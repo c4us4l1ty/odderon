@@ -55,6 +55,8 @@ fn pack(data: &[u8], range: Option<(i64, i64)>) -> Result<Vec<u8>, String> {
         return Err("expected a little-endian DAF/SPK with ND=2, NI=6".into());
     }
     let mut found: [Option<Vec<u8>>; 4] = Default::default();
+    let mut common_start = i64::MIN;
+    let mut common_end = i64::MAX;
     let mut record = usize::try_from(i32_at(data, 76)?).map_err(|_| "invalid summary pointer")?;
     let mut visited = std::collections::BTreeSet::new();
     while record != 0 {
@@ -123,6 +125,8 @@ fn pack(data: &[u8], range: Option<(i64, i64)>) -> Result<Vec<u8>, String> {
                 if clip_start < start as i64 || clip_end > end as i64 {
                     return Err(format!("requested range outside target {target} coverage"));
                 }
+                common_start = common_start.max(clip_start);
+                common_end = common_end.min(clip_end);
                 let origin = init as i128;
                 let stride = interval as i128;
                 let first = usize::try_from((i128::from(clip_start) - origin) / stride)
@@ -169,6 +173,9 @@ fn pack(data: &[u8], range: Option<(i64, i64)>) -> Result<Vec<u8>, String> {
             }
         }
         record = next;
+    }
+    if common_start >= common_end {
+        return Err("selected segments have no common coverage".into());
     }
     let mut out = b"ODEPHEM1".to_vec();
     put_u32(&mut out, WANTED.len())?;
@@ -302,6 +309,17 @@ mod tests {
         let mut corrupt_header = good.clone();
         corrupt_header[706] = 0;
         assert!(pack(&corrupt_header, None).is_err());
+        // All four segments are valid, but one has disjoint coverage.
+        let mut disjoint = good.clone();
+        let summary = 2048 + 24;
+        disjoint[summary..summary + 8].copy_from_slice(&20.0_f64.to_le_bytes());
+        disjoint[summary + 8..summary + 16].copy_from_slice(&30.0_f64.to_le_bytes());
+        disjoint[4096..4104].copy_from_slice(&25.0_f64.to_le_bytes());
+        disjoint[4096 + 64..4096 + 72].copy_from_slice(&20.0_f64.to_le_bytes());
+        assert_eq!(
+            pack(&disjoint, None).unwrap_err(),
+            "selected segments have no common coverage"
+        );
         let mut bad = good.clone();
         bad[2048..2056].copy_from_slice(&3f64.to_le_bytes());
         assert!(pack(&bad, None).is_err());
