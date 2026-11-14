@@ -14,14 +14,14 @@ const columns=matrix=>[matrix[0],matrix[3],matrix[6],matrix[1],matrix[4],matrix[
 function loadDate(){
   // Calendar arithmetic only: selected midnight is explicitly TDB, not UTC.
   const time=Date.parse(`${date.value}T00:00:00Z`), seconds=(time-J2000_UNIX_MS)/1000;
-  if(!Number.isFinite(time)||!wasm.view_load(seconds)){showError('Date outside the available ephemeris (2020–2035 TDB).');return false;}
+  if(!Number.isFinite(time)||!wasm.view_load(seconds)){snapshot=null;$('distance').textContent='—';$('speed').textContent='—';showError('Date outside the available ephemeris (2020–2035 TDB).');return false;}
   const value=i=>wasm.view_value(i), count=value(27), samples=[];
   for(let i=0;i<count;i++)samples.push({time:value(28+4*i),pos:[value(29+4*i),value(30+4*i),value(31+4*i)]});
   snapshot={seconds,moon:[value(0),value(1),value(2)],velocity:[value(3),value(4),value(5)],sun:[value(6),value(7),value(8)],earthOrientation:columns(Array.from({length:9},(_,i)=>value(9+i))),moonOrientation:columns(Array.from({length:9},(_,i)=>value(18+i))),samples};
   $('distance').textContent=Math.round(Math.hypot(...snapshot.moon)/1000).toLocaleString('en-US');
   $('speed').textContent=(Math.hypot(...snapshot.velocity)/1000).toFixed(3);
   $('prev').disabled=date.value===date.min;$('next').disabled=date.value===date.max;
-  error.hidden=true;governor.invalidate();return true;
+  if(!contextLost)error.hidden=true;governor.invalidate();return true;
 }
 function geometry(){
   const {yaw,pitch,zoom}=camera, c=Math.cos(pitch),s=Math.sin(pitch), cy=Math.cos(yaw),sy=Math.sin(yaw);

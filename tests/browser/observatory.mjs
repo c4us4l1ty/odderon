@@ -50,7 +50,8 @@ try{
   assert.equal(await page.locator('#date').inputValue(),'2026-01-02');
   await page.locator('#date').fill('2020-01-01');await page.locator('#date').dispatchEvent('change');assert.equal(await page.locator('#prev').isDisabled(),true);
   await page.locator('#date').fill('2035-12-31');await page.locator('#date').dispatchEvent('change');assert.equal(await page.locator('#next').isDisabled(),true);
-  await page.locator('#today-reset').click();await page.locator('#show-path').uncheck();await page.locator('#show-velocity').check();await page.locator('#show-vehicle').check();await page.locator('#zoom-in').click();await page.locator('#reset').click();
+  await page.locator('#date').fill('2019-01-01');await page.locator('#date').dispatchEvent('change');assert.equal(await page.locator('#error').isVisible(),true);assert.equal(await page.locator('#distance').textContent(),'—');
+  await page.locator('#today-reset').click();assert.equal(await page.locator('#error').isHidden(),true);await page.locator('#show-path').uncheck();await page.locator('#show-velocity').check();await page.locator('#show-vehicle').check();await page.locator('#zoom-in').click();await page.locator('#reset').click();
   await page.locator('#scene').focus();await page.keyboard.press('ArrowRight');
   await page.waitForTimeout(300);
   const glResult=await page.locator('#world').evaluate(canvas=>{const gl=canvas.getContext('webgl2');return {error:gl.getError(),w:canvas.width,h:canvas.height};});
