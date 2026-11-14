@@ -104,6 +104,22 @@ pub fn fingerprint() -> [u8; 32] {
     let earth_orientation =
         odd_ephem::orientation::earth_approx_orientation(Epoch::new(820_497_600, 0.25).unwrap())
             .unwrap();
+    // Exercise WP 1.1 in both native and browser Wasm with numerical
+    // tolerances; transcendental functions are not promised bit-identical.
+    let orbit_state = State {
+        position_m: [6_524_834.0, 6_862_875.0, 6_448_296.0],
+        velocity_m_s: [4_901.327, 5_533.756, -1_976.341],
+    };
+    let orbit = odd_astro::elements::Elements::from_state(orbit_state, 3.986_004_418e14).unwrap();
+    assert!((orbit.eccentricity - 0.832_853_398_487_521_5).abs() < 1e-12);
+    assert!((orbit.argument_of_periapsis_rad - 0.931_742_810_240_855_7).abs() < 1e-12);
+    let round_trip = orbit.to_state(3.986_004_418e14).unwrap();
+    for i in 0..3 {
+        assert!((round_trip.position_m[i] - orbit_state.position_m[i]).abs() < 1e-5);
+        assert!((round_trip.velocity_m_s[i] - orbit_state.velocity_m_s[i]).abs() < 1e-8);
+    }
+    let anomaly = odd_astro::anomaly::hyperbolic_from_mean(2.0, 1.350_402_387_287_602_8).unwrap();
+    assert!((anomaly - 1.0).abs() < 1e-12);
     let values = [
         century.seconds() as u64,
         century.fraction().to_bits(),
