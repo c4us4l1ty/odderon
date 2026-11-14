@@ -18,8 +18,13 @@ precession transformation to J2000. For solar-system-barycentric queries it
 estimates the Sun's barycentric offset from eight secular planetary orbits and
 approximate mass ratios; this is **not** the DE440 barycenter. Lunar velocity
 and its precession-frame rotation rate are differentiated analytically. Mean-equinox precession becomes less reliable far from J2000.
-The tier changes discontinuously at the packed boundaries: do not treat it as
-a seamless high-precision spacecraft ephemeris or as an uncertainty bound.
+Within the first and last 30 days of packed coverage, a cubic smoothstep
+blends the analytical and packed states, including the derivative of the weight
+in velocity. At the table boundaries the result joins the analytical tier C1;
+30 days inside it joins the packed tier C1. These blended states are labeled
+`Blended`, and are not DE440-accuracy states. Blending is not an uncertainty
+bound and can introduce artificial acceleration; do not use it as an exact
+spacecraft force model.
 Future UTC and pre-1972 UTC inputs also use assumed leap offsets, not knowledge
 of future timekeeping or historically accurate UTC.
 

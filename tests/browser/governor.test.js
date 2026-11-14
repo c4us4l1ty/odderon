@@ -1,17 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Governor } from '../../web/governor.js';
-function fakeClock(){let id=0;const frames=new Map(),timers=new Map();return {frames,timers,requestAnimationFrame:f=>{frames.set(++id,f);return id;},cancelAnimationFrame:i=>frames.delete(i),setTimeout:(f,ms)=>{timers.set(++id,{f,ms});return id;},clearTimeout:i=>timers.delete(i),flushFrame(){const old=[...frames.values()];frames.clear();old.forEach(f=>f());},flushTimers(){const old=[...timers.values()];timers.clear();old.forEach(t=>t.f());},settle(){for(let i=0;i<20&&frames.size;i++)this.flushFrame();}};}
-test('coalesces invalidations into 16 finite batches with no idle work',()=>{const c=fakeClock(),r=[],g=new Governor((q,b)=>r.push([q,b]),c);g.invalidate();g.invalidate();assert.equal(c.frames.size,1);c.settle();assert.deepEqual(r,Array.from({length:16},(_,i)=>['final',i]));assert.equal(c.frames.size,0);assert.equal(c.timers.size,0);assert.equal(g.frameCount,16);});
-test('interactive frames settle progressively after release debounce',()=>{const c=fakeClock(),r=[],g=new Governor((q,b)=>r.push([q,b]),c);g.begin();g.move();c.flushFrame();g.move();g.end();assert.equal(c.frames.size,0);assert.equal([...c.timers.values()][0].ms,50);c.flushTimers();c.settle();assert.deepEqual(r[0],['interactive',0]);assert.equal(r.length,17);assert.deepEqual(r.at(-1),['final',15]);assert.equal(c.frames.size,0);});
-test('new drag and suspension cancel stale work',()=>{const c=fakeClock(),r=[],g=new Governor((q,b)=>r.push([q,b]),c);g.invalidate();c.flushFrame();g.begin();assert.equal(c.frames.size,0);g.end();g.begin();assert.equal(c.timers.size,0);g.suspend();c.flushFrame();c.flushTimers();assert.equal(r.length,1);g.resume();c.settle();assert.equal(r.length,17);});
-test('overlay-only invalidation does not restart progressive rendering',()=>{const c=fakeClock(),r=[],g=new Governor((q,b)=>r.push([q,b]),c);g.invalidate();c.settle();g.invalidate(false);c.flushFrame();assert.deepEqual(r.at(-1),['overlay',null]);assert.equal(c.frames.size,0);});
-test('world invalidation restarts an incomplete accumulation',()=>{const c=fakeClock(),r=[],g=new Governor((q,b)=>r.push([q,b]),c);g.invalidate();c.flushFrame();c.flushFrame();g.invalidate();c.settle();assert.deepEqual(r.slice(0,3),[['final',0],['final',1],['final',0]]);assert.deepEqual(r.at(-1),['final',15]);});
-test('failed drawing does not loop',()=>{const c=fakeClock(),g=new Governor(()=>false,c);g.invalidate();c.settle();assert.equal(g.frameCount,1);assert.equal(c.frames.size,0);});
-test('world invalidation from inside batch zero restarts at zero',()=>{
-  const c=fakeClock(),r=[];let g;
-  g=new Governor((quality,batch)=>{r.push([quality,batch]);if(r.length===1)g.invalidate(true);},c);
-  g.invalidate();c.settle();
-  assert.deepEqual(r.slice(0,3),[['final',0],['final',0],['final',1]]);
-  assert.deepEqual(r.at(-1),['final',15]);
-});
+function fakeClock(){let id=0;const frames=new Map();return {frames,requestAnimationFrame:f=>{frames.set(++id,f);return id;},cancelAnimationFrame:i=>frames.delete(i),flush(){const old=[...frames.values()];frames.clear();old.forEach(f=>f());}};}
+test('coalesces invalidations into one frame and rests',()=>{const c=fakeClock(),r=[],g=new Governor(q=>r.push(q),c);g.invalidate();g.invalidate();assert.equal(c.frames.size,1);c.flush();assert.deepEqual(r,['final']);assert.equal(c.frames.size,0);assert.equal(g.frameCount,1);});
+test('release coalesces pending drag into one final frame',()=>{const c=fakeClock(),r=[],g=new Governor(q=>r.push(q),c);g.begin();g.move();c.flush();g.move();g.end();assert.equal(c.frames.size,1);c.flush();assert.deepEqual(r,['interactive','final']);assert.equal(c.frames.size,0);});
+test('suspend cancels work and resume draws once',()=>{const c=fakeClock(),r=[],g=new Governor(q=>r.push(q),c);g.invalidate();g.suspend();c.flush();assert.deepEqual(r,[]);g.resume();c.flush();assert.deepEqual(r,['final']);assert.equal(c.frames.size,0);});
+test('overlay-only invalidation never redraws world',()=>{const c=fakeClock(),r=[],g=new Governor(q=>r.push(q),c);g.invalidate(false);c.flush();assert.deepEqual(r,['overlay']);assert.equal(c.frames.size,0);});
+test('draw may invalidate during a frame',()=>{const c=fakeClock(),r=[];let g;g=new Governor(q=>{r.push(q);if(r.length===1)g.invalidate();},c);g.invalidate();c.flush();assert.equal(c.frames.size,1);c.flush();assert.deepEqual(r,['final','final']);assert.equal(c.frames.size,0);});
+test('draw failure does not loop',()=>{const c=fakeClock(),g=new Governor(()=>false,c);g.invalidate();c.flush();assert.equal(c.frames.size,0);});

@@ -3,7 +3,7 @@
 //! The bundled Chebyshev records cover 2020–2036 TDB. Outside that range the
 //! bundled ephemeris uses JPL secular elements and truncated Meeus lunar terms
 //! from 3000 BC through AD 3000. Outputs identify the model; see the project
-//! documentation for uncertainty, boundary discontinuities and limitations.
+//! documentation for uncertainty, boundary blending and limitations.
 //! Caller-supplied packed files remain bounded and never silently extrapolate.
 //! These geometric states are not light-time-corrected observations.
 
@@ -37,6 +37,8 @@ pub enum EphemerisModel {
     PackedDe440,
     /// Approximate secular planetary and truncated analytical lunar model.
     Analytical,
+    /// Smooth transition between the two models; not a DE440-accuracy state.
+    Blended,
 }
 
 /// A geometric state with an explicitly labelled origin, axes and epoch.
@@ -260,6 +262,40 @@ impl Ephemeris {
             .all(|v| v.is_finite())
         {
             return Err(EphemerisError::InvalidData);
+        }
+        // Blend entirely inside the table's validity interval. At either
+        // boundary the analytical model has weight 1; 30 days into the table
+        // the packed model has weight 1. Derivative of the weight is required
+        // for the returned velocity to remain the derivative of position.
+        const BLEND_SECONDS: f64 = 30.0 * 86_400.0;
+        if self.analytical_fallback {
+            let since_start = (epoch.seconds() - self.start) as f64 + epoch.fraction();
+            let until_end = (self.end - epoch.seconds()) as f64 - epoch.fraction();
+            let (distance, direction) = if since_start < until_end {
+                (since_start, 1.0)
+            } else {
+                (until_end, -1.0)
+            };
+            if distance < BLEND_SECONDS {
+                let a = analytical::state(target, center, epoch)?;
+                let s = distance / BLEND_SECONDS;
+                let w = s * s * (3.0 - 2.0 * s);
+                let dw = direction * 6.0 * s * (1.0 - s) / BLEND_SECONDS;
+                for i in 0..3 {
+                    let delta = result.position_m[i] - a.position_m[i];
+                    result.velocity_m_s[i] = a.velocity_m_s[i]
+                        + w * (result.velocity_m_s[i] - a.velocity_m_s[i])
+                        + dw * delta;
+                    result.position_m[i] = a.position_m[i] + w * delta;
+                }
+                return Ok(EphemerisState {
+                    target,
+                    center,
+                    epoch,
+                    model: EphemerisModel::Blended,
+                    state: result,
+                });
+            }
         }
         Ok(EphemerisState {
             target,

@@ -6,14 +6,15 @@ import { spawn, execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
 const wasm = await readFile(resolve('target/wasm32-unknown-unknown/debug/odd_core_oracle.wasm'));
-const expected = execFileSync(resolve('target/debug/odd-core-oracle'), { encoding: 'utf8' }).trim();
+const expected = execFileSync(resolve('target/debug/odd-core-oracle'), { encoding: 'utf8' }).trim().split('\n');
 const { instance } = await WebAssembly.instantiate(wasm, {});
-const nodeResult = Array.from({ length: 32 }, (_, i) => instance.exports.oracle_byte(i).toString(16).padStart(2, '0')).join('');
-if (nodeResult !== expected) throw new Error(`Native/Node wasm mismatch: ${expected} != ${nodeResult}`);
+const fingerprints = exp => ['oracle_byte','integrator_oracle_byte','blended_integrator_oracle_byte','analytical_integrator_oracle_byte'].map(name=>Array.from({length:32},(_,i)=>exp[name](i).toString(16).padStart(2,'0')).join(''));
+const nodeResult = fingerprints(instance.exports);
+if (nodeResult.join(',') !== expected.join(',')) throw new Error(`Native/Node wasm mismatch: ${expected} != ${nodeResult}`);
 
 const html = `<!doctype html><html><body><script>
 fetch('/oracle.wasm').then(r => r.arrayBuffer()).then(b => WebAssembly.instantiate(b, {})).then(({instance}) => {
-  const hash = Array.from({length:32}, (_, i) => instance.exports.oracle_byte(i).toString(16).padStart(2,'0')).join('');
+  const hash = ['oracle_byte','integrator_oracle_byte','blended_integrator_oracle_byte','analytical_integrator_oracle_byte'].map(name=>Array.from({length:32},(_,i)=>instance.exports[name](i).toString(16).padStart(2,'0')).join('')).join(',');
   return fetch('/result?value=' + encodeURIComponent(hash));
 }).catch(e => fetch('/result?error=' + encodeURIComponent(String(e))));
 </script></body></html>`;
@@ -47,7 +48,7 @@ let timer;
 const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`Chrome parity timed out: ${stderr}`)), 90_000); });
 try {
   const result = await Promise.race([browserResult, exited, timeout]);
-  if (result.error || result.value !== expected) throw new Error(`Chrome wasm parity failed: ${JSON.stringify(result)}, expected ${expected}`);
+  if (result.error || result.value !== expected.join(',')) throw new Error(`Chrome wasm parity failed: ${JSON.stringify(result)}, expected ${expected}`);
   console.log(`Native, Node and Chrome wasm fingerprints agree: ${expected}`);
 } finally {
   clearTimeout(timer);
