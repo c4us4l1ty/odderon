@@ -11,3 +11,4 @@ crate-type = ["rlib", "cdylib"]
 odd-core = { path = "../odd-core" }
 odd-astro = { path = "../odd-astro" }
 odd-ephem = { path = "../odd-ephem" }
+odd-sim = { path = "../odd-sim" }
