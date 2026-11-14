@@ -20,8 +20,9 @@ float noise(vec3 p){vec3 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f); float a=mix(
 float fbm(vec3 p){return noise(p)*.55+noise(p*2.03)*.28+noise(p*4.11)*.12;}
 void main(){
  vec2 p=(2.0*gl_FragCoord.xy-uResolution)/uResolution.y;
- vec2 cell=floor(gl_FragCoord.xy/5.0); float star=step(.996,hash(vec3(cell,37.0)))*smoothstep(.42,.05,length(fract(gl_FragCoord.xy/5.0)-.5))*.20;
- vec3 bg=mix(vec3(.018,.039,.041),vec3(.039,.076,.070),clamp(1.0-length(p)*.65,0.0,1.0))+star;
+ // Subtle paper grain only: this is not a synthetic star catalog.
+ float grain=(hash(vec3(gl_FragCoord.xy,37.0))-.5)*.003;
+ vec3 bg=mix(vec3(.018,.039,.041),vec3(.039,.076,.070),clamp(1.0-length(p)*.65,0.0,1.0))+grain;
  float de=length(p-uEarth.xy)/uEarth.z, dm=length(p-uMoon.xy)/uMoon.z;
  float halo=exp(-max(de-1.0,0.0)*8.0)*.11*(1.0-smoothstep(.98,1.0,de));
  // An atmosphere glow extends beyond the silhouette.
