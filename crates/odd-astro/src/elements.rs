@@ -521,7 +521,19 @@ impl ModifiedEquinoctialElements {
         }
         let (fhat, ghat) = Self::basis(self.h, self.k)?;
         let (sl, cl) = self.l.sin_cos();
-        let w = 1.0 + self.f * cl + self.g * sl;
+        let eccentricity = self.f.hypot(self.g);
+        if !eccentricity.is_finite() {
+            return Err(ElementsError::NumericalRange);
+        }
+        let radial_e = self.f * cl + self.g * sl;
+        // Near a parabolic far side, 1 + e cos(ν) catastrophically
+        // cancels. Use the same stable half-angle form as classical elements.
+        let w = if radial_e < 0.0 {
+            let nu = self.l - self.g.atan2(self.f);
+            conic_denominator(eccentricity, nu, nu.cos())
+        } else {
+            1.0 + radial_e
+        };
         if !w.is_finite() {
             return Err(ElementsError::NumericalRange);
         }
@@ -531,8 +543,23 @@ impl ModifiedEquinoctialElements {
         let radius = self.p / w;
         let speed = (mu / self.p).sqrt();
         let position_m = std::array::from_fn(|j| radius * (cl * fhat[j] + sl * ghat[j]));
+        // Preserve nearly cancelling velocity components at principal axes.
+        let f_plus_cos = if cl < -0.5 && self.f > 0.5 {
+            (self.f - 1.0) + sl * sl / (1.0 - cl)
+        } else if cl > 0.5 && self.f < -0.5 {
+            (self.f + 1.0) - sl * sl / (1.0 + cl)
+        } else {
+            self.f + cl
+        };
+        let g_plus_sin = if sl > 0.5 && self.g < -0.5 {
+            (self.g + 1.0) - cl * cl / (1.0 + sl)
+        } else if sl < -0.5 && self.g > 0.5 {
+            (self.g - 1.0) + cl * cl / (1.0 - sl)
+        } else {
+            self.g + sl
+        };
         let velocity_m_s =
-            std::array::from_fn(|j| speed * (-(self.g + sl) * fhat[j] + (self.f + cl) * ghat[j]));
+            std::array::from_fn(|j| speed * (-g_plus_sin * fhat[j] + f_plus_cos * ghat[j]));
         if radius <= 0.0
             || speed <= 0.0
             || !position_m

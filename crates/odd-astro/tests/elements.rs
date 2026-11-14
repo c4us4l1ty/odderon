@@ -515,3 +515,21 @@ fn equinoctial_near_singular_roundtrip() {
     );
     let _ = retro;
 }
+
+#[test]
+fn equinoctial_near_parabolic_radius_is_stable() {
+    use odd_astro::elements::ModifiedEquinoctialElements as Mee;
+    let el = Mee {
+        p: 8_000_000.0,
+        f: 1.0 - f64::EPSILON,
+        g: 0.0,
+        h: 0.0,
+        k: 0.0,
+        l: PI - 1e-8,
+    };
+    let state = el.to_state(MU).unwrap();
+    let radius = state.position_m[0].hypot(state.position_m[1]);
+    assert!((radius / 2.940_694_223_310_72e22 - 1.0).abs() < 2e-15);
+    // mpmath 80-digit transverse velocity from the exact f64 inputs.
+    assert!((state.velocity_m_s[1] / -1.214_408_927_286_618_2e-12 - 1.0).abs() < 2e-15);
+}
