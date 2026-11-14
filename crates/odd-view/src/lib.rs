@@ -104,3 +104,146 @@ mod tests {
         assert!(view_value(SIZE as u32).is_nan());
     }
 }
+
+// Orbit output: signed sample count (positive = closed), 180 positions, then four [valid,x,y,z]
+// marker records in PE, AP, AN, DN order. Marker validity is explicit.
+const ORBIT_SAMPLES: usize = 180;
+const ORBIT_MARKERS: usize = 1 + 3 * ORBIT_SAMPLES;
+const ORBIT_SIZE: usize = ORBIT_MARKERS + 4 * 4;
+static ORBIT: Mutex<[f64; ORBIT_SIZE]> = Mutex::new([0.0; ORBIT_SIZE]);
+
+fn orbit_snapshot(state: odd_core::frames::State, mu: f64) -> Option<[f64; ORBIT_SIZE]> {
+    use odd_astro::{
+        anomaly::{true_from_elliptic, true_from_hyperbolic},
+        elements::{Elements, SINGULAR_TOLERANCE},
+    };
+    use std::f64::consts::{PI, TAU};
+    let el = Elements::from_state(state, mu).ok()?;
+    let mut out = [0.0; ORBIT_SIZE];
+    out[0] = if el.eccentricity < 1.0 {
+        ORBIT_SAMPLES as f64
+    } else {
+        -(ORBIT_SAMPLES as f64)
+    };
+    for i in 0..ORBIT_SAMPLES {
+        let fraction = i as f64 / (ORBIT_SAMPLES - 1) as f64;
+        let nu = if el.eccentricity < 1.0 {
+            true_from_elliptic(el.eccentricity, TAU * i as f64 / ORBIT_SAMPLES as f64).ok()?
+        } else if el.eccentricity > 1.0 {
+            // Hyperbolas extend to infinity. Show a finite F∈[-3,3] segment.
+            true_from_hyperbolic(el.eccentricity, 6.0 * fraction - 3.0).ok()?
+        } else {
+            // Parabolic Barker parameter D is similarly bounded for display.
+            2.0 * (40.0 * fraction - 20.0).atan()
+        };
+        let position = Elements {
+            true_anomaly_rad: nu,
+            ..el
+        }
+        .to_state(mu)
+        .ok()?
+        .position_m;
+        out[1 + 3 * i..4 + 3 * i].copy_from_slice(&position);
+    }
+    // Peri/apo are undefined for a circular orbit, and node markers are
+    // undefined for an equatorial plane; omit instead of inventing them.
+    let markers = [
+        if el.eccentricity >= SINGULAR_TOLERANCE {
+            Some(0.0)
+        } else {
+            None
+        },
+        if el.eccentricity >= SINGULAR_TOLERANCE && el.eccentricity < 1.0 {
+            Some(PI)
+        } else {
+            None
+        },
+        if el.inclination_rad.sin().abs() >= SINGULAR_TOLERANCE {
+            Some(-el.argument_of_periapsis_rad)
+        } else {
+            None
+        },
+        if el.inclination_rad.sin().abs() >= SINGULAR_TOLERANCE {
+            Some(PI - el.argument_of_periapsis_rad)
+        } else {
+            None
+        },
+    ];
+    for (i, angle) in markers.into_iter().enumerate() {
+        if let Some(angle) = angle {
+            if let Ok(s) = (Elements {
+                true_anomaly_rad: angle,
+                ..el
+            })
+            .to_state(mu)
+            {
+                let index = ORBIT_MARKERS + i * 4;
+                out[index] = 1.0;
+                out[index + 1..index + 4].copy_from_slice(&s.position_m);
+            }
+        }
+    }
+    Some(out)
+}
+
+/// Set the active central-body-relative test orbit in inertial SI coordinates.
+/// Invalid states clear the previous orbit. This computes only ideal conics,
+/// not a propagated spacecraft trajectory or an impact check.
+#[no_mangle]
+pub extern "C" fn orbit_load(mu: f64, x: f64, y: f64, z: f64, vx: f64, vy: f64, vz: f64) -> i32 {
+    let mut out = ORBIT.lock().unwrap();
+    *out = [0.0; ORBIT_SIZE];
+    let state = odd_core::frames::State {
+        position_m: [x, y, z],
+        velocity_m_s: [vx, vy, vz],
+    };
+    match orbit_snapshot(state, mu) {
+        Some(result) => {
+            *out = result;
+            1
+        }
+        None => 0,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn orbit_value(index: u32) -> f64 {
+    ORBIT
+        .lock()
+        .unwrap()
+        .get(index as usize)
+        .copied()
+        .unwrap_or(f64::NAN)
+}
+
+#[cfg(test)]
+mod orbit_tests {
+    use super::*;
+    #[test]
+    fn computes_real_orbit_samples_and_nodes() {
+        let mu = 3.986_004_418e14;
+        let state = odd_core::frames::State {
+            position_m: [7e6, 0.0, 0.0],
+            velocity_m_s: [0.0, 7600.0, 2000.0],
+        };
+        let out = orbit_snapshot(state, mu).unwrap();
+        assert_eq!(out[0], 180.0);
+        assert!((out[1] - 7e6).abs() < 1e-7);
+        for index in 0..4 {
+            assert_eq!(out[ORBIT_MARKERS + 4 * index], 1.0);
+        }
+        for index in [2, 3] {
+            assert!(out[ORBIT_MARKERS + 4 * index + 3].abs() < 1e-7);
+        }
+        let r = (out[ORBIT_MARKERS + 1].powi(2)
+            + out[ORBIT_MARKERS + 2].powi(2)
+            + out[ORBIT_MARKERS + 3].powi(2))
+        .sqrt();
+        assert!(r > 6_378_137.0);
+    }
+    #[test]
+    fn invalid_orbit_clears_output() {
+        assert_eq!(orbit_load(0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0), 0);
+        assert_eq!(orbit_value(0), 0.0);
+    }
+}

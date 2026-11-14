@@ -49,11 +49,13 @@ controls select a midnight **TDB**, not local time or UTC. The date range is
   actual instantaneous relative velocity, scaled to one day: it is a tangent,
   not a propagated path. When its projected length is under one screen pixel,
   the arrow is suppressed and labeled as almost along the view direction.
-* Orbital elements, apsides, B-plane targeting and vehicle trajectories require
-  later physics packages. This viewport does not fabricate those results.
-  `web/overlay.js` provides reusable polyline, vector, apsis-marker and B-plane
-  bullseye drawing primitives for callers that have genuine computed data;
-  they do not calculate those inputs.
+* An optional ideal Earth test orbit is calculated from an explicitly supplied
+  inertial state by `odd-astro` and drawn with 180 eccentric-anomaly samples.
+  PE/AP and node markers are omitted when undefined; open conics are shown as
+  finite segments, not as an impossible drawing of their infinite extent. The
+  initial example is not a mission. `window.odderonSetOrbit` accepts a caller's
+  SI position/velocity and μ to replace it. This is an instantaneous two-body
+  conic, not a perturbed trajectory, collision check or B-plane solution.
 
 ## Rendering and idle behavior
 

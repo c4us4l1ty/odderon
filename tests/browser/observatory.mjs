@@ -102,6 +102,12 @@ try{
   await page.waitForFunction(n=>odderonDiagnostics.draws>n,beforeRestoreDensity,{timeout:10000});
   await page.waitForFunction(()=>odderonDiagnostics.batchIndex===15&&!odderonDiagnostics.pendingFrame,null,{timeout:60000});
   assert.equal(await page.locator('#world').evaluate(c=>c.width),initialSize.width);
+  // The displayed test orbit is calculated in odd-astro, not a drawn ellipse.
+  assert.deepEqual(await page.evaluate(()=>odderonDiagnostics.orbit),{samples:180,closed:true,markers:['PE','AP','AN','DN']});
+  await page.locator('#show-orbit').check();
+  await page.waitForFunction(()=>odderonDiagnostics.batchIndex===15&&!odderonDiagnostics.pendingFrame,null,{timeout:60000});
+  assert.equal(await page.evaluate(()=>odderonDiagnostics.orbit.samples),180);
+  await page.locator('#show-orbit').uncheck();
   const beforeDate=await page.locator('#distance').textContent();await page.locator('#next').click();assert.notEqual(await page.locator('#distance').textContent(),beforeDate);
   assert.equal(await page.locator('#date').inputValue(),'2026-01-02');
   await page.locator('#date').fill('2020-01-01');await page.locator('#date').dispatchEvent('change');assert.equal(await page.locator('#prev').isDisabled(),true);

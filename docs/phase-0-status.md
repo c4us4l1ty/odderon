@@ -43,10 +43,9 @@ performance on every device, or a waiver of scientific accuracy in later work.
   The sampled Moon path and velocity come from the ephemeris; physical body
   radii use the same scale as their positions. Surfaces and the optional
   vehicle are illustrations, not a terrain map or simulated mission.
-- Limit: spacecraft trajectory ellipses, computed apsides and B-plane
-  solutions are not displayed. Reusable drawing primitives exist, but real
-  orbital and targeting data must be supplied by later physics work; they must
-  not be fabricated to fill the viewport.
+- An optional ideal test conic with computed apsides and nodes is now
+  displayed. It is not a propagated mission or a B-plane solution; targeting
+  data and higher-fidelity trajectories still require later physics work.
 - Idle means no continuously scheduled application frames, not a guarantee of
   zero CPU or GPU use. The browser now submits a finite progressive sequence;
   its deterministic idle test checks animation and worker-message counters,
