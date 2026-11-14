@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1518"><link rel="icon" href="data:,">
+  <title>Odderon · Orbit rescue prototype</title>
+  <link rel="stylesheet" href="./style.css"><link rel="stylesheet" href="./mission.css">
+</head>
+<body><div class="app">
+  <header class="topbar"><a class="brand" href="./"><span class="brand-mark">◒</span><span>ODDERON<small>SPACE ENGINEERING, MADE TANGIBLE</small></span></a><a class="back" href="./">← Earth–Moon observatory</a></header>
+  <main class="mission-main">
+    <div class="intro"><div><div class="eyebrow">MISSION PLANNING / EARLY PROTOTYPE</div><h1>Give an orbit <em>new life.</em></h1><p>Design two pushes, predict the outcome, and see what changes when burns take time.</p></div></div>
+    <div class="mission-grid">
+      <section class="planner-card" aria-label="Orbit planning diagram">
+        <div class="planner-head"><div><span id="mission-rank" class="section-label">CONTRACT 101 / CADET</span><h2 id="mission-title">Orbit rescue</h2></div><span class="mission-chip">EXPERIMENTAL</span></div>
+        <p id="mission-description" class="mission-sub">Raise a 260 km circular orbit to 550 km, then make it circular within three hours. The dotted cyan path is your instantaneous-push preview; the gold path includes finite burns and modeled forces.</p>
+        <div class="mission-canvas"><canvas id="plan-canvas" aria-label="Orbit plan. Select a point on the path to add a maneuver. Use the maneuver controls for keyboard access."></canvas><span>EARTH-CENTERED · PLANE PROJECTION</span></div>
+        <p id="plan-status" class="plan-status" role="status">Loading mission physics…</p>
+        <div class="mission-legend"><span><i class="cyan"></i> Instantaneous prediction</span><span><i class="gold"></i> Finite-burn calculation</span></div>
+      </section>
+      <aside class="planner-controls" aria-label="Maneuver design">
+        <div class="section-label">01 / DESIGN THE PUSHES</div>
+        <label for="mission-select">Mission</label><select id="mission-select" disabled><option value="101">101 · Orbit rescue</option><option value="102">102 · Sun-synchronous orbit</option></select>
+        <p>Click the path to add a maneuver, or use the controls below. Drag the colored handles to change its direction and strength.</p>
+        <div class="button-row"><button id="add-node" disabled>Add maneuver</button><button id="example" disabled>Show two-push example</button></div>
+        <label for="node-select">Selected maneuver</label><select id="node-select" disabled><option>No maneuver</option></select>
+        <label for="node-time">Time after start <small>seconds</small></label><input id="node-time" type="number" min="1" max="10799" step="1" value="200" disabled>
+        <label for="node-t">Along motion <small>meters per second</small></label><input id="node-t" type="number" step="1" value="0" disabled>
+        <label for="node-n">In-plane sideways <small>meters per second</small></label><input id="node-n" type="number" step="1" value="0" disabled>
+        <label for="node-w">Out of orbital plane <small>meters per second</small></label><input id="node-w" type="number" step="1" value="0" disabled>
+        <button id="remove-node" class="quiet" disabled>Remove maneuver</button>
+        <div class="lens" aria-live="polite"><div class="section-label">PHYSICS LENS</div><p id="lens-text">A maneuver is a change in velocity. Choose a handle or control to see what it does.</p></div>
+        <div class="causal" aria-live="polite"><div class="section-label">CAUSE &amp; EFFECT CHECK</div><div id="causal-text">The checks update as you design and simulate a plan.</div><button id="split-kick" class="quiet" hidden>Split selected push into two passes</button></div>
+      </aside>
+    </div>
+    <section class="contract-card" aria-labelledby="prediction-title"><div><div class="section-label">02 / MAKE A PREDICTION</div><h2 id="prediction-title">What do you expect?</h2><p>Start with the ideal prediction, or edit it to account for real effects. Locking freezes your plan and estimates before flight.</p></div>
+      <div class="prediction-grid"><label>Velocity change <small>m/s</small><input id="predict-dv" type="number" min="0" step="any"></label><label>Farthest altitude <small>km</small><input id="predict-apo" type="number" step="any"></label><label>Closest altitude <small>km</small><input id="predict-peri" type="number" step="any"></label><label>Remaining propellant <small>kg</small><input id="predict-fuel" type="number" min="0" step="any"></label><label>Flight duration <small>seconds</small><input id="predict-time" type="number" min="0" step="any"></label></div>
+      <div class="button-row"><button id="prefill" disabled>Use ideal prediction</button><button id="execute" class="primary" disabled>Lock &amp; execute mission</button><button id="unlock" class="quiet" hidden>Change plan</button></div><p id="execute-status" role="status"></p>
+    </section>
+    <section class="debrief" id="debrief" hidden aria-live="polite"><div class="section-label">03 / MISSION DEBRIEF</div><h2>The prediction meets <em>reality.</em></h2><div id="debrief-content"></div><p class="disclaimer">“Reality” here is a simplified model, not a flight-operations prediction. Sensitivity shares compare separate counterfactual runs; they are not exact additive causes of the total difference.</p></section>
+    <footer><span>ODDERON / MISSION PLANNING PROTOTYPE</span><span>CONTRACT 103 IS NOT YET AVAILABLE</span></footer>
+  </main>
+</div><script type="module" src="./mission.js"></script></body></html>

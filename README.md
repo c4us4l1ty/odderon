@@ -1,7 +1,8 @@
 # Odderon
 
 Odderon is an early-stage, scientifically grounded space engineering game.
-The current code includes an interactive Earth–Moon observatory, **not yet a playable game**.
+The current code includes an interactive Earth–Moon observatory and an
+experimental orbit-rescue planning prototype; the full game is not yet complete.
 The project vision and proposed design live in [BRAINSTORM.md](BRAINSTORM.md),
 [ARCHITECTURE_LAWS.md](ARCHITECTURE_LAWS.md), [blueprint.md](blueprint.md),
 [UI.md](UI.md), and [ELO.md](ELO.md).
@@ -12,6 +13,11 @@ Phase 0 is accepted as a foundation with explicit scientific, scope, and
 performance limitations; see [Phase 0 status](docs/phase-0-status.md).
 WP 1.1 adds ideal two-body orbital elements and transfer calculations; see
 [orbital-elements notes](docs/orbital-elements.md) for validation and limits.
+
+An in-progress WP 1.3/1.4 prototype adds multi-node maneuver planning,
+locked predictions and two experimental mission scenarios. The third
+requested mission and some acceptance gates are not complete; see
+[mission-planning feasibility](docs/mission-planning-feasibility.md).
 
 Work Package 0.1 provides SI quantities, epochs, UTC conversion, hierarchical
 reference-frame snapshots, and versioned hashing in `crates/odd-core`.
@@ -51,3 +57,6 @@ Open <http://localhost:8000/>. See [observatory notes](docs/observatory.md)
 for controls, browser tests, rendering choices, and scientific/performance
 limitations. Positions are calculated from DE440s; visible surface features
 and the optional vehicle study are illustrative.
+
+After building and serving the WebAssembly module as above, open
+<http://localhost:8000/mission.html> for the experimental mission scenarios.

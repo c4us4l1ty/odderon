@@ -7,6 +7,8 @@ use odd_ephem::{
 };
 use std::sync::{Mutex, OnceLock};
 
+mod mission_bridge;
+
 // position, velocity, Sun relative Earth, Earth and Moon body-to-J2000 matrices,
 // then a count and time-tagged Earth-relative Moon samples (seconds,x,y,z).
 const HEADER: usize = 28;

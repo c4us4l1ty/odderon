@@ -134,5 +134,53 @@ try{
   if(ext){await page.locator('#world').evaluate(c=>window.testLoseContext.loseContext());await page.waitForFunction(()=>!document.getElementById('error').hidden);await page.locator('#date').fill('2019-01-01');await page.locator('#date').dispatchEvent('change');await page.locator('#world').evaluate(c=>window.testLoseContext.restoreContext());await page.waitForFunction(()=>document.getElementById('error').textContent.includes('Date outside'),{timeout:10000});await page.locator('#today-reset').click();await page.waitForFunction(()=>document.getElementById('error').hidden,{timeout:10000});}
   await page.setViewportSize({width:390,height:844});await page.waitForTimeout(300);assert.equal(await page.locator('#error').isHidden(),true);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'mobile horizontal overflow');
-  assert.deepEqual(errors,[]);console.log('Browser viewport, interactions, bounds, WebGL and responsive layout passed.');
+  // Experimental rescue mission: create two actual nodes, lock a prediction,
+  // run the finite-burn worker, and ensure the completed screen goes idle.
+  await page.setViewportSize({width:1440,height:1000});
+  await page.goto(`http://127.0.0.1:${server.address().port}/mission.html`);
+  await page.waitForFunction(()=>!document.getElementById('add-node').disabled,null,{timeout:30000});
+  const missionBox=await page.locator('#plan-canvas').boundingBox();
+  await page.mouse.click(missionBox.x+missionBox.width/2+(6378137+260000)*missionBox.height/(2.45*(6378137+550000)),missionBox.y+missionBox.height/2);
+  assert.equal(await page.evaluate(()=>missionDiagnostics.nodes.length),1,'clicking the path should place a maneuver');
+  await page.locator('#remove-node').click();
+  await page.locator('#add-node').click();
+  await page.locator('#node-t').fill('82.38547669');
+  await page.locator('#add-node').click();
+  await page.locator('#node-time').fill('2979.885241');
+  await page.locator('#node-t').fill('81.50942505');
+  assert.equal(await page.evaluate(()=>missionDiagnostics.nodes.length),2);
+  await page.locator('#node-w').focus();
+  assert.match(await page.locator('#lens-text').textContent(),/perpendicular to the orbital plane/);
+  const handle=await page.evaluate(()=>missionDiagnostics.handles.find(h=>h.key==='t').end);
+  const canvasBox=await page.locator('#plan-canvas').boundingBox();
+  await page.mouse.move(canvasBox.x+handle[0],canvasBox.y+handle[1]);await page.mouse.down();await page.mouse.move(canvasBox.x+handle[0]+5,canvasBox.y+handle[1]+5,{steps:3});await page.mouse.up();
+  assert.notEqual(await page.evaluate(()=>missionDiagnostics.nodes[1].dv[0]),81.50942505,'dragging a handle should change the maneuver');
+  await page.locator('#node-t').fill('81.50942505');
+  await page.locator('#prefill').click();
+  await page.locator('#execute').click();
+  await page.waitForFunction(()=>!document.getElementById('debrief').hidden||(missionDiagnostics.locked&&!missionDiagnostics.pending),null,{timeout:120000});
+  assert.equal(await page.locator('#debrief').isHidden(),false,`mission error: ${await page.locator('#execute-status').textContent()}, page errors: ${errors}`);
+  const debrief=await page.locator('#debrief-content').textContent();
+  const score=Number(debrief.match(/([0-9.]+)%Mission score/)?.[1]);
+  assert.ok(score>80,`rescue score: ${score}; ${debrief}`);
+  assert.equal(await page.evaluate(()=>missionDiagnostics.locked),true);
+  await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:10000});
+  const missionIdle=await page.evaluate(()=>({frames:testFrameCallbacks,messages:testWorkerMessages,draws:missionDiagnostics.draws}));
+  await page.waitForTimeout(2000);
+  assert.deepEqual(await page.evaluate(()=>({frames:testFrameCallbacks,messages:testWorkerMessages,draws:missionDiagnostics.draws})),missionIdle,'mission must settle without frames, redraws, or worker messages');
+  await page.locator('#unlock').click();
+  assert.equal(await page.evaluate(()=>missionDiagnostics.locked),false);
+  await page.locator('#mission-select').selectOption('102');
+  await page.locator('#example').click();
+  assert.equal(await page.evaluate(()=>missionDiagnostics.nodes.length),1);
+  await page.locator('#execute').click();
+  await page.waitForFunction(()=>!document.getElementById('debrief').hidden||(missionDiagnostics.locked&&!missionDiagnostics.pending),null,{timeout:180000});
+  assert.equal(await page.locator('#debrief').isHidden(),false,`mission error: ${await page.locator('#execute-status').textContent()}, page errors: ${errors}`);
+  const sso=await page.locator('#debrief-content').textContent();
+  const ssoScore=Number(sso.match(/([0-9.]+)%Mission score/)?.[1]);
+  assert.ok(ssoScore>80,`sun-synchronous score: ${ssoScore}; ${sso}`);
+  const j2=Number(sso.match(/Earth’s equatorial bulge: ([0-9.]+)%/)?.[1]);
+  assert.ok(j2>85,`node sensitivity must be dominated by equatorial bulge: ${sso}`);
+  await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:10000});
+  assert.deepEqual(errors,[]);console.log('Browser viewport, interactions, bounds, WebGL, responsive layout and mission prototype passed.');
 } finally{if(browser)await browser.close();await new Promise(r=>server.close(r));}

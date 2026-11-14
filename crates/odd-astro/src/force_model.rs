@@ -51,15 +51,39 @@ impl ForceModel {
         initial: Keyframe,
         end: f64,
         options: Options,
+        environment: F,
+    ) -> Result<TrajectorySpline, IntegrationError>
+    where
+        F: FnMut(f64) -> Result<Environment, IntegrationError>,
+    {
+        let burns: Vec<Burn> = self.burn.into_iter().collect();
+        self.propagate_with_burns(initial, end, options, &burns, environment)
+    }
+
+    /// Propagate a chronological, non-overlapping schedule of constant-force
+    /// burns. This replaces `self.burn`; events include every start and end.
+    /// Dry mass and engine availability remain the caller's responsibility.
+    pub fn propagate_with_burns<F>(
+        &self,
+        initial: Keyframe,
+        end: f64,
+        options: Options,
+        burns: &[Burn],
         mut environment: F,
     ) -> Result<TrajectorySpline, IntegrationError>
     where
         F: FnMut(f64) -> Result<Environment, IntegrationError>,
     {
-        let mut events = Vec::new();
-        if let Some(b) = self.burn {
+        let mut events = Vec::with_capacity(burns.len() * 2);
+        for (i, b) in burns.iter().enumerate() {
+            b.acceleration_and_mass_rate(b.start, initial.mass)
+                .map_err(|_| IntegrationError::InvalidInput)?;
+            if i > 0 && burns[i - 1].end > b.start {
+                return Err(IntegrationError::InvalidInput);
+            }
             events.extend([b.start, b.end]);
         }
+        events.dedup();
         integrate(initial, end, &events, options, |t, r, v, m| {
             if !self.mu.is_finite() || self.mu <= 0.0 {
                 return Err(IntegrationError::InvalidInput);
@@ -107,7 +131,8 @@ impl ForceModel {
                         .map_err(|_| IntegrationError::ForceFailure)?);
                 }
             }
-            let rate = if let Some(b) = self.burn {
+            let active = burns.iter().find(|b| t >= b.start && t < b.end);
+            let rate = if let Some(b) = active {
                 let (a, rate) = b
                     .acceleration_and_mass_rate(t, m)
                     .map_err(|_| IntegrationError::ForceFailure)?;
