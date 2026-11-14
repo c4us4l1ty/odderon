@@ -132,6 +132,10 @@ pub fn fingerprint() -> [u8; 32] {
     .unwrap();
     let radius = remote.position_m[0].hypot(remote.position_m[1]);
     assert!((radius / 2.940_694_223_310_720_1e22 - 1.0).abs() < 1e-12);
+    let a = 1e18_f64;
+    let near_apocenter = f64::from_bits((2.0 * a).to_bits() - 1);
+    let slow = odd_astro::elliptical_speed(3.986_004_418e14, near_apocenter, a).unwrap();
+    assert!((slow / 2.258_779_682_713_655e-10 - 1.0).abs() < 1e-12);
     let anomaly = odd_astro::anomaly::hyperbolic_from_mean(2.0, 1.350_402_387_287_602_8).unwrap();
     assert!((anomaly - 1.0).abs() < 1e-12);
     let values = [

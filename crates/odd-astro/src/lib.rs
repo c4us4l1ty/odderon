@@ -73,14 +73,21 @@ pub fn elliptical_speed(
     positive(mu_m3_s2)?;
     positive(radius_m)?;
     positive(semi_major_axis_m)?;
-    // Divide before multiplying by 2 to avoid overflowing 2 * a.
-    if radius_m / semi_major_axis_m >= 2.0 {
-        return Err(OrbitError::RadiusOutsideEllipse);
-    }
-    let factor = 2.0 / radius_m - 1.0 / semi_major_axis_m;
-    let squared_speed = finite(mu_m3_s2 * factor)?;
+    // Avoid subtracting rounded reciprocals near r = 2a. When r >= a,
+    // (a - (r - a)) / a is (2a - r) / a without overflowing 2a or
+    // underflowing r/2. Both differences are exact near the boundary.
+    let fraction = if radius_m >= semi_major_axis_m {
+        let excess = radius_m - semi_major_axis_m;
+        if excess >= semi_major_axis_m {
+            return Err(OrbitError::RadiusOutsideEllipse);
+        }
+        (semi_major_axis_m - excess) / semi_major_axis_m
+    } else {
+        2.0 - radius_m / semi_major_axis_m
+    };
+    let squared_speed = finite((mu_m3_s2 / radius_m) * fraction)?;
     if squared_speed <= 0.0 {
-        return Err(OrbitError::RadiusOutsideEllipse);
+        return Err(OrbitError::NumericalRange);
     }
     finite(squared_speed.sqrt())
 }

@@ -61,3 +61,23 @@ fn invalid_values_and_equal_orbits() {
     assert_eq!(same.total_delta_v_m_s, 0.0);
     assert_eq!(same.coast_time_s, 0.0);
 }
+
+#[test]
+fn vis_viva_near_degenerate_ellipse_apocenter() {
+    // 80-digit mpmath result from the exact binary64 inputs. At r just below
+    // 2a, subtracting two rounded reciprocals previously produced zero.
+    let tiny = f64::from_bits(1);
+    assert_eq!(elliptical_speed(tiny, tiny, tiny).unwrap(), 1.0);
+    let a = 1e18_f64;
+    let r = f64::from_bits((2.0 * a).to_bits() - 1);
+    let expected = 2.258_779_682_713_655e-10;
+    let result = elliptical_speed(EARTH_MU, r, a).unwrap();
+    assert!(
+        (result / expected - 1.0).abs() < 1e-14,
+        "{result} != {expected}"
+    );
+    assert_eq!(
+        elliptical_speed(EARTH_MU, 2.0 * a, a),
+        Err(OrbitError::RadiusOutsideEllipse)
+    );
+}
