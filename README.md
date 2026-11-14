@@ -1,7 +1,7 @@
 # Odderon
 
 Odderon is an early-stage, scientifically grounded space engineering game.
-The current code is foundational infrastructure, **not yet a playable game**.
+The current code includes an interactive Earth–Moon observatory, **not yet a playable game**.
 The project vision and proposed design live in [BRAINSTORM.md](BRAINSTORM.md),
 [ARCHITECTURE_LAWS.md](ARCHITECTURE_LAWS.md), [blueprint.md](blueprint.md),
 [UI.md](UI.md), and [ELO.md](ELO.md).
@@ -30,3 +30,18 @@ CI additionally compares native and WebAssembly fixtures in Node and headless
 Chrome. To run that check locally, build `odd-core-oracle` natively and for wasm,
 then run `node tools/core-oracle/check-parity.mjs` with Chrome on `PATH` (or set
 `CHROME_BIN`).
+
+## Earth–Moon observatory (WP 0.3)
+
+Build the WebAssembly ephemeris and serve the viewport locally:
+
+```sh
+cargo build --locked --release -p odd-view --target wasm32-unknown-unknown
+cp target/wasm32-unknown-unknown/release/odd_view.wasm web/odd_view.wasm
+python3 -m http.server 8000 --directory web
+```
+
+Open <http://localhost:8000/>. See [observatory notes](docs/observatory.md)
+for controls, browser tests, rendering choices, and scientific/performance
+limitations. Positions are calculated from DE440s; visible surface features
+and the optional vehicle study are illustrative.
