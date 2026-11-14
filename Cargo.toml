@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/odd-core", "crates/odd-astro", "tools/core-oracle"]
+resolver = "2"

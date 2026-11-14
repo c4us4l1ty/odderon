@@ -1,0 +1,9 @@
+[package]
+name = "odd-astro"
+version = "0.1.0"
+edition = "2021"
+description = "Analytical astrodynamics for Odderon"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+odd-core = { path = "../odd-core" }

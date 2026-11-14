@@ -1,1 +1,30 @@
-# odderon
+# Odderon
+
+Odderon is an early-stage, scientifically grounded space engineering game.
+The current code is foundational infrastructure, **not yet a playable game**.
+The project vision and proposed design live in [BRAINSTORM.md](BRAINSTORM.md),
+[ARCHITECTURE_LAWS.md](ARCHITECTURE_LAWS.md), [blueprint.md](blueprint.md),
+[UI.md](UI.md), and [ELO.md](ELO.md).
+
+## Current implementation
+
+Work Package 0.1 provides SI quantities, epochs, UTC conversion, hierarchical
+reference-frame snapshots, and versioned hashing in `crates/odd-core`.
+[Foundation notes](docs/foundation.md) describe the scientific assumptions,
+accuracy and coverage limits, and corrections to unrealistic precision claims.
+`crates/odd-astro` separately provides ideal two-body orbit calculations and
+numerical propagation. These are simplified models, not a flight simulator.
+
+With Rust and the `wasm32-unknown-unknown` target installed:
+
+```sh
+cargo test --locked --workspace
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo build --locked --workspace --target wasm32-unknown-unknown
+cargo fmt --all -- --check
+```
+
+CI additionally compares native and WebAssembly fixtures in Node and headless
+Chrome. To run that check locally, build `odd-core-oracle` natively and for wasm,
+then run `node tools/core-oracle/check-parity.mjs` with Chrome on `PATH` (or set
+`CHROME_BIN`).

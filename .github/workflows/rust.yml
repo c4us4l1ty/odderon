@@ -1,0 +1,57 @@
+name: Rust foundation
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+      - name: Run workspace tests
+        shell: bash
+        run: |
+          set +e
+          cargo test --locked --workspace --color never 2>&1 | tee /tmp/odderon-cargo-test.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            python3 -c 'from pathlib import Path; s="\n".join(Path("/tmp/odderon-cargo-test.log").read_text().splitlines()[-50:]); print("::error::" + s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))'
+          fi
+          exit "$status"
+      - name: Clippy
+        shell: bash
+        run: |
+          set +e
+          cargo clippy --locked --workspace --all-targets --color never -- -D warnings 2>&1 | tee /tmp/odderon-clippy.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            python3 -c 'from pathlib import Path; s="\n".join(Path("/tmp/odderon-clippy.log").read_text().splitlines()[-50:]); print("::error::" + s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))'
+          fi
+          exit "$status"
+      - run: cargo build --locked --workspace --target wasm32-unknown-unknown
+      - run: cargo build --locked -p odd-core-oracle && cargo build --locked -p odd-core-oracle --lib --target wasm32-unknown-unknown
+      - name: Compare native and browser WebAssembly fixtures
+        shell: bash
+        run: |
+          set +e
+          node tools/core-oracle/check-parity.mjs 2>&1 | tee /tmp/odderon-parity.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            python3 -c 'from pathlib import Path; s="\n".join(Path("/tmp/odderon-parity.log").read_text().splitlines()[:30]); print("::error::" + s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))'
+          fi
+          exit "$status"
+      - name: Check formatting
+        shell: bash
+        run: |
+          set +e
+          cargo fmt --all -- --check 2>&1 | tee /tmp/odderon-fmt.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            python3 -c 'from pathlib import Path; s=Path("/tmp/odderon-fmt.log").read_text(); print("::error::" + s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))'
+          fi
+          exit "$status"
