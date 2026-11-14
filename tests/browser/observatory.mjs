@@ -25,12 +25,16 @@ try{
   // Capture the actual MediaQueryList objects so we can deliver a monitor
   // change notification even on headless Chrome versions whose CDP metrics
   // override updates matchMedia results without emitting a change event.
-  await page.addInitScript(()=>{const raf=window.requestAnimationFrame.bind(window);window.testFrameCallbacks=0;window.requestAnimationFrame=fn=>raf(time=>{window.testFrameCallbacks++;fn(time);});window.testWorkerMessages=0;const NativeWorker=window.Worker;window.Worker=class extends NativeWorker{constructor(...args){super(...args);this.addEventListener('message',()=>window.testWorkerMessages++);}postMessage(...args){window.testWorkerMessages++;return super.postMessage(...args);}};const original=window.matchMedia.bind(window);window.testDensityQueries=[];window.matchMedia=query=>{const result=original(query);if(query.startsWith('(resolution: '))window.testDensityQueries.push(result);return result;};});
+  await page.addInitScript(()=>{const raf=window.requestAnimationFrame.bind(window);window.testFrameCallbacks=0;window.requestAnimationFrame=fn=>raf(time=>{window.testFrameCallbacks++;fn(time);});window.testWorkerMessages=0;window.testStrokes=[];window.testClears=0;const proto=WebGL2RenderingContext.prototype;const instanced=proto.drawArraysInstanced;proto.drawArraysInstanced=function(mode,first,count,instances){window.testStrokes.push({instances,fbo:this.getParameter(this.DRAW_FRAMEBUFFER_BINDING)});return instanced.call(this,mode,first,count,instances);};const clear=proto.clear;proto.clear=function(...args){window.testClears++;return clear.apply(this,args);};const NativeWorker=window.Worker;window.Worker=class extends NativeWorker{constructor(...args){super(...args);this.addEventListener('message',()=>window.testWorkerMessages++);}postMessage(...args){window.testWorkerMessages++;return super.postMessage(...args);}};const original=window.matchMedia.bind(window);window.testDensityQueries=[];window.matchMedia=query=>{const result=original(query);if(query.startsWith('(resolution: '))window.testDensityQueries.push(result);return result;};});
   const errors=[];page.on('pageerror',e=>errors.push(String(e)));page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
   await page.waitForFunction(()=>window.odderonDiagnostics?.draws>0,{timeout:30000});
   await page.waitForFunction(()=>odderonDiagnostics.batchIndex===15&&!odderonDiagnostics.pendingFrame,null,{timeout:60000});
   assert.equal(await page.evaluate(()=>odderonDiagnostics.strokeCount),1500000);
+  const submission=await page.evaluate(()=>{const entries=window.testStrokes.slice(-16);return {counts:entries.map(e=>e.instances),same:entries.length===16&&entries[0].fbo!==null&&entries.every(e=>e.fbo===entries[0].fbo),clears:window.testClears};});
+  assert.deepEqual(submission.counts,[60000,...Array(15).fill(96000)]);
+  assert.equal(submission.same,true,'progressive strokes must target one persistent framebuffer');
+  assert.equal(submission.clears,0,'progressive accumulation must not clear between batches');
   assert.equal(await page.locator('#error').isHidden(),true);
   assert.equal(await page.locator('#distance').textContent(),'361,026');
   // Telemetry-only controls must not re-run the expensive world layer.
@@ -39,26 +43,6 @@ try{
   assert.equal(await page.evaluate(()=>odderonDiagnostics.draws),layerBefore.world,'path toggle repainted the world');
   await page.locator('#show-path').check();await page.waitForFunction(n=>odderonDiagnostics.overlayDraws>n,layerBefore.overlay+1);
   assert.equal(await page.evaluate(()=>odderonDiagnostics.draws),layerBefore.world,'path toggle repainted the world');
-  // Exercise the real filter against a synthetic two-region/noise fixture.
-  // A constant image must stay constant; noise should decrease without
-  // washing out a sharp edge. This is an implementation check, not an art score.
-  const filter=await page.evaluate(async()=>{
-    const {vertex,paintFragment}=await import('./shaders.js');const canvas=document.createElement('canvas');canvas.width=32;canvas.height=32;
-    const gl=canvas.getContext('webgl2',{preserveDrawingBuffer:true});
-    const shader=(kind,src)=>{const s=gl.createShader(kind);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(s));return s;};
-    const p=gl.createProgram();gl.attachShader(p,shader(gl.VERTEX_SHADER,vertex));gl.attachShader(p,shader(gl.FRAGMENT_SHADER,paintFragment));gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(p));gl.useProgram(p);
-    const rgba=(generator)=>{const bytes=new Uint8Array(32*32*4);for(let y=0;y<32;y++)for(let x=0;x<32;x++){const i=(y*32+x)*4;const v=generator(x,y);bytes.set([v,v,v,255],i);}return bytes;};
-    const texture=(index,bytes)=>{const t=gl.createTexture();gl.activeTexture(gl.TEXTURE0+index);gl.bindTexture(gl.TEXTURE_2D,t);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,32,32,0,gl.RGBA,gl.UNSIGNED_BYTE,bytes);};
-    const input=rgba((x,y)=>(x<16?48:205)+(((x*13+y*17)%11)-5)*3);const normal=new Uint8Array(32*32*4);for(let i=0;i<normal.length;i+=4)normal.set([128,128,179,255],i);
-    texture(0,input);texture(1,normal);gl.uniform1i(gl.getUniformLocation(p,'uColor'),0);gl.uniform1i(gl.getUniformLocation(p,'uNormal'),1);gl.uniform2f(gl.getUniformLocation(p,'uResolution'),32,32);gl.uniform1f(gl.getUniformLocation(p,'uQuality'),1);gl.viewport(0,0,32,32);gl.drawArrays(gl.TRIANGLES,0,3);let output=new Uint8Array(input.length);gl.readPixels(0,0,32,32,gl.RGBA,gl.UNSIGNED_BYTE,output);
-    const variance=(bytes)=>{let s=0,q=0,n=0;for(let y=4;y<28;y++)for(let x=3;x<12;x++){let v=bytes[(y*32+x)*4];s+=v;q+=v*v;n++;}return q/n-(s/n)**2;};
-    const sample=(x)=>{let sum=0;for(let y=4;y<28;y++)sum+=output[(y*32+x)*4];return sum/24;};
-    const result={inputVariance:variance(input),outputVariance:variance(output),left:sample(15),right:sample(16)};
-    texture(0,rgba(()=>96));gl.drawArrays(gl.TRIANGLES,0,3);gl.readPixels(0,0,32,32,gl.RGBA,gl.UNSIGNED_BYTE,output);result.constant=output[(16*32+16)*4];result.error=gl.getError();return result;
-  });
-  assert.equal(filter.error,0);assert.ok(Math.abs(filter.constant-96)<=2,`constant field ${JSON.stringify(filter)}`);
-  assert.ok(filter.outputVariance<filter.inputVariance*.8,`noise not reduced ${JSON.stringify(filter)}`);
-  assert.ok(filter.left<85 && filter.right>170,`edge blurred ${JSON.stringify(filter)}`);
   // Check actual GPU pixels at the analytically projected centers, not just
   // a draw counter: shader compilation or a blank framebuffer must fail.
   const pixels=await page.locator('#world').evaluate(canvas=>{

@@ -457,6 +457,30 @@ fn equinoctial_near_singular_roundtrip() {
     for (e, i) in [(0.0, 0.0), (1e-10, 1e-10), (0.5, 1.2), (1.5, 0.9)] {
         let original = elements(e, i, 1.1, 0.7, 0.5).to_state(MU).unwrap();
         let equinoctial = Mee::from_state(original, MU).unwrap();
+        // Independently compare the documented classical-to-MEE identities,
+        // then check both representations against the original Cartesian state.
+        near(equinoctial.p, 8_000_000.0, 1e-7);
+        near(equinoctial.f, e * (1.1_f64 + 0.7).cos(), 2e-15);
+        near(equinoctial.g, e * (1.1_f64 + 0.7).sin(), 2e-15);
+        near(equinoctial.h, (i * 0.5).tan() * 1.1_f64.cos(), 2e-15);
+        near(equinoctial.k, (i * 0.5).tan() * 1.1_f64.sin(), 2e-15);
+        let classical_back = Elements::from_state(original, MU)
+            .unwrap()
+            .to_state(MU)
+            .unwrap();
+        for (got, want) in [
+            (classical_back.position_m, original.position_m),
+            (classical_back.velocity_m_s, original.velocity_m_s),
+        ] {
+            let err = got
+                .iter()
+                .zip(want)
+                .map(|(x, y)| (x - y) * (x - y))
+                .sum::<f64>()
+                .sqrt();
+            let scale = want.iter().map(|x| x * x).sum::<f64>().sqrt();
+            assert!(err / scale < 1e-13, "classical {e} {i}: {err} / {scale}");
+        }
         let back = equinoctial.to_state(MU).unwrap();
         for (got, want) in [
             (back.position_m, original.position_m),

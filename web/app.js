@@ -36,7 +36,7 @@ function setOrbit(state,mu){
   const count=wasm.orbit_value(0),points=[];
   for(let i=0;i<Math.abs(count);i++)points.push([wasm.orbit_value(1+3*i),wasm.orbit_value(2+3*i),wasm.orbit_value(3+3*i)]);
   const markers=[];for(let i=0;i<4;i++){const index=541+4*i;if(wasm.orbit_value(index))markers.push({name:['PE','AP','AN','DN'][i],pos:[wasm.orbit_value(index+1),wasm.orbit_value(index+2),wasm.orbit_value(index+3)]});}
-  activeOrbit={points,markers,closed:count>0};invalidateWorld();return true;
+  activeOrbit={points,markers,closed:count>0,position:[...state.position]};invalidateWorld();return true;
 }
 window.odderonSetOrbit=setOrbit;
 function geometry(){
@@ -70,6 +70,7 @@ function drawOverlay(model,rect){
     const points=activeOrbit.points.map(p=>pixel(model.project(p)));if(activeOrbit.closed)points.push(points[0]);
     polyline(ctx,points,{stroke:'#e1bd78',width:1.5});
     for(const marker of activeOrbit.markers)apsis(ctx,pixel(model.project(marker.pos)),marker.name);
+    const craft=pixel(model.project(activeOrbit.position));reticle(ctx,craft,{color:'#e1bd78'});ctx.fillStyle='#e1bd78';ctx.font='10px system-ui';ctx.fillText('TEST CRAFT',craft[0]+9,craft[1]+12);
     ctx.fillStyle='#e1bd78';ctx.font='10px system-ui';ctx.fillText(activeOrbit.closed?'IDEAL TWO-BODY TEST ORBIT':'IDEAL TWO-BODY · OPEN SEGMENT',20,rect.height-26);
   }
   if($('show-path').checked){
