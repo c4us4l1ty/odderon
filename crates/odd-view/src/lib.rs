@@ -1,7 +1,10 @@
 //! Small presentation boundary for the bounded ephemeris. Values remain SI/J2000.
 //! The browser owns camera/projection, never the science model.
 use odd_core::epoch::Epoch;
-use odd_ephem::{orientation::{earth_approx_orientation, moon_orientation}, Body, Ephemeris};
+use odd_ephem::{
+    orientation::{earth_approx_orientation, moon_orientation},
+    Body, Ephemeris,
+};
 use std::sync::{Mutex, OnceLock};
 
 // position, velocity, Sun relative Earth, Earth and Moon body-to-J2000 matrices,
@@ -13,7 +16,9 @@ static DATA: Mutex<[f64; SIZE]> = Mutex::new([0.0; SIZE]);
 static EPHEMERIS: OnceLock<Option<Ephemeris>> = OnceLock::new();
 
 fn snapshot(seconds: i64) -> Option<[f64; SIZE]> {
-    let eph = EPHEMERIS.get_or_init(|| Ephemeris::bundled().ok()).as_ref()?;
+    let eph = EPHEMERIS
+        .get_or_init(|| Ephemeris::bundled().ok())
+        .as_ref()?;
     let epoch = Epoch::new(seconds, 0.0).ok()?;
     let moon = eph.state(Body::Moon, Body::Earth, epoch).ok()?.state;
     let sun = eph.state(Body::Sun, Body::Earth, epoch).ok()?.state;
@@ -32,8 +37,13 @@ fn snapshot(seconds: i64) -> Option<[f64; SIZE]> {
     // Half-day samples are actual geometric states, not a fitted ellipse.
     for offset in -28_i64..=28 {
         let time = seconds + offset * 43_200;
-        if time < start || time >= end { continue; }
-        let state = eph.state(Body::Moon, Body::Earth, Epoch::new(time, 0.0).ok()?).ok()?.state;
+        if time < start || time >= end {
+            continue;
+        }
+        let state = eph
+            .state(Body::Moon, Body::Earth, Epoch::new(time, 0.0).ok()?)
+            .ok()?
+            .state;
         let i = HEADER + n * 4;
         out[i] = time as f64;
         out[i + 1..i + 4].copy_from_slice(&state.position_m);
@@ -49,9 +59,17 @@ fn snapshot(seconds: i64) -> Option<[f64; SIZE]> {
 pub extern "C" fn view_load(seconds: f64) -> i32 {
     let mut data = DATA.lock().unwrap();
     *data = [0.0; SIZE];
-    if !seconds.is_finite() || seconds.fract() != 0.0 || !(631_108_800.0..1_136_030_400.0).contains(&seconds) { return 0; }
+    if !seconds.is_finite()
+        || seconds.fract() != 0.0
+        || !(631_108_800.0..1_136_030_400.0).contains(&seconds)
+    {
+        return 0;
+    }
     match snapshot(seconds as i64) {
-        Some(result) => { *data = result; 1 }
+        Some(result) => {
+            *data = result;
+            1
+        }
         None => 0,
     }
 }
@@ -59,7 +77,11 @@ pub extern "C" fn view_load(seconds: f64) -> i32 {
 /// Access values after successful `view_load`; invalid indices return NaN.
 #[no_mangle]
 pub extern "C" fn view_value(index: u32) -> f64 {
-    DATA.lock().unwrap().get(index as usize).copied().unwrap_or(f64::NAN)
+    DATA.lock()
+        .unwrap()
+        .get(index as usize)
+        .copied()
+        .unwrap_or(f64::NAN)
 }
 
 #[cfg(test)]

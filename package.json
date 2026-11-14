@@ -2,5 +2,10 @@
   "name": "odderon-observatory",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node --test tests/browser/governor.test.js" }
+  "scripts": {
+    "test": "node --test tests/browser/governor.test.js"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.56.1"
+  }
 }

@@ -75,3 +75,13 @@ jobs:
             python3 -c 'from pathlib import Path; s=Path("/tmp/odderon-fmt.log").read_text(); print("::error::" + s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))'
           fi
           exit "$status"
+
+      - name: Build browser ephemeris module
+        run: |
+          cargo build --locked --release -p odd-view --target wasm32-unknown-unknown
+          cp target/wasm32-unknown-unknown/release/odd_view.wasm web/odd_view.wasm
+      - name: Upload browser ephemeris module
+        uses: actions/upload-artifact@v4
+        with:
+          name: odd-view-wasm
+          path: web/odd_view.wasm
