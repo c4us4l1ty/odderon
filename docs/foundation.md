@@ -80,7 +80,7 @@ Chrome WebAssembly. This directly exercises a browser instead of relying on a
 wasm build alone. Passing those fixtures is not a proof that all future physics
 or all browsers are bit-reproducible.
 
-WP 0.2 now adds a bounded Earth–Moon ephemeris; see [ephemeris notes](ephemeris.md).
+WP 0.2 now adds a bounded DE440 table and a lower-accuracy long-range fallback; see [ephemeris notes](ephemeris.md).
 No general ephemeris, propagator fidelity beyond the separate two-body experiment,
 identity system, playable user interface, or real flight qualification is
 implied by WP 0.1. UTC coverage, source data, cross-system precision budgets,

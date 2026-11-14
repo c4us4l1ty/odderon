@@ -17,7 +17,8 @@ Work Package 0.1 provides SI quantities, epochs, UTC conversion, hierarchical
 reference-frame snapshots, and versioned hashing in `crates/odd-core`.
 [Foundation notes](docs/foundation.md) describe the scientific assumptions,
 accuracy and coverage limits, and corrections to unrealistic precision claims.
-Work Package 0.2 adds bounded, real JPL Earth–Moon ephemerides; see
+Work Package 0.2 adds a bounded real JPL Earth–Moon ephemeris and a
+lower-accuracy long-range analytical fallback; see
 [ephemeris notes](docs/ephemeris.md) for data provenance, validation, and
 orientation limitations. `crates/odd-astro` separately provides ideal two-body orbit calculations and
 numerical propagation. These are simplified models, not a flight simulator.
