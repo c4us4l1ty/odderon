@@ -145,3 +145,47 @@ fn render_conversion_is_not_a_reversible_simulation_transform() {
     let b = odd_core::frames::render_position([1.0 + 5e-8, 0.0, 0.0]).unwrap();
     assert_eq!(a, b);
 }
+
+#[test]
+fn galactic_round_trip_preserves_docking_with_realistic_large_offsets() {
+    let mut tree = FrameTree::new(Epoch::J2000);
+    tree.add_stellar_system(
+        17,
+        GalacticAnchor {
+            milliparsecs: [2_452_809, 14_111, -90_001],
+        },
+        translate([10_000_000_000_000.125, -7_000_000_000_000.5, 0.0]),
+    )
+    .unwrap();
+    tree.add_frame(
+        FrameId::BodyCentered(17),
+        FrameId::StellarSystem(17),
+        translate([149_597_870_700.123_44, -50_000_000_000.25, 0.0]),
+    )
+    .unwrap();
+    tree.add_frame(
+        FrameId::Camera(17),
+        FrameId::BodyCentered(17),
+        translate([20.0, 30.0, 40.0]),
+    )
+    .unwrap();
+    let point = |x| FramedState {
+        frame: FrameId::Camera(17),
+        epoch: Epoch::J2000,
+        state: State {
+            position_m: [x, 0.0, 0.0],
+            velocity_m_s: [0.0; 3],
+        },
+    };
+    let a = point(0.123_456_789);
+    let b = point(0.623_456_789);
+    let a_back = tree
+        .from_galactic(tree.to_galactic(a).unwrap(), a.frame)
+        .unwrap();
+    let b_back = tree
+        .from_galactic(tree.to_galactic(b).unwrap(), b.frame)
+        .unwrap();
+    assert!((a_back.state.position_m[0] - a.state.position_m[0]).abs() < 1e-9);
+    assert!((b_back.state.position_m[0] - b.state.position_m[0]).abs() < 1e-9);
+    assert!((b_back.state.position_m[0] - a_back.state.position_m[0] - 0.5).abs() < 1e-9);
+}
