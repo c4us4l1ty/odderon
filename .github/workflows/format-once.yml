@@ -1,6 +1,7 @@
 name: Format working branch
 on:
-  workflow_dispatch:
+  push:
+    branches: ["arena/bcf1f459-odderon"]
 permissions:
   contents: write
 jobs:
