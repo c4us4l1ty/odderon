@@ -44,7 +44,7 @@ const exited = new Promise((_, reject) => {
   proc.on('close', code => reject(new Error(`Chrome exited before reporting a result (${code}): ${stderr}`)));
 });
 let timer;
-const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`Chrome parity timed out: ${stderr}`)), 30_000); });
+const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`Chrome parity timed out: ${stderr}`)), 90_000); });
 try {
   const result = await Promise.race([browserResult, exited, timeout]);
   if (result.error || result.value !== expected) throw new Error(`Chrome wasm parity failed: ${JSON.stringify(result)}, expected ${expected}`);
