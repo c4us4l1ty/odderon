@@ -154,3 +154,103 @@ fn rejects_invalid_and_nonphysical_inputs() {
         Err(ElementsError::InvalidInput)
     );
 }
+
+#[test]
+fn independent_satkit_elliptical_states() {
+    // See tools/astro-oracle/generate_satkit.py for the independent generator.
+    let fixtures = include_str!("../../../data/oracles/orbits-satkit.csv");
+    let mut count = 0;
+    for line in fixtures.lines().skip(1) {
+        let v: Vec<f64> = line.split(',').map(|s| s.parse().unwrap()).collect();
+        assert_eq!(v.len(), 12);
+        let input = Elements {
+            semi_latus_rectum_m: v[0],
+            eccentricity: v[1],
+            inclination_rad: v[2],
+            ascending_node_rad: v[3],
+            argument_of_periapsis_rad: v[4],
+            true_anomaly_rad: v[5],
+        };
+        let expected = State {
+            position_m: [v[6], v[7], v[8]],
+            velocity_m_s: [v[9], v[10], v[11]],
+        };
+        let actual = input.to_state(MU).unwrap();
+        // Absolute tolerances bound component errors even near a zero crossing.
+        same_state(actual, expected, 3e-6, 2e-9);
+        let recovered = Elements::from_state(expected, MU).unwrap();
+        same_state(recovered.to_state(MU).unwrap(), expected, 3e-6, 2e-9);
+        count += 1;
+    }
+    assert_eq!(count, 100);
+}
+
+#[test]
+fn independent_cspice_hyperbolic_states() {
+    use odd_astro::anomaly::{
+        hyperbolic_from_mean, hyperbolic_from_true, hyperbolic_mean, true_from_hyperbolic,
+    };
+    let fixtures = include_str!("../../../data/oracles/hyperbolic-cspice.csv");
+    let mut count = 0;
+    for line in fixtures.lines().skip(1) {
+        let v: Vec<f64> = line.split(',').map(|s| s.parse().unwrap()).collect();
+        assert_eq!(v.len(), 12);
+        let true_anomaly =
+            true_from_hyperbolic(v[1], hyperbolic_from_mean(v[1], v[5]).unwrap()).unwrap();
+        let input = Elements {
+            semi_latus_rectum_m: v[0],
+            eccentricity: v[1],
+            inclination_rad: v[2],
+            ascending_node_rad: v[3],
+            argument_of_periapsis_rad: v[4],
+            true_anomaly_rad: true_anomaly,
+        };
+        let expected = State {
+            position_m: [v[6], v[7], v[8]],
+            velocity_m_s: [v[9], v[10], v[11]],
+        };
+        same_state(input.to_state(MU).unwrap(), expected, 5e-4, 1e-8);
+        let out = Elements::from_state(expected, MU).unwrap();
+        same_state(out.to_state(MU).unwrap(), expected, 5e-4, 1e-8);
+        near(out.eccentricity, v[1], 2e-13);
+        near(
+            hyperbolic_mean(
+                out.eccentricity,
+                hyperbolic_from_true(out.eccentricity, out.true_anomaly_rad).unwrap(),
+            )
+            .unwrap(),
+            v[5],
+            2e-12,
+        );
+        count += 1;
+    }
+    assert_eq!(count, 100);
+}
+
+#[test]
+fn independent_cspice_parabolic_states() {
+    let fixtures = include_str!("../../../data/oracles/parabolic-cspice.csv");
+    let mut count = 0;
+    for line in fixtures.lines().skip(1) {
+        let v: Vec<f64> = line.split(',').map(|s| s.parse().unwrap()).collect();
+        assert_eq!(v.len(), 11);
+        let input = Elements {
+            semi_latus_rectum_m: v[0],
+            eccentricity: 1.0,
+            inclination_rad: v[1],
+            ascending_node_rad: v[2],
+            argument_of_periapsis_rad: v[3],
+            true_anomaly_rad: v[4],
+        };
+        let expected = State {
+            position_m: [v[5], v[6], v[7]],
+            velocity_m_s: [v[8], v[9], v[10]],
+        };
+        same_state(input.to_state(MU).unwrap(), expected, 1e-5, 1e-9);
+        let out = Elements::from_state(expected, MU).unwrap();
+        same_state(out.to_state(MU).unwrap(), expected, 1e-5, 1e-9);
+        near(out.eccentricity, 1.0, 2e-14);
+        count += 1;
+    }
+    assert_eq!(count, 50);
+}
