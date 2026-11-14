@@ -84,10 +84,8 @@ impl CommandTimeline {
                 .checked_add(dur_us)
                 .ok_or(CommandError::NumericalRange)?;
             const MAX_EXACT: i64 = 1_i64 << 53;
-            if command.t_us < -MAX_EXACT
-                || command.t_us > MAX_EXACT
-                || end < -MAX_EXACT
-                || end > MAX_EXACT
+            if !(-MAX_EXACT..=MAX_EXACT).contains(&command.t_us)
+                || !(-MAX_EXACT..=MAX_EXACT).contains(&end)
             {
                 return Err(CommandError::NumericalRange);
             }
