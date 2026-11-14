@@ -6,7 +6,9 @@
 
 pub mod anomaly;
 pub mod elements;
+pub mod integrator;
 pub mod patched_conics;
+pub mod perturb;
 pub mod propagation;
 pub mod spline;
 

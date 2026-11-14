@@ -375,7 +375,7 @@ fn physical_parameters_are_named_and_barycenters_are_not_bodies() {
 }
 
 fn compare_cspice_corpus(data: &str) -> usize {
-    let ephem = Ephemeris::bundled().unwrap();
+    let ephem = Ephemeris::from_bytes(include_bytes!("../../../data/packed/de440s-2020-2036.ephb")).unwrap();
     let mut n = 0;
     for line in data.lines().filter(|line| !line.starts_with('#')) {
         let mut fields = line.split(',');
