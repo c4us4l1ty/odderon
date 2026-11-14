@@ -9,3 +9,4 @@ crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 odd-core = { path = "../../crates/odd-core" }
+odd-ephem = { path = "../../crates/odd-ephem" }

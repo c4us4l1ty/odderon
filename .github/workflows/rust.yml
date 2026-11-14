@@ -13,6 +13,8 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
           components: rustfmt, clippy
+      - name: Verify bundled ephemeris checksum
+        run: echo '8f651100deaaffbae85ae4dac2a577b805993e8e4cfbe7dd8b710913ece36335  data/packed/de440s-2020-2036.ephb' | sha256sum --check
       - name: Run workspace tests
         shell: bash
         run: |
@@ -21,6 +23,24 @@ jobs:
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
             python3 -c 'from pathlib import Path; s="\n".join(Path("/tmp/odderon-cargo-test.log").read_text().splitlines()[-50:]); print("::error::" + s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))'
+          fi
+          exit "$status"
+      - name: Reproduce the packed ephemeris from the pinned SPK subset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set +e
+          (
+            set -e
+            gh api -H 'Accept: application/vnd.github.raw+json' repos/laurpaul/LunarMaps/git/blobs/5613b931809458da8ef89673f95536b66a16a5de > /tmp/de440s-subset.bsp
+            echo 'f2ca56c14a88fa6a61d599daa40d12ae85ac25f204870fbc623d433c9a57cc37  /tmp/de440s-subset.bsp' | sha256sum --check
+            cargo run --locked -p pack-ephem -- --range 631108800 1136030400 /tmp/de440s-subset.bsp /tmp/de440.ephb
+            cmp /tmp/de440.ephb data/packed/de440s-2020-2036.ephb
+          ) 2>&1 | tee /tmp/odderon-pack.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            python3 -c 'from pathlib import Path; s="\n".join(Path("/tmp/odderon-pack.log").read_text().splitlines()[-30:]); print("::error::" + s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))'
           fi
           exit "$status"
       - name: Clippy
