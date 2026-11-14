@@ -486,7 +486,7 @@ impl FrameTree {
                 state: state.rounded()?,
             })
         } else {
-            self.from_galactic_impl(self.to_galactic(source)?, to)
+            self.galactic_to_local_impl(self.to_galactic(source)?, to)
         }
     }
 
@@ -525,10 +525,10 @@ impl FrameTree {
         if matches!(to, FrameId::Camera(_)) {
             return Err(TreeError::CameraIsRenderOnly);
         }
-        self.from_galactic_impl(source, to)
+        self.galactic_to_local_impl(source, to)
     }
 
-    fn from_galactic_impl(
+    fn galactic_to_local_impl(
         &self,
         source: GalacticState,
         to: FrameId,
