@@ -1,0 +1,121 @@
+// Experimental mission 101. Scientific calculations are performed by the
+// Rust/WASM planner and the one-shot flight worker, not fabricated by canvas.
+const $=id=>document.getElementById(id);
+const MU=3.986004418e14,R=6378137,INITIAL=R+260000,TARGET=R+550000,DURATION=10800,DRY=1020;
+const setup=[820497600,DURATION,1200,DRY,2400,310,INITIAL,0,0,0,Math.sqrt(MU/INITIAL),0];
+const canvas=$('plan-canvas'),ctx=canvas.getContext('2d');
+let wasm,nodes=[],selected=-1,preview=[],actual=null,worker=null,timer=null,locked=null,drag=null,draws=0,messages=0,sequence=0;
+const lens={
+  t:'A push along the direction of travel changes orbital energy. Near the closest point, a forward push raises the farthest point of the orbit; a backward push lowers it.',
+  n:'This sideways push stays in the orbital plane and is perpendicular to the direction of travel. Near an apsis it points roughly inward or outward; away from one it is not exactly radial.',
+  w:'This push is perpendicular to the orbital plane. It changes the direction of the orbit’s angular momentum and can tilt the plane. The diagram’s diagonal handle is a symbol, not a 3D projection.',
+  time:'Move the maneuver along the predicted path. Timing changes where the engine pushes and how the rest of the orbit responds.'
+};
+const fields={time:$('node-time'),t:$('node-t'),n:$('node-n'),w:$('node-w')};
+const distance=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1]);
+function readState(w,t){return Array.from({length:7},(_,i)=>w.mission_preview(t,i));}
+function configure(w,items){
+  if(!w.mission_setup(...setup))return false;
+  for(const item of [...items].sort((a,b)=>a.time-b.time)){
+    if(Math.hypot(...item.dv)<1e-12)continue;
+    if(!w.mission_add_node(item.time,...item.dv))return false;
+  }
+  return !!w.mission_compile();
+}
+function orbitMetrics(state){
+  const r=state.slice(0,3),v=state.slice(3,6),radius=Math.hypot(...r),speed2=v.reduce((a,b)=>a+b*b,0);
+  const h=[r[1]*v[2]-r[2]*v[1],r[2]*v[0]-r[0]*v[2],r[0]*v[1]-r[1]*v[0]],h2=h.reduce((a,b)=>a+b*b,0);
+  const energy=speed2/2-MU/radius;if(!(energy<0))return null;
+  const a=-MU/(2*energy),e=Math.sqrt(Math.max(0,1+2*energy*h2/(MU*MU)));
+  return {apo:(a*(1+e)-R)/1000,peri:(a*(1-e)-R)/1000};
+}
+function syncFields(){
+  const n=nodes[selected];$('node-select').innerHTML='';
+  if(!nodes.length){const o=document.createElement('option');o.textContent='No maneuver';$('node-select').append(o);}
+  nodes.forEach((node,i)=>{const o=document.createElement('option');o.value=String(i);o.textContent=`Maneuver ${i+1} · ${Math.round(node.time)} s`;o.selected=i===selected;$('node-select').append(o);});
+  for(const control of [...Object.values(fields),$('node-select'),$('remove-node')])control.disabled=!n||!!locked;
+  if(n){fields.time.value=String(Math.round(n.time));fields.t.value=String(+n.dv[0].toFixed(2));fields.n.value=String(+n.dv[1].toFixed(2));fields.w.value=String(+n.dv[2].toFixed(2));}
+  $('add-node').disabled=!wasm||!!locked||nodes.length>=12;$('example').disabled=!wasm||!!locked;
+}
+function updatePreview(schedule=true){
+  if(!wasm)return;
+  cancelFlight();sequence++;syncFields();actual=null;
+  if(!configure(wasm,nodes)){$('plan-status').textContent='Unable to compile: check timing, overlapping burns, or available propellant.';$('plan-status').classList.add('failure');preview=[];$('prefill').disabled=true;$('execute').disabled=true;draw();cancelFlight();return;}
+  $('plan-status').classList.remove('failure');$('plan-status').textContent='Ideal orbit ready. The modeled flight calculates in the background.';
+  preview=Array.from({length:361},(_,i)=>({time:DURATION*i/360,state:readState(wasm,DURATION*i/360)}));
+  if(preview.some(p=>p.state.some(x=>!Number.isFinite(x)))){preview=[];$('plan-status').textContent='The ideal orbit could not be sampled.';cancelFlight();draw();return;}
+  $('prefill').disabled=false;$('execute').disabled=nodes.length===0||!!locked;
+  syncFields();draw();if(schedule)scheduleFlight();
+}
+function cancelFlight(){if(timer!==null){clearTimeout(timer);timer=null;}if(worker){worker.terminate();worker=null;}}
+function scheduleFlight(){cancelFlight();const version=++sequence;timer=setTimeout(()=>{timer=null;startFlight(false,version);},350);}
+function startFlight(isLocked,version=++sequence){
+  cancelFlight();worker=new Worker('./mission-worker.js',{type:'module'});const current=worker;
+  const snapshot=nodes.map(n=>({time:n.time,dv:[...n.dv]}));
+  current.onmessage=({data})=>{messages++;if(worker!==current||version!==sequence)return;current.terminate();worker=null;
+    if(data.error){$('plan-status').textContent=data.error;$('plan-status').classList.add('failure');if(isLocked)$('execute-status').textContent=data.error;return;}
+    actual=data.points;draw();$('plan-status').textContent='Flight model ready. No simulation runs while idle.';
+    if(isLocked)showDebrief(data.report);
+  };
+  current.onerror=()=>{if(worker!==current)return;worker.terminate();worker=null;$('plan-status').textContent='Flight worker failed.';if(isLocked)$('execute-status').textContent='Flight worker failed.';};
+  messages++;current.postMessage({setup,nodes:snapshot});
+}
+function prefill(){
+  const state=readState(wasm,DURATION),metrics=orbitMetrics(state);if(!metrics){$('execute-status').textContent='The ideal orbit has no finite farthest point.';return false;}
+  $('predict-dv').value=nodes.reduce((a,n)=>a+Math.hypot(...n.dv),0).toFixed(3);
+  $('predict-apo').value=metrics.apo.toFixed(3);$('predict-peri').value=metrics.peri.toFixed(3);
+  $('predict-fuel').value=(state[6]-DRY).toFixed(3);$('predict-time').value=String(DURATION);$('execute-status').textContent='';return true;
+}
+function showDebrief(report){
+  const [mass,apo,peri,e,score,dv]=report,p=locked.prediction;
+  const fmt=(x,n=1)=>Number(x).toLocaleString('en-US',{maximumFractionDigits:n,minimumFractionDigits:n});
+  const entries=[['Mission score',`${fmt(score*100,1)}%`],['Farthest altitude',`${fmt(apo/1000)} km`],['Closest altitude',`${fmt(peri/1000)} km`],['Remaining propellant',`${fmt(mass-DRY,2)} kg`],['Orbit eccentricity',fmt(e,5)],['Commanded velocity change',`${fmt(dv,2)} m/s`]];
+  const card=document.createElement('div');card.className='debrief-grid';for(const [label,value] of entries){const item=document.createElement('div'),strong=document.createElement('strong'),span=document.createElement('span');strong.textContent=value;span.textContent=label;item.append(strong,span);card.append(item);}
+  const compare=document.createElement('p');compare.textContent=`Locked prediction: ${fmt(p.apo)} km farthest, ${fmt(p.peri)} km closest, ${fmt(p.fuel,2)} kg propellant and ${fmt(p.dv,2)} m/s velocity change after ${fmt(p.time,0)} seconds.`;
+  const heading=document.createElement('h3');heading.textContent='Farthest-altitude sensitivity';
+  const list=document.createElement('div');list.className='sensitivity-list';const names=['Burn duration','Earth’s equatorial bulge','Moon and Sun gravity','Atmospheric drag','Sunlight pressure'];
+  for(let i=0;i<5;i++){const row=document.createElement('div'),share=report[11+i],delta=report[16+i];row.textContent=Number.isFinite(share)?`${names[i]}: ${fmt(share*100)}% of sensitivity · signed change ${fmt(delta/1000,2)} km`:`${names[i]}: sensitivity share undefined`;list.append(row);}
+  $('debrief-content').replaceChildren(card,compare,heading,list);$('debrief').hidden=false;$('execute-status').textContent='Flight complete. The prediction remains locked.';
+}
+function toCanvas(point){const rect=canvas.getBoundingClientRect(),span=2.45*TARGET;return [rect.width/2+point[0]*rect.height/span,rect.height/2-point[1]*rect.height/span];}
+function draw(){
+  const rect=canvas.getBoundingClientRect();if(!rect.width||!rect.height)return;const dpr=Math.min(devicePixelRatio||1,2);canvas.width=Math.round(rect.width*dpr);canvas.height=Math.round(rect.height*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,rect.width,rect.height);draws++;
+  const center=toCanvas([0,0]),earth=R*rect.height/(2.45*TARGET);
+  const gradient=ctx.createRadialGradient(center[0]-earth*.25,center[1]-earth*.3,earth*.04,center[0],center[1],earth);gradient.addColorStop(0,'#607f71');gradient.addColorStop(.75,'#254b4a');gradient.addColorStop(1,'#102b33');ctx.beginPath();ctx.arc(...center,earth,0,Math.PI*2);ctx.fillStyle=gradient;ctx.fill();ctx.strokeStyle='#6e9e8c';ctx.lineWidth=1;ctx.stroke();
+  const line=(pts,color,dashed)=>{ctx.beginPath();ctx.setLineDash(dashed?[4,5]:[]);ctx.strokeStyle=color;ctx.lineWidth=2;pts.forEach((p,i)=>{const xy=toCanvas(p);if(i)ctx.lineTo(...xy);else ctx.moveTo(...xy);});ctx.stroke();ctx.setLineDash([]);};
+  if(preview.length)line(preview.map(p=>p.state),'#70d7dc',true);if(actual)line(actual,'#e2bc79',false);
+  nodes.forEach((node,i)=>{const state=readState(wasm,node.time);if(state.some(x=>!Number.isFinite(x)))return;const p=toCanvas(state);ctx.fillStyle=i===selected?'#f0ddac':'#a1c2b2';ctx.beginPath();ctx.arc(...p,5,0,Math.PI*2);ctx.fill();ctx.fillStyle='#e4eada';ctx.font='11px system-ui';ctx.fillText(String(i+1),p[0]+9,p[1]-8);if(i===selected){for(const h of handles(p,state)){ctx.strokeStyle=h.color;ctx.beginPath();ctx.moveTo(...p);ctx.lineTo(...h.end);ctx.stroke();ctx.fillStyle=h.color;ctx.beginPath();ctx.arc(...h.end,6,0,Math.PI*2);ctx.fill();ctx.fillText(h.label,h.end[0]+7,h.end[1]-6);}}});
+}
+function handles(p,state){const v=[state[3],-state[4]],m=Math.hypot(...v)||1,t=v.map(x=>x/m),n=[-t[1],t[0]];return [{key:'t',dir:t,color:'#80d9cb',label:'Along'},{key:'n',dir:n,color:'#e1bc76',label:'Sideways'},{key:'w',dir:[.707,-.707],color:'#bdade0',label:'Plane tilt'}].map(h=>({...h,end:[p[0]+h.dir[0]*42,p[1]+h.dir[1]*42]}));}
+function mousePoint(e){const r=canvas.getBoundingClientRect();return [e.clientX-r.left,e.clientY-r.top];}
+function nearestPath(p){let best=null;for(const item of preview){const d=distance(p,toCanvas(item.state));if(!best||d<best.d)best={d,time:item.time};}return best;}
+function setLens(key){$('lens-text').textContent=lens[key]||lens.time;}
+for(const key of Object.keys(fields)){
+  fields[key].addEventListener('focus',()=>setLens(key));fields[key].addEventListener('mouseenter',()=>setLens(key));
+  fields[key].addEventListener('input',()=>{if(locked||selected<0)return;const value=Number(fields[key].value);if(!Number.isFinite(value))return;if(key==='time')nodes[selected].time=Math.max(1,Math.min(DURATION-1,value));else nodes[selected].dv[{t:0,n:1,w:2}[key]]=value;updatePreview();});
+}
+$('node-select').addEventListener('change',e=>{selected=Number(e.target.value);syncFields();draw();});
+$('add-node').addEventListener('click',()=>{nodes.push({time:200,dv:[10,0,0]});selected=nodes.length-1;updatePreview();});
+$('remove-node').addEventListener('click',()=>{if(selected<0)return;nodes.splice(selected,1);selected=Math.min(selected,nodes.length-1);updatePreview();});
+$('example').addEventListener('click',()=>{const a=(INITIAL+TARGET)/2,v1=Math.sqrt(MU/INITIAL),v2=Math.sqrt(MU/TARGET),coast=Math.PI*Math.sqrt(a*a*a/MU);nodes=[{time:200,dv:[v1*(Math.sqrt(TARGET/a)-1),0,0]},{time:200+coast,dv:[v2*(1-Math.sqrt(INITIAL/a)),0,0]}];selected=0;updatePreview();prefill();});
+$('prefill').addEventListener('click',prefill);
+$('execute').addEventListener('click',()=>{
+  const ids=['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time'];
+  const vals=ids.map(id=>Number($(id).value));
+  if(ids.some(id=>$(id).value.trim()==='')||vals.some(x=>!Number.isFinite(x))||vals[0]<0||vals[3]<0||vals[4]<=0){$('execute-status').textContent='Enter a valid prediction for each field.';return;}
+  locked=Object.freeze({prediction:Object.freeze({dv:vals[0],apo:vals[1],peri:vals[2],fuel:vals[3],time:vals[4]})});
+  for(const id of ['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time','prefill','execute'])$(id).disabled=true;
+  $('unlock').hidden=false;$('debrief').hidden=true;$('execute-status').textContent='Prediction locked. Simulating the flight and its comparisons…';syncFields();startFlight(true);
+});
+$('unlock').addEventListener('click',()=>{locked=null;cancelFlight();sequence++;$('unlock').hidden=true;$('debrief').hidden=true;$('execute-status').textContent='';for(const id of ['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time'])$(id).disabled=false;updatePreview();});
+canvas.addEventListener('pointerdown',e=>{
+  if(locked||!preview.length||e.button!==0)return;const p=mousePoint(e),node=nodes[selected];
+  if(node){const state=readState(wasm,node.time),center=toCanvas(state);for(const h of handles(center,state))if(distance(p,h.end)<12){drag={pointer:e.pointerId,key:h.key,start:p,initial:node.dv[{t:0,n:1,w:2}[h.key]],dir:h.dir};setLens(h.key);canvas.setPointerCapture(e.pointerId);return;}if(distance(p,center)<12){drag={pointer:e.pointerId,key:'time'};setLens('time');canvas.setPointerCapture(e.pointerId);return;}}
+  const nearest=nearestPath(p);if(nearest&&nearest.d<12&&nodes.length<12){nodes.push({time:Math.max(60,Math.min(DURATION-60,nearest.time)),dv:[10,0,0]});selected=nodes.length-1;updatePreview();}
+});
+canvas.addEventListener('pointermove',e=>{if(!drag||drag.pointer!==e.pointerId||selected<0)return;const p=mousePoint(e),node=nodes[selected];if(drag.key==='time'){const near=nearestPath(p);if(near)node.time=Math.max(60,Math.min(DURATION-60,near.time));}else{const i={t:0,n:1,w:2}[drag.key];node.dv[i]=drag.initial+2*((p[0]-drag.start[0])*drag.dir[0]+(p[1]-drag.start[1])*drag.dir[1]);}updatePreview(false);});
+function endDrag(e){if(drag&&drag.pointer===e.pointerId){drag=null;scheduleFlight();}}
+canvas.addEventListener('pointerup',endDrag);canvas.addEventListener('pointercancel',endDrag);canvas.addEventListener('lostpointercapture',endDrag);
+new ResizeObserver(draw).observe(canvas.parentElement);
+window.missionDiagnostics=Object.freeze({get nodes(){return nodes.map(n=>({time:n.time,dv:[...n.dv]}));},get pending(){return !!worker||timer!==null;},get draws(){return draws;},get messages(){return messages;},get locked(){return !!locked;}});
+try{const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error('The physics module is not available. Build it first.');({instance:{exports:wasm}}=await WebAssembly.instantiate(await response.arrayBuffer(),{}));syncFields();updatePreview();}catch(e){$('plan-status').classList.add('failure');$('plan-status').textContent=String(e.message||e);}
