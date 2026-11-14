@@ -20,6 +20,20 @@ pub enum OrbitError {
     NumericalRange,
 }
 
+// Evaluate 1 + e cos(ν) without cancellation near the far side of a
+// nearly parabolic conic. PI itself is treated as the parabolic asymptote.
+fn conic_denominator(e: f64, anomaly: f64, cosine: f64) -> f64 {
+    if e == 1.0 && (anomaly % std::f64::consts::TAU).abs() == std::f64::consts::PI {
+        return 0.0;
+    }
+    if cosine < 0.0 {
+        let half_cos = (0.5 * anomaly).cos();
+        (1.0 - e) + (e * half_cos) * (2.0 * half_cos)
+    } else {
+        1.0 + e * cosine
+    }
+}
+
 fn positive(value: f64) -> Result<(), OrbitError> {
     if value.is_finite() && value > 0.0 {
         Ok(())

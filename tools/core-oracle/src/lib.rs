@@ -120,6 +120,18 @@ pub fn fingerprint() -> [u8; 32] {
     }
     let near_parabolic = odd_astro::anomaly::true_from_elliptic(1.0 - f64::EPSILON, 1e-8).unwrap();
     assert!((near_parabolic - 0.886_131_745_558_101_2).abs() < 1e-14);
+    let remote = odd_astro::elements::Elements {
+        semi_latus_rectum_m: 8_000_000.0,
+        eccentricity: 1.0 - f64::EPSILON,
+        inclination_rad: 0.0,
+        ascending_node_rad: 0.0,
+        argument_of_periapsis_rad: 0.0,
+        true_anomaly_rad: std::f64::consts::PI - 1e-8,
+    }
+    .to_state(3.986_004_418e14)
+    .unwrap();
+    let radius = remote.position_m[0].hypot(remote.position_m[1]);
+    assert!((radius / 2.940_694_223_310_720_1e22 - 1.0).abs() < 1e-12);
     let anomaly = odd_astro::anomaly::hyperbolic_from_mean(2.0, 1.350_402_387_287_602_8).unwrap();
     assert!((anomaly - 1.0).abs() < 1e-12);
     let values = [

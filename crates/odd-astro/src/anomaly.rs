@@ -2,6 +2,7 @@
 //!
 //! The mean anomaly is dimensionless and unwrapped. These functions use a
 //! safeguarded numerical inversion, not a universal five-iteration guarantee.
+use crate::conic_denominator;
 use std::f64::consts::{PI, TAU};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,7 +26,7 @@ fn validate(e: f64, value: f64) -> Result<(), AnomalyError> {
 pub fn hyperbolic_from_true(e: f64, true_anomaly_rad: f64) -> Result<f64, AnomalyError> {
     validate(e, true_anomaly_rad)?;
     let (sn, cn) = true_anomaly_rad.sin_cos();
-    let denominator = 1.0 + e * cn;
+    let denominator = conic_denominator(e, true_anomaly_rad, cn);
     if !denominator.is_finite() {
         return Err(AnomalyError::NumericalRange);
     }

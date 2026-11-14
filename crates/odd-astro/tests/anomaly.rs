@@ -151,3 +151,12 @@ fn near_parabolic_elliptic_anomalies_avoid_cancellation() {
         Err(AnomalyError::NumericalRange)
     );
 }
+
+#[test]
+fn hyperbolic_near_asymptote_uses_stable_denominator() {
+    // 80-digit mpmath using the exact binary64 angle and eccentricity.
+    let e = 1.0 + f64::EPSILON;
+    let nu = PI - 3e-8;
+    let result = hyperbolic_from_true(e, nu).unwrap();
+    near(result, 1.744_231_428_086_033_4, 2e-15);
+}

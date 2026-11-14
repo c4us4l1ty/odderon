@@ -4,6 +4,7 @@
 //! remain representable. Classical angles are retained even near singularities
 //! for reconstruction; `special_angles` provides better-conditioned combined
 //! angles for interpretation. A radial trajectory has no orbital plane.
+use crate::conic_denominator;
 use odd_core::frames::State;
 use std::f64::consts::{PI, TAU};
 
@@ -104,7 +105,7 @@ impl Elements {
         if !p.is_finite() || p <= 0.0 {
             return Err(ElementsError::NumericalRange);
         }
-        let denominator = 1.0 + e * true_anomaly_rad.cos();
+        let denominator = conic_denominator(e, true_anomaly_rad, true_anomaly_rad.cos());
         if !denominator.is_finite() {
             return Err(ElementsError::NumericalRange);
         }
@@ -219,7 +220,7 @@ impl Elements {
             return Err(ElementsError::InvalidInput);
         }
         let (sn, cn) = self.true_anomaly_rad.sin_cos();
-        let denominator = 1.0 + e * cn;
+        let denominator = conic_denominator(e, self.true_anomaly_rad, cn);
         if !denominator.is_finite() {
             return Err(ElementsError::NumericalRange);
         }

@@ -378,3 +378,20 @@ fn seeded_conic_round_trips_cover_multiple_scales() {
         same_state(back, state, 2e-11 * radius, 2e-11 * speed);
     }
 }
+
+#[test]
+fn near_parabolic_apocenter_radius_avoids_cancellation() {
+    // 80-digit mpmath oracle using exact binary64 inputs, including ν.
+    let source = elements(1.0 - f64::EPSILON, 0.0, 0.0, 0.0, PI - 1e-8);
+    let state = source.to_state(MU).unwrap();
+    let radius = state.position_m[0].hypot(state.position_m[1]);
+    let expected = 2.940_694_223_310_720_1e22;
+    assert!(
+        (radius / expected - 1.0).abs() < 2e-15,
+        "radius {radius} versus {expected}"
+    );
+    assert_eq!(
+        elements(1.0, 0.0, 0.0, 0.0, PI).to_state(MU),
+        Err(ElementsError::OutsidePhysicalBranch)
+    );
+}

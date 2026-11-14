@@ -104,6 +104,11 @@ calculation. The SatKit tutorial publishes this same example at rounded
 precision. This is a correction to the test specification, not a claim that
 0.001% was passed against the rounded ω value.
 
+Near-parabolic periapsis and far-side cases are also checked against 80-digit
+`mpmath` calculations using exact binary64 inputs; see
+`tools/astro-oracle/near_parabolic_mpmath.py`. These checks do not eliminate
+conditioning limits close to an asymptote.
+
 Additional committed fixtures compare 100 elliptical states and 100 anomaly
 sets with SatKit, and 100 hyperbolic plus 50 parabolic states with NAIF CSPICE
 N0067 (`spiceypy` 8.4.0). Generators are in `tools/astro-oracle/`; their
