@@ -1,0 +1,8 @@
+[package]
+name = "odd-core"
+version = "0.1.0"
+edition = "2021"
+description = "Foundational time and reference frame types for Odderon"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
