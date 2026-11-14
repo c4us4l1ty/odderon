@@ -75,3 +75,26 @@ jobs:
             python3 -c 'from pathlib import Path; s=Path("/tmp/odderon-fmt.log").read_text(); print("::error::" + s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))'
           fi
           exit "$status"
+
+      - name: Build browser ephemeris module
+        run: |
+          cargo build --locked --release -p odd-view --target wasm32-unknown-unknown
+          cp target/wasm32-unknown-unknown/release/odd_view.wasm web/odd_view.wasm
+      - name: Upload browser ephemeris module
+        uses: actions/upload-artifact@v4
+        with:
+          name: odd-view-wasm
+          path: web/odd_view.wasm
+      - name: Install browser test dependency
+        run: npm ci
+      - name: Test browser viewport and idle governor
+        shell: bash
+        run: |
+          set +e
+          (npm test && npm run test:browser && ODDERON_BASELINE=1 npm run test:idle && ODDERON_PINNED_CHROMIUM=1 npm run test:idle) 2>&1 | tee /tmp/odderon-browser.log
+          status=${PIPESTATUS[0]}
+          while IFS= read -r line; do echo "::notice::$line"; done < <(grep -E '^(Blank-tab control|Idle after camera drag|CPU report only)' /tmp/odderon-browser.log)
+          if [ "$status" -ne 0 ]; then
+            python3 -c 'from pathlib import Path; s="\n".join(Path("/tmp/odderon-browser.log").read_text().splitlines()[-50:]); print("::error::" + s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))'
+          fi
+          exit "$status"
