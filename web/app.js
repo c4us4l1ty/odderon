@@ -8,9 +8,9 @@ const scene=$('scene'), canvas=$('world'), overlay=$('overlay'), date=$('date'),
 const J2000_UNIX_MS=Date.UTC(2000,0,1,12), DAY=86400;
 let renderer, wasm, snapshot, contextLost=false, camera={yaw:-1.30,pitch:-.35,zoom:1}, pointer=null, draws=0, overlayDraws=0, worldDirty=true, overlayDirty=true, lastQuality=null;
 const showError=message=>{error.hidden=false;error.textContent=message;};
-const governor=new Governor(quality=>{try{draw(quality);}catch(e){governor.suspend();showError(`The view could not be rendered: ${e.message}`);}});
+const governor=new Governor((quality,batch)=>{try{return draw(quality,batch);}catch(e){governor.suspend();showError(`The view could not be rendered: ${e.message}`);return false;}});
 const invalidateWorld=()=>{worldDirty=true;overlayDirty=true;governor.invalidate();};
-const invalidateOverlay=()=>{overlayDirty=true;governor.invalidate();};
+const invalidateOverlay=()=>{overlayDirty=true;governor.invalidate(false);};
 const dot=(a,b)=>a.reduce((s,x,i)=>s+x*b[i],0);
 const norm=a=>{const m=Math.hypot(...a);return a.map(v=>v/m);};
 const subtract=(a,b)=>a.map((v,i)=>v-b[i]);
@@ -35,13 +35,18 @@ function geometry(){
   const e=project([0,0,0]),m=project(snapshot.moon);
   return {right,up,view,project,earth:[e[0],e[1],projectedRadius(EARTH_RADIUS_M,span),e[2]],moon:[m[0],m[1],projectedRadius(MOON_RADIUS_M,span),m[2]],earthLight:norm(snapshot.sun),moonLight:norm(subtract(snapshot.sun,snapshot.moon)),earthOrientation:snapshot.earthOrientation,moonOrientation:snapshot.moonOrientation,vehicle:$('show-vehicle').checked};
 }
-function draw(quality){
-  if(!snapshot||!renderer)return;
-  const rect=scene.getBoundingClientRect();if(rect.width<1||rect.height<1)return;
-  const model=geometry(), updateWorld=worldDirty||lastQuality!==quality;
-  if(updateWorld){renderer.draw(model,quality);draws++;lastQuality=quality;$('render-status').textContent=quality==='interactive'?'INTERACTIVE QUALITY':'RENDERED · RESTING';}
-  if(updateWorld||overlayDirty){drawOverlay(model,rect);overlayDraws++;}
-  canvas.style.visibility='';overlay.style.visibility='';worldDirty=false;overlayDirty=false;
+function draw(quality,batch){
+  if(!snapshot||!renderer)return false;
+  const rect=scene.getBoundingClientRect();if(rect.width<1||rect.height<1)return false;
+  const model=geometry();
+  if(quality==='interactive'||(quality==='final'&&batch===0)){
+    if(!renderer.start(model,quality))return false;
+    draws++;lastQuality=quality;worldDirty=false;overlayDirty=true;
+  } else if(quality==='final'&&batch>0){renderer.batch(batch);draws++;}
+  if(overlayDirty){drawOverlay(model,rect);overlayDraws++;overlayDirty=false;}
+  if(quality==='interactive')$('render-status').textContent='INTERACTIVE QUALITY';
+  else if(quality==='final')$('render-status').textContent=batch===15?'RENDERED · RESTING':`PAINTING · ${batch}/15`;
+  canvas.style.visibility='';overlay.style.visibility='';return true;
 }
 function drawOverlay(model,rect){
   const dpr=Math.min(window.devicePixelRatio||1,2), w=Math.round(rect.width*dpr),h=Math.round(rect.height*dpr);
@@ -97,7 +102,7 @@ canvas.addEventListener('webglcontextlost',event=>{event.preventDefault();contex
 canvas.addEventListener('webglcontextrestored',()=>{try{renderer.init();worldDirty=true;overlayDirty=true;lastQuality=null;contextLost=false;if(wasm&&!snapshot)showError('Date outside the available ephemeris (2020–2035 TDB).');else error.hidden=true;syncVisibility();}catch(e){showError(`Could not restore graphics: ${e.message}`);}});
 if(document.hidden)governor.suspend();
 // Read-only diagnostics make the idle gate observable without creating a poller.
-window.odderonDiagnostics=Object.freeze({get draws(){return draws;},get overlayDraws(){return overlayDraws;},get pendingFrame(){return governor.frame!==null;},get pendingTimer(){return governor.timer!==null;},get quality(){return $('render-status').textContent;},get circles(){if(!snapshot)return null;const g=geometry();return {earth:[...g.earth],moon:[...g.moon]};}});
+window.odderonDiagnostics=Object.freeze({get draws(){return draws;},get frameCount(){return governor.frameCount;},get batchIndex(){return renderer?.batchIndex??-1;},get strokeCount(){return renderer?.strokeCount??0;},get overlayDraws(){return overlayDraws;},get pendingFrame(){return governor.frame!==null;},get pendingTimer(){return governor.timer!==null;},get quality(){return $('render-status').textContent;},get circles(){if(!snapshot)return null;const g=geometry();return {earth:[...g.earth],moon:[...g.moon]};}});
 try {
   renderer=new Renderer(canvas);
   const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error(`Ephemeris module not found (${response.status}). Build the browser app first.`);

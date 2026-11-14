@@ -48,11 +48,10 @@ performance on every device, or a waiver of scientific accuracy in later work.
   orbital and targeting data must be supplied by later physics work; they must
   not be fabricated to fill the viewport.
 - Idle means no continuously scheduled application frames, not a guarantee of
-  zero CPU or GPU use. The release debounce targets 50 ms, not a real-time
-  deadline. The headless CI tests have passed the <0.2% CPU gate, but an
-  intermittent software-GPU failure was also observed; hardware GPU usage and
-  the target laptop have not been measured. See [observatory.md](observatory.md)
-  for the method, results and other caveats.
+  zero CPU or GPU use. The browser now submits a finite progressive sequence;
+  its deterministic idle test checks animation and worker-message counters,
+  not OS CPU or hardware GPU utilization. The target laptop has not been
+  measured. See [observatory.md](observatory.md) for details and caveats.
 
 ## Verification and next step
 

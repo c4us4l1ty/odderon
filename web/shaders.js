@@ -113,3 +113,36 @@ void main(){
  }
  outColor=vec4(mix(base,result/max(all,0.000001),.7),1.0);
 }`;
+
+// Instanced, deterministic screen-space strokes read the real G-buffer.
+// The analytic surface normal supplies a projected tangential flow direction.
+export const strokeVertex = `#version 300 es
+precision highp float; precision highp int;
+uniform sampler2D uNormal; uniform vec2 uResolution; uniform int uBatch;
+out vec2 vBrush; out vec2 vSample; flat out float vSurface;
+uint mixbits(uint x){x^=x>>16;x*=0x7feb352du;x^=x>>15;x*=0x846ca68bu;x^=x>>16;return x;}
+float rnd(uint x){return float(mixbits(x)&0x00ffffffu)/16777216.0;}
+void main(){
+ uint id=uint(gl_InstanceID)+uint(uBatch)*100003u;
+ vec2 center=vec2(rnd(id*2u+31u),rnd(id*2u+32u));
+ vec3 normal=texture(uNormal,center).rgb;
+ vec2 radial=normal.xy*2.0-1.0;
+ vec2 tangent=length(radial)>.001?normalize(vec2(-radial.y,radial.x)):vec2(1,0);
+ vec2 perpendicular=vec2(-tangent.y,tangent.x);
+ vec2 corners[6]=vec2[6](vec2(-1,-1),vec2(1,-1),vec2(-1,1),vec2(-1,1),vec2(1,-1),vec2(1,1));
+ vec2 corner=corners[gl_VertexID];
+ float size=uBatch==0?4.0:mix(3.0,1.1,float(uBatch)/15.0);
+ vec2 offset=(tangent*corner.x*size+perpendicular*corner.y*size*.28)*2.0/uResolution;
+ gl_Position=vec4(center*2.0-1.0+offset,0,1);
+ vBrush=corner;vSample=center;vSurface=normal.b;
+}`;
+export const strokeFragment = `#version 300 es
+precision highp float;
+uniform sampler2D uColor; in vec2 vBrush; in vec2 vSample; flat in float vSurface; out vec4 outColor;
+void main(){
+ if(vSurface<.1)discard;
+ float shape=max(0.0,1.0-dot(vBrush,vBrush));
+ if(shape<=0.0)discard;
+ vec3 pigment=texture(uColor,vSample).rgb;
+ outColor=vec4(pigment,shape*.28);
+}`;

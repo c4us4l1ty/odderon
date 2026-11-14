@@ -58,69 +58,36 @@ controls select a midnight **TDB**, not local time or UTC. The date range is
 ## Rendering and idle behavior
 
 The first WebGL2 pass renders analytic spheres and illustrative geometry into
-an offscreen color/normal framebuffer. A second pass computes a Gaussian-smoothed RGB structure tensor, extracts its
-orientation and anisotropy, and applies an eight-sector polynomial-weighted
-anisotropic Kuwahara filter; procedural normal-tangent pigment strokes are
-shader-generated. Its small fixed sample radius is a quality/performance
-choice, not the 1.5 million instanced strokes proposed in brainstorming. A separate Canvas2D layer
-renders sharp labels, samples and optional vector independently of the filter.
-No external textures or 3D models are used. WebGL errors, unsupported WebGL2,
-and lost/restored contexts have visible handling.
+an offscreen color/normal framebuffer. Instanced brushstroke quads sample those
+buffers, align to the projected surface-normal tangent and blend into a
+persistent accumulation framebuffer. Batch 0 submits 60,000 coarse instances;
+15 finer batches submit 96,000 each, for 1,500,000 instances. Strokes whose
+samples lie in empty sky are discarded. This count is GPU *instances submitted*,
+not a promise that every stroke produces visible fragments. The result is an
+illustrative style, not measured surface data. A separate Canvas2D layer draws
+labels and vectors. No external textures or 3D models are used.
 
-The governor schedules at most one animation frame at a time, and no repeating
-animation or timer when settled. While dragging it draws at half linear
-resolution; on release it schedules one final-quality pass after a **minimum**
-50 ms debounce. A separate change during that wait supersedes the delayed
-pass and can render sooner; browser scheduling and GPU work can also delay it.
-The debounce is not a real-time deadline. High-density rendering is capped at 1.5 device
-pixels per CSS pixel and 2048 pixels on the longest side to bound memory/cost.
-The cached compositor image stays visible until invalidated. Resizing, display pixel-density changes, zoom,
-keyboard input, date, overlay changes and context restoration wake the scheduler;
-path and velocity toggles repaint only the vector layer when the world is already
-settled. An invalid date hides the previous scene until a valid date is rendered;
-hiding the document cancels pending work.
+The governor coalesces invalidations. While dragging it draws a single coarse
+batch at half resolution; after a minimum 50 ms release debounce it rebuilds
+at final resolution and schedules the 15 finite refinement frames. A new
+interaction, resize, date change, context loss or visibility change cancels
+or restarts stale work. When the last batch completes no further animation
+frame is scheduled. High-density rendering is capped at 1.5 device pixels per
+CSS pixel and 2048 pixels on the longest side. Overlay-only changes do not
+repaint the world. Browser and GPU scheduling mean neither completion time
+nor CPU/GPU usage is guaranteed.
 
 ## Verification and performance
 
-```sh
-npm ci
-npm test                       # governor and overlay primitive tests
-npm run test:browser           # Chrome/Chromium and built web/odd_view.wasm
-npm run test:idle              # Linux-only, after camera drag
-# CHROME_BIN=/path/to/chromium npm run test:idle
-```
-
-The browser test uses real WebGL2, checks the 2026-01-01 Earth–Moon distance,
-5.2 seconds with no application frames/pending work, drag and final-resolution
-rendering, dates, toggles, keyboard, context restoration, WebGL errors and mobile
-layout. The display-density test changes the emulated ratio and dispatches a
-media-query notification because some headless Chrome versions omit that event;
-it does not verify physical monitor switching. It checks the filter on constant/noisy/high-contrast test images. It
-logs Chrome main-thread task time; this alone is **not** total browser CPU.
-
-The separate Linux idle gate opens the page, calibrates `/proc` accounting with
-a busy browser loop, rotates/releases the camera, waits for the settled render,
-finishes GPU work and measures ten seconds with no interaction. It adds up
-scheduler execution time for all threads in the browser's descendant process
-tree, including GPU and renderer processes, expressed as a percentage of one
-CPU core. It fails if the process or thread set changes, if any app frames or
-work remain scheduled, or if the measured CPU is not below 0.2%. It excludes the
-Node test runner, external browser processes, hardware GPU utilization and
-other system processes; it is a headless, software-rendered measurement, not a
-physical-device profiler. CI runs the strict gate with the system Chrome and a
-pinned Chromium 141 binary; `ODDERON_BASELINE=1` first records a separate
-blank-tab control and gives browser startup activity time to settle. It does
-not subtract the control from the application result. In CI run 43575937861,
-the system Chrome measured 0.0679% and the pinned Chromium measured 0.0399%
-over their respective ten-second windows; the earlier blank-tab control was
-0.4318%. Earlier runs that began sampling closer to Chrome startup exceeded the
-limit (5.5–7.2%), mainly browser/network-service threads. CI run 43576770828
-also failed the pinned gate at 5.2941% with zero application frames, dominated
-by software GPU threads even after the test called `gl.finish()` and waited.
-Later runs passed; the cause of this intermittent overhead is not established.
-These measurements are workload- and environment-specific, not a guarantee. Repeat on the target
-laptop with a normal visible browser and GPU to establish its result. Zero CPU
-and sub-0.2% on all devices are not guaranteed.
+`npm test` checks scheduling, scale, and the absence of recurring timers and CSS
+keyframes. `npm run test:browser` exercises actual WebGL2 and, after batch 15,
+checks that both animation callback and worker message counts stay unchanged
+for two seconds. The application currently creates no workers. This is a
+**deterministic no-scheduled-work check**, not a measurement of browser, OS,
+or GPU utilization. The earlier Linux process-tree CPU test remains available
+as an optional diagnostic (`npm run test:idle`) but is no longer a CI gate.
+The finite progressive workload and target laptop still need performance
+profiling; zero idle CPU/GPU cannot be promised.
 
 ## Research
 

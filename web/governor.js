@@ -1,24 +1,32 @@
-// A demand scheduler: one outstanding frame at most, no idle animation loop.
+// Demand scheduler: one outstanding frame at most; progressive work is finite.
 export class Governor {
-  constructor(draw, clock = window) { this.draw = draw; this.clock = clock; this.frame = null; this.timer = null; this.dragging = false; this.suspended = false; }
-  invalidate() {
-    // A new update after release supersedes the delayed final pass.
-    if (!this.dragging) this.cancelTimer();
-    if (this.suspended || this.frame !== null) return;
-    this.frame = this.clock.requestAnimationFrame(() => { this.frame = null; if (!this.suspended) this.draw(this.dragging ? 'interactive' : 'final'); });
+  constructor(draw, clock = window) { this.draw=draw;this.clock=clock;this.frame=null;this.timer=null;this.dragging=false;this.suspended=false;this.stage=null;this.frameCount=0; }
+  invalidate(world=true) {
+    if(!this.dragging && world)this.cancelTimer();
+    if(world)this.stage=0;
+    if(this.suspended||this.frame!==null)return;
+    this.frame=this.clock.requestAnimationFrame(()=>this.tick());
   }
-  begin() { this.dragging = true; this.cancelTimer(); }
-  move() { if (this.dragging) this.invalidate(); }
-  end() {
-    if (!this.dragging) return;
-    this.dragging = false;
-    // Cancel any stale pending interactive frame; the settled frame will
-    // render the newest state after the debounce.
-    if (this.frame !== null) { this.clock.cancelAnimationFrame(this.frame); this.frame = null; }
-    this.cancelTimer();
-    this.timer = this.clock.setTimeout(() => { this.timer = null; this.invalidate(); }, 50);
+  tick(){
+    this.frame=null;if(this.suspended)return;this.frameCount++;
+    if(this.dragging){this.stage=null;this.draw('interactive',0);return;}
+    if(this.stage===null){this.draw('overlay',null);return;}
+    const batch=this.stage;
+    const keepGoing=this.draw('final',batch)!==false;
+    // A draw callback may suspend, restart, or otherwise invalidate work.
+    if(this.suspended||!keepGoing){this.stage=null;return;}
+    if(this.stage===batch)this.stage=batch===15?null:batch+1;
+    if(this.stage!==null && this.frame===null)this.frame=this.clock.requestAnimationFrame(()=>this.tick());
   }
-  cancelTimer() { if (this.timer !== null) { this.clock.clearTimeout(this.timer); this.timer = null; } }
-  suspend() { this.suspended = true; this.dragging = false; this.cancelTimer(); if (this.frame !== null) this.clock.cancelAnimationFrame(this.frame); this.frame = null; }
-  resume() { this.suspended = false; this.invalidate(); }
+  begin(){this.dragging=true;this.stage=null;this.cancelTimer();if(this.frame!==null){this.clock.cancelAnimationFrame(this.frame);this.frame=null;}}
+  move(){if(this.dragging)this.invalidate(true);}
+  end(){
+    if(!this.dragging)return;this.dragging=false;
+    if(this.frame!==null){this.clock.cancelAnimationFrame(this.frame);this.frame=null;}
+    this.stage=null;this.cancelTimer();
+    this.timer=this.clock.setTimeout(()=>{this.timer=null;this.invalidate(true);},50);
+  }
+  cancelTimer(){if(this.timer!==null){this.clock.clearTimeout(this.timer);this.timer=null;}}
+  suspend(){this.suspended=true;this.dragging=false;this.stage=null;this.cancelTimer();if(this.frame!==null)this.clock.cancelAnimationFrame(this.frame);this.frame=null;}
+  resume(){this.suspended=false;this.invalidate(true);}
 }
