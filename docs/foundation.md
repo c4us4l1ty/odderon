@@ -1,46 +1,80 @@
-# Foundation: first implementation slice
+# Work Package 0.1: core foundation
 
-This is an initial subset of Work Package 0.1, not a complete game or a completed
-coordinate kernel. `odd-core` is pure Rust and has no runtime dependencies. It
-contains split TDB epochs, defined astronomical constants, and local frame transformations, including instantaneous rotation and velocity. CI checks native tests, formatting, Clippy, and a WebAssembly build.
-`odd-astro` also provides an initial ideal two-body Hohmann transfer calculator.
-Its published [FreeFlyer worked example](https://ai-solutions.com/_freeflyeruniversityguide/hohmann_transfer.htm)
-is an independent rounded reference, not an ephemeris or high-fidelity simulation.
-A fixed-step velocity-Verlet propagator also models ideal two-body coasts. Tests
-compare against a circular analytic orbit, time reversal, energy conservation,
-and second-order step convergence. It does not yet pass the proposed high-fidelity
-NASA/J2 oracle gate or detect impacts between steps.
+`odd-core` implements the initial WP 0.1 foundation: SI quantity wrappers,
+split TDB epochs, explicit UTC conversion, epoch-stamped hierarchical local
+frames, coarse galactic anchors, one-way camera projection, and versioned
+postcard/SHA-256 fingerprints. It is a pure computational library: it has no
+clock reads, filesystem access, or network I/O. `odd-astro` additionally
+contains early, ideal two-body calculators and a velocity-Verlet propagator;
+these are not part of the WP 0.1 completion claim.
 
-## Scientific and engineering decisions
+The design proposals remain intact in [blueprint.md](../blueprint.md) and
+[ARCHITECTURE_LAWS.md](../ARCHITECTURE_LAWS.md). The clarification below is
+intentional where their numerical requirements contradict real precision or
+astronomical units.
 
-- Simulation time is TDB seconds since J2000.0 (JD 2451545.0 TDB), as in
+## Precision and frame contract
+
+- The 8,000-light-year test uses approximately **2,453 parsecs**, or 2,452,809
+  **milliparsecs**. The blueprint's 2,452,809 *parsecs* is a factor of 1,000
+  too large. The [IAU 2015 definition](https://www.iau.org/static/resolutions/IAU2015_English.pdf)
+  is 648,000/π astronomical units per parsec; the
+  [IAU 2012 astronomical unit](https://www.iau.org/static/resolutions/IAU2012_English.pdf)
+  and the Julian year fix the relevant conversion.
+- A `GalacticState` retains an integer milliparsec anchor and an f64 meter
+  residual. A milliparsec is approximately 3.09 × 10¹³ m, so an anchor alone is
+  not a precise stellar position. Catalog data must provide its residual,
+  epoch, uncertainty, and reference-frame metadata.
+- Local-to-local transforms go through their lowest common ancestor; a galactic
+  round trip retains a split anchor. The docking test shows sub-nanometer error
+  for the specified nearby sample at 8,000 ly. This is **not a universal
+  guarantee**: local f64 precision depends on distances to each frame origin,
+  and cross-system subtraction inevitably loses fine precision as separation
+  grows. Callers must choose suitable origins and accuracy budgets.
+- Camera f32 output is deliberately one-way. A general sub-nanometer round
+  trip through f32 cannot be guaranteed; tests demonstrate values that become
+  indistinguishable when rendered. Camera projections must not be fed back into
+  simulation state. Therefore the literal blueprint requirement to round-trip
+  arbitrary f32 camera positions to nanometer accuracy is not claimed.
+- Each tree is a snapshot at one TDB epoch. `KinematicTransform` accepts
+  caller-supplied origins, rotations, velocities, and angular velocities at that
+  epoch. Its velocity transport follows the
+  [NAIF rotation/angular-velocity relationship](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/IDL/icy/cspice_rav2xf.html).
+  The tree does **not** generate ephemerides or body orientation over time;
+  those are later work packages. Users must label and supply correct states.
+
+## Time and data contract
+
+- TDB is represented as integer seconds plus a normalized fractional second
+  since J2000.0 (JD 2451545.0 TDB), following
   [NAIF SPICE](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/FORTRAN/spicelib/str2et.html).
-  No UTC conversion is supplied: leap-second data and the TDB−TT correction are
-  both needed. A single floating-point Julian date also limits input precision.
-- The IAU-defined parsec is 648,000/π astronomical units, and a Julian year is
-  365.25 days; see [IAU Resolution B2 (2012)](https://www.iau.org/static/resolutions/IAU2012_English.pdf)
-  and [IAU Resolution B2 (2015)](https://www.iau.org/static/resolutions/IAU2015_English.pdf).
-  8,000 light-years is approximately **2,453 parsecs**, not 2,452,809 parsecs.
-- Integer milliparsecs are a **coarse anchor**, not an exact stellar position:
-  each step is about 3.09 × 10¹³ m. A future catalog must also retain residuals,
-  measurement uncertainty, epoch, and reference-frame metadata. Nearby
-  calculations must stay local; reconstructing and subtracting huge f64 global
-  coordinates will lose precision.
-- A rotating frame needs a velocity correction, not just a position rotation.
-  `KinematicTransform` uses the standard rotation-plus-angular-velocity transport
-  equation; see [NAIF RAV2XF](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/IDL/icy/cspice_rav2xf.html).
-  Its inputs are supplied at one epoch; it does not model Earth orientation.
-- f32 camera coordinates are a one-way rendering projection. They cannot in
-  general preserve a nanometer-level round trip. The docking test instead checks
-  a particular local f64 transform and separation; it is not a universal
-  precision guarantee. Even f64 local coordinates have magnitude-dependent
-  precision, so frame origins and acceptable error budgets matter.
+  A single f64 Julian date loses fine precision before it reaches the API.
+- UTC input supports Gregorian dates from 1972-01-01 through 2026-12-31,
+  including all historical positive leap seconds. Earlier and later dates
+  explicitly fail rather than guessing an offset. The snapshot uses NAIF
+  `naif0012.tls`, with no leap at the end of 2026 per
+  [IERS Bulletin C 72](https://hpiers.obspm.fr/iers/bul/bulc/bulletinc.72).
+  Update the table and coverage deliberately when new bulletins are published.
+- The NAIF periodic TT-to-TDB approximation has roughly 30 µs physical model
+  accuracy, not nanosecond accuracy. Tests include CSPICE N0067 reference values
+  for all 27 historical leap boundaries, plus the NAIF Cassini example.
+- SHA-256 hashes include a little-endian u16 schema version followed by postcard
+  bytes. **Only explicitly ordered, versioned schemas are canonical**: arbitrary
+  `Serialize` implementations, unordered maps, NaNs, and signed zero can yield
+  ambiguous or different encodings. Callers must validate and define their own
+  schema and float policy. A hash proves neither authorship nor real-world
+  validity.
 
-## Remaining work before WP 0.1 is complete
+## Verification and remaining scope
 
-Define and validate frame identity/tree, time-dependent rotation models, and
-cross-system residuals. Add robust epoch/calendar conversions
-with versioned leap-second and time-scale data, SI quantity types, versioned
-canonical serialization and hashing, additional independent reference cases,
-and native/Wasm replay-parity tests. The current crate should not be used as
-an ephemeris, navigation system, or flight-qualified software.
+GitHub CI runs native tests, Clippy, formatting, and wasm32 builds. A shared
+fixture checks the J2000, UTC, split-frame/docking, and hash cases and compares
+its byte-identical fingerprint in native Rust, Node WebAssembly, and headless
+Chrome WebAssembly. This directly exercises a browser instead of relying on a
+wasm build alone. Passing those fixtures is not a proof that all future physics
+or all browsers are bit-reproducible.
+
+No ephemeris, propagator fidelity beyond the separate two-body experiment,
+identity system, playable user interface, or real flight qualification is
+implied by WP 0.1. UTC coverage, source data, cross-system precision budgets,
+and richer physical models must be revisited in later packages.

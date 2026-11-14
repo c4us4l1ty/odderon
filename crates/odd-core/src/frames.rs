@@ -3,7 +3,8 @@
 //! A star's coarse catalog anchor is kept separate from local meter offsets.
 //! Perform nearby calculations in their shared frame rather than subtracting
 //! enormous global floating-point positions. This module does not yet provide
-//! a frame tree, cross-system transforms, time-dependent orientations, or ephemerides.
+//! time-dependent orientation models or ephemerides. A frame tree snapshot
+//! uses caller-supplied transforms and split galactic anchors.
 
 /// Coarse ICRS-aligned stellar anchor in integer milliparsecs relative to the
 /// Solar System barycenter. This is catalog indexing, not a precise location;

@@ -1,6 +1,6 @@
 //! Foundational simulation types. Distances are in meters and times in seconds.
 //!
-//! This crate does not yet model celestial ephemerides, orientations over time, or UTC.
+//! This crate does not yet model celestial ephemerides or orientations over time.
 //! No floating point rendering coordinates should be fed back into simulation state.
 
 pub mod canon;

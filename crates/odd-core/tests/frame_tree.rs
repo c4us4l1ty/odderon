@@ -112,3 +112,36 @@ fn crossing_systems_and_invalid_hierarchies() {
         Err(TreeError::EpochMismatch)
     );
 }
+
+#[test]
+fn rotated_sibling_frames_use_lowest_common_ancestor() {
+    let mut tree = sample_tree();
+    let rot = Rotation::new([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]).unwrap();
+    let fixed =
+        KinematicTransform::new([1.0, 2.0, 0.0], [3.0, 0.0, 0.0], rot, [0.0, 0.0, 2.0]).unwrap();
+    tree.add_frame(FrameId::BodyFixed(1), FrameId::BodyCentered(1), fixed)
+        .unwrap();
+    let start = FramedState {
+        frame: FrameId::BodyFixed(1),
+        epoch: Epoch::J2000,
+        state: State {
+            position_m: [3.0, 0.0, 0.0],
+            velocity_m_s: [0.0; 3],
+        },
+    };
+    let camera = tree.transform(start, FrameId::Camera(1)).unwrap();
+    assert_eq!(camera.state.position_m, [-19.0, -25.0, -40.0]);
+    assert_eq!(camera.state.velocity_m_s, [-3.0, 0.0, 0.0]);
+    assert_eq!(
+        tree.transform(camera, FrameId::BodyFixed(1)).unwrap(),
+        start
+    );
+}
+
+#[test]
+fn render_conversion_is_not_a_reversible_simulation_transform() {
+    // At 1 m the neighboring f32 spacing is roughly 1.19e-7 m.
+    let a = odd_core::frames::render_position([1.0, 0.0, 0.0]).unwrap();
+    let b = odd_core::frames::render_position([1.0 + 5e-8, 0.0, 0.0]).unwrap();
+    assert_eq!(a, b);
+}

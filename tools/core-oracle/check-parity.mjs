@@ -26,12 +26,14 @@ try {
   const chrome = process.env.CHROME_BIN || 'google-chrome';
   const proc = spawn(chrome, ['--headless', '--disable-gpu', '--no-sandbox', '--disable-dev-shm-usage', '--virtual-time-budget=10000', '--dump-dom', `http://127.0.0.1:${port}/`]);
   let stdout = '', stderr = '';
+  const timeout = setTimeout(() => proc.kill('SIGKILL'), 30_000);
   proc.stdout.on('data', chunk => stdout += chunk);
   proc.stderr.on('data', chunk => stderr += chunk);
   const result = await new Promise((resolveExit, reject) => {
     proc.on('error', reject);
     proc.on('close', code => resolveExit(code));
   });
+  clearTimeout(timeout);
   const match = stdout.match(/ODD_RESULT:([a-f0-9]{64})/);
   if (result !== 0 || !match || match[1] !== expected) throw new Error(`Chrome wasm parity failed (${result}): ${stdout}\n${stderr}`);
   console.log(`Native, Node and Chrome wasm fingerprints agree: ${expected}`);
