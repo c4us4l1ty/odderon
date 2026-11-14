@@ -86,16 +86,45 @@ fn analytical_coast_returns_after_period_and_supports_hyperbolas() {
 #[test]
 fn locked_prediction_is_separate_from_the_execution_score() {
     use odd_sim::mission::{apsides, score_rescue, LockedMission, PredictionBaseline};
-    let transfer = hohmann_transfer(MU,R,6_928_137.0).unwrap();
-    let second = 200_000_000 + libm::round(transfer.coast_time_s*1e6) as i64;
+    let transfer = hohmann_transfer(MU, R, 6_928_137.0).unwrap();
+    let second = 200_000_000 + libm::round(transfer.coast_time_s * 1e6) as i64;
     let end = second + 200_000_000;
-    let nodes = [ManeuverNode { epoch_us:200_000_000, tnw_m_s:[transfer.departure_delta_v_m_s,0.0,0.0] }, ManeuverNode { epoch_us:second, tnw_m_s:[transfer.arrival_delta_v_m_s,0.0,0.0] }];
-    let plan = Plan::compile(initial(),MU,end,1020.0,engine(),&nodes).unwrap();
+    let nodes = [
+        ManeuverNode {
+            epoch_us: 200_000_000,
+            tnw_m_s: [transfer.departure_delta_v_m_s, 0.0, 0.0],
+        },
+        ManeuverNode {
+            epoch_us: second,
+            tnw_m_s: [transfer.arrival_delta_v_m_s, 0.0, 0.0],
+        },
+    ];
+    let plan = Plan::compile(initial(), MU, end, 1020.0, engine(), &nodes).unwrap();
     let target = plan.sample(end).unwrap();
-    let a = apsides(target,MU,6_378_137.0).unwrap();
-    let prediction = PredictionBaseline { delta_v_m_s: plan.requested_delta_v_m_s, apoapsis_altitude_m:a.apoapsis_altitude_m, periapsis_altitude_m:a.periapsis_altitude_m, remaining_propellant_kg:target.mass-1020.0, time_of_flight_s:end as f64/1e6, target_miss_distance_m:None };
-    let lock = LockedMission::new(plan,prediction,1020.0).unwrap();
-    assert_eq!(lock.prediction(),prediction);
-    assert!(score_rescue(target,lock.dry_mass_kg(),end as f64/1e6,MU,6_378_137.0).unwrap()>0.99);
-    assert_eq!(score_rescue(target,1020.0,11_000.0,MU,6_378_137.0).unwrap(),0.0);
+    let a = apsides(target, MU, 6_378_137.0).unwrap();
+    let prediction = PredictionBaseline {
+        delta_v_m_s: plan.requested_delta_v_m_s,
+        apoapsis_altitude_m: a.apoapsis_altitude_m,
+        periapsis_altitude_m: a.periapsis_altitude_m,
+        remaining_propellant_kg: target.mass - 1020.0,
+        time_of_flight_s: end as f64 / 1e6,
+        target_miss_distance_m: None,
+    };
+    let lock = LockedMission::new(plan, prediction, 1020.0).unwrap();
+    assert_eq!(lock.prediction(), prediction);
+    assert!(
+        score_rescue(
+            target,
+            lock.dry_mass_kg(),
+            end as f64 / 1e6,
+            MU,
+            6_378_137.0
+        )
+        .unwrap()
+            > 0.99
+    );
+    assert_eq!(
+        score_rescue(target, 1020.0, 11_000.0, MU, 6_378_137.0).unwrap(),
+        0.0
+    );
 }
