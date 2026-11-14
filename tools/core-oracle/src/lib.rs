@@ -373,24 +373,57 @@ pub extern "C" fn analytical_integrator_oracle_byte(index: u32) -> u32 {
 /// Canonical integer command timeline for a two-node rescue plan.
 pub fn maneuver_fingerprint() -> [u8; 32] {
     use odd_astro::spline::Keyframe;
-    use odd_sim::{planner::{ManeuverNode, Plan}, CommandKind, Engine};
+    use odd_sim::{
+        planner::{ManeuverNode, Plan},
+        CommandKind, Engine,
+    };
     let initial = Keyframe {
         time: 0.0,
         position: [6_638_137.0, 0.0, 0.0],
         velocity: [0.0, 7749.104, 0.0],
         mass: 1200.0,
     };
-    let engine = Engine { thrust_newtons: 2400.0, specific_impulse_seconds: 310.0, stage: 0, engine: 0 };
+    let engine = Engine {
+        thrust_newtons: 2400.0,
+        specific_impulse_seconds: 310.0,
+        stage: 0,
+        engine: 0,
+    };
     let nodes = [
-        ManeuverNode { epoch_us: 200_000_000, tnw_m_s: [82.38547669, 0.0, 0.0] },
-        ManeuverNode { epoch_us: 2_979_885_241, tnw_m_s: [81.50942505, 0.0, 0.0] },
+        ManeuverNode {
+            epoch_us: 200_000_000,
+            tnw_m_s: [82.38547669, 0.0, 0.0],
+        },
+        ManeuverNode {
+            epoch_us: 2_979_885_241,
+            tnw_m_s: [81.50942505, 0.0, 0.0],
+        },
     ];
-    let plan = Plan::compile(initial, 3.986_004_418e14, 10_800_000_000, 1020.0, engine, &nodes).unwrap();
+    let plan = Plan::compile(
+        initial,
+        3.986_004_418e14,
+        10_800_000_000,
+        1020.0,
+        engine,
+        &nodes,
+    )
+    .unwrap();
     let mut values = Vec::new();
     for command in plan.timeline.commands() {
         values.push(command.t_us as u64);
-        let CommandKind::Burn { stage, engine, throttle_u16, dur_us, quat_i16 } = command.kind;
-        values.extend([u64::from(stage), u64::from(engine), u64::from(throttle_u16), dur_us as u64]);
+        let CommandKind::Burn {
+            stage,
+            engine,
+            throttle_u16,
+            dur_us,
+            quat_i16,
+        } = command.kind;
+        values.extend([
+            u64::from(stage),
+            u64::from(engine),
+            u64::from(throttle_u16),
+            dur_us as u64,
+        ]);
         values.extend(quat_i16.map(|q| q as i64 as u64));
     }
     canonical_hash(1, &values).unwrap()
@@ -399,5 +432,9 @@ pub fn maneuver_fingerprint() -> [u8; 32] {
 #[no_mangle]
 pub extern "C" fn maneuver_oracle_byte(index: u32) -> u32 {
     static FINGERPRINT: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
-    FINGERPRINT.get_or_init(maneuver_fingerprint).get(index as usize).copied().map_or(256, u32::from)
+    FINGERPRINT
+        .get_or_init(maneuver_fingerprint)
+        .get(index as usize)
+        .copied()
+        .map_or(256, u32::from)
 }
