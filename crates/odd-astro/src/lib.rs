@@ -4,6 +4,7 @@
 //! an ideal point-mass, two-body model without burns or perturbations. Neither
 //! model includes operational constraints. All inputs and outputs use SI units.
 
+pub mod anomaly;
 pub mod elements;
 pub mod propagation;
 
