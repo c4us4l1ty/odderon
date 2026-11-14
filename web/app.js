@@ -81,7 +81,7 @@ new ResizeObserver(()=>governor.invalidate()).observe(scene);
 function syncVisibility(){if(document.hidden||contextLost){pointer=null;governor.suspend();}else governor.resume();}
 document.addEventListener('visibilitychange',syncVisibility);
 canvas.addEventListener('webglcontextlost',event=>{event.preventDefault();contextLost=true;syncVisibility();showError('Graphics context lost. Waiting for the browser to restore it.');});
-canvas.addEventListener('webglcontextrestored',()=>{try{renderer.init();contextLost=false;error.hidden=true;syncVisibility();}catch(e){showError(`Could not restore graphics: ${e.message}`);}});
+canvas.addEventListener('webglcontextrestored',()=>{try{renderer.init();contextLost=false;if(wasm&&!snapshot)showError('Date outside the available ephemeris (2020–2035 TDB).');else error.hidden=true;syncVisibility();}catch(e){showError(`Could not restore graphics: ${e.message}`);}});
 if(document.hidden)governor.suspend();
 // Read-only diagnostics make the idle gate observable without creating a poller.
 window.odderonDiagnostics=Object.freeze({get draws(){return draws;},get pendingFrame(){return governor.frame!==null;},get pendingTimer(){return governor.timer!==null;},get quality(){return $('render-status').textContent;},get circles(){if(!snapshot)return null;const g=geometry();return {earth:[...g.earth],moon:[...g.moon]};}});

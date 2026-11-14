@@ -58,7 +58,7 @@ try{
   assert.equal(glResult.error,0,'WebGL error');assert.ok(glResult.w>200&&glResult.h>200);
   if(process.env.ODDERON_SCREENSHOT)await page.screenshot({path:process.env.ODDERON_SCREENSHOT,fullPage:true});
   const ext=await page.locator('#world').evaluate(c=>{window.testLoseContext=c.getContext('webgl2').getExtension('WEBGL_lose_context');return !!window.testLoseContext;});
-  if(ext){await page.locator('#world').evaluate(c=>window.testLoseContext.loseContext());await page.waitForFunction(()=>!document.getElementById('error').hidden);await page.locator('#world').evaluate(c=>window.testLoseContext.restoreContext());await page.waitForFunction(()=>document.getElementById('error').hidden,{timeout:10000});}
+  if(ext){await page.locator('#world').evaluate(c=>window.testLoseContext.loseContext());await page.waitForFunction(()=>!document.getElementById('error').hidden);await page.locator('#date').fill('2019-01-01');await page.locator('#date').dispatchEvent('change');await page.locator('#world').evaluate(c=>window.testLoseContext.restoreContext());await page.waitForFunction(()=>document.getElementById('error').textContent.includes('Date outside'),{timeout:10000});await page.locator('#today-reset').click();await page.waitForFunction(()=>document.getElementById('error').hidden,{timeout:10000});}
   await page.setViewportSize({width:390,height:844});await page.waitForTimeout(300);assert.equal(await page.locator('#error').isHidden(),true);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'mobile horizontal overflow');
   assert.deepEqual(errors,[]);console.log('Browser viewport, interactions, bounds, WebGL and responsive layout passed.');
