@@ -82,7 +82,7 @@ try{
   const initialSize=await page.locator('#world').evaluate(c=>({width:c.width,css:c.getBoundingClientRect().width}));
   const beforeDensity=await page.evaluate(()=>odderonDiagnostics.draws);
   await cdp.send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:2,mobile:false});
-  await page.waitForFunction(n=>odderonDiagnostics.draws>n,beforeDensity,{timeout:10000});
+  try{await page.waitForFunction(n=>odderonDiagnostics.draws>n,beforeDensity,{timeout:10000});}catch(e){console.error('DPR diagnostic',await page.evaluate(()=>({dpr:devicePixelRatio,oldQuery:matchMedia('(resolution: 1dppx)').matches,newQuery:matchMedia('(resolution: 2dppx)').matches,hidden:document.hidden,error:document.getElementById('error').textContent})));throw e;}
   const denseSize=await page.locator('#world').evaluate(c=>({width:c.width,css:c.getBoundingClientRect().width}));
   assert.equal(denseSize.css,initialSize.css);assert.ok(denseSize.width>initialSize.width,'DPR change did not resize the world canvas');
   const beforeRestoreDensity=await page.evaluate(()=>odderonDiagnostics.draws);
