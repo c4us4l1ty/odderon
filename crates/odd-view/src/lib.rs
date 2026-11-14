@@ -372,6 +372,21 @@ mod orbit_tests {
 // Worker-only numerical trajectory cache. Each WebAssembly instance owns its
 // own cache, so propagation never blocks the UI's rendering instance.
 static TRAJECTORY: Mutex<Option<odd_astro::spline::TrajectorySpline>> = Mutex::new(None);
+static TRAJECTORY_BURN: Mutex<Option<odd_astro::perturb::burn::Burn>> = Mutex::new(None);
+
+/// Configure one constant inertial finite burn for the next trajectory load.
+/// Times are relative to the trajectory epoch; force is newtons and Isp seconds.
+#[no_mangle]
+pub extern "C" fn trajectory_burn(start:f64,end:f64,fx:f64,fy:f64,fz:f64,isp:f64) -> i32 {
+    let mut burn=TRAJECTORY_BURN.lock().unwrap();
+    *burn=None;
+    let value=odd_astro::perturb::burn::Burn{start,end,force_newtons:[fx,fy,fz],specific_impulse_seconds:isp};
+    if value.acceleration_and_mass_rate(start,1.0).is_err() {return 0;}
+    *burn=Some(value);1
+}
+
+#[no_mangle]
+pub extern "C" fn trajectory_clear_burn() { *TRAJECTORY_BURN.lock().unwrap()=None; }
 
 /// Propagate an Earth-centered example with J2, Moon, Sun, co-rotating drag
 /// and SRP. `epoch` is integer TDB seconds after J2000; time in the cache is
@@ -433,7 +448,7 @@ pub extern "C" fn trajectory_load(
             central_radius: 6_378_137.0,
         }),
         third_body: true,
-        burn: None,
+        burn: *TRAJECTORY_BURN.lock().unwrap(),
     };
     let initial = Keyframe {
         time: 0.0,

@@ -30,9 +30,10 @@ function loadDate(){
 }
 // Accept caller-supplied real inertial state in SI units; this is a conic, not
 // numerical propagation. A failed update clears stale orbit geometry.
-function setOrbit(state,mu,soi=149_598_023_000*(3.986004418e14/1.3271244004127942e20)**0.4){
+function setOrbit(state,mu,soi=149_598_023_000*(3.986004418e14/1.3271244004127942e20)**0.4,simulation={}){
   if(trajectoryWorker){trajectoryWorker.terminate();trajectoryWorker=null;}
   activeOrbit=null;invalidateWorld();
+  if(!simulation||typeof simulation!=='object')return false;
   if(!wasm||!state||!Array.isArray(state.position)||!Array.isArray(state.velocity)||state.position.length!==3||state.velocity.length!==3)return false;
   if(!(soi===null?wasm.orbit_load(mu,...state.position,...state.velocity):wasm.orbit_load_soi(mu,...state.position,...state.velocity,soi)))return false;
   const count=wasm.orbit_value(0),points=[];
@@ -40,23 +41,23 @@ function setOrbit(state,mu,soi=149_598_023_000*(3.986004418e14/1.327124400412794
   const markers=[];for(let i=0;i<6;i++){const index=541+4*i;if(wasm.orbit_value(index))markers.push({name:['PE','AP','AN','DN','SOI IN','SOI OUT'][i],pos:[wasm.orbit_value(index+1),wasm.orbit_value(index+2),wasm.orbit_value(index+3)]});}
   const position=state.position.map(Number), maxRadius=Math.max(Math.hypot(...position),...points.map(p=>Math.hypot(...p)),...markers.map(m=>Math.hypot(...m.pos)));
   if(!Number.isFinite(maxRadius)||!Number.isFinite(maxRadius*2.2))return false;
-  activeOrbit={points,markers,closed:count>0,position,velocity:state.velocity.map(Number),mu,maxRadius,perturbed:null};invalidateWorld();if($('show-orbit').checked)startTrajectory();return true;
+  activeOrbit={points,markers,closed:count>0,position,velocity:state.velocity.map(Number),mu,maxRadius,perturbed:null,simulation};invalidateWorld();if($('show-orbit').checked)startTrajectory();return true;
 }
 window.odderonSetOrbit=setOrbit;
 function startTrajectory(){
   if(trajectoryWorker){trajectoryWorker.terminate();trajectoryWorker=null;}
   if(!snapshot||!activeOrbit||!$('show-orbit').checked)return;
-  const orbit=activeOrbit;orbit.perturbed=null;invalidateOverlay();
+  const orbit=activeOrbit;orbit.perturbed=null;orbit.finalMass=null;invalidateOverlay();
   const worker=new Worker('./trajectory-worker.js',{type:'module'});trajectoryWorker=worker;
   worker.onmessage=({data})=>{if(trajectoryWorker!==worker)return;worker.terminate();trajectoryWorker=null;
     if(activeOrbit!==orbit)return;
     if(data.error){$('trajectory-status').textContent=data.error;return;}
-    orbit.perturbed=data.points;orbit.maxRadius=Math.max(orbit.maxRadius,...data.points.map(p=>Math.hypot(...p)));
-    $('trajectory-status').textContent='L3 · 24 HOUR MODEL';invalidateWorld();
+    orbit.perturbed=data.points;orbit.finalMass=data.finalMass;orbit.maxRadius=Math.max(orbit.maxRadius,...data.points.map(p=>Math.hypot(...p)));
+    $('trajectory-status').textContent=`L3 · ${orbit.simulation.duration??86400} SECOND MODEL`;invalidateWorld();
   };
   worker.onerror=()=>{if(trajectoryWorker!==worker)return;worker.terminate();trajectoryWorker=null;$('trajectory-status').textContent='Trajectory worker failed.';};
   $('trajectory-status').textContent='CALCULATING L3…';
-  worker.postMessage({epoch:snapshot.seconds,duration:86400,mu:orbit.mu,position:orbit.position,velocity:orbit.velocity,mass:500});
+  worker.postMessage({epoch:snapshot.seconds,duration:orbit.simulation.duration??86400,mu:orbit.mu,position:orbit.position,velocity:orbit.velocity,mass:orbit.simulation.mass??500,burn:orbit.simulation.burn??null});
 }
 
 function geometry(){
@@ -150,7 +151,7 @@ canvas.addEventListener('webglcontextlost',event=>{event.preventDefault();contex
 canvas.addEventListener('webglcontextrestored',()=>{try{renderer.init();worldDirty=true;overlayDirty=true;lastQuality=null;contextLost=false;if(wasm&&!snapshot)showError('Date outside the available ephemeris (2020–2035 TDB).');else error.hidden=true;syncVisibility();}catch(e){showError(`Could not restore graphics: ${e.message}`);}});
 if(document.hidden)governor.suspend();
 // Read-only diagnostics make the idle gate observable without creating a poller.
-window.odderonDiagnostics=Object.freeze({get draws(){return draws;},get frameCount(){return governor.frameCount;},get trajectory(){return {samples:activeOrbit?.perturbed?.length??0,pending:!!trajectoryWorker};},get orbitProjection(){return snapshot&&activeOrbit?geometry().project(activeOrbit.position):null;},get orbit(){return activeOrbit?{samples:activeOrbit.points.length,closed:activeOrbit.closed,markers:activeOrbit.markers.map(m=>m.name)}:null;},get overlayDraws(){return overlayDraws;},get pendingFrame(){return governor.frame!==null;},get quality(){return $('render-status').textContent;},get circles(){if(!snapshot)return null;const g=geometry();return {earth:[...g.earth],moon:[...g.moon]};}});
+window.odderonDiagnostics=Object.freeze({get draws(){return draws;},get frameCount(){return governor.frameCount;},get trajectory(){return {samples:activeOrbit?.perturbed?.length??0,pending:!!trajectoryWorker,finalMass:activeOrbit?.finalMass??null};},get orbitProjection(){return snapshot&&activeOrbit?geometry().project(activeOrbit.position):null;},get orbit(){return activeOrbit?{samples:activeOrbit.points.length,closed:activeOrbit.closed,markers:activeOrbit.markers.map(m=>m.name)}:null;},get overlayDraws(){return overlayDraws;},get pendingFrame(){return governor.frame!==null;},get quality(){return $('render-status').textContent;},get circles(){if(!snapshot)return null;const g=geometry();return {earth:[...g.earth],moon:[...g.moon]};}});
 try {
   renderer=new Renderer(canvas);
   const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error(`Ephemeris module not found (${response.status}). Build the browser app first.`);

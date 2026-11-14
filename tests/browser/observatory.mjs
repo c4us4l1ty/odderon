@@ -93,11 +93,16 @@ try{
   await page.waitForFunction(()=>odderonDiagnostics.quality.includes('RESTING')&&!odderonDiagnostics.pendingFrame,null,{timeout:60000});
   assert.equal(await page.evaluate(()=>odderonDiagnostics.orbit.samples),180);
   await page.waitForFunction(()=>odderonDiagnostics.trajectory.samples===241&&!odderonDiagnostics.trajectory.pending,null,{timeout:120000});
-  assert.match(await page.locator('#trajectory-status').textContent(),/24 HOUR MODEL/);
+  assert.match(await page.locator('#trajectory-status').textContent(),/86400 SECOND MODEL/);
   await page.waitForFunction(()=>odderonDiagnostics.quality.includes('RESTING')&&!odderonDiagnostics.pendingFrame,null,{timeout:60000});
   const afterWorker=await page.evaluate(()=>({frames:window.testFrameCallbacks,messages:window.testWorkerMessages}));
   await page.waitForTimeout(2000);
   assert.deepEqual(await page.evaluate(()=>({frames:window.testFrameCallbacks,messages:window.testWorkerMessages})),afterWorker,'trajectory completion must return to idle');
+  const startedBurn=await page.evaluate(()=>odderonSetOrbit({position:[7e6,0,0],velocity:[0,7600,2000]},3.986004418e14,null,{duration:2400,mass:500,burn:{start:1200,end:1260,force:[0,5,0],isp:450}}));
+  assert.equal(startedBurn,true);
+  await page.waitForFunction(()=>odderonDiagnostics.trajectory.samples===241&&!odderonDiagnostics.trajectory.pending,null,{timeout:120000});
+  const finalMass=await page.evaluate(()=>odderonDiagnostics.trajectory.finalMass);
+  assert.ok(Math.abs(finalMass-(500-300/(450*9.80665)))<1e-8,'worker burn mass must honor exact duration');
   const fit=await page.evaluate(()=>{
     const radius=2e8,mu=3.986004418e14;
     const accepted=window.odderonSetOrbit({position:[radius,0,0],velocity:[0,Math.sqrt(mu/radius),0]},mu);

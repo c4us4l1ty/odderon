@@ -13,8 +13,11 @@ step ending at an event evaluates the left limit and the next step the right.
 The browser's comparison example is Earth-centered in J2000, with a 500 kg
 spacecraft, 4 m² drag/SRP area, Cd 2.2 and Cr 1.3. It integrates 24 hours on a
 short-lived worker using the bundled ephemeris; it displays a dashed cyan ideal
-conic and a gold perturbed path. The browser example has no burn configured;
-Rust callers can supply one. The model uses the J2000 z-axis as an approximate
+conic and a gold perturbed path. The browser default has no burn configured. Callers can pass a fourth argument to
+`odderonSetOrbit`: `{duration, mass, burn: {start, end, force, isp}}`, where
+burn times are relative seconds, force is an inertial newton vector and Isp is
+seconds. The configurable duration is at most 10 days. Rust callers can also
+supply a burn. The model uses the J2000 z-axis as an approximate
 Earth pole and a constant rotation rate, not observed Earth orientation data.
 Changing the date or input cancels the old worker, and failures clear the
 computed path. The API permits other force configurations, but the current

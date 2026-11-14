@@ -258,14 +258,16 @@ mod tests {
             Ok((r.map(|x| f * x), 0.0))
         })
         .unwrap();
-        let s = trajectory.sample(10.0 * period).unwrap();
         let energy = |k: Keyframe| {
             let r = libm::sqrt(k.position.iter().map(|x| x * x).sum::<f64>());
             k.velocity.iter().map(|x| x * x).sum::<f64>() * 0.5 - mu / r
         };
         let angular = |k: Keyframe| k.position[0] * k.velocity[1] - k.position[1] * k.velocity[0];
-        assert!((energy(s) / energy(initial) - 1.0).abs() < 1e-9);
-        assert!((angular(s) / angular(initial) - 1.0).abs() < 1e-9);
+        for index in 0..trajectory.len() {
+            let s=trajectory.keyframe(index).unwrap();
+            assert!((energy(s) / energy(initial) - 1.0).abs() < 1e-9);
+            assert!((angular(s) / angular(initial) - 1.0).abs() < 1e-9);
+        }
     }
     #[test]
     fn event_splits_force_and_mass_rate() {
