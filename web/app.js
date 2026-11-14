@@ -55,14 +55,15 @@ function drawOverlay(model,rect){
     const angle=Math.atan2(to[1]-from[1],to[0]-from[0]);
     ctx.strokeStyle='#e1bd78';ctx.fillStyle='#e1bd78';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(...from);ctx.lineTo(...to);ctx.stroke();
     ctx.beginPath();ctx.moveTo(...to);ctx.lineTo(to[0]-8*Math.cos(angle-.45),to[1]-8*Math.sin(angle-.45));ctx.lineTo(to[0]-8*Math.cos(angle+.45),to[1]-8*Math.sin(angle+.45));ctx.closePath();ctx.fill();
-    ctx.font='10px system-ui';ctx.fillText('VELOCITY DIRECTION · 1 DAY AT CURRENT SPEED',20,rect.height-(model.vehicle?62:45));
+    ctx.font='10px system-ui';ctx.fillText('VELOCITY · 1 DAY AT CURRENT SPEED',20,rect.height-(model.vehicle?62:45));
   }
   if(model.vehicle){ctx.fillStyle='#d5bb80';ctx.font='10px system-ui';ctx.fillText('VEHICLE STUDY · NOT A SIMULATED MISSION',20,rect.height-45);}
   function label(body,name,detail){
-    const [x,y]=pixel(body),radius=body[2]*rect.height/2, tx=x+radius+16,ty=y-radius*.22;
+    const [x,y]=pixel(body),radius=body[2]*rect.height/2;
     if(x < -radius||x>rect.width+radius||y < -radius||y>rect.height+radius)return;
-    ctx.strokeStyle='rgba(205,223,203,.55)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x+radius*.76,y-radius*.3);ctx.lineTo(tx-5,ty);ctx.stroke();
-    ctx.font='700 10px system-ui';ctx.letterSpacing='1.2px';ctx.fillStyle='#dce8d5';ctx.fillText(name,tx,ty-3);ctx.font='10px system-ui';ctx.letterSpacing='0px';ctx.fillStyle='#91a89a';ctx.fillText(detail,tx,ty+11);
+    const side=x+radius+140>rect.width?-1:1, tx=x+side*(radius+16),ty=Math.max(42,Math.min(rect.height-40,y-radius*.22));
+    ctx.textAlign=side===1?'left':'right';ctx.strokeStyle='rgba(205,223,203,.55)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x+side*radius*.76,y-radius*.3);ctx.lineTo(tx-side*5,ty);ctx.stroke();
+    ctx.font='700 10px system-ui';ctx.letterSpacing='1.2px';ctx.fillStyle='#dce8d5';ctx.fillText(name,tx,ty-3);ctx.font='10px system-ui';ctx.letterSpacing='0px';ctx.fillStyle='#91a89a';ctx.fillText(detail,tx,ty+11);ctx.textAlign='left';
   }
   label(model.earth,'EARTH','Our home');label(model.moon,'MOON','Natural satellite');
 }
