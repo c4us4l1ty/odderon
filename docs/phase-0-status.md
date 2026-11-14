@@ -18,9 +18,9 @@ performance on every device, or a waiver of scientific accuracy in later work.
   especially across distant systems. Catalog residuals and frame metadata are
   still required. The original proposal's 2,452,809 parsecs for 8,000 light-years
   is a unit error: it should be approximately 2,452,809 milliparsecs.
-- UTC conversion is bounded through 2026-12-31 and requires a deliberate
-  leap-second data update for later dates. See [foundation.md](foundation.md)
-  for the complete contract and scientific limitations.
+- UTC conversion now extrapolates the fixed leap table outside its historical
+  range. The assumed 10 s before 1972 and 37 s after 2017 are not historical
+  or future truth. See [foundation.md](foundation.md) for the contract.
 
 ## 0.2: Earth–Moon ephemeris foundation
 

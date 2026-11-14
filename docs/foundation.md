@@ -33,7 +33,9 @@ astronomical units.
   guarantee**: rotations use f64 products, local states are eventually rounded
   to one f64, and cross-system anchor conversion loses fine precision as
   separation grows. Callers must choose suitable origins and accuracy budgets.
-- Camera f32 output is deliberately one-way. A general sub-nanometer round
+- Camera frames are rendering sinks: simulation transforms reject camera
+  states; `project_to_camera` projects through the LCA to f32.
+  Camera f32 output is deliberately one-way. A general sub-nanometer round
   trip through f32 cannot be guaranteed; tests demonstrate values that become
   indistinguishable when rendered. Camera projections must not be fed back into
   simulation state. Therefore the literal blueprint requirement to round-trip
@@ -52,12 +54,11 @@ astronomical units.
   [NAIF SPICE](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/FORTRAN/spicelib/str2et.html).
   A single f64 Julian date loses fine precision before it reaches the API; a
   two-part Julian date constructor is available for more precise input.
-- UTC input supports Gregorian dates from 1972-01-01 through 2026-12-31,
-  including all historical positive leap seconds. Earlier and later dates
-  explicitly fail rather than guessing an offset. The snapshot uses NAIF
-  `naif0012.tls`, with no leap at the end of 2026 per
-  [IERS Bulletin C 72](https://hpiers.obspm.fr/iers/bul/bulc/bulletinc.72).
-  Update the table and coverage deliberately when new bulletins are published.
+- UTC uses a proleptic Gregorian calendar with astronomical year numbering and
+  the NAIF `naif0012.tls` positive-leap table. Before 1972 it assumes 10 s
+  TAI−UTC; after 2017 it assumes 37 s. These are **extrapolations**, not
+  historically correct pre-1972 UTC or predictions of future leap seconds.
+  Update the table deliberately when new IERS bulletins are published.
 - The NAIF periodic TT-to-TDB approximation has roughly 30 µs physical model
   accuracy, not nanosecond accuracy. Tests include CSPICE N0067 reference values
   for all 27 historical leap boundaries, plus the NAIF Cassini example.

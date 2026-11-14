@@ -35,6 +35,12 @@ used for the undefined angle. Radial motion has no orbital plane and returns an
 error. Invalid, nonfinite, unrepresentable or physically inaccessible inputs
 return errors instead of deliberately returning NaNs.
 
+`ModifiedEquinoctialElements` provides direct Cartesian conversions in the
+posigrade Walker chart, avoiding circular and prograde-equatorial singularities.
+Its h/k parameters are singular at exactly 180° inclination; use the classical
+or Cartesian representation there. Floating-point conditioning worsens near
+that limit. This is not an arbitrary-precision conversion.
+
 Near a parabola, the sign and magnitude of `a`, and near-singular classical
 angles, can be extremely sensitive to state errors and floating-point
 roundoff. Even a state mathematically on a parabola can produce an eccentricity
