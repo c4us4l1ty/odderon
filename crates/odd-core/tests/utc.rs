@@ -14,10 +14,11 @@ fn utc(y: i32, m: u8, d: u8, h: u8, min: u8, s: u8) -> UtcDateTime {
 
 #[test]
 fn naif_cassini_reference() {
-    // NAIF WebGeocalc reference: 140254384.184620 TDB seconds past J2000.
-    // https://naif.jpl.nasa.gov/naif/lessons_wgc_r2.html
+    // CSPICE N0067 with naif0012.tls, 2004 JUN 11 19:32:00 UTC.
+    // NAIF WGC lesson prints 140254384.184620 with a different kernel;
+    // naif0012.tls produces 140254384.184625208.
     let et = utc(2004, 6, 11, 19, 32, 0).to_tdb().unwrap();
-    assert!((et.seconds() as f64 + et.fraction() - 140_254_384.184_620).abs() < 0.000_001);
+    assert!((et.seconds() as f64 + et.fraction() - 140_254_384.184_625_2).abs() < 0.000_001);
 }
 
 #[test]
