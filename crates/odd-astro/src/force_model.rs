@@ -95,8 +95,14 @@ impl ForceModel {
                     let central = r.map(|x| -x);
                     let companion = std::array::from_fn(|i| env.companion.position[i] - r[i]);
                     let visible = srp::illumination_two(
-                        sun, env.sun.radius, central, s.central_radius, companion, env.companion.radius,
-                    ).map_err(|_| IntegrationError::ForceFailure)?;
+                        sun,
+                        env.sun.radius,
+                        central,
+                        s.central_radius,
+                        companion,
+                        env.companion.radius,
+                    )
+                    .map_err(|_| IntegrationError::ForceFailure)?;
                     add(srp::acceleration(sun, s.cr, s.area, m, visible)
                         .map_err(|_| IntegrationError::ForceFailure)?);
                 }

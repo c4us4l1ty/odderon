@@ -288,13 +288,26 @@ mod tests {
     fn rounded_step_landing_uses_actual_interval_and_left_limit() {
         let t = 4_503_599_627_370_496.0;
         let boundary = t + 1.0;
-        let initial = Keyframe { time: t, position: [0.0; 3], velocity: [0.0; 3], mass: 1.0 };
+        let initial = Keyframe {
+            time: t,
+            position: [0.0; 3],
+            velocity: [0.0; 3],
+            mass: 1.0,
+        };
         let mut o = options();
         o.initial_step = 0.75;
         o.max_step = 1.0;
         let out = integrate(initial, boundary, &[boundary], o, |time, _, _, _| {
-            Ok((if time < boundary { [1.0, 0.0, 0.0] } else { [0.0; 3] }, 0.0))
-        }).unwrap();
+            Ok((
+                if time < boundary {
+                    [1.0, 0.0, 0.0]
+                } else {
+                    [0.0; 3]
+                },
+                0.0,
+            ))
+        })
+        .unwrap();
         let end = out.sample(boundary).unwrap();
         assert!((end.velocity[0] - 1.0).abs() < 1e-12);
         assert!((end.position[0] - 0.5).abs() < 1e-12);

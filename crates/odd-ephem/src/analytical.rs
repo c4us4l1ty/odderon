@@ -478,8 +478,10 @@ fn planet(index: usize, t: f64) -> [f64; 3] {
         el[5] * RAD,
     );
     let q = extra[3] * RAD * t;
-    let mean = ((long - el[4] + extra[0] * t * t + extra[1] * libm::cos(q) + extra[2] * libm::sin(q)) * RAD)
-        .rem_euclid(2.0 * PI);
+    let mean =
+        ((long - el[4] + extra[0] * t * t + extra[1] * libm::cos(q) + extra[2] * libm::sin(q))
+            * RAD)
+            .rem_euclid(2.0 * PI);
     let mut ecc = mean;
     for _ in 0..6 {
         ecc -= (ecc - e * libm::sin(ecc) - mean) / (1.0 - e * libm::cos(ecc));

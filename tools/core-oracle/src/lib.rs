@@ -352,12 +352,20 @@ pub extern "C" fn integrator_oracle_byte(index: u32) -> u32 {
 #[no_mangle]
 pub extern "C" fn blended_integrator_oracle_byte(index: u32) -> u32 {
     static FINGERPRINT: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
-    FINGERPRINT.get_or_init(blended_integrator_fingerprint).get(index as usize).copied().map_or(256, u32::from)
+    FINGERPRINT
+        .get_or_init(blended_integrator_fingerprint)
+        .get(index as usize)
+        .copied()
+        .map_or(256, u32::from)
 }
 
 #[cfg(target_arch = "wasm32")]
 #[no_mangle]
 pub extern "C" fn analytical_integrator_oracle_byte(index: u32) -> u32 {
     static FINGERPRINT: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
-    FINGERPRINT.get_or_init(analytical_integrator_fingerprint).get(index as usize).copied().map_or(256, u32::from)
+    FINGERPRINT
+        .get_or_init(analytical_integrator_fingerprint)
+        .get(index as usize)
+        .copied()
+        .map_or(256, u32::from)
 }
