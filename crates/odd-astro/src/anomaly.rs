@@ -221,16 +221,32 @@ pub fn elliptic_from_mean(e: f64, mean: f64) -> Result<f64, AnomalyError> {
     Err(AnomalyError::NoConvergence)
 }
 
+// The half-angle forms avoid subtracting cos(E)-e near periapsis when
+// eccentricity approaches one. Scale tiny subnormal angles before halving.
+fn elliptic_angle(value: f64, numerator: f64, denominator: f64) -> Result<f64, AnomalyError> {
+    let v = principal(value);
+    let scale = numerator / denominator;
+    let result = if v.abs() < 1e-160 {
+        scale * v
+    } else {
+        let (s, c) = (0.5 * v).sin_cos();
+        2.0 * (numerator * s).atan2(denominator * c)
+    };
+    if result.is_finite() && (result != 0.0 || v == 0.0) {
+        Ok(result)
+    } else {
+        Err(AnomalyError::NumericalRange)
+    }
+}
+
 /// Eccentric anomaly E from true anomaly, in [-π, π].
 pub fn elliptic_from_true(e: f64, true_anomaly_rad: f64) -> Result<f64, AnomalyError> {
     validate_ellipse(e, true_anomaly_rad)?;
-    let (s, c) = true_anomaly_rad.sin_cos();
-    Ok(((1.0 - e).sqrt() * (1.0 + e).sqrt() * s).atan2(e + c))
+    elliptic_angle(true_anomaly_rad, (1.0 - e).sqrt(), (1.0 + e).sqrt())
 }
 
 /// True anomaly from eccentric anomaly E, in [-π, π].
 pub fn true_from_elliptic(e: f64, anomaly: f64) -> Result<f64, AnomalyError> {
     validate_ellipse(e, anomaly)?;
-    let (s, c) = anomaly.sin_cos();
-    Ok(((1.0 - e).sqrt() * (1.0 + e).sqrt() * s).atan2(c - e))
+    elliptic_angle(anomaly, (1.0 + e).sqrt(), (1.0 - e).sqrt())
 }

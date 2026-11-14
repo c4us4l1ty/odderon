@@ -118,6 +118,8 @@ pub fn fingerprint() -> [u8; 32] {
         assert!((round_trip.position_m[i] - orbit_state.position_m[i]).abs() < 1e-5);
         assert!((round_trip.velocity_m_s[i] - orbit_state.velocity_m_s[i]).abs() < 1e-8);
     }
+    let near_parabolic = odd_astro::anomaly::true_from_elliptic(1.0 - f64::EPSILON, 1e-8).unwrap();
+    assert!((near_parabolic - 0.886_131_745_558_101_2).abs() < 1e-14);
     let anomaly = odd_astro::anomaly::hyperbolic_from_mean(2.0, 1.350_402_387_287_602_8).unwrap();
     assert!((anomaly - 1.0).abs() < 1e-12);
     let values = [

@@ -129,3 +129,25 @@ fn hyperbolic_tiny_angles_remain_representable() {
     let recovered = hyperbolic_from_true(e, nu).unwrap();
     assert_eq!(recovered, f);
 }
+
+#[test]
+fn near_parabolic_elliptic_anomalies_avoid_cancellation() {
+    use odd_astro::anomaly::{elliptic_from_true, true_from_elliptic};
+    // 80-digit mpmath half-angle calculation, with the exact binary64 e.
+    let e = 1.0 - f64::EPSILON;
+    for (eccentric, expected_true) in [
+        (1e-8, 0.886_131_745_558_101_2),
+        (1e-9, 0.094_835_125_079_021),
+        (1e-7, 2.726_202_012_841_388),
+    ] {
+        let result = true_from_elliptic(e, eccentric).unwrap();
+        near(result, expected_true, 1e-15);
+        near(elliptic_from_true(e, result).unwrap(), eccentric, 1e-22);
+    }
+    let smallest = f64::from_bits(1);
+    assert!(true_from_elliptic(e, smallest).unwrap() > 0.0);
+    assert_eq!(
+        elliptic_from_true(e, smallest),
+        Err(AnomalyError::NumericalRange)
+    );
+}
