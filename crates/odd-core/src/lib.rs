@@ -7,5 +7,6 @@ pub mod canon;
 pub mod consts;
 pub mod epoch;
 pub mod frames;
+pub mod fmt;
 pub mod units;
 pub mod utc;

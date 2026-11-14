@@ -28,7 +28,8 @@ astronomical units.
 - Local-to-local transforms go through their lowest common ancestor; a galactic
   round trip retains the anchor and a compensated two-term position. This avoids
   erasing docking-scale offsets when adding stellar residuals and AU-scale body
-  origins. The test includes both at 8,000 ly. This is **not a universal
+  origins, using compensated summation based on [TwoSum](https://www.tuhh.de/ti3/paper/rump/OgRuOi05.pdf).
+  The test includes both at 8,000 ly. This is **not a universal
   guarantee**: rotations use f64 products, local states are eventually rounded
   to one f64, and cross-system anchor conversion loses fine precision as
   separation grows. Callers must choose suitable origins and accuracy budgets.
@@ -64,7 +65,8 @@ astronomical units.
   bytes. **Only explicitly ordered, versioned schemas are canonical**: arbitrary
   `Serialize` implementations, unordered maps, NaNs, and signed zero can yield
   ambiguous or different encodings. Callers must validate and define their own
-  schema and float policy. `CanonicalValue` provides an ordered-map and finite
+  schema and float policy; schemas also need distinct version/domain policies to
+  prevent cross-schema ambiguity. `CanonicalValue` provides an ordered-map and finite
   float building block, but does not normalize Unicode or verify an arbitrary
   schema. A hash proves neither authorship nor real-world validity.
 

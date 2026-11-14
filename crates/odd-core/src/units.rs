@@ -59,3 +59,7 @@ si_quantity!(
     /// Speed in meters per second.
     MetersPerSecond
 );
+si_quantity!(
+    /// Angular velocity in radians per second.
+    RadiansPerSecond
+);

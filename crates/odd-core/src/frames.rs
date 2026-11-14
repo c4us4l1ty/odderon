@@ -489,8 +489,9 @@ impl SplitPosition {
         }
     }
 
-    // Error-free TwoSum for finite, non-overflowing addition, followed by
-    // renormalization of the two-term expansion.
+    // Knuth TwoSum for finite, non-overflowing addition, followed by
+    // renormalization of the two-term expansion. See Ogita, Rump & Oishi
+    // (2005), Algorithm 3.1: https://www.tuhh.de/ti3/paper/rump/OgRuOi05.pdf
     fn add_component(&mut self, i: usize, value: f64) -> Result<(), TreeError> {
         let (sum, error) = two_sum(self.high[i], value);
         let (high, low) = two_sum(sum, self.low[i] + error);
