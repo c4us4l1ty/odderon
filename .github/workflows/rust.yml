@@ -26,7 +26,11 @@ jobs:
           fi
           exit "$status"
       - name: Report warmed orbital conversion throughput (informational)
-        run: cargo run --release --locked -p odd-astro --example elements_benchmark
+        shell: bash
+        run: |
+          result=$(cargo run --release --locked -p odd-astro --example elements_benchmark)
+          echo "$result"
+          echo "::notice::$result"
       - name: Reproduce the packed ephemeris from the pinned SPK subset
         env:
           GH_TOKEN: ${{ github.token }}

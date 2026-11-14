@@ -328,3 +328,53 @@ fn tiny_inbound_anomalies_do_not_wrap_away() {
         near(out.true_anomaly_rad, -1e-16, 1e-29);
     }
 }
+
+#[test]
+fn seeded_conic_round_trips_cover_multiple_scales() {
+    use odd_astro::anomaly::true_from_hyperbolic;
+    let mut seed: u64 = 0x56b5_8adf_2291_0101;
+    let mut sample = || {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((seed >> 11) as f64) / ((1u64 << 53) as f64)
+    };
+    for case in 0..2000 {
+        let p = 1e5 * 10f64.powf(5.0 * sample());
+        let e = if case % 2 == 0 {
+            0.999 * sample()
+        } else {
+            1.001 + 4.0 * sample()
+        };
+        let i = if case % 7 == 0 {
+            if case % 14 == 0 {
+                1e-10
+            } else {
+                PI - 1e-10
+            }
+        } else {
+            PI * sample()
+        };
+        let nu = if e < 1.0 {
+            TAU * sample() - PI
+        } else {
+            true_from_hyperbolic(e, 6.0 * sample() - 3.0).unwrap()
+        };
+        let el = Elements {
+            semi_latus_rectum_m: p,
+            eccentricity: e,
+            inclination_rad: i,
+            ascending_node_rad: TAU * sample(),
+            argument_of_periapsis_rad: TAU * sample(),
+            true_anomaly_rad: nu,
+        };
+        let state = el.to_state(MU).unwrap();
+        let back = Elements::from_state(state, MU)
+            .unwrap()
+            .to_state(MU)
+            .unwrap();
+        let radius = state.position_m.iter().map(|x| x * x).sum::<f64>().sqrt();
+        let speed = state.velocity_m_s.iter().map(|x| x * x).sum::<f64>().sqrt();
+        same_state(back, state, 2e-11 * radius, 2e-11 * speed);
+    }
+}

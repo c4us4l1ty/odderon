@@ -46,6 +46,25 @@ not promise convergence in five iterations. Near an asymptote or for huge
 inputs, angle and phase precision are limited by floating-point representation;
 errors are reported when a result cannot be represented or a solve fails.
 
+### Example: state to elements and back
+
+```rust
+use odd_astro::elements::Elements;
+use odd_core::frames::State;
+
+let mu = 3.986_004_418e14; // Earth μ, m³/s²
+let state = State {
+    position_m: [6_524_834.0, 6_862_875.0, 6_448_296.0],
+    velocity_m_s: [4_901.327, 5_533.756, -1_976.341],
+};
+let elements = Elements::from_state(state, mu)?;
+let back = elements.to_state(mu)?;
+// For a non-parabolic example, the signed semi-major axis is available.
+let a_m = elements.semi_major_axis_m();
+# let _ = (back, a_m);
+# Ok::<(), odd_astro::elements::ElementsError>(())
+```
+
 ## Transfers and patched-conic building blocks
 
 - `vis_viva_speed` covers elliptic, hyperbolic and parabolic scalar speeds;
@@ -89,7 +108,8 @@ Additional committed fixtures compare 100 elliptical states and 100 anomaly
 sets with SatKit, and 100 hyperbolic plus 50 parabolic states with NAIF CSPICE
 N0067 (`spiceypy` 8.4.0). Generators are in `tools/astro-oracle/`; their
 outputs are checked in so tests do not need Python or a network. Tests also
-cover near-circular/equatorial and retrograde configurations, parabolic and
+cover 2,000 seeded conic round trips, near-circular/equatorial and retrograde
+configurations, parabolic and
 hyperbolic branches, invalid input, and published transfer examples. The
 native/Node/Chrome Wasm oracle runs a tolerance-based orbit fixture; orbital
 outputs are not claimed bit-identical across platforms. These checks are not a
