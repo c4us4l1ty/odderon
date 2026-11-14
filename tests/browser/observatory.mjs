@@ -22,6 +22,10 @@ try{
   await slow.goto(`http://127.0.0.1:${server.address().port}/`,{waitUntil:'domcontentloaded'});await requested;
   assert.equal(await slow.locator('#date').isDisabled(),true);assert.equal(await slow.locator('#next').isDisabled(),true);
   release();await slow.waitForFunction(()=>window.odderonDiagnostics?.draws>0,null,{timeout:30000});assert.equal(await slow.locator('#date').isEnabled(),true);await slow.close();
+  // Capture the actual MediaQueryList objects so we can deliver a monitor
+  // change notification even on headless Chrome versions whose CDP metrics
+  // override updates matchMedia results without emitting a change event.
+  await page.addInitScript(()=>{const original=window.matchMedia.bind(window);window.testDensityQueries=[];window.matchMedia=query=>{const result=original(query);if(query.startsWith('(resolution: '))window.testDensityQueries.push(result);return result;};});
   const errors=[];page.on('pageerror',e=>errors.push(String(e)));page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
   await page.waitForFunction(()=>window.odderonDiagnostics?.draws>0,{timeout:30000});
@@ -82,11 +86,17 @@ try{
   const initialSize=await page.locator('#world').evaluate(c=>({width:c.width,css:c.getBoundingClientRect().width}));
   const beforeDensity=await page.evaluate(()=>odderonDiagnostics.draws);
   await cdp.send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:2,mobile:false});
-  try{await page.waitForFunction(n=>odderonDiagnostics.draws>n,beforeDensity,{timeout:10000});}catch(e){console.error('DPR diagnostic',await page.evaluate(()=>({dpr:devicePixelRatio,oldQuery:matchMedia('(resolution: 1dppx)').matches,newQuery:matchMedia('(resolution: 2dppx)').matches,hidden:document.hidden,error:document.getElementById('error').textContent})));throw e;}
+  assert.equal(await page.evaluate(()=>devicePixelRatio),2);
+  await page.evaluate(()=>window.testDensityQueries[0].dispatchEvent(new Event('change')));
+  await page.waitForFunction(n=>odderonDiagnostics.draws>n,beforeDensity,{timeout:10000});
   const denseSize=await page.locator('#world').evaluate(c=>({width:c.width,css:c.getBoundingClientRect().width}));
   assert.equal(denseSize.css,initialSize.css);assert.ok(denseSize.width>initialSize.width,'DPR change did not resize the world canvas');
   const beforeRestoreDensity=await page.evaluate(()=>odderonDiagnostics.draws);
+  assert.ok(await page.evaluate(()=>window.testDensityQueries.length)>=2,'density watcher did not re-arm');
+  const queryIndex=await page.evaluate(()=>window.testDensityQueries.length-1);
   await cdp.send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
+  assert.equal(await page.evaluate(()=>devicePixelRatio),1);
+  await page.evaluate(i=>window.testDensityQueries[i].dispatchEvent(new Event('change')),queryIndex);
   await page.waitForFunction(n=>odderonDiagnostics.draws>n,beforeRestoreDensity,{timeout:10000});
   assert.equal(await page.locator('#world').evaluate(c=>c.width),initialSize.width);
   const beforeDate=await page.locator('#distance').textContent();await page.locator('#next').click();assert.notEqual(await page.locator('#distance').textContent(),beforeDate);

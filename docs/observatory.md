@@ -91,7 +91,9 @@ npm run test:idle              # Linux-only, after camera drag
 The browser test uses real WebGL2, checks the 2026-01-01 Earth–Moon distance,
 5.2 seconds with no application frames/pending work, drag and final-resolution
 rendering, dates, toggles, keyboard, context restoration, WebGL errors and mobile
-layout. It checks the filter on constant/noisy/high-contrast test images. It
+layout. The display-density test changes the emulated ratio and dispatches a
+media-query notification because some headless Chrome versions omit that event;
+it does not verify physical monitor switching. It checks the filter on constant/noisy/high-contrast test images. It
 logs Chrome main-thread task time; this alone is **not** total browser CPU.
 
 The separate Linux idle gate opens the page, calibrates `/proc` accounting with
