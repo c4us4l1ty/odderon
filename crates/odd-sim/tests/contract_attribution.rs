@@ -165,9 +165,8 @@ fn centered_tug_burn_can_enter_the_atmosphere_before_debrief() {
     let eph = Ephemeris::bundled().unwrap();
     // Keep the specified full model: never disable drag to manufacture an
     // apoapsis sensitivity for a trajectory that does not survive the burn.
-    let full = model(initial.mass).propagate_with_burns(
-        initial, 20_000.0, opts(), &burns, |t| env(&eph, t),
-    );
+    let full = model(initial.mass)
+        .propagate_with_burns(initial, 20_000.0, opts(), &burns, |t| env(&eph, t));
     assert!(matches!(full, Err(IntegrationError::ForceFailure)));
     // Independent geometry check in point-Earth vacuum: even before adding
     // drag the burn dives to roughly 41 km altitude. See the SciPy oracle.
@@ -176,10 +175,17 @@ fn centered_tug_burn_can_enter_the_atmosphere_before_debrief() {
     vacuum.drag = None;
     vacuum.radiation = None;
     vacuum.third_body = false;
-    let path = vacuum.propagate_with_burns(initial, burns[0].end, opts(), &burns, |t| env(&eph, t)).unwrap();
-    let min_height = (0..path.len()).map(|i| {
-        let p = path.keyframe(i).unwrap().position;
-        libm::sqrt(p.iter().map(|x| x*x).sum()) - R
-    }).fold(f64::INFINITY, f64::min);
-    assert!((35_000.0..50_000.0).contains(&min_height), "minimum altitude {min_height}");
+    let path = vacuum
+        .propagate_with_burns(initial, burns[0].end, opts(), &burns, |t| env(&eph, t))
+        .unwrap();
+    let min_height = (0..path.len())
+        .map(|i| {
+            let p = path.keyframe(i).unwrap().position;
+            libm::sqrt(p.iter().map(|x| x * x).sum()) - R
+        })
+        .fold(f64::INFINITY, f64::min);
+    assert!(
+        (35_000.0..50_000.0).contains(&min_height),
+        "minimum altitude {min_height}"
+    );
 }
