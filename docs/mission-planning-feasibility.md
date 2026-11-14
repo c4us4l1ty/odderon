@@ -43,7 +43,14 @@ inertial-direction, centered-burn model, one 3,120 m/s burn gives an osculating
 apoapsis radius near 41,044 km, versus about 109,315 km after two equal burns
 at consecutive predicted periapses. Both consume the same mass. The 2-kick
 gain exceeds 40,000 km for these exact assumptions but does not reach the
-stated target. Other steering laws and perturbations produce different answers;
+stated target. More importantly, the long single burn dives to about 41 km
+altitude even in the point-Earth vacuum model. With the existing rotating
+atmosphere and a 4 m² area, the modeled flight enters Earth and the integrator
+fails before the later evaluation epoch. An independent simplified SciPy
+experiment (`tug_atmosphere_scipy.py`) also finds an impact, though its drag
+model neglects density above 86 km and its time is not a precise prediction.
+Consequently the requested late-epoch full-model apoapsis attribution is
+undefined for this fixture; assigning it a percentage would be misleading. Other steering laws and perturbations produce different answers;
 there is no proof here that a single burn is universally impossible.
 
 ## Attribution is metric- and model-dependent

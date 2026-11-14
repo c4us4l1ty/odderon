@@ -11,7 +11,6 @@ use odd_astro::{
 use odd_core::{epoch::Epoch, frames::State};
 use odd_ephem::{Body, Ephemeris};
 use odd_sim::{
-    mission::metric_apoapsis,
     planner::{ManeuverNode, Plan},
     Engine,
 };
@@ -143,7 +142,7 @@ fn sso_node_regression_is_dominated_by_j2_sensitivity() {
     );
 }
 #[test]
-fn tug_apoapsis_sensitivity_is_dominated_by_burn_duration() {
+fn centered_tug_burn_can_enter_the_atmosphere_before_debrief() {
     let r = R + 200_000.0;
     let initial = Keyframe {
         time: 0.0,
@@ -164,23 +163,23 @@ fn tug_apoapsis_sensitivity_is_dominated_by_burn_duration() {
     let plan = Plan::compile(initial, MU, 20_000_000_000, 5200.0, engine, &nodes).unwrap();
     let burns = plan.timeline.burns(&[engine]).unwrap();
     let eph = Ephemeris::bundled().unwrap();
-    let runs = propagate_counterfactuals(
-        initial,
-        20_000.0,
-        opts(),
-        model(initial.mass),
-        &burns,
-        &plan.impulses,
-        |t| env(&eph, t),
-        |s| metric_apoapsis(s, MU, R),
-    )
-    .unwrap();
-    let stats = runs.sensitivities().unwrap();
-    let shares = stats.metric_shares.unwrap();
-    assert!(
-        shares[0] > 0.7,
-        "apoapsis shares={shares:?}, deltas={:?}",
-        stats.signed_metric_deltas
+    // Keep the specified full model: never disable drag to manufacture an
+    // apoapsis sensitivity for a trajectory that does not survive the burn.
+    let full = model(initial.mass).propagate_with_burns(
+        initial, 20_000.0, opts(), &burns, |t| env(&eph, t),
     );
-    assert!((shares.iter().sum::<f64>() - 1.0).abs() < 1e-12);
+    assert!(matches!(full, Err(IntegrationError::ForceFailure)));
+    // Independent geometry check in point-Earth vacuum: even before adding
+    // drag the burn dives to roughly 41 km altitude. See the SciPy oracle.
+    let mut vacuum = model(initial.mass);
+    vacuum.zonal = None;
+    vacuum.drag = None;
+    vacuum.radiation = None;
+    vacuum.third_body = false;
+    let path = vacuum.propagate_with_burns(initial, burns[0].end, opts(), &burns, |t| env(&eph, t)).unwrap();
+    let min_height = (0..path.len()).map(|i| {
+        let p = path.keyframe(i).unwrap().position;
+        libm::sqrt(p.iter().map(|x| x*x).sum()) - R
+    }).fold(f64::INFINITY, f64::min);
+    assert!((35_000.0..50_000.0).contains(&min_height), "minimum altitude {min_height}");
 }
