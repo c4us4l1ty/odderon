@@ -88,8 +88,20 @@ pub struct DragParameters {
 /// Drag for an oblate body whose symmetry axis is `pole`. Altitude is the
 /// geocentric radial distance above the ellipsoid in that direction, not
 /// terrain or geodetic height. `omega` is inertial angular velocity (rad/s).
-pub fn acceleration(r: [f64; 3], v: [f64; 3], params: DragParameters) -> Result<[f64; 3], PerturbationError> {
-    let DragParameters { pole, omega, equatorial_radius, polar_radius, cd, area, mass } = params;
+pub fn acceleration(
+    r: [f64; 3],
+    v: [f64; 3],
+    params: DragParameters,
+) -> Result<[f64; 3], PerturbationError> {
+    let DragParameters {
+        pole,
+        omega,
+        equatorial_radius,
+        polar_radius,
+        cd,
+        area,
+        mass,
+    } = params;
     if !r
         .iter()
         .chain(v.iter())
