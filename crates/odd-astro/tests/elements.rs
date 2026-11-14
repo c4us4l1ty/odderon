@@ -385,7 +385,7 @@ fn near_parabolic_apocenter_radius_avoids_cancellation() {
     let source = elements(1.0 - f64::EPSILON, 0.0, 0.0, 0.0, PI - 1e-8);
     let state = source.to_state(MU).unwrap();
     let radius = state.position_m[0].hypot(state.position_m[1]);
-    let expected = 2.940_694_223_310_720_1e22;
+    let expected = 2.940_694_223_310_72e22;
     assert!(
         (radius / expected - 1.0).abs() < 2e-15,
         "radius {radius} versus {expected}"
