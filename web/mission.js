@@ -4,7 +4,7 @@ const $=id=>document.getElementById(id);
 const MU=3.986004418e14,R=6378137,INITIAL=R+260000,TARGET=R+550000,DURATION=10800,DRY=1020;
 const setup=[820497600,DURATION,1200,DRY,2400,310,INITIAL,0,0,0,Math.sqrt(MU/INITIAL),0];
 const canvas=$('plan-canvas'),ctx=canvas.getContext('2d');
-let wasm,nodes=[],selected=-1,preview=[],actual=null,worker=null,timer=null,locked=null,drag=null,draws=0,messages=0,sequence=0;
+let wasm,nodes=[],selected=-1,preview=[],actual=null,lastReport=null,worker=null,timer=null,locked=null,drag=null,draws=0,messages=0,sequence=0;
 const lens={
   t:'A push along the direction of travel changes orbital energy. Near the closest point, a forward push raises the farthest point of the orbit; a backward push lowers it.',
   n:'This sideways push stays in the orbital plane and is perpendicular to the direction of travel. Near an apsis it points roughly inward or outward; away from one it is not exactly radial.',
@@ -39,13 +39,13 @@ function syncFields(){
 }
 function updatePreview(schedule=true){
   if(!wasm)return;
-  cancelFlight();sequence++;syncFields();actual=null;
-  if(!configure(wasm,nodes)){$('plan-status').textContent='Unable to compile: check timing, overlapping burns, or available propellant.';$('plan-status').classList.add('failure');preview=[];$('prefill').disabled=true;$('execute').disabled=true;draw();cancelFlight();return;}
+  cancelFlight();sequence++;syncFields();actual=null;lastReport=null;
+  if(!configure(wasm,nodes)){$('plan-status').textContent='Unable to compile: check timing, overlapping burns, or available propellant.';$('plan-status').classList.add('failure');preview=[];$('prefill').disabled=true;$('execute').disabled=true;updateCausal();draw();cancelFlight();return;}
   $('plan-status').classList.remove('failure');$('plan-status').textContent='Ideal orbit ready. The modeled flight calculates in the background.';
   preview=Array.from({length:361},(_,i)=>({time:DURATION*i/360,state:readState(wasm,DURATION*i/360)}));
   if(preview.some(p=>p.state.some(x=>!Number.isFinite(x)))){preview=[];$('plan-status').textContent='The ideal orbit could not be sampled.';cancelFlight();draw();return;}
   $('prefill').disabled=false;$('execute').disabled=nodes.length===0||!!locked;
-  syncFields();draw();if(schedule)scheduleFlight();
+  syncFields();updateCausal();draw();if(schedule)scheduleFlight();
 }
 function cancelFlight(){if(timer!==null){clearTimeout(timer);timer=null;}if(worker){worker.terminate();worker=null;}}
 function scheduleFlight(){cancelFlight();const version=++sequence;timer=setTimeout(()=>{timer=null;startFlight(false,version);},350);}
@@ -54,7 +54,7 @@ function startFlight(isLocked,version=++sequence){
   const snapshot=nodes.map(n=>({time:n.time,dv:[...n.dv]}));
   current.onmessage=({data})=>{messages++;if(worker!==current||version!==sequence)return;current.terminate();worker=null;
     if(data.error){$('plan-status').textContent=data.error;$('plan-status').classList.add('failure');if(isLocked)$('execute-status').textContent=data.error;return;}
-    actual=data.points;draw();$('plan-status').textContent='Flight model ready. No simulation runs while idle.';
+    actual=data.points;lastReport=data.report;updateCausal();draw();$('plan-status').textContent='Flight model ready. No simulation runs while idle.';
     if(isLocked)showDebrief(data.report);
   };
   current.onerror=()=>{if(worker!==current)return;worker.terminate();worker=null;$('plan-status').textContent='Flight worker failed.';if(isLocked)$('execute-status').textContent='Flight worker failed.';};
@@ -77,6 +77,38 @@ function showDebrief(report){
   for(let i=0;i<5;i++){const row=document.createElement('div'),share=report[11+i],delta=report[16+i];row.textContent=Number.isFinite(share)?`${names[i]}: ${fmt(share*100)}% of sensitivity · signed change ${fmt(delta/1000,2)} km`:`${names[i]}: sensitivity share undefined`;list.append(row);}
   $('debrief-content').replaceChildren(card,compare,heading,list);$('debrief').hidden=false;$('execute-status').textContent='Flight complete. The prediction remains locked.';
 }
+function updateCausal(){
+  const target=$('causal-text');target.replaceChildren();$('split-kick').hidden=true;
+  const chain=(symptom,mechanism,cause)=>{const row=document.createElement('div');row.className='cause-chain';const strong=document.createElement('strong');strong.textContent=symptom;row.append(strong,document.createTextNode(` ← ${mechanism} ← ${cause}`));target.append(row);};
+  const planned=nodes.reduce((sum,n)=>sum+Math.hypot(...n.dv),0);
+  const needed=setup[2]*(-Math.expm1(-planned/(setup[5]*9.80665)));
+  if(needed>setup[2]-DRY)chain('Propellant deficit','The requested speed changes exceed the available propellant','The ideal rocket equation estimates '+needed.toFixed(1)+' kg required');
+  if(preview.length){
+    const peris=preview.filter((_,i)=>i%15===0).map(p=>orbitMetrics(p.state)?.peri).filter(Number.isFinite);
+    if(peris.length&&Math.min(...peris)<120)chain('Low closest altitude','Atmospheric drag or impact may dominate','The ideal orbit dips below 120 km; propagation cannot model landing');
+  }
+  if(lastReport&&preview.length){
+    const ideal=orbitMetrics(preview[preview.length-1].state),actualApo=lastReport[1]/1000;
+    if(ideal&&ideal.apo>0&&(ideal.apo-actualApo)/ideal.apo>0.02){
+      const finite=lastReport[16]/1000;
+      chain('Farthest-point shortfall: '+(ideal.apo-actualApo).toFixed(1)+' km','Finite burn comparison changes the farthest altitude by '+finite.toFixed(1)+' km','Thrust is spread over time rather than applied at a single point; other forces also contribute');
+      const n=nodes[selected];if(n&&n.dv[0]>0&&Math.abs(n.dv[1])<1e-9&&Math.abs(n.dv[2])<1e-9&&!locked)$('split-kick').hidden=false;
+    }
+  }
+  if(!target.childNodes.length)target.textContent='No rule currently triggered. This is a limited check, not a safety certification.';
+}
+$('split-kick').addEventListener('click',()=>{
+  const original=nodes[selected];if(!original||original.dv[0]<=0)return;
+  const old=nodes.map(n=>({time:n.time,dv:[...n.dv]}));
+  original.dv[0]*=0.5;
+  if(!configure(wasm,nodes)){nodes=old;updatePreview();return;}
+  const state=readState(wasm,original.time),radius=Math.hypot(...state.slice(0,3)),speed2=state.slice(3,6).reduce((a,b)=>a+b*b,0),energy=speed2/2-MU/radius;
+  if(!(energy<0)){nodes=old;updatePreview();$('plan-status').textContent='A second pass cannot be estimated for an unbound intermediate orbit.';return;}
+  const a=-MU/(2*energy),period=2*Math.PI*Math.sqrt(a*a*a/MU),second=original.time+period;
+  if(!Number.isFinite(second)||second>=DURATION-1){nodes=old;updatePreview();$('plan-status').textContent='The next ideal periapsis falls outside the current mission duration.';return;}
+  nodes.push({time:second,dv:[original.dv[0],0,0]});selected=nodes.length-1;updatePreview();
+  $('plan-status').textContent='Second push placed at the next ideal periapsis. The finite-burn trajectory may reach periapsis at a different time; check the gold path.';
+});
 function toCanvas(point){const rect=canvas.getBoundingClientRect(),span=2.45*TARGET;return [rect.width/2+point[0]*rect.height/span,rect.height/2-point[1]*rect.height/span];}
 function draw(){
   const rect=canvas.getBoundingClientRect();if(!rect.width||!rect.height)return;const dpr=Math.min(devicePixelRatio||1,2);canvas.width=Math.round(rect.width*dpr);canvas.height=Math.round(rect.height*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,rect.width,rect.height);draws++;
@@ -117,5 +149,5 @@ canvas.addEventListener('pointermove',e=>{if(!drag||drag.pointer!==e.pointerId||
 function endDrag(e){if(drag&&drag.pointer===e.pointerId){drag=null;scheduleFlight();}}
 canvas.addEventListener('pointerup',endDrag);canvas.addEventListener('pointercancel',endDrag);canvas.addEventListener('lostpointercapture',endDrag);
 new ResizeObserver(draw).observe(canvas.parentElement);
-window.missionDiagnostics=Object.freeze({get nodes(){return nodes.map(n=>({time:n.time,dv:[...n.dv]}));},get pending(){return !!worker||timer!==null;},get draws(){return draws;},get messages(){return messages;},get locked(){return !!locked;}});
+window.missionDiagnostics=Object.freeze({get nodes(){return nodes.map(n=>({time:n.time,dv:[...n.dv]}));},get pending(){return !!worker||timer!==null;},get draws(){return draws;},get messages(){return messages;},get locked(){return !!locked;},get handles(){if(selected<0||!wasm)return [];const state=readState(wasm,nodes[selected].time);return handles(toCanvas(state),state).map(h=>({key:h.key,end:h.end}));}});
 try{const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error('The physics module is not available. Build it first.');({instance:{exports:wasm}}=await WebAssembly.instantiate(await response.arrayBuffer(),{}));syncFields();updatePreview();}catch(e){$('plan-status').classList.add('failure');$('plan-status').textContent=String(e.message||e);}

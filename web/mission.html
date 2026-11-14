@@ -29,6 +29,7 @@
         <label for="node-w">Out of orbital plane <small>meters per second</small></label><input id="node-w" type="number" step="1" value="0" disabled>
         <button id="remove-node" class="quiet" disabled>Remove maneuver</button>
         <div class="lens" aria-live="polite"><div class="section-label">PHYSICS LENS</div><p id="lens-text">A maneuver is a change in velocity. Choose a handle or control to see what it does.</p></div>
+        <div class="causal" aria-live="polite"><div class="section-label">CAUSE &amp; EFFECT CHECK</div><div id="causal-text">The checks update as you design and simulate a plan.</div><button id="split-kick" class="quiet" hidden>Split selected push into two passes</button></div>
       </aside>
     </div>
     <section class="contract-card" aria-labelledby="prediction-title"><div><div class="section-label">02 / MAKE A PREDICTION</div><h2 id="prediction-title">What do you expect?</h2><p>Start with the ideal prediction, or edit it to account for real effects. Locking freezes your plan and estimates before flight.</p></div>
