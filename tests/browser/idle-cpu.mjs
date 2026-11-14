@@ -44,7 +44,7 @@ function delta(before,after){
 }
 let browser;
 try{
-  browser=await chromium.launch({executablePath:process.env.CHROME_BIN||execFileSync('which',['google-chrome'],{encoding:'utf8'}).trim(),headless:true,args:['--no-sandbox','--enable-webgl','--use-angle=swiftshader','--enable-unsafe-swiftshader','--disable-dev-shm-usage']});
+  browser=await chromium.launch({executablePath:process.env.CHROME_BIN||execFileSync('which',['google-chrome'],{encoding:'utf8'}).trim(),headless:true,args:['--no-sandbox','--enable-webgl','--use-angle=swiftshader','--enable-unsafe-swiftshader','--disable-dev-shm-usage','--no-proxy-server']});
   const page=await browser.newPage({viewport:{width:1280,height:900},deviceScaleFactor:1});
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
   await page.waitForFunction(()=>window.odderonDiagnostics?.draws>0,null,{timeout:30000});
@@ -57,12 +57,13 @@ try{
   // deltas for calibration. The strict identity requirement is for idle below.
   let busy=0n;for(const [id,v] of busyAfter.threads)if(busyBefore.threads.has(id))busy+=v-busyBefore.threads.get(id);
   assert.ok(busy>30_000_000n,`Scheduler accounting did not detect the calibration workload: ${busy} ns`);
+  const initialDraws=await page.evaluate(()=>odderonDiagnostics.draws);
   const box=await page.locator('#scene').boundingBox();
   await page.mouse.move(box.x+box.width/2,box.y+box.height/2);await page.mouse.down();await page.mouse.move(box.x+box.width*.62,box.y+box.height*.56,{steps:5});await page.mouse.up();
   await page.waitForFunction(()=>odderonDiagnostics.quality.includes('RESTING')&&!odderonDiagnostics.pendingFrame&&!odderonDiagnostics.pendingTimer,null,{timeout:30000});
   // Drain the final GPU pass before the idle window, then let browser settle.
   await page.locator('#world').evaluate(c=>c.getContext('webgl2').finish());await page.waitForTimeout(1000);
-  const draws=await page.evaluate(()=>odderonDiagnostics.draws);
+  const draws=await page.evaluate(()=>odderonDiagnostics.draws);assert.ok(draws>initialDraws,'camera drag did not render');
   const start=accounting(), startTime=process.hrtime.bigint();
   await new Promise(r=>setTimeout(r,10000));
   const endTime=process.hrtime.bigint(), end=accounting();
@@ -75,4 +76,7 @@ try{
     for(const t of top){const [pid,,tid]=t.id.split(':');let name='unknown',cmd='unknown';try{name=readFileSync(`/proc/${pid}/task/${tid}/comm`,'utf8').trim();cmd=readFileSync(`/proc/${pid}/cmdline`,'utf8').replaceAll('\0',' ').slice(0,160);}catch{}console.log(`  ${(t.ns/1e6).toFixed(3)} ms ${name} (${cmd})`);}
   }
   assert.ok(percent<0.2,`Browser process-tree CPU ${percent.toFixed(4)}% exceeds the <0.2% one-core gate`);
+  await page.mouse.move(box.x+box.width*.5,box.y+box.height*.5);await page.mouse.down();await page.mouse.move(box.x+box.width*.55,box.y+box.height*.52);
+  await page.waitForFunction(n=>odderonDiagnostics.draws>n,draws,{timeout:30000});await page.mouse.up();
+  console.log('Renderer woke successfully on renewed camera interaction.');
 }finally{if(browser)await browser.close();await new Promise(r=>server.close(r));}
