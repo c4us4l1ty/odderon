@@ -1,8 +1,9 @@
 // Experimental mission 101. Scientific calculations are performed by the
 // Rust/WASM planner and the one-shot flight worker, not fabricated by canvas.
 const $=id=>document.getElementById(id);
-const MU=3.986004418e14,R=6378137,INITIAL=R+260000,TARGET=R+550000,DURATION=10800,DRY=1020;
-const setup=[820497600,DURATION,1200,DRY,2400,310,INITIAL,0,0,0,Math.sqrt(MU/INITIAL),0];
+const MU=3.986004418e14,R=6378137;
+let INITIAL=R+260000,TARGET=R+550000,DURATION=10800,DRY=1020,plane=[1,0],scenario='101';
+let setup=[820497600,DURATION,1200,DRY,2400,310,INITIAL,0,0,0,Math.sqrt(MU/INITIAL),0];
 const canvas=$('plan-canvas'),ctx=canvas.getContext('2d');
 let wasm,nodes=[],selected=-1,preview=[],actual=null,lastReport=null,worker=null,timer=null,locked=null,drag=null,draws=0,messages=0,sequence=0;
 const lens={
@@ -15,7 +16,7 @@ const fields={time:$('node-time'),t:$('node-t'),n:$('node-n'),w:$('node-w')};
 const distance=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1]);
 function readState(w,t){return Array.from({length:7},(_,i)=>w.mission_preview(t,i));}
 function configure(w,items){
-  if(!w.mission_setup(...setup))return false;
+  if(!w.mission_setup(...setup)||!w.mission_metric(scenario==='102'?1:0))return false;
   for(const item of [...items].sort((a,b)=>a.time-b.time)){
     if(Math.hypot(...item.dv)<1e-12)continue;
     if(!w.mission_add_node(item.time,...item.dv))return false;
@@ -35,7 +36,7 @@ function syncFields(){
   nodes.forEach((node,i)=>{const o=document.createElement('option');o.value=String(i);o.textContent=`Maneuver ${i+1} · ${Math.round(node.time)} s`;o.selected=i===selected;$('node-select').append(o);});
   for(const control of [...Object.values(fields),$('node-select'),$('remove-node')])control.disabled=!n||!!locked;
   if(n){fields.time.value=String(Math.round(n.time));fields.t.value=String(+n.dv[0].toFixed(2));fields.n.value=String(+n.dv[1].toFixed(2));fields.w.value=String(+n.dv[2].toFixed(2));}
-  $('add-node').disabled=!wasm||!!locked||nodes.length>=12;$('example').disabled=!wasm||!!locked;
+  $('add-node').disabled=!wasm||!!locked||nodes.length>=12;$('example').disabled=!wasm||!!locked;$('mission-select').disabled=!wasm||!!locked;
 }
 function updatePreview(schedule=true){
   if(!wasm)return;
@@ -58,7 +59,7 @@ function startFlight(isLocked,version=++sequence){
     if(isLocked)showDebrief(data.report);
   };
   current.onerror=()=>{if(worker!==current)return;worker.terminate();worker=null;$('plan-status').textContent='Flight worker failed.';if(isLocked)$('execute-status').textContent='Flight worker failed.';};
-  messages++;current.postMessage({setup,nodes:snapshot});
+  messages++;current.postMessage({setup,nodes:snapshot,metric:scenario==='102'?1:0});
 }
 function prefill(){
   const state=readState(wasm,DURATION),metrics=orbitMetrics(state);if(!metrics){$('execute-status').textContent='The ideal orbit has no finite farthest point.';return false;}
@@ -67,14 +68,18 @@ function prefill(){
   $('predict-fuel').value=(state[6]-DRY).toFixed(3);$('predict-time').value=String(DURATION);$('execute-status').textContent='';return true;
 }
 function showDebrief(report){
-  const [mass,apo,peri,e,score,dv]=report,p=locked.prediction;
+  const [mass,apo,peri,e,rescueScore,dv]=report,p=locked.prediction;
+  const drift=report[28]*180/Math.PI,inclination=report[26]*180/Math.PI;
+  const maxError=Math.max(Math.abs(apo/1000-800)/10,Math.abs(peri/1000-800)/10,Math.abs(drift-4.93)/0.15);
+  const score=scenario==='101'?rescueScore:(e<0.005&&mass>=DRY&&maxError<=1?1-0.2*maxError:0);
   const fmt=(x,n=1)=>Number(x).toLocaleString('en-US',{maximumFractionDigits:n,minimumFractionDigits:n});
   const entries=[['Mission score',`${fmt(score*100,1)}%`],['Farthest altitude',`${fmt(apo/1000)} km`],['Closest altitude',`${fmt(peri/1000)} km`],['Remaining propellant',`${fmt(mass-DRY,2)} kg`],['Orbit eccentricity',fmt(e,5)],['Commanded velocity change',`${fmt(dv,2)} m/s`]];
+  if(scenario==='102')entries.push(['Orbital-plane tilt',`${fmt(inclination,2)}°`],['Five-day node rotation',`${fmt(drift,3)}°`]);
   const card=document.createElement('div');card.className='debrief-grid';for(const [label,value] of entries){const item=document.createElement('div'),strong=document.createElement('strong'),span=document.createElement('span');strong.textContent=value;span.textContent=label;item.append(strong,span);card.append(item);}
   const compare=document.createElement('p');compare.textContent=`Locked prediction: ${fmt(p.apo)} km farthest, ${fmt(p.peri)} km closest, ${fmt(p.fuel,2)} kg propellant and ${fmt(p.dv,2)} m/s velocity change after ${fmt(p.time,0)} seconds.`;
-  const heading=document.createElement('h3');heading.textContent='Farthest-altitude sensitivity';
+  const heading=document.createElement('h3');heading.textContent=scenario==='102'?'Orbit-node rotation sensitivity':'Farthest-altitude sensitivity';
   const list=document.createElement('div');list.className='sensitivity-list';const names=['Burn duration','Earth’s equatorial bulge','Moon and Sun gravity','Atmospheric drag','Sunlight pressure'];
-  for(let i=0;i<5;i++){const row=document.createElement('div'),share=report[11+i],delta=report[16+i];row.textContent=Number.isFinite(share)?`${names[i]}: ${fmt(share*100)}% of sensitivity · signed change ${fmt(delta/1000,2)} km`:`${names[i]}: sensitivity share undefined`;list.append(row);}
+  for(let i=0;i<5;i++){const row=document.createElement('div'),share=report[11+i],delta=report[16+i];row.textContent=Number.isFinite(share)?`${names[i]}: ${fmt(share*100)}% of sensitivity · signed change ${scenario==='102'?fmt(delta*180/Math.PI,3)+'°':fmt(delta/1000,2)+' km'}`:`${names[i]}: sensitivity share undefined`;list.append(row);}
   $('debrief-content').replaceChildren(card,compare,heading,list);$('debrief').hidden=false;$('execute-status').textContent='Flight complete. The prediction remains locked.';
 }
 function updateCausal(){
@@ -87,7 +92,7 @@ function updateCausal(){
     const peris=preview.filter((_,i)=>i%15===0).map(p=>orbitMetrics(p.state)?.peri).filter(Number.isFinite);
     if(peris.length&&Math.min(...peris)<120)chain('Low closest altitude','Atmospheric drag or impact may dominate','The ideal orbit dips below 120 km; propagation cannot model landing');
   }
-  if(lastReport&&preview.length){
+  if(scenario==='101'&&lastReport&&preview.length){
     const ideal=orbitMetrics(preview[preview.length-1].state),actualApo=lastReport[1]/1000;
     if(ideal&&ideal.apo>0&&(ideal.apo-actualApo)/ideal.apo>0.02){
       const finite=lastReport[16]/1000;
@@ -109,7 +114,7 @@ $('split-kick').addEventListener('click',()=>{
   nodes.push({time:second,dv:[original.dv[0],0,0]});selected=nodes.length-1;updatePreview();
   $('plan-status').textContent='Second push placed at the next ideal periapsis. The finite-burn trajectory may reach periapsis at a different time; check the gold path.';
 });
-function toCanvas(point){const rect=canvas.getBoundingClientRect(),span=2.45*TARGET;return [rect.width/2+point[0]*rect.height/span,rect.height/2-point[1]*rect.height/span];}
+function toCanvas(point){const rect=canvas.getBoundingClientRect(),span=2.45*TARGET;return [rect.width/2+point[0]*rect.height/span,rect.height/2-(point[1]*plane[0]+point[2]*plane[1])*rect.height/span];}
 function draw(){
   const rect=canvas.getBoundingClientRect();if(!rect.width||!rect.height)return;const dpr=Math.min(devicePixelRatio||1,2);canvas.width=Math.round(rect.width*dpr);canvas.height=Math.round(rect.height*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,rect.width,rect.height);draws++;
   const center=toCanvas([0,0]),earth=R*rect.height/(2.45*TARGET);
@@ -118,7 +123,7 @@ function draw(){
   if(preview.length)line(preview.map(p=>p.state),'#70d7dc',true);if(actual)line(actual,'#e2bc79',false);
   nodes.forEach((node,i)=>{const state=readState(wasm,node.time);if(state.some(x=>!Number.isFinite(x)))return;const p=toCanvas(state);ctx.fillStyle=i===selected?'#f0ddac':'#a1c2b2';ctx.beginPath();ctx.arc(...p,5,0,Math.PI*2);ctx.fill();ctx.fillStyle='#e4eada';ctx.font='11px system-ui';ctx.fillText(String(i+1),p[0]+9,p[1]-8);if(i===selected){for(const h of handles(p,state)){ctx.strokeStyle=h.color;ctx.beginPath();ctx.moveTo(...p);ctx.lineTo(...h.end);ctx.stroke();ctx.fillStyle=h.color;ctx.beginPath();ctx.arc(...h.end,6,0,Math.PI*2);ctx.fill();ctx.fillText(h.label,h.end[0]+7,h.end[1]-6);}}});
 }
-function handles(p,state){const v=[state[3],-state[4]],m=Math.hypot(...v)||1,t=v.map(x=>x/m),n=[-t[1],t[0]];return [{key:'t',dir:t,color:'#80d9cb',label:'Along'},{key:'n',dir:n,color:'#e1bc76',label:'Sideways'},{key:'w',dir:[.707,-.707],color:'#bdade0',label:'Plane tilt'}].map(h=>({...h,end:[p[0]+h.dir[0]*42,p[1]+h.dir[1]*42]}));}
+function handles(p,state){const v=[state[3],-(state[4]*plane[0]+state[5]*plane[1])],m=Math.hypot(...v)||1,t=v.map(x=>x/m),n=[-t[1],t[0]];return [{key:'t',dir:t,color:'#80d9cb',label:'Along'},{key:'n',dir:n,color:'#e1bc76',label:'Sideways'},{key:'w',dir:[.707,-.707],color:'#bdade0',label:'Plane tilt'}].map(h=>({...h,end:[p[0]+h.dir[0]*42,p[1]+h.dir[1]*42]}));}
 function mousePoint(e){const r=canvas.getBoundingClientRect();return [e.clientX-r.left,e.clientY-r.top];}
 function nearestPath(p){let best=null;for(const item of preview){const d=distance(p,toCanvas(item.state));if(!best||d<best.d)best={d,time:item.time};}return best;}
 function setLens(key){$('lens-text').textContent=lens[key]||lens.time;}
@@ -129,7 +134,21 @@ for(const key of Object.keys(fields)){
 $('node-select').addEventListener('change',e=>{selected=Number(e.target.value);syncFields();draw();});
 $('add-node').addEventListener('click',()=>{nodes.push({time:200,dv:[10,0,0]});selected=nodes.length-1;updatePreview();});
 $('remove-node').addEventListener('click',()=>{if(selected<0)return;nodes.splice(selected,1);selected=Math.min(selected,nodes.length-1);updatePreview();});
-$('example').addEventListener('click',()=>{const a=(INITIAL+TARGET)/2,v1=Math.sqrt(MU/INITIAL),v2=Math.sqrt(MU/TARGET),coast=Math.PI*Math.sqrt(a*a*a/MU);nodes=[{time:200,dv:[v1*(Math.sqrt(TARGET/a)-1),0,0]},{time:200+coast,dv:[v2*(1-Math.sqrt(INITIAL/a)),0,0]}];selected=0;updatePreview();prefill();});
+$('example').addEventListener('click',()=>{const a=(INITIAL+TARGET)/2,coast=Math.PI*Math.sqrt(a*a*a/MU);
+  if(scenario==='102'){const vAtFar=Math.sqrt(MU*(2/TARGET-1/a)),circular=Math.sqrt(MU/TARGET),tilt=2.6*Math.PI/180;nodes=[{time:coast,dv:[circular*Math.cos(tilt)-vAtFar,0,-circular*Math.sin(tilt)]}];}
+  else{const v1=Math.sqrt(MU/INITIAL),v2=Math.sqrt(MU/TARGET);nodes=[{time:200,dv:[v1*(Math.sqrt(TARGET/a)-1),0,0]},{time:200+coast,dv:[v2*(1-Math.sqrt(INITIAL/a)),0,0]}];}
+  selected=0;updatePreview();prefill();});
+$('mission-select').addEventListener('change',()=>{
+  if(locked)return;scenario=$('mission-select').value;cancelFlight();sequence++;nodes=[];selected=-1;actual=null;lastReport=null;
+  if(scenario==='102'){
+    INITIAL=R+250000;TARGET=R+800000;DURATION=432000;plane=[Math.cos(96*Math.PI/180),Math.sin(96*Math.PI/180)];const a=(INITIAL+TARGET)/2,v=Math.sqrt(MU*(2/INITIAL-1/a));setup=[820497600,DURATION,1200,DRY,2400,310,INITIAL,0,0,0,v*plane[0],v*plane[1]];
+    $('mission-rank').textContent='CONTRACT 102 / FLIGHT DYNAMICS OFFICER';$('mission-title').textContent='Follow the sunlight';$('mission-description').textContent='Circularize at 800 km and tilt the orbit so its crossing of the equator turns by about 4.93° in five days. Engine and spacecraft mass use the rescue prototype assumptions.';$('example').textContent='Show circularization example';
+  }else{
+    INITIAL=R+260000;TARGET=R+550000;DURATION=10800;plane=[1,0];setup=[820497600,DURATION,1200,DRY,2400,310,INITIAL,0,0,0,Math.sqrt(MU/INITIAL),0];
+    $('mission-rank').textContent='CONTRACT 101 / CADET';$('mission-title').textContent='Orbit rescue';$('mission-description').textContent='Raise a 260 km circular orbit to 550 km, then make it circular within three hours. The dotted cyan path is your instantaneous-push preview; the gold path includes finite burns and modeled forces.';$('example').textContent='Show two-push example';
+  }
+  fields.time.max=String(DURATION-1);$('debrief').hidden=true;for(const id of ['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time'])$(id).value='';updatePreview();
+});
 $('prefill').addEventListener('click',prefill);
 $('execute').addEventListener('click',()=>{
   const ids=['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time'];
