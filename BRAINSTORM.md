@@ -654,7 +654,37 @@ Also consider CPU resource usage because I don't have a GPU in my computer (NEAR
 Real aerospace engineers use tools like NASA GMAT (General Mission Analysis Tool), NASA CEA (Chemical Equilibrium with Applications), and STK (Systems Tool Kit). The problem is that those tools have terrible UX and no game loop. Games like Kerbal Space Program or Children of a Dead Earth go partway, but KSP simplifies physics (Lego-brick parts, scaled-down solar system, single-body gravity) and CoaDE lacks the economic, exploratory, and corporate dimensions.
 Because Odderon's full vision spans from chemical turbopumps to relativistic interstellar laser sails across 4,000 light-years, trying to build everything at once is the biggest risk. Real aerospace programs build in Blocks (Block 1, Block 2, Block 3). You should structure Odderon the exact same way. Also that 4000 light years distance should be scalable, I dont want issues in future when i try to scale it to 8000 light years.
 
-https://patch.gg/blendi/painted-valley - for the game art, someone used fable 5.2 (AI agent) to create that art style in .js - see the image. (For RUST, use the github CI as compiler)
-<img width="925" height="836" alt="image" src="https://github.com/user-attachments/assets/e85d4d7d-049a-40dd-b3e6-23b47c97baab" />
-<img width="897" height="912" alt="image" src="https://github.com/user-attachments/assets/f353fd77-825e-4cf9-87f9-3aef192a5708" />
+(For RUST, use the github CI as compiler)
+
+
+ # UPDATE TO THE ART STYLE:
+https://patch.gg/blendi/painted-valley - for the game art, someone used fable 5.2 (AI agent) to create that art style in .js - see the image.  <img width="897" height="912" alt="image" src="https://github.com/user-attachments/assets/f353fd77-825e-4cf9-87f9-3aef192a5708" />
+
+<img width="897" height="723" alt="image" src="https://github.com/user-attachments/assets/27573f7c-bc7e-4246-bd8b-ed951fc5230e" /> https://manifold.xyz/@hachimi-a0d04e94/id/4196888816 - shadow of the summer noon aesthetic.
+
+switching the visual direction to the @HakimiHamizi ("Shadows of a Summer Noon" / Makoto Shinkai) style is a massive upgrade—both artistically and for your no-GPU laptop.
+Part 1: Why the "Summer Noon" Aesthetic is 10x Better for Space & Uses 95% Less GPU
+
+Look closely at what makes your reference image (Shadows of a Summer Noon) look so striking:
+
+    Zero 1.5-Million-Polygon Overhead: It doesn't need 1.5 million overlapping brushstroke quads! Instead, it uses clean geometry with high-contrast, stylized warm-vs-cool lighting.
+    Why This Matches Real Spaceflight: Real space is the ultimate "Summer Noon"—because there is no air in space to scatter light, sunlight is blindingly crisp and golden-warm, shadows are razor-sharp, and the shaded side of a spacecraft in Low Earth Orbit is bathed in deep cobalt-blue Earthshine bounce light!
+    1 Single Render Pass (< 0.8 ms on Integrated Graphics):
+    Instead of running 15 progressive frames of 1.5 million instanced brushstrokes every time the camera stops, your WebGL shader renders 1 single frame on camera stop and immediately halts at 0 FPS (0.0% CPU / 0.0% GPU).
+
+The 4 Mathematical Rules of the "Summer Noon Orbital" Shader (For Your Agent)
+
+We replace the 1.5M brushstroke accumulator with a Single-Pass Stylized Cel-Painterly Fragment Shader:
+
+    Rule 1: Warm-Sun / Cool-Shadow Dichromatic Ramp:
+    Never shade shadows by multiplying color by black (color * NdotL). Instead, map N⋅LN⋅L through a 3-stop artistic color ramp:
+        Sunlit Key (N⋅L>0.15N⋅L>0.15): Warm golden-noon key light #FFF4DC (vec3(1.0, 0.957, 0.863)).
+        Terminator Band (−0.05<N⋅L≤0.15−0.05<N⋅L≤0.15): A narrow warm amber/vermilion transition band (vec3(0.88, 0.42, 0.24)) that gives planets and rocket hulls that warm painted edge at sunset/terminator.
+        Shadow Fill (N⋅L≤−0.05N⋅L≤−0.05): Deep cerulean/cobalt sky-bounce fill #1E3A6E (vec3(0.118, 0.227, 0.431)), modulated by Planet-Shine (when a spacecraft is near Earth, Earth's sunlit hemisphere reflects blue ocean light onto the dark side of the ship!).
+    Rule 2: Crisp Stylized Rim Backlight (Fresnel):
+    Add a sharp sunlit rim highlight: rim = step(0.72, pow(1.0 - max(dot(N, V), 0.0), 3.0)) * smoothstep(-0.1, 0.2, dot(N, L)), giving spacecraft struts, solar arrays, and planetary limbs that luminous anime/Shinkai edge against the dark cosmos.
+    Rule 3: Billowing Two-Tone Cumulus & Rayleigh Sky on Earth:
+    Just like the clouds in the top-right of your reference image, Earth's cloud layer uses a 2-step cel-shaded FBM noise mask with a slight directional UV shadow offset onto the ocean/continents below, paired with a rich cyan-to-deep-cobalt atmospheric limb gradient.
+    Rule 4: Subtle Procedural Paper/Wood Grain:
+    Apply a zero-cost screen-space/object-space procedural hash grain (±2%±2% luminance in OkLab) so metal tanks, radiators, and lunar regolith have tactile warmth without loading a single texture file.
 
