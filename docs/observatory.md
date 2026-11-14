@@ -110,8 +110,11 @@ not subtract the control from the application result. In CI run 43575937861,
 the system Chrome measured 0.0679% and the pinned Chromium measured 0.0399%
 over their respective ten-second windows; the earlier blank-tab control was
 0.4318%. Earlier runs that began sampling closer to Chrome startup exceeded the
-limit (5.5–7.2%), mainly browser/network-service threads. These measurements
-are workload- and environment-specific, not a guarantee. Repeat on the target
+limit (5.5–7.2%), mainly browser/network-service threads. CI run 43576770828
+also failed the pinned gate at 5.2941% with zero application frames, dominated
+by software GPU threads even after the test called `gl.finish()` and waited.
+Later runs passed; the cause of this intermittent overhead is not established.
+These measurements are workload- and environment-specific, not a guarantee. Repeat on the target
 laptop with a normal visible browser and GPU to establish its result. Zero CPU
 and sub-0.2% on all devices are not guaranteed.
 
