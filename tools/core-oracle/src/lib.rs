@@ -11,6 +11,20 @@ pub fn fingerprint() -> [u8; 32] {
     assert_eq!(epoch, Epoch::J2000);
     let century = epoch.checked_add_seconds(86_400.0 * 36_525.0).unwrap();
     assert_eq!(century.seconds(), 3_155_760_000);
+    let small_step = f64::from_bits((1023_u64 - 54) << 52);
+    let precise_fraction = Epoch::new(0, 0.5)
+        .unwrap()
+        .checked_sub_seconds(small_step)
+        .unwrap()
+        .fraction();
+    assert_eq!(precise_fraction, 0.5 - small_step);
+    assert_eq!(
+        Epoch::new(i64::MIN, 0.0)
+            .unwrap()
+            .checked_add_seconds(9_223_372_036_854_775_808.0)
+            .unwrap(),
+        Epoch::J2000
+    );
     let utc = UtcDateTime {
         year: 2004,
         month: 6,
@@ -76,6 +90,7 @@ pub fn fingerprint() -> [u8; 32] {
     let values = [
         century.seconds() as u64,
         century.fraction().to_bits(),
+        precise_fraction.to_bits(),
         utc.seconds() as u64,
         utc.fraction().to_bits(),
         separation.to_bits(),

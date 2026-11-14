@@ -31,6 +31,33 @@ fn epoch_normalizes_and_checks_bounds() {
 }
 
 #[test]
+fn epoch_addition_preserves_small_negative_durations_and_full_range() {
+    let half = Epoch::new(0, 0.5).unwrap();
+    let step = 2.0_f64.powi(-54);
+    assert_eq!(
+        half.checked_sub_seconds(step).unwrap().fraction(),
+        0.5 - step
+    );
+    assert_eq!(
+        half.checked_add_seconds(-step).unwrap().fraction(),
+        0.5 - step
+    );
+
+    let minimum = Epoch::new(i64::MIN, 0.0).unwrap();
+    let across_range = minimum
+        .checked_add_seconds(9_223_372_036_854_775_808.0)
+        .unwrap();
+    assert_eq!(across_range, Epoch::J2000);
+    assert_eq!(
+        minimum
+            .checked_sub_seconds(-9_223_372_036_854_775_808.0)
+            .unwrap(),
+        Epoch::J2000
+    );
+    assert!(minimum.checked_add_seconds(-step).is_err());
+}
+
+#[test]
 fn eight_thousand_light_years_is_about_2453_parsecs() {
     let pc = 8_000.0 * SPEED_OF_LIGHT_M_S * JULIAN_YEAR_S / PARSEC_M;
     assert!((pc - 2452.8).abs() < 0.1);

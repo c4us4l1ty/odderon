@@ -80,15 +80,32 @@ impl Epoch {
         if !duration.is_finite() {
             return Err(EpochRangeError);
         }
-        let whole = duration.floor();
-        if whole < i64::MIN as f64 || whole >= 9_223_372_036_854_775_808.0 {
+        // A duration can exceed the i64 range and still produce a valid
+        // result when added to an epoch on the opposite side of zero.
+        // No duration larger than 2^64 seconds can fit across the epoch range.
+        const MAX_SPAN: f64 = 18_446_744_073_709_551_616.0;
+        if duration.abs() > MAX_SPAN {
             return Err(EpochRangeError);
         }
-        let fraction = self.fraction + (duration - whole);
-        let carry = if fraction >= 1.0 { 1 } else { 0 };
-        let seconds = i128::from(self.seconds) + i128::from(whole as i64) + carry;
+        // Truncation keeps the fractional remainder signed. Using floor here
+        // would turn a tiny negative duration into approximately 1.0 and
+        // erase it when added to the existing fractional second.
+        let whole = duration.trunc();
+        let mut seconds = i128::from(self.seconds) + whole as i128;
+        let mut fraction = self.fraction + (duration - whole);
+        if fraction < 0.0 {
+            seconds -= 1;
+            // Check the mathematical range before rounding a tiny negative
+            // fraction back up to 1.0 at the lower boundary.
+            i64::try_from(seconds).map_err(|_| EpochRangeError)?;
+            fraction += 1.0;
+        }
+        if fraction >= 1.0 {
+            seconds += 1;
+            fraction -= 1.0;
+        }
         let seconds = i64::try_from(seconds).map_err(|_| EpochRangeError)?;
-        Self::new(seconds, fraction - carry as f64)
+        Self::new(seconds, fraction)
     }
 
     /// Signed difference in seconds. Very large differences lose fractional
