@@ -48,9 +48,14 @@ fn elements(s: Keyframe) -> (f64, f64, f64, f64) {
 }
 #[test]
 fn oracle_sso_j2_precession() {
-    let a = 7_178_137.0;
+    // The requested values are mean elements. This osculating perigee
+    // fixture was independently fitted with scipy DOP853; see its generator.
+    let target_a = 7_178_137.0;
+    let target_e = 0.001;
+    let target_inc = 98.60 * std::f64::consts::PI / 180.0;
+    let a = 7_187_122.0;
     let e = 0.001;
-    let inc = 98.60 * std::f64::consts::PI / 180.0;
+    let inc = 98.594_574 * std::f64::consts::PI / 180.0;
     let rp = a * (1.0 - e);
     let speed = libm::sqrt(MU * (1.0 + e) / rp);
     let start = Keyframe {
@@ -71,7 +76,9 @@ fn oracle_sso_j2_precession() {
     let mut sy = 0.0;
     let mut sxx = 0.0;
     let mut sxy = 0.0;
-    let mut predicted = 0.0;
+    let mut mean_a = 0.0;
+    let mut mean_e = 0.0;
+    let mut mean_inc = 0.0;
     let count = 501;
     for i in 0..count {
         let t = end * (i as f64) / (count - 1) as f64;
@@ -80,11 +87,18 @@ fn oracle_sso_j2_precession() {
         sy += node;
         sxx += t * t;
         sxy += t * node;
-        let p = a * (1.0 - e * e);
-        predicted += -1.5 * 1.082_626_68e-3 * (R / p) * (R / p) * libm::sqrt(MU / (a * a * a)) * c;
+        mean_a += a;
+        mean_e += e;
+        mean_inc += libm::acos(c);
     }
+    assert!((mean_a / count as f64 - target_a).abs() < 100.0);
+    assert!((mean_e / count as f64 - target_e).abs() < 0.000_03);
+    assert!((mean_inc / count as f64 - target_inc).abs() < 0.000_2);
     let measured = (count as f64 * sxy - sx * sy) / (count as f64 * sxx - sx * sx);
-    predicted /= count as f64;
+    let p = target_a * (1.0 - target_e * target_e);
+    let predicted = -1.5 * 1.082_626_68e-3 * (R / p) * (R / p)
+        * libm::sqrt(MU / (target_a * target_a * target_a))
+        * libm::cos(target_inc);
     assert!(
         (measured / predicted - 1.0).abs() < 0.0025,
         "measured {measured}, predicted {predicted}"

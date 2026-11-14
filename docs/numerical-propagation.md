@@ -46,9 +46,18 @@ trajectory that reaches below the atmospheric reference surface fails, rather
 than representing a landing. No model here should be used for flight operations.
 
 Tests compare ten-period two-body conserved quantities, ten-day J2 nodal
-precession against the first-order formula evaluated on mean osculating
-elements (the formula is a mean-element result), five-day drag decay with a separately integrated circular
+precession against the first-order formula for the requested mean elements,
+using a fitted osculating initial state (the formula is a mean-element result), five-day drag decay with a separately integrated circular
 energy-balance model, and a finite perigee burn against an impulsive transfer.
 The native/Node/Chromium parity fixture hashes the final state of a ten-day
 J2 + Moon + Sun + drag + SRP + burn run. Parity is tested for these builds and
 inputs; it is not a claim about every compiler, CPU or configuration.
+
+The mean/osculating distinction matters for the stated SSO tolerance. An
+independent SciPy DOP853 check (`tools/astro-oracle/j2_sso_scipy.py`) gives
+about 0.98950°/day when the stated a/e/i are used directly as *osculating*
+elements, versus the first-order mean-element prediction 0.98530°/day: a
+0.43% difference. The oracle instead starts from a documented osculating
+fixture whose ten-day mean a/e/i match the requested values, and obtains about
+0.98455°/day. It does not imply the first-order rate must match arbitrary
+osculating initial conditions within 0.25%.
