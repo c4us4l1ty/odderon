@@ -123,6 +123,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "odd-view"
+version = "0.1.0"
+dependencies = [
+ "odd-core",
+ "odd-ephem",
+]
+
+[[package]]
 name = "pack-ephem"
 version = "0.1.0"
 

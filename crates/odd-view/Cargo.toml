@@ -1,0 +1,12 @@
+[package]
+name = "odd-view"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+odd-core = { path = "../odd-core" }
+odd-ephem = { path = "../odd-ephem" }
