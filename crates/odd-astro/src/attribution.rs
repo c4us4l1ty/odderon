@@ -120,10 +120,14 @@ where
 {
     use crate::integrator::IntegrationError;
     if impulses.iter().any(|b| {
-        !b.time.is_finite() || b.time < initial.time || b.time > end
-            || !b.propellant_kg.is_finite() || b.propellant_kg < 0.0
+        !b.time.is_finite()
+            || b.time < initial.time
+            || b.time > end
+            || !b.propellant_kg.is_finite()
+            || b.propellant_kg < 0.0
             || !b.delta_v_m_s.iter().all(|x| x.is_finite())
-    }) || impulses.windows(2).any(|w| w[0].time >= w[1].time) {
+    }) || impulses.windows(2).any(|w| w[0].time >= w[1].time)
+    {
         return Err(IntegrationError::InvalidInput);
     }
     let mut plain = full_model;
@@ -134,23 +138,37 @@ where
     plain.burn = None;
     let mut state = initial;
     for impulse in impulses {
-        state = plain.propagate_with_burns(state, impulse.time, options, &[], &mut environment)?
-            .sample(impulse.time).map_err(|_| IntegrationError::NumericalRange)?;
-        for i in 0..3 { state.velocity[i] += impulse.delta_v_m_s[i]; }
+        state = plain
+            .propagate_with_burns(state, impulse.time, options, &[], &mut environment)?
+            .sample(impulse.time)
+            .map_err(|_| IntegrationError::NumericalRange)?;
+        for i in 0..3 {
+            state.velocity[i] += impulse.delta_v_m_s[i];
+        }
         state.mass -= impulse.propellant_kg;
-        if state.mass <= 0.0 || !state.mass.is_finite() || !state.velocity.iter().all(|x| x.is_finite()) {
+        if state.mass <= 0.0
+            || !state.mass.is_finite()
+            || !state.velocity.iter().all(|x| x.is_finite())
+        {
             return Err(IntegrationError::NumericalRange);
         }
     }
-    state = plain.propagate_with_burns(state, end, options, &[], &mut environment)?
-        .sample(end).map_err(|_| IntegrationError::NumericalRange)?;
+    state = plain
+        .propagate_with_burns(state, end, options, &[], &mut environment)?
+        .sample(end)
+        .map_err(|_| IntegrationError::NumericalRange)?;
     let outcome = |s: crate::spline::Keyframe| -> Result<Outcome, IntegrationError> {
-        Ok(Outcome { position_m: s.position, metric: metric(s)? })
+        Ok(Outcome {
+            position_m: s.position,
+            metric: metric(s)?,
+        })
     };
     let impulsive = outcome(state)?;
     let mut run = |model: crate::force_model::ForceModel| -> Result<Outcome, IntegrationError> {
-        let state = model.propagate_with_burns(initial, end, options, burns, &mut environment)?
-            .sample(end).map_err(|_| IntegrationError::NumericalRange)?;
+        let state = model
+            .propagate_with_burns(initial, end, options, burns, &mut environment)?
+            .sample(end)
+            .map_err(|_| IntegrationError::NumericalRange)?;
         outcome(state)
     };
     let finite_only = run(plain)?;
@@ -167,7 +185,15 @@ where
     without = full_model;
     without.radiation = None;
     let no_srp = run(without)?;
-    Ok(Counterfactuals { impulsive, finite_only, full, no_j2, no_third_body, no_drag, no_srp })
+    Ok(Counterfactuals {
+        impulsive,
+        finite_only,
+        full,
+        no_j2,
+        no_third_body,
+        no_drag,
+        no_srp,
+    })
 }
 
 #[cfg(test)]
