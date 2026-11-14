@@ -136,6 +136,20 @@ pub fn fingerprint() -> [u8; 32] {
     let near_apocenter = f64::from_bits((2.0 * a).to_bits() - 1);
     let slow = odd_astro::elliptical_speed(3.986_004_418e14, near_apocenter, a).unwrap();
     assert!((slow / 2.258_779_682_713_655e-10 - 1.0).abs() < 1e-12);
+    let hohmann =
+        odd_astro::hohmann_transfer(3.986_004_418e14, 7_000_000.0, 7_000_000.000_001).unwrap();
+    assert!((hohmann.departure_delta_v_m_s / 2.695_667_036_401_499e-10 - 1.0).abs() < 1e-12);
+    let bi = odd_astro::patched_conics::bi_elliptic_transfer(
+        3.986_004_418e14,
+        7_000_000.0,
+        7_000_000.000_001,
+        7_000_000.000_002,
+    )
+    .unwrap();
+    assert!((bi.intermediate_delta_v_m_s / 2.695_667_036_401_307e-10 - 1.0).abs() < 1e-12);
+    assert!(
+        odd_astro::anomaly::hyperbolic_from_true(1.0 + f64::EPSILON, f64::from_bits(1)).is_err()
+    );
     let anomaly = odd_astro::anomaly::hyperbolic_from_mean(2.0, 1.350_402_387_287_602_8).unwrap();
     assert!((anomaly - 1.0).abs() < 1e-12);
     let values = [

@@ -34,7 +34,7 @@ pub fn hyperbolic_from_true(e: f64, true_anomaly_rad: f64) -> Result<f64, Anomal
         return Err(AnomalyError::OutsidePhysicalBranch);
     }
     let ratio = (((e - 1.0).sqrt() * (e + 1.0).sqrt()) / denominator) * sn;
-    if !ratio.is_finite() {
+    if !ratio.is_finite() || (ratio == 0.0 && sn != 0.0) {
         return Err(AnomalyError::NumericalRange);
     }
     Ok(ratio.asinh())

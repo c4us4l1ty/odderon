@@ -111,8 +111,10 @@ pub fn vis_viva_speed(
             return elliptical_speed(mu_m3_s2, radius_m, a);
         }
     }
-    let inverse_a = semi_major_axis_m.map_or(0.0, |a| 1.0 / a);
-    let square = finite((mu_m3_s2 / radius_m) * 2.0 - mu_m3_s2 * inverse_a)?;
+    // Divide μ by |a| directly: 1/|a| can overflow even when μ/|a|
+    // and the resulting speed are representable.
+    let hyperbolic_term = semi_major_axis_m.map_or(0.0, |a| mu_m3_s2 / -a);
+    let square = finite((mu_m3_s2 / radius_m) * 2.0 + hyperbolic_term)?;
     if square <= 0.0 {
         return Err(OrbitError::NumericalRange);
     }
@@ -151,11 +153,22 @@ pub fn hohmann_transfer(
             coast_time_s: 0.0,
         });
     }
-    let a = finite(initial_radius_m * 0.5 + final_radius_m * 0.5)?;
+    let min_radius = initial_radius_m.min(final_radius_m);
+    let max_radius = initial_radius_m.max(final_radius_m);
+    let a = finite(min_radius + (max_radius - min_radius) * 0.5)?;
     let initial_speed = circular_speed(mu_m3_s2, initial_radius_m)?;
     let final_speed = circular_speed(mu_m3_s2, final_radius_m)?;
-    let departure = finite(elliptical_speed(mu_m3_s2, initial_radius_m, a)? - initial_speed)?;
-    let arrival = finite(final_speed - elliptical_speed(mu_m3_s2, final_radius_m, a)?)?;
+    // Rationalize sqrt(1±u)-1 to avoid cancellation when the two
+    // radii are close. u = (final-initial)/(final+initial).
+    let u = ((final_radius_m - initial_radius_m) / a) * 0.5;
+    if u == 0.0 {
+        return Err(OrbitError::NumericalRange);
+    }
+    let departure = finite(initial_speed * (u / ((final_radius_m / a).sqrt() + 1.0)))?;
+    let arrival = finite(final_speed * (u / (1.0 + (initial_radius_m / a).sqrt())))?;
+    if departure == 0.0 || arrival == 0.0 {
+        return Err(OrbitError::NumericalRange);
+    }
     let total = finite(departure.abs() + arrival.abs())?;
     // sqrt(a^3 / mu) = a / sqrt(mu / a); avoids forming a^3.
     let coast = finite(std::f64::consts::PI * (a / circular_speed(mu_m3_s2, a)?))?;

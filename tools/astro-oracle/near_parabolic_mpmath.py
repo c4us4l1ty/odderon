@@ -26,3 +26,17 @@ r = mp.mpf(math.nextafter(2e18, 0.0))
 mu = mp.mpf(398600441800000.0)
 speed = mp.sqrt(mu*(2/r-1/a))
 print(f"near-apocenter vis-viva speed={mp.nstr(speed, 40)}")
+
+# Difference of nearly equal circular and transfer velocities.
+r1 = mp.mpf(7_000_000.0)
+r2 = mp.mpf(7_000_000.000_001)
+a = (r1+r2)/2
+first = mp.sqrt(mu*(2/r1-1/a))-mp.sqrt(mu/r1)
+second = mp.sqrt(mu/r2)-mp.sqrt(mu*(2/r2-1/a))
+print(f"close-orbit Hohmann burns={mp.nstr(first, 40)}, {mp.nstr(second, 40)}")
+
+rb = mp.mpf(7_000_000.000_002)
+a1, a2 = (r1+rb)/2, (r2+rb)/2
+v = lambda r, axis: mp.sqrt(mu*(2/r-1/axis))
+for burn in [v(r1,a1)-mp.sqrt(mu/r1), v(rb,a2)-v(rb,a1), mp.sqrt(mu/r2)-v(r2,a2)]:
+    print(f"close-orbit bi-elliptic burn={mp.nstr(burn, 40)}")

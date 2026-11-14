@@ -160,3 +160,13 @@ fn hyperbolic_near_asymptote_uses_stable_denominator() {
     let result = hyperbolic_from_true(e, nu).unwrap();
     near(result, 1.744_231_428_086_033_4, 2e-15);
 }
+
+#[test]
+fn hyperbolic_true_conversion_reports_underflow() {
+    let tiny = f64::from_bits(1);
+    assert_eq!(
+        hyperbolic_from_true(1.0 + f64::EPSILON, tiny),
+        Err(AnomalyError::NumericalRange)
+    );
+    assert_eq!(hyperbolic_from_true(1.0 + f64::EPSILON, 0.0), Ok(0.0));
+}

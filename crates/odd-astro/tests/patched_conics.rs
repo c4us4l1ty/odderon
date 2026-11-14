@@ -105,3 +105,44 @@ fn vis_viva_for_all_conics() {
         Err(OrbitError::RadiusOutsideEllipse)
     );
 }
+
+#[test]
+fn hyperbolic_vis_viva_avoids_reciprocal_overflow() {
+    // The reciprocal of |a| overflows, but mu/|a| and the speed are finite.
+    let speed = odd_astro::vis_viva_speed(1e-300, 1.0, Some(-1e-310)).unwrap();
+    assert!((speed / 100_000.0 - 1.0).abs() < 1e-13);
+}
+
+#[test]
+fn bi_elliptic_close_radii_retain_small_burns() {
+    // mpmath at 80 digits using the exact binary64 inputs.
+    let result =
+        bi_elliptic_transfer(MU, 7_000_000.0, 7_000_000.000_001, 7_000_000.000_002).unwrap();
+    let reverse =
+        bi_elliptic_transfer(MU, 7_000_000.000_001, 7_000_000.0, 7_000_000.000_002).unwrap();
+    near(
+        reverse.departure_delta_v_m_s,
+        -result.arrival_delta_v_m_s,
+        1e-24,
+    );
+    near(
+        reverse.intermediate_delta_v_m_s,
+        -result.intermediate_delta_v_m_s,
+        1e-24,
+    );
+    near(
+        reverse.arrival_delta_v_m_s,
+        -result.departure_delta_v_m_s,
+        1e-24,
+    );
+    let same = bi_elliptic_transfer(MU, 7_000_000.0, 7_000_000.0, 7_000_000.0).unwrap();
+    assert_eq!(same.total_delta_v_m_s, 0.0);
+    assert!(same.coast_time_s > 0.0); // Two explicitly requested half-circles.
+    for (got, expected) in [
+        (result.departure_delta_v_m_s, 5.388_824_140_738_829e-10),
+        (result.intermediate_delta_v_m_s, 2.695_667_036_401_307e-10),
+        (result.arrival_delta_v_m_s, -2.693_157_104_337_233_5e-10),
+    ] {
+        assert!((got / expected - 1.0).abs() < 1e-13, "{result:?}");
+    }
+}

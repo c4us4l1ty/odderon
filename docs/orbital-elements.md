@@ -28,7 +28,8 @@ angles for *near*-singular cases, not a claim that small but nonzero e or i is
 exactly zero. The `circular_equatorial`, `circular_inclined`, and
 `eccentric_equatorial` constructors accept the corresponding combined angles
 for exactly circular and/or equatorial cases. They do not reconstruct the
-small nonzero elements discarded by a limiting combined angle. The original classical angles are retained for reconstruction;
+small nonzero elements discarded by a limiting combined angle. The original
+classical angles are retained for reconstruction;
 they can be poorly conditioned. At exact singularities a conventional zero is
 used for the undefined angle. Radial motion has no orbital plane and returns an
 error. Invalid, nonfinite, unrepresentable or physically inaccessible inputs
@@ -111,7 +112,9 @@ precision. This is a correction to the test specification, not a claim that
 
 Near-parabolic periapsis and far-side cases are also checked against 80-digit
 `mpmath` calculations using exact binary64 inputs; see
-`tools/astro-oracle/near_parabolic_mpmath.py`. These checks do not eliminate
+`tools/astro-oracle/near_parabolic_mpmath.py`. The script also calculates
+small-burn Hohmann and bi-elliptic regression values for nearly equal radii,
+where subtracting orbital speeds is poorly conditioned. These checks do not eliminate
 conditioning limits close to an asymptote.
 
 Additional committed fixtures compare 100 elliptical states and 100 anomaly

@@ -81,3 +81,22 @@ fn vis_viva_near_degenerate_ellipse_apocenter() {
         Err(OrbitError::RadiusOutsideEllipse)
     );
 }
+
+#[test]
+fn nearly_equal_hohmann_radii_retain_small_burns() {
+    // mpmath 80-digit calculation with exact f64 radius inputs.
+    let up = hohmann_transfer(EARTH_MU, 7_000_000.0, 7_000_000.000_001).unwrap();
+    let expected_departure = 2.695_667_036_401_499e-10;
+    let expected_arrival = 2.695_667_036_401_403e-10;
+    assert!(
+        (up.departure_delta_v_m_s / expected_departure - 1.0).abs() < 1e-13,
+        "{up:?}"
+    );
+    assert!(
+        (up.arrival_delta_v_m_s / expected_arrival - 1.0).abs() < 1e-13,
+        "{up:?}"
+    );
+    let down = hohmann_transfer(EARTH_MU, 7_000_000.000_001, 7_000_000.0).unwrap();
+    near(down.departure_delta_v_m_s, -up.arrival_delta_v_m_s, 1e-24);
+    near(down.arrival_delta_v_m_s, -up.departure_delta_v_m_s, 1e-24);
+}

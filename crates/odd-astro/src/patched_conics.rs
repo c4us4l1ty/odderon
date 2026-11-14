@@ -1,7 +1,7 @@
 //! Small building blocks for ideal patched-conic planning, not a trajectory
 //! encounter finder. A patch must occur at one common epoch in parallel inertial
 //! axes; the caller supplies the secondary body's position and velocity.
-use crate::{circular_speed, elliptical_speed, finite, positive, OrbitError};
+use crate::{circular_speed, finite, positive, OrbitError};
 use odd_core::frames::State;
 use std::f64::consts::PI;
 
@@ -99,19 +99,33 @@ pub fn bi_elliptic_transfer(
     if apoapsis_radius_m < initial_radius_m.max(final_radius_m) {
         return Err(OrbitError::InvalidInput);
     }
-    let a1 = finite(initial_radius_m * 0.5 + apoapsis_radius_m * 0.5)?;
-    let a2 = finite(final_radius_m * 0.5 + apoapsis_radius_m * 0.5)?;
+    let a1 = finite(initial_radius_m + (apoapsis_radius_m - initial_radius_m) * 0.5)?;
+    let a2 = finite(final_radius_m + (apoapsis_radius_m - final_radius_m) * 0.5)?;
+    let first_root = (initial_radius_m / a1).sqrt();
+    let second_root = (final_radius_m / a2).sqrt();
+    // Rationalized differences of transfer and circular speeds preserve small
+    // burns instead of subtracting nearly equal orbital velocities.
+    let u1 = ((apoapsis_radius_m - initial_radius_m) / a1) * 0.5;
+    let u2 = ((final_radius_m - apoapsis_radius_m) / a2) * 0.5;
     let departure = finite(
-        elliptical_speed(mu_m3_s2, initial_radius_m, a1)?
-            - circular_speed(mu_m3_s2, initial_radius_m)?,
-    )?;
-    let intermediate = finite(
-        elliptical_speed(mu_m3_s2, apoapsis_radius_m, a2)?
-            - elliptical_speed(mu_m3_s2, apoapsis_radius_m, a1)?,
+        circular_speed(mu_m3_s2, initial_radius_m)?
+            * (u1 / (1.0 + (apoapsis_radius_m / a1).sqrt())),
     )?;
     let arrival = finite(
-        circular_speed(mu_m3_s2, final_radius_m)? - elliptical_speed(mu_m3_s2, final_radius_m, a2)?,
+        circular_speed(mu_m3_s2, final_radius_m)? * (u2 / (1.0 + (apoapsis_radius_m / a2).sqrt())),
     )?;
+    let intermediate = if initial_radius_m == final_radius_m {
+        0.0
+    } else {
+        let delta = (apoapsis_radius_m / a1) * (((final_radius_m - initial_radius_m) / a2) * 0.5);
+        finite(circular_speed(mu_m3_s2, apoapsis_radius_m)? * (delta / (first_root + second_root)))?
+    };
+    if (departure == 0.0 && apoapsis_radius_m != initial_radius_m)
+        || (arrival == 0.0 && apoapsis_radius_m != final_radius_m)
+        || (intermediate == 0.0 && initial_radius_m != final_radius_m)
+    {
+        return Err(OrbitError::NumericalRange);
+    }
     let total = finite(departure.abs() + intermediate.abs() + arrival.abs())?;
     let coast =
         finite(PI * (a1 / circular_speed(mu_m3_s2, a1)? + a2 / circular_speed(mu_m3_s2, a2)?))?;
