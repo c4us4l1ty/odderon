@@ -107,6 +107,9 @@ normally permits its endpoint. Unknown versions and trailing bytes are rejected.
   regenerates it after verifying the full kernel's hash. The tests compare all
   position and velocity components. These checks verify the extraction,
   decoder and derivatives, not independence of the underlying ephemeris.
+  The separate `de440s-cspice-pairs.csv` tests all 25 target/center pairs
+  at five epochs (including the solar-system barycenter and self-states); its
+  generator is `tools/pack-ephem/reference/generate_pairs.py`.
 - CI checks the bundled hash and reproduces the packed bytes from the pinned,
   hash-verified SPK subset. Full-source reproduction was also verified locally.
   The 1900 and 2100 eight-day fixtures in `data/oracles/` were likewise packed
@@ -128,7 +131,13 @@ from that PCK (Sun IAU 2015, Moon IAU 2009). The Moon's IAU frame is an
 approximation, not the higher-precision DE440 lunar principal-axes or
 mean-Earth frame. The Sun's rotating meridian is conventional; the plasma
 rotates differentially. These models are restricted to the shipped coverage.
-CSPICE frame matrices check the implementation.
+CSPICE frame matrices check the implementation. The 12 matrices in
+`data/oracles/iau-orientation-cspice.csv` cover all three bodies, fractional
+seconds, and the start/end of the supported interval; they can be regenerated
+with `tools/pack-ephem/reference/generate_orientation.py` using pck00011.tpc
+SHA-256 `3dff7b1dbeceaa01f25467767d3fa25816051c85d162d1edf04acb310ee28bb1`.
+These test implementation against the same model, not the model's physical
+accuracy.
 
 For Earth, `earth_approx_orientation` supplies the NAIF IAU_EARTH low-accuracy
 visualization model; NAIF warns its prime-meridian error is at least 150

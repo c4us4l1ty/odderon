@@ -370,26 +370,21 @@ fn physical_parameters_are_named_and_barycenters_are_not_bodies() {
     assert_eq!(physical(Body::Sun).unwrap().radii_m, [695_700_000.0; 3]);
 }
 
-#[test]
-fn full_kernel_cspice_corpus_covers_interval_and_record_edges() {
-    // Full DE440s, CSPICE_N0067; see generator for provenance and sampling.
+fn compare_cspice_corpus(data: &str) -> usize {
     let ephem = Ephemeris::bundled().unwrap();
-    let data = include_str!("../../../data/oracles/de440s-cspice.csv");
     let mut n = 0;
     for line in data.lines().filter(|line| !line.starts_with('#')) {
         let mut fields = line.split(',');
-        let target = match fields.next().unwrap() {
+        let body = |id| match id {
+            "0" => Body::SolarSystemBarycenter,
             "3" => Body::EarthMoonBarycenter,
             "10" => Body::Sun,
             "301" => Body::Moon,
             "399" => Body::Earth,
-            _ => panic!("unknown target"),
+            _ => panic!("unknown body"),
         };
-        let center = match fields.next().unwrap() {
-            "0" => Body::SolarSystemBarycenter,
-            "3" => Body::EarthMoonBarycenter,
-            _ => panic!("unknown center"),
-        };
+        let target = body(fields.next().unwrap());
+        let center = body(fields.next().unwrap());
         let seconds: i64 = fields.next().unwrap().parse().unwrap();
         let fraction: f64 = fields.next().unwrap().parse().unwrap();
         let components: Vec<f64> = fields.map(|s| s.parse().unwrap()).collect();
@@ -412,7 +407,27 @@ fn full_kernel_cspice_corpus_covers_interval_and_record_edges() {
         }
         n += 1;
     }
-    assert!(n >= 400);
+    n
+}
+
+#[test]
+fn full_kernel_cspice_corpus_covers_interval_and_record_edges() {
+    // Full DE440s, CSPICE_N0067; see generator for provenance and sampling.
+    assert_eq!(
+        compare_cspice_corpus(include_str!("../../../data/oracles/de440s-cspice.csv")),
+        452
+    );
+}
+
+#[test]
+fn full_kernel_all_supported_body_pairs_match_cspice() {
+    // Five epochs exercise every target/center pair, including self and SSB.
+    assert_eq!(
+        compare_cspice_corpus(include_str!(
+            "../../../data/oracles/de440s-cspice-pairs.csv"
+        )),
+        125
+    );
 }
 
 #[test]
