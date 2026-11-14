@@ -418,7 +418,8 @@ fn full_kernel_cspice_corpus_covers_interval_and_record_edges() {
 #[test]
 fn custom_coverage_supports_past_and_future_de440_records() {
     // CSPICE N0067 and full DE440s; two compact eight-day fixtures.
-    let samples: [(&[u8], i64, [f64; 3], [f64; 3]); 2] = [
+    type Fixture<'a> = (&'a [u8], i64, [f64; 3], [f64; 3]);
+    let samples: [Fixture<'_>; 2] = [
         (
             include_bytes!("../../../data/oracles/de440s-1900-8d.ephb"),
             -3_155_716_800,
@@ -444,7 +445,7 @@ fn custom_coverage_supports_past_and_future_de440_records() {
             [
                 -416.859_643_819_902_26,
                 -849.998_439_012_363_9,
-                -467.702_941_766_646_57,
+                -467.702_941_766_646_6,
             ],
         ),
     ];
