@@ -72,20 +72,26 @@ interaction effects in [Zhao et al.](https://proceedings.mlr.press/v216/zhao23a/
 The Rust foundation now compiles sorted multi-node ideal conics and quantized
 burns, rejects overlapping/out-of-plan commands and planned fuel deficits,
 locks an immutable prediction, and performs seven counterfactual propagations.
-An experimental Contract 101 orbit-rescue page (`web/mission.html`) includes
+The experimental mission page (`web/mission.html`) includes
 canvas node and handle interaction, keyboard-accessible numerical controls,
 a textual lens, a locked prediction, worker-based flight and a debrief. Its
 Earth model assumes a 4 m² drag and radiation area, Cd 2.2, Cr 1.3, a J2000
 z-axis pole and a 2026-01-01 TDB start. The 550 km success score is a local
 explicit rule, not an Elo rating. The browser test places two maneuvers,
-executes, scores above 0.80, and checks the two-second idle counters.
+executes, scores above 0.80, and checks the two-second idle counters. It also
+exercises Contract 102, whose unspecified 1,200 kg initial mass, 180 kg
+available propellant, 2,400 N thrust and 310 s specific impulse are explicitly
+borrowed from Contract 101. That fixture uses a 250 km by 800 km initial
+orbit and a combined circularization and plane-change burn. Its five-day
+full-force numerical fixture meets the requested node-rotation range and
+shows over 85% J2 sensitivity for node rotation; that is not a guarantee for
+other plans or a unique causal decomposition.
 
-This is **not completed WP 1.3/1.4**: Contracts 102 and 103 are not playable;
+This is **not completed WP 1.3/1.4**: Contract 103 is not playable;
 there is no lunar encounter finder, ranked mission selector, impact event
 handling, full visual cause-and-effect graph, or verified automatic perigee
 passage splitter. The prototype splitter estimates the next *ideal* periapsis,
 which can differ materially from the finite-burn passage, and is presented with
 that caveat. The point-Earth kick regression is not proof of the complete
-lunar mission. A five-day full-force SSO numerical fixture meets the specified
-J2-dominance check for one documented engine assumption; the tug's full-model
-apoapsis-attribution oracle remains undefined for the impact case above.
+lunar mission. The tug's full-model apoapsis-attribution oracle remains undefined for the
+impact case above.

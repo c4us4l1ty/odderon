@@ -15,8 +15,8 @@ WP 1.1 adds ideal two-body orbital elements and transfer calculations; see
 [orbital-elements notes](docs/orbital-elements.md) for validation and limits.
 
 An in-progress WP 1.3/1.4 prototype adds multi-node maneuver planning,
-locked predictions and one experimental orbit-rescue scenario. The other
-requested missions and acceptance gates are not complete; see
+locked predictions and two experimental mission scenarios. The third
+requested mission and some acceptance gates are not complete; see
 [mission-planning feasibility](docs/mission-planning-feasibility.md).
 
 Work Package 0.1 provides SI quantities, epochs, UTC conversion, hierarchical
@@ -59,4 +59,4 @@ limitations. Positions are calculated from DE440s; visible surface features
 and the optional vehicle study are illustrative.
 
 After building and serving the WebAssembly module as above, open
-<http://localhost:8000/mission.html> for the experimental rescue scenario.
+<http://localhost:8000/mission.html> for the experimental mission scenarios.

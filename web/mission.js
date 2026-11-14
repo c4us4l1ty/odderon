@@ -70,7 +70,7 @@ function prefill(){
 function showDebrief(report){
   const [mass,apo,peri,e,rescueScore,dv]=report,p=locked.prediction;
   const drift=report[28]*180/Math.PI,inclination=report[26]*180/Math.PI;
-  const maxError=Math.max(Math.abs(apo/1000-800)/10,Math.abs(peri/1000-800)/10,Math.abs(drift-4.93)/0.15);
+  const maxError=Math.max(Math.abs(apo/1000-800)/10,Math.abs(peri/1000-800)/10,Math.abs(drift-4.93)/0.15,Math.abs(inclination-98.60)/0.25);
   const score=scenario==='101'?rescueScore:(e<0.005&&mass>=DRY&&maxError<=1?1-0.2*maxError:0);
   const fmt=(x,n=1)=>Number(x).toLocaleString('en-US',{maximumFractionDigits:n,minimumFractionDigits:n});
   const entries=[['Mission score',`${fmt(score*100,1)}%`],['Farthest altitude',`${fmt(apo/1000)} km`],['Closest altitude',`${fmt(peri/1000)} km`],['Remaining propellant',`${fmt(mass-DRY,2)} kg`],['Orbit eccentricity',fmt(e,5)],['Commanded velocity change',`${fmt(dv,2)} m/s`]];
