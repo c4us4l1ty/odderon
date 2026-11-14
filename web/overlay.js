@@ -7,9 +7,12 @@ export function polyline(ctx, points, {stroke='#bacfc0', dashed=false, width=1}=
   ctx.strokeStyle=stroke;ctx.lineWidth=width;ctx.setLineDash(dashed?[3,5]:[]);ctx.stroke();ctx.restore();
 }
 export function vector(ctx, from, to, {color='#e1bd78'}={}) {
-  if(!finitePoint(from)||!finitePoint(to))return;
-  const angle=Math.atan2(to[1]-from[1],to[0]-from[0]);ctx.save();ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=1.5;
-  ctx.beginPath();ctx.moveTo(...from);ctx.lineTo(...to);ctx.stroke();ctx.beginPath();ctx.moveTo(...to);ctx.lineTo(to[0]-8*Math.cos(angle-.45),to[1]-8*Math.sin(angle-.45));ctx.lineTo(to[0]-8*Math.cos(angle+.45),to[1]-8*Math.sin(angle+.45));ctx.closePath();ctx.fill();ctx.restore();
+  if(!finitePoint(from)||!finitePoint(to))return false;
+  const dx=to[0]-from[0],dy=to[1]-from[1],length=Math.hypot(dx,dy);
+  // An almost line-of-sight vector has no discernible screen direction.
+  if(length<1)return false;
+  const angle=Math.atan2(dy,dx),head=Math.min(8,length*.4);ctx.save();ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=1.5;
+  ctx.beginPath();ctx.moveTo(...from);ctx.lineTo(...to);ctx.stroke();ctx.beginPath();ctx.moveTo(...to);ctx.lineTo(to[0]-head*Math.cos(angle-.45),to[1]-head*Math.sin(angle-.45));ctx.lineTo(to[0]-head*Math.cos(angle+.45),to[1]-head*Math.sin(angle+.45));ctx.closePath();ctx.fill();ctx.restore();return true;
 }
 // Apsis is a supplied screen position and label, not detected by drawing code.
 export function apsis(ctx, point, label, {color='#d5bb80'}={}) {

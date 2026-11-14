@@ -45,7 +45,8 @@ controls select a midnight **TDB**, not local time or UTC. The date range is
   rocket and plume are a **screen-space illustration**, not a spacecraft,
   engine simulation or a real position. The optional velocity arrow uses the
   actual instantaneous relative velocity, scaled to one day: it is a tangent,
-  not a propagated path.
+  not a propagated path. When its projected length is under one screen pixel,
+  the arrow is suppressed and labeled as almost along the view direction.
 * Orbital elements, apsides, B-plane targeting and vehicle trajectories require
   later physics packages. This viewport does not fabricate those results.
   `web/overlay.js` provides reusable polyline, vector, apsis-marker and B-plane

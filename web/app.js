@@ -57,9 +57,9 @@ function drawOverlay(model,rect){
     const from=pixel(model.project(snapshot.moon));
     // A 1-day tangent scaled from instantaneous geometric velocity, not an orbit prediction.
     const to=pixel(model.project(snapshot.moon.map((x,i)=>x+snapshot.velocity[i]*86400)));
-    vector(ctx,from,to);
+    const visible=vector(ctx,from,to);
     ctx.fillStyle='#e1bd78';
-    ctx.font='10px system-ui';ctx.fillText('VELOCITY · 1 DAY AT CURRENT SPEED',20,rect.height-(model.vehicle?62:45));
+    ctx.font='10px system-ui';ctx.fillText(visible?'VELOCITY · 1 DAY AT CURRENT SPEED':'VELOCITY · ALMOST ALONG VIEW',20,rect.height-(model.vehicle?62:45));
   }
   if(model.vehicle){ctx.fillStyle='#d5bb80';ctx.font='10px system-ui';ctx.fillText('VEHICLE STUDY · NOT A SIMULATED MISSION',20,rect.height-45);}
   function label(body,name,detail){
