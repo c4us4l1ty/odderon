@@ -3,6 +3,9 @@
 This is an initial subset of Work Package 0.1, not a complete game or a completed
 coordinate kernel. `odd-core` is pure Rust and has no runtime dependencies. It
 contains split TDB epochs, defined astronomical constants, and local frame transformations, including instantaneous rotation and velocity. CI checks native tests, formatting, Clippy, and a WebAssembly build.
+`odd-astro` also provides an initial ideal two-body Hohmann transfer calculator.
+Its published [FreeFlyer worked example](https://ai-solutions.com/_freeflyeruniversityguide/hohmann_transfer.htm)
+is an independent rounded reference, not an ephemeris or high-fidelity simulation.
 
 ## Scientific and engineering decisions
 

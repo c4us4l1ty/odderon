@@ -7,7 +7,9 @@ The broader vision lives in [BRAINSTORM.md](BRAINSTORM.md).
 ## Current implementation
 
 `crates/odd-core` contains split TDB epochs and local reference-frame
-transformations, including instantaneous rotation and velocity. See [foundation notes](docs/foundation.md) for model limitations,
+transformations, including instantaneous rotation and velocity. `crates/odd-astro` provides ideal two-body circular orbit, vis-viva, and
+Hohmann transfer calculations. These are analytical approximations, not a
+trajectory simulation. See [foundation notes](docs/foundation.md) for model limitations,
 references, and the remaining work before Work Package 0.1 is complete.
 
 With Rust and the `wasm32-unknown-unknown` target installed:

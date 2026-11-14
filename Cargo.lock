@@ -3,5 +3,9 @@
 version = 4
 
 [[package]]
+name = "odd-astro"
+version = "0.1.0"
+
+[[package]]
 name = "odd-core"
 version = "0.1.0"
