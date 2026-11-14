@@ -6,7 +6,7 @@ import { EARTH_RADIUS_M, MOON_RADIUS_M, projectedRadius, needsReticle, orbitView
 const $=id=>document.getElementById(id);
 const scene=$('scene'), canvas=$('world'), overlay=$('overlay'), date=$('date'), error=$('error');
 const J2000_UNIX_MS=Date.UTC(2000,0,1,12), DAY=86400;
-let renderer, wasm, snapshot, activeOrbit=null, contextLost=false, camera={yaw:-1.30,pitch:-.35,zoom:1}, pointer=null, draws=0, overlayDraws=0, worldDirty=true, overlayDirty=true, lastQuality=null;
+let renderer, wasm, snapshot, activeOrbit=null, trajectoryWorker=null, contextLost=false, camera={yaw:-1.30,pitch:-.35,zoom:1}, pointer=null, draws=0, overlayDraws=0, worldDirty=true, overlayDirty=true, lastQuality=null;
 const showError=message=>{error.hidden=false;error.textContent=message;};
 const governor=new Governor((quality,batch)=>{try{return draw(quality,batch);}catch(e){governor.suspend();showError(`The view could not be rendered: ${e.message}`);return false;}});
 const invalidateWorld=()=>{worldDirty=true;overlayDirty=true;governor.invalidate();};
@@ -25,22 +25,38 @@ function loadDate(){
   $('distance').textContent=Math.round(Math.hypot(...snapshot.moon)/1000).toLocaleString('en-US');
   $('speed').textContent=(Math.hypot(...snapshot.velocity)/1000).toFixed(3);
   $('prev').disabled=date.value===date.min;$('next').disabled=date.value===date.max;
-  if(!contextLost)error.hidden=true;invalidateWorld();return true;
+  if(!contextLost)error.hidden=true;invalidateWorld();if($('show-orbit').checked)startTrajectory();return true;
 }
 // Accept caller-supplied real inertial state in SI units; this is a conic, not
 // numerical propagation. A failed update clears stale orbit geometry.
-function setOrbit(state,mu){
+function setOrbit(state,mu,soi=149_598_023_000*(3.986004418e14/1.3271244004127942e20)**0.4){
+  if(trajectoryWorker){trajectoryWorker.terminate();trajectoryWorker=null;}
   activeOrbit=null;invalidateWorld();
   if(!wasm||!state||!Array.isArray(state.position)||!Array.isArray(state.velocity)||state.position.length!==3||state.velocity.length!==3)return false;
-  if(!wasm.orbit_load(mu,...state.position,...state.velocity))return false;
+  if(!(soi===null?wasm.orbit_load(mu,...state.position,...state.velocity):wasm.orbit_load_soi(mu,...state.position,...state.velocity,soi)))return false;
   const count=wasm.orbit_value(0),points=[];
   for(let i=0;i<Math.abs(count);i++)points.push([wasm.orbit_value(1+3*i),wasm.orbit_value(2+3*i),wasm.orbit_value(3+3*i)]);
-  const markers=[];for(let i=0;i<4;i++){const index=541+4*i;if(wasm.orbit_value(index))markers.push({name:['PE','AP','AN','DN'][i],pos:[wasm.orbit_value(index+1),wasm.orbit_value(index+2),wasm.orbit_value(index+3)]});}
-  const position=state.position.map(Number), maxRadius=Math.max(Math.hypot(...position),...points.map(p=>Math.hypot(...p)));
+  const markers=[];for(let i=0;i<6;i++){const index=541+4*i;if(wasm.orbit_value(index))markers.push({name:['PE','AP','AN','DN','SOI IN','SOI OUT'][i],pos:[wasm.orbit_value(index+1),wasm.orbit_value(index+2),wasm.orbit_value(index+3)]});}
+  const position=state.position.map(Number), maxRadius=Math.max(Math.hypot(...position),...points.map(p=>Math.hypot(...p)),...markers.map(m=>Math.hypot(...m.pos)));
   if(!Number.isFinite(maxRadius)||!Number.isFinite(maxRadius*2.2))return false;
-  activeOrbit={points,markers,closed:count>0,position,maxRadius};invalidateWorld();return true;
+  activeOrbit={points,markers,closed:count>0,position,velocity:state.velocity.map(Number),mu,maxRadius,perturbed:null};invalidateWorld();if($('show-orbit').checked)startTrajectory();return true;
 }
 window.odderonSetOrbit=setOrbit;
+function startTrajectory(){
+  if(trajectoryWorker){trajectoryWorker.terminate();trajectoryWorker=null;}
+  if(!snapshot||!activeOrbit||!$('show-orbit').checked)return;
+  const orbit=activeOrbit, worker=new Worker('./trajectory-worker.js',{type:'module'});trajectoryWorker=worker;
+  worker.onmessage=({data})=>{if(trajectoryWorker!==worker)return;worker.terminate();trajectoryWorker=null;
+    if(activeOrbit!==orbit)return;
+    if(data.error){$('trajectory-status').textContent=data.error;return;}
+    orbit.perturbed=data.points;orbit.maxRadius=Math.max(orbit.maxRadius,...data.points.map(p=>Math.hypot(...p)));
+    $('trajectory-status').textContent='L3 · 24 HOUR MODEL';invalidateWorld();
+  };
+  worker.onerror=()=>{if(trajectoryWorker!==worker)return;worker.terminate();trajectoryWorker=null;$('trajectory-status').textContent='Trajectory worker failed.';};
+  $('trajectory-status').textContent='CALCULATING L3…';
+  worker.postMessage({epoch:snapshot.seconds,duration:86400,mu:orbit.mu,position:orbit.position,velocity:orbit.velocity,mass:500});
+}
+
 function geometry(){
   const {yaw,pitch,zoom}=camera, c=Math.cos(pitch),s=Math.sin(pitch), cy=Math.cos(yaw),sy=Math.sin(yaw);
   const right=[-sy,cy,0],up=[-s*cy,-s*sy,c],view=[c*cy,c*sy,s];
@@ -72,7 +88,8 @@ function drawOverlay(model,rect){
   const pixel=p=>[rect.width/2+p[0]*rect.height/2,rect.height/2-p[1]*rect.height/2];
   if($('show-orbit').checked&&activeOrbit){
     const points=activeOrbit.points.map(p=>pixel(model.project(p)));if(activeOrbit.closed)points.push(points[0]);
-    polyline(ctx,points,{stroke:'#e1bd78',width:1.5});
+    polyline(ctx,points,{stroke:'#6ad5da',width:1.5,dashed:true});
+    if(activeOrbit.perturbed)polyline(ctx,activeOrbit.perturbed.map(p=>pixel(model.project(p))),{stroke:'#e1bd78',width:2});
     for(const marker of activeOrbit.markers)apsis(ctx,pixel(model.project(marker.pos)),marker.name);
     const craft=pixel(model.project(activeOrbit.position));reticle(ctx,craft,{color:'#e1bd78'});ctx.fillStyle='#e1bd78';ctx.font='10px system-ui';ctx.fillText('TEST CRAFT',craft[0]+9,craft[1]+12);
     ctx.fillStyle='#e1bd78';ctx.font='10px system-ui';ctx.fillText(activeOrbit.closed?'IDEAL TWO-BODY TEST ORBIT':'IDEAL TWO-BODY · OPEN SEGMENT',20,rect.height-26);
@@ -111,7 +128,7 @@ scene.addEventListener('pointerup',endPointer);scene.addEventListener('pointerca
 scene.addEventListener('wheel',e=>{e.preventDefault();zoom(Math.exp(-Math.max(-100,Math.min(100,e.deltaY))*.002));},{passive:false});
 scene.addEventListener('keydown',e=>{let used=true;switch(e.key){case 'ArrowLeft':camera.yaw-=.12;break;case 'ArrowRight':camera.yaw+=.12;break;case 'ArrowUp':camera.pitch=Math.max(-1.52,camera.pitch-.12);break;case 'ArrowDown':camera.pitch=Math.min(1.52,camera.pitch+.12);break;case '+':case '=':zoom(1.2);break;case '-':zoom(1/1.2);break;default:used=false;}if(used){e.preventDefault();invalidateWorld();}});
 $('zoom-in').addEventListener('click',()=>zoom(1.2));$('zoom-out').addEventListener('click',()=>zoom(1/1.2));$('reset').addEventListener('click',()=>{camera={yaw:-1.30,pitch:-.35,zoom:1};invalidateWorld();});
-for(const id of ['show-path','show-velocity'])$(id).addEventListener('change',invalidateOverlay);$('show-vehicle').addEventListener('change',invalidateWorld);$('show-orbit').addEventListener('change',invalidateWorld);date.addEventListener('change',loadDate);$('prev').addEventListener('click',()=>changeDay(-1));$('next').addEventListener('click',()=>changeDay(1));$('today-reset').addEventListener('click',()=>{date.value='2026-01-01';loadDate();});
+for(const id of ['show-path','show-velocity'])$(id).addEventListener('change',invalidateOverlay);$('show-vehicle').addEventListener('change',invalidateWorld);$('show-orbit').addEventListener('change',()=>{invalidateWorld();if($('show-orbit').checked)startTrajectory();else if(trajectoryWorker){trajectoryWorker.terminate();trajectoryWorker=null;}});date.addEventListener('change',loadDate);$('prev').addEventListener('click',()=>changeDay(-1));$('next').addEventListener('click',()=>changeDay(1));$('today-reset').addEventListener('click',()=>{date.value='2026-01-01';loadDate();});
 new ResizeObserver(invalidateWorld).observe(scene);
 // A monitor or browser zoom change can alter pixel density without resizing the
 // CSS box. Re-arm a one-shot media query rather than polling while idle.

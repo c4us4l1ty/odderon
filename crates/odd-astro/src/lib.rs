@@ -7,6 +7,7 @@
 
 pub mod anomaly;
 pub mod elements;
+pub mod force_model;
 pub mod integrator;
 pub mod patched_conics;
 pub mod perturb;

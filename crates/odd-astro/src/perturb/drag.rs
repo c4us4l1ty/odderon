@@ -1,8 +1,8 @@
 //! Earth reference atmosphere and drag. The seven-layer USSA76 lower
 //! atmosphere ends at 86 km geometric altitude, not 1000 km. Above that,
-//! this module uses a fixed exponential reference-density table, NOT the
-//! full USSA76 upper-atmosphere physics or a space-weather model. High-altitude
-//! drag estimates are illustrative and can differ greatly from reality.
+//! this module uses published piecewise polynomial fits to the USSA76 upper
+//! density tables, not the full species model or a space-weather model.
+//! High-altitude density varies greatly with solar activity.
 use super::{dot, norm, PerturbationError};
 
 /// Approximate density in kg/m³, using geometric altitude in meters.
@@ -15,38 +15,25 @@ pub fn earth_density(height: f64) -> Result<f64, PerturbationError> {
         return Ok(0.0);
     }
     if height >= 86_000.0 {
-        // Reference exponential thermosphere, geometric altitude (m), base
-        // density (kg/m³), scale height (m). This is not a time-varying model.
-        const TABLE: [(f64, f64, f64); 15] = [
-            (86e3, 6.957e-6, 5.799e3),
-            (100e3, 5.297e-7, 5.877e3),
-            (110e3, 9.661e-8, 7.263e3),
-            (120e3, 2.438e-8, 9.473e3),
-            (130e3, 8.484e-9, 12.636e3),
-            (140e3, 3.845e-9, 16.149e3),
-            (150e3, 2.070e-9, 22.523e3),
-            (180e3, 5.464e-10, 29.740e3),
-            (200e3, 2.789e-10, 37.105e3),
-            (250e3, 7.248e-11, 45.546e3),
-            (300e3, 2.418e-11, 53.628e3),
-            (350e3, 9.518e-12, 53.298e3),
-            (400e3, 3.725e-12, 58.515e3),
-            (500e3, 6.967e-13, 63.822e3),
-            (600e3, 1.454e-13, 71.835e3),
+        // Braeunig Table 8, polynomial fits to USSA76 density tables. Heights
+        // are geometric km, coefficients approximate the table (~4 digits).
+        const FIT: [(f64, [f64; 5]); 10] = [
+            (86.0, [0.0, -3.322622e-6, 9.111460e-4, -0.2609971, 5.944694]),
+            (91.0, [0.0, 2.873405e-5, -0.008492037, 0.6541179, -23.62010]),
+            (100.0, [-1.240774e-5, 0.005162063, -0.8048342, 55.55996, -1443.338]),
+            (110.0, [0.0, -8.854164e-5, 0.03373254, -4.390837, 176.5294]),
+            (120.0, [3.661771e-7, -2.154344e-4, 0.04809214, -4.884744, 172.3597]),
+            (150.0, [1.906032e-8, -1.527799e-5, 0.004724294, -0.6992340, 20.50921]),
+            (200.0, [1.199282e-9, -1.451051e-6, 6.910474e-4, -0.1736220, -5.321644]),
+            (300.0, [1.140564e-10, -2.130756e-7, 1.570762e-4, -0.07029296, -12.89844]),
+            (500.0, [8.105631e-12, -2.358417e-9, -2.635110e-6, -0.01562608, -20.02246]),
+            (750.0, [-3.701195e-12, -8.608611e-9, 5.118829e-5, -0.06600998, -6.137674]),
         ];
-        const TOP: [(f64, f64, f64); 4] = [
-            (700e3, 3.614e-14, 88.667e3),
-            (800e3, 1.170e-14, 124.640e3),
-            (900e3, 5.245e-15, 181.05e3),
-            (1000e3, 3.019e-15, 268e3),
-        ];
-        let mut layer = TABLE[0];
-        for row in TABLE.into_iter().chain(TOP) {
-            if height >= row.0 {
-                layer = row;
-            }
-        }
-        return Ok(layer.1 * libm::exp(-(height - layer.0) / layer.2));
+        let z = height / 1000.0;
+        let mut coeff = FIT[0].1;
+        for (base, values) in FIT { if z >= base { coeff = values; } }
+        let [a, b, c, d, e] = coeff;
+        return Ok(libm::exp((((a*z+b)*z+c)*z+d)*z+e));
     }
     // USSA76 standard geopotential layers: base height, temperature,
     // pressure, temperature lapse rate. SI values.
@@ -148,7 +135,7 @@ mod tests {
     #[test]
     fn reference_densities_and_corotation() {
         assert!((earth_density(0.0).unwrap() - 1.225).abs() < 1e-4);
-        assert!((earth_density(300e3).unwrap() / 2.418e-11 - 1.0).abs() < 1e-14);
+        assert!((earth_density(300e3).unwrap() / 1.915_12e-11 - 1.0).abs() < 1e-5);
         assert_eq!(earth_density(1_000_001.0).unwrap(), 0.0);
         let a = acceleration(
             [6_678_137.0, 0.0, 0.0],
