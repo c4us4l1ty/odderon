@@ -29,11 +29,17 @@ are explicit instead.
 ## Source, provenance, and reproducibility
 
 The upstream is JPL/NAIF [`de440s.bsp`](https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/de440s.bsp).
-This repository's small packed file is extracted from the 2020–2036 subset
-`de440s_2020-2035.bsp` distributed in Lawrence Livermore National Laboratory's
-`ssa-data-lunar` 0.0.1, mirrored at
+This repository's small packed file was produced from the 2020–2036 subset
+`de440s_2020-2035.bsp` mirrored at
 [laurpaul/LunarMaps](https://github.com/laurpaul/LunarMaps/tree/main/raw). The
-mirror reports that it was cut with SPICE SPKSUB and retains original data.
+mirror describes cutting the full DE440s SPK from Lawrence Livermore National
+Laboratory's `ssa-data-lunar` 0.0.1 with SPICE SPKSUB. We independently
+obtained that package's full `de440s.bsp` from PyPI and verified that clipping
+it directly with `pack-ephem --range` reproduces the bundled file byte for byte.
+Its SHA-256 is
+`c1c7feeab882263fc493a9d5a5b2ddd71b54826cdf65d8d17a76126b260a49f2`;
+this agrees with the [independent published kernel lock](https://github.com/mikezupper/learn-solar-system/blob/main/data/kernels.lock.json).
+A checksum identifies a particular file, not an independent proof of its origin.
 The subset's SHA-256 is
 `f2ca56c14a88fa6a61d599daa40d12ae85ac25f204870fbc623d433c9a57cc37`;
 the checked-in packed output has SHA-256
@@ -49,13 +55,27 @@ gh api -H 'Accept: application/vnd.github.raw+json' \
   repos/laurpaul/LunarMaps/git/blobs/5613b931809458da8ef89673f95536b66a16a5de \
   > data/raw/de440s_2020-2035.bsp
 sha256sum data/raw/de440s_2020-2035.bsp
-cargo run --locked -p pack-ephem -- data/raw/de440s_2020-2035.bsp /tmp/de440.ephb
+cargo run --locked -p pack-ephem -- --range 631108800 1136030400 \
+  data/raw/de440s_2020-2035.bsp /tmp/de440.ephb
 cmp /tmp/de440.ephb data/packed/de440s-2020-2036.ephb
 ```
 
+For broader use, obtain the full NAIF `de440s.bsp`, verify the SHA-256 above,
+and use the same `--range` command on it, or omit `--range` to pack the full
+coverage (approximately 21 MB). `Ephemeris::from_bytes` can load these files
+from application-provided bytes; the application is responsible for external
+storage and source integrity. Full DE440s covers 1849-12-26 through 2150-01-22
+TDB; the exact packed coverage is returned by `coverage()` and remains
+half-open. The separately provided orientation approximations are still limited
+to 2020–2036 and do not automatically inherit external ephemeris coverage.
+No large source kernels or full-range output are committed.
+
 The offline packer deliberately reads little-endian DAF/SPK, J2000 type-2
 segments (3→0, 10→0, 301→3, 399→3), with exact integer-second metadata. It
-rejects missing/duplicate segments and malformed timing and coefficients. It
+rejects missing/duplicate segments, a damaged DAF transfer sentinel, and
+malformed timing and coefficients. The sentinel detects some transfer damage,
+not all corruption. `--range` takes integral TDB seconds since J2000 and
+selects all intersecting original records without refitting them. It
 does not claim to be a general SPK parser or Horizons CSV fitter; use NAIF tools
 first to subset or normalize other kernels. It does not verify source identity:
 that is the operator's responsibility. The binary reader validates structure,
@@ -80,9 +100,20 @@ normally permits its endpoint. Unknown versions and trailing bytes are rejected.
   vector norm errors and range to <0.1%, and also exercises much tighter
   empirical tolerances at that epoch. Earth, Sun and barycenter are separately
   checked against Horizons SSB states. DE440 and DE441 are different solutions.
-- CSPICE N0067 via spiceypy 8.4 evaluated the *same subset* at the start,
-  a record boundary, a fractional epoch, and near the end. These checks verify
-  the decoder and derivatives, not independence of the underlying ephemeris.
+- CSPICE N0067 via spiceypy 8.4 evaluated the **full** DE440s kernel at
+  113 epochs across the bundled coverage, including fractional instants and
+  both sides of record boundaries. `data/oracles/de440s-cspice.csv` holds 452
+  individual segment states; `tools/pack-ephem/reference/generate_cspice.py`
+  regenerates it after verifying the full kernel's hash. The tests compare all
+  position and velocity components. These checks verify the extraction,
+  decoder and derivatives, not independence of the underlying ephemeris.
+- CI checks the bundled hash and reproduces the packed bytes from the pinned,
+  hash-verified SPK subset. Full-source reproduction was also verified locally.
+  The 1900 and 2100 eight-day fixtures in `data/oracles/` were likewise packed
+  from the hash-verified full source with `--range -3155716800 -3155025600`
+  and `--range 3155716800 3156408000`; their states and half-open boundaries
+  are checked against CSPICE. They test the custom-data path, not the bundled
+  2020–2036 coverage.
 - Native, Node wasm and headless Chrome wasm compare selected ephemeris and
   orientation outputs bit-for-bit. This fixture is not a guarantee for all
   inputs or architectures. CI also checks malformed and out-of-range input.

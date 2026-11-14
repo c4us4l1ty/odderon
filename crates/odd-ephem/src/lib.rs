@@ -220,6 +220,16 @@ impl Ephemeris {
                 }
             }
         }
+        // A path may sum several individually finite states. Check the
+        // composed result as well, including caller-supplied ephemerides.
+        if !result
+            .position_m
+            .iter()
+            .chain(&result.velocity_m_s)
+            .all(|v| v.is_finite())
+        {
+            return Err(EphemerisError::InvalidData);
+        }
         Ok(EphemerisState {
             target,
             center,

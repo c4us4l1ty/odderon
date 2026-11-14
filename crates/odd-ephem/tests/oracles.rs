@@ -328,6 +328,36 @@ fn horizons_relative_vectors_across_coverage() {
 }
 
 #[test]
+fn finite_segment_states_cannot_overflow_in_composition() {
+    // Each evaluated segment is finite, but Moon→EMB plus EMB→SSB exceeds
+    // f64 range. Even structurally valid caller-supplied data must fail closed.
+    let mut bytes = b"ODEPHEM1".to_vec();
+    bytes.extend(4_u32.to_le_bytes());
+    for (target, center) in [(3_i32, 0_i32), (10, 0), (301, 3), (399, 3)] {
+        bytes.extend(target.to_le_bytes());
+        bytes.extend(center.to_le_bytes());
+        for x in [0.0_f64, 10.0, 0.0, 10.0] {
+            bytes.extend(x.to_le_bytes());
+        }
+        bytes.extend(1_u32.to_le_bytes());
+        bytes.extend(1_u32.to_le_bytes());
+        let coefficient = if target == 3 || target == 301 {
+            1e305_f64
+        } else {
+            0.0
+        };
+        for x in [coefficient, 0.0, 0.0] {
+            bytes.extend(x.to_le_bytes());
+        }
+    }
+    let ephem = Ephemeris::from_bytes(&bytes).unwrap();
+    assert_eq!(
+        ephem.state(Body::Moon, Body::Sun, Epoch::J2000),
+        Err(EphemerisError::InvalidData)
+    );
+}
+
+#[test]
 fn physical_parameters_are_named_and_barycenters_are_not_bodies() {
     use odd_ephem::physical::physical;
     assert!(physical(Body::SolarSystemBarycenter).is_none());
@@ -338,4 +368,102 @@ fn physical_parameters_are_named_and_barycenters_are_not_bodies() {
     );
     assert_eq!(physical(Body::Moon).unwrap().radii_m, [1_737_400.0; 3]);
     assert_eq!(physical(Body::Sun).unwrap().radii_m, [695_700_000.0; 3]);
+}
+
+#[test]
+fn full_kernel_cspice_corpus_covers_interval_and_record_edges() {
+    // Full DE440s, CSPICE_N0067; see generator for provenance and sampling.
+    let ephem = Ephemeris::bundled().unwrap();
+    let data = include_str!("../../../data/oracles/de440s-cspice.csv");
+    let mut n = 0;
+    for line in data.lines().filter(|line| !line.starts_with('#')) {
+        let mut fields = line.split(',');
+        let target = match fields.next().unwrap() {
+            "3" => Body::EarthMoonBarycenter,
+            "10" => Body::Sun,
+            "301" => Body::Moon,
+            "399" => Body::Earth,
+            _ => panic!("unknown target"),
+        };
+        let center = match fields.next().unwrap() {
+            "0" => Body::SolarSystemBarycenter,
+            "3" => Body::EarthMoonBarycenter,
+            _ => panic!("unknown center"),
+        };
+        let seconds: i64 = fields.next().unwrap().parse().unwrap();
+        let fraction: f64 = fields.next().unwrap().parse().unwrap();
+        let components: Vec<f64> = fields.map(|s| s.parse().unwrap()).collect();
+        assert_eq!(components.len(), 6);
+        let state = ephem
+            .state(target, center, Epoch::new(seconds, fraction).unwrap())
+            .unwrap()
+            .state;
+        for axis in 0..3 {
+            assert!(
+                (state.position_m[axis] - components[axis]).abs() < 0.001,
+                "position at {seconds}+{fraction}, {target:?} axis {axis}: {} vs {}",
+                state.position_m[axis],
+                components[axis]
+            );
+            assert!(
+                (state.velocity_m_s[axis] - components[axis + 3]).abs() < 0.000_001,
+                "velocity at {seconds}+{fraction}, {target:?} axis {axis}"
+            );
+        }
+        n += 1;
+    }
+    assert!(n >= 400);
+}
+
+#[test]
+fn custom_coverage_supports_past_and_future_de440_records() {
+    // CSPICE N0067 and full DE440s; two compact eight-day fixtures.
+    let samples: [(&[u8], i64, [f64; 3], [f64; 3]); 2] = [
+        (
+            include_bytes!("../../../data/oracles/de440s-1900-8d.ephb"),
+            -3_155_716_800,
+            [
+                24_464_926.520_781_275,
+                -339_984_249.046_225_7,
+                -139_725_244.190_060_65,
+            ],
+            [
+                1_060.165_900_602_653_4,
+                70.311_857_995_211_58,
+                133.924_978_377_331_85,
+            ],
+        ),
+        (
+            include_bytes!("../../../data/oracles/de440s-2100-8d.ephb"),
+            3_155_716_800,
+            [
+                -339_519_599.086_461_5,
+                135_866_823.268_439,
+                66_602_106.591_248_68,
+            ],
+            [
+                -416.859_643_819_902_26,
+                -849.998_439_012_363_9,
+                -467.702_941_766_646_57,
+            ],
+        ),
+    ];
+    for (data, start, pos, vel) in samples {
+        let e = Ephemeris::from_bytes(data).unwrap();
+        assert_eq!(e.coverage(), (start, start + 691_200));
+        let got = e
+            .state(Body::Moon, Body::Earth, Epoch::new(start, 0.0).unwrap())
+            .unwrap()
+            .state;
+        assert!(difference(got.position_m, pos) < 0.001);
+        assert!(difference(got.velocity_m_s, vel) < 0.000_001);
+        assert_eq!(
+            e.state(
+                Body::Moon,
+                Body::Earth,
+                Epoch::new(start + 691_200, 0.0).unwrap()
+            ),
+            Err(EphemerisError::OutsideCoverage)
+        );
+    }
 }

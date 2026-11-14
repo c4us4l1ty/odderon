@@ -39,10 +39,16 @@ fn put_u32(out: &mut Vec<u8>, v: usize) -> Result<(), String> {
     Ok(())
 }
 
-fn pack(data: &[u8]) -> Result<Vec<u8>, String> {
+fn pack(data: &[u8], range: Option<(i64, i64)>) -> Result<Vec<u8>, String> {
+    if range.is_some_and(|(start, end)| start >= end) {
+        return Err("range start must precede end".into());
+    }
     if data.len() < 1024
         || &data[..8] != b"DAF/SPK "
         || &data[88..96] != b"LTL-IEEE"
+        // This detects common text-mode transfer corruption, but does not
+        // authenticate the kernel. A trusted digest is still required.
+        || &data[699..727] != b"FTPSTR:\r:\n:\r\n:\r\0:\x81:\x10\xce:ENDFTP"
         || i32_at(data, 8)? != 2
         || i32_at(data, 12)? != 6
     {
@@ -107,19 +113,44 @@ fn pack(data: &[u8]) -> Result<Vec<u8>, String> {
                     .ok_or("segment end overflow")?
                         != trailer
                     || start < init
-                    || end > init + count as f64 * interval
+                    || (end as i128) > (init as i128) + (count as i128) * (interval as i128)
                 {
                     return Err("inconsistent type-2 record layout or coverage".into());
+                }
+                // Choose every original Chebyshev record intersecting the
+                // requested half-open range, without fitting new coefficients.
+                let (clip_start, clip_end) = range.unwrap_or((start as i64, end as i64));
+                if clip_start < start as i64 || clip_end > end as i64 {
+                    return Err(format!("requested range outside target {target} coverage"));
+                }
+                let origin = init as i128;
+                let stride = interval as i128;
+                let first = usize::try_from((i128::from(clip_start) - origin) / stride)
+                    .map_err(|_| "invalid first record")?;
+                let last_exclusive =
+                    usize::try_from((i128::from(clip_end) - origin + stride - 1) / stride)
+                        .map_err(|_| "invalid last record")?;
+                if first >= last_exclusive || last_exclusive > count {
+                    return Err("range outside records".into());
+                }
+                let clip_init = origin + first as i128 * stride;
+                if clip_init.abs() > 9_007_199_254_740_992_i128 {
+                    return Err("clipped origin not exactly representable".into());
                 }
                 let mut block = Vec::new();
                 put_i32(&mut block, target);
                 put_i32(&mut block, center);
-                for v in [start, end, init, interval] {
+                for v in [
+                    clip_start as f64,
+                    clip_end as f64,
+                    clip_init as f64,
+                    interval,
+                ] {
                     put_f64(&mut block, v);
                 }
                 put_u32(&mut block, ncoef)?;
-                put_u32(&mut block, count)?;
-                for rec in 0..count {
+                put_u32(&mut block, last_exclusive - first)?;
+                for rec in first..last_exclusive {
                     let pos = a + rec * size * 8;
                     let mid = f64_at(data, pos)?;
                     let radius = f64_at(data, pos + 8)?;
@@ -156,12 +187,22 @@ fn main() {
 }
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = env::args_os().collect();
-    if args.len() != 3 {
-        return Err("usage: pack-ephem INPUT.bsp OUTPUT.ephb".into());
-    }
-    let data = fs::read(&args[1])?;
-    let output = pack(&data)?;
-    fs::write(&args[2], &output)?;
+    let (input, output_path, range) = match args.as_slice() {
+        [_, input, output] => (input, output, None),
+        [_, flag, start, end, input, output] if flag == "--range" => {
+            let start = start.to_str().ok_or("invalid start")?.parse::<i64>()?;
+            let end = end.to_str().ok_or("invalid end")?.parse::<i64>()?;
+            (input, output, Some((start, end)))
+        }
+        _ => {
+            return Err(
+                "usage: pack-ephem [--range START_TDB_S END_TDB_S] INPUT.bsp OUTPUT.ephb".into(),
+            )
+        }
+    };
+    let data = fs::read(input)?;
+    let output = pack(&data, range)?;
+    fs::write(output_path, &output)?;
     println!("packed {} bytes", output.len());
     Ok(())
 }
@@ -177,6 +218,7 @@ mod tests {
         b[12..16].copy_from_slice(&6i32.to_le_bytes());
         b[76..80].copy_from_slice(&3i32.to_le_bytes());
         b[88..96].copy_from_slice(b"LTL-IEEE");
+        b[699..727].copy_from_slice(b"FTPSTR:\r:\n:\r\n:\r\0:\x81:\x10\xce:ENDFTP");
         b[2048 + 16..2048 + 24].copy_from_slice(&4.0f64.to_le_bytes());
         for (i, (target, center)) in WANTED.iter().enumerate() {
             let p = 2048 + 24 + i * 40;
@@ -199,23 +241,78 @@ mod tests {
         b
     }
     #[test]
+    fn clipping_respects_half_open_record_boundaries() {
+        let mut b = synthetic();
+        const SEGMENT_BYTES: usize = (8 * 3 + 4) * 8;
+        b.resize(4096 + 4 * SEGMENT_BYTES, 0);
+        for i in 0..4 {
+            let p = 2048 + 24 + i * 40;
+            b[p + 8..p + 16].copy_from_slice(&30.0_f64.to_le_bytes());
+            let offset = 4096 + i * SEGMENT_BYTES;
+            let first = (offset / 8 + 1) as i32;
+            let last = first + (SEGMENT_BYTES / 8) as i32 - 1;
+            b[p + 32..p + 36].copy_from_slice(&first.to_le_bytes());
+            b[p + 36..p + 40].copy_from_slice(&last.to_le_bytes());
+            for rec in 0..3 {
+                let words = [
+                    5.0 + 10.0 * rec as f64,
+                    5.0,
+                    1.0 + rec as f64,
+                    2.0,
+                    3.0,
+                    4.0,
+                    5.0,
+                    6.0,
+                ];
+                for (j, value) in words.iter().enumerate() {
+                    let pos = offset + (8 * rec + j) * 8;
+                    b[pos..pos + 8].copy_from_slice(&f64::to_le_bytes(*value));
+                }
+            }
+            for (j, value) in [0.0_f64, 10.0, 8.0, 3.0].iter().enumerate() {
+                let pos = offset + (24 + j) * 8;
+                b[pos..pos + 8].copy_from_slice(&value.to_le_bytes());
+            }
+        }
+        let clipped = pack(&b, Some((11, 20))).unwrap();
+        assert_eq!(f64_at(&clipped, 20).unwrap(), 11.0);
+        assert_eq!(f64_at(&clipped, 28).unwrap(), 20.0);
+        assert_eq!(f64_at(&clipped, 36).unwrap(), 10.0);
+        assert_eq!(u32::from_le_bytes(bytes(&clipped, 56).unwrap()), 1);
+        assert_eq!(f64_at(&clipped, 60).unwrap(), 2.0);
+        let two_records = pack(&b, Some((11, 21))).unwrap();
+        assert_eq!(u32::from_le_bytes(bytes(&two_records, 56).unwrap()), 2);
+        assert_eq!(f64_at(&two_records, 60 + 48).unwrap(), 3.0);
+    }
+
+    #[test]
     fn extracts_and_rejects_bad_data() {
         let good = synthetic();
-        let packed = pack(&good).unwrap();
+        let packed = pack(&good, None).unwrap();
         assert_eq!(&packed[..8], b"ODEPHEM1");
         assert_eq!(packed.len(), 12 + 4 * (48 + 6 * 8));
-        assert!(pack(&good[..200]).is_err());
+        let clipped = pack(&good, Some((2, 9))).unwrap();
+        assert_eq!(f64_at(&clipped, 20).unwrap(), 2.0);
+        assert_eq!(f64_at(&clipped, 28).unwrap(), 9.0);
+        assert_eq!(f64_at(&clipped, 36).unwrap(), 0.0);
+        assert!(pack(&good, Some((-1, 5))).is_err());
+        assert!(pack(&good, Some((0, 11))).is_err());
+        assert!(pack(&good, Some((5, 5))).is_err());
+        assert!(pack(&good[..200], None).is_err());
+        let mut corrupt_header = good.clone();
+        corrupt_header[706] = 0;
+        assert!(pack(&corrupt_header, None).is_err());
         let mut bad = good.clone();
         bad[2048..2056].copy_from_slice(&3f64.to_le_bytes());
-        assert!(pack(&bad).is_err());
+        assert!(pack(&bad, None).is_err());
         let mut bad = good.clone();
         bad[2048 + 24 + 28..2048 + 24 + 32].copy_from_slice(&3i32.to_le_bytes());
-        assert!(pack(&bad).is_err());
+        assert!(pack(&bad, None).is_err());
         let mut bad = good.clone();
         bad[4096..4104].copy_from_slice(&99f64.to_le_bytes());
-        assert!(pack(&bad).is_err());
+        assert!(pack(&bad, None).is_err());
         let mut bad = good.clone();
         bad[4096 + 16..4096 + 24].copy_from_slice(&f64::NAN.to_le_bytes());
-        assert!(pack(&bad).is_err());
+        assert!(pack(&bad, None).is_err());
     }
 }
