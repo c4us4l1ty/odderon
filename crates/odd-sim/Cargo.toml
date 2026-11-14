@@ -1,0 +1,11 @@
+[package]
+name = "odd-sim"
+version = "0.1.0"
+edition = "2021"
+description = "Deterministic mission commands for Odderon"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+odd-astro = { path = "../odd-astro" }
+odd-core = { path = "../odd-core" }
+libm = "0.2"

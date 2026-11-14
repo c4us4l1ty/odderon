@@ -125,6 +125,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "odd-sim"
+version = "0.1.0"
+dependencies = [
+ "libm",
+ "odd-astro",
+ "odd-core",
+]
+
+[[package]]
 name = "odd-view"
 version = "0.1.0"
 dependencies = [
