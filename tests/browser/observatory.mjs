@@ -169,5 +169,16 @@ try{
   assert.deepEqual(await page.evaluate(()=>({frames:testFrameCallbacks,messages:testWorkerMessages,draws:missionDiagnostics.draws})),missionIdle,'mission must settle without frames, redraws, or worker messages');
   await page.locator('#unlock').click();
   assert.equal(await page.evaluate(()=>missionDiagnostics.locked),false);
+  await page.locator('#mission-select').selectOption('102');
+  await page.locator('#example').click();
+  assert.equal(await page.evaluate(()=>missionDiagnostics.nodes.length),1);
+  await page.locator('#execute').click();
+  await page.waitForFunction(()=>!document.getElementById('debrief').hidden,null,{timeout:180000});
+  const sso=await page.locator('#debrief-content').textContent();
+  const ssoScore=Number(sso.match(/([0-9.]+)%Mission score/)?.[1]);
+  assert.ok(ssoScore>80,`sun-synchronous score: ${ssoScore}; ${sso}`);
+  const j2=Number(sso.match(/Earth’s equatorial bulge: ([0-9.]+)%/)?.[1]);
+  assert.ok(j2>85,`node sensitivity must be dominated by equatorial bulge: ${sso}`);
+  await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:10000});
   assert.deepEqual(errors,[]);console.log('Browser viewport, interactions, bounds, WebGL, responsive layout and mission prototype passed.');
 } finally{if(browser)await browser.close();await new Promise(r=>server.close(r));}
