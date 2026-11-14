@@ -37,6 +37,28 @@ pub struct Elements {
     pub true_anomaly_rad: f64,
 }
 
+/// Direction of motion in the reference plane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EquatorialDirection {
+    Prograde,
+    Retrograde,
+}
+
+impl EquatorialDirection {
+    fn inclination(self) -> f64 {
+        match self {
+            Self::Prograde => 0.0,
+            Self::Retrograde => PI,
+        }
+    }
+    fn sign(self) -> f64 {
+        match self {
+            Self::Prograde => 1.0,
+            Self::Retrograde => -1.0,
+        }
+    }
+}
+
 /// Well-conditioned combined angles for nearly singular configurations.
 /// Longitudes are measured in the inertial xy-plane; argument of latitude is
 /// measured from the ascending node in the direction of motion. For near (not
@@ -70,6 +92,90 @@ fn valid_mu(mu: f64) -> bool {
 }
 
 impl Elements {
+    /// Construct an exactly circular equatorial orbit using the inertial
+    /// true longitude. The radius is measured from the central body.
+    pub fn circular_equatorial(
+        radius_m: f64,
+        direction: EquatorialDirection,
+        true_longitude_rad: f64,
+    ) -> Result<Self, ElementsError> {
+        if !radius_m.is_finite() || radius_m <= 0.0 || !true_longitude_rad.is_finite() {
+            return Err(ElementsError::InvalidInput);
+        }
+        Ok(Self {
+            semi_latus_rectum_m: radius_m,
+            eccentricity: 0.0,
+            inclination_rad: direction.inclination(),
+            ascending_node_rad: 0.0,
+            argument_of_periapsis_rad: 0.0,
+            true_anomaly_rad: direction.sign() * true_longitude_rad,
+        })
+    }
+
+    /// Construct an exactly circular inclined orbit from the argument of
+    /// latitude measured from the ascending node in the direction of motion.
+    pub fn circular_inclined(
+        radius_m: f64,
+        inclination_rad: f64,
+        ascending_node_rad: f64,
+        argument_of_latitude_rad: f64,
+    ) -> Result<Self, ElementsError> {
+        if !radius_m.is_finite()
+            || radius_m <= 0.0
+            || !inclination_rad.is_finite()
+            || inclination_rad <= 0.0
+            || inclination_rad >= PI
+            || !ascending_node_rad.is_finite()
+            || !argument_of_latitude_rad.is_finite()
+        {
+            return Err(ElementsError::InvalidInput);
+        }
+        Ok(Self {
+            semi_latus_rectum_m: radius_m,
+            eccentricity: 0.0,
+            inclination_rad,
+            ascending_node_rad,
+            argument_of_periapsis_rad: 0.0,
+            true_anomaly_rad: argument_of_latitude_rad,
+        })
+    }
+
+    /// Construct an exactly equatorial noncircular conic using the inertial
+    /// longitude of periapsis and true anomaly in the direction of motion.
+    /// p is the semilatus rectum, so this also supports open conics.
+    pub fn eccentric_equatorial(
+        semi_latus_rectum_m: f64,
+        eccentricity: f64,
+        direction: EquatorialDirection,
+        longitude_of_periapsis_rad: f64,
+        true_anomaly_rad: f64,
+    ) -> Result<Self, ElementsError> {
+        if !semi_latus_rectum_m.is_finite()
+            || semi_latus_rectum_m <= 0.0
+            || !eccentricity.is_finite()
+            || eccentricity <= 0.0
+            || !longitude_of_periapsis_rad.is_finite()
+            || !true_anomaly_rad.is_finite()
+        {
+            return Err(ElementsError::InvalidInput);
+        }
+        let denominator = conic_denominator(eccentricity, true_anomaly_rad, true_anomaly_rad.cos());
+        if !denominator.is_finite() {
+            return Err(ElementsError::NumericalRange);
+        }
+        if denominator <= 0.0 {
+            return Err(ElementsError::OutsidePhysicalBranch);
+        }
+        Ok(Self {
+            semi_latus_rectum_m,
+            eccentricity,
+            inclination_rad: direction.inclination(),
+            ascending_node_rad: 0.0,
+            argument_of_periapsis_rad: direction.sign() * longitude_of_periapsis_rad,
+            true_anomaly_rad,
+        })
+    }
+
     /// Construct from the usual signed semi-major axis and five classical
     /// elements. Ellipses require a > 0 and e < 1; hyperbolas require a < 0
     /// and e > 1. Parabolas have no finite a and must be specified with p.

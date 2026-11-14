@@ -25,7 +25,10 @@ of either 0 or π inclination. Longitudes are inertial xy-plane longitudes;
 argument of latitude is measured in the direction of motion. Retrograde
 orientations are handled explicitly. These alternatives are limiting combined
 angles for *near*-singular cases, not a claim that small but nonzero e or i is
-exactly zero. The original classical angles are retained for reconstruction;
+exactly zero. The `circular_equatorial`, `circular_inclined`, and
+`eccentric_equatorial` constructors accept the corresponding combined angles
+for exactly circular and/or equatorial cases. They do not reconstruct the
+small nonzero elements discarded by a limiting combined angle. The original classical angles are retained for reconstruction;
 they can be poorly conditioned. At exact singularities a conventional zero is
 used for the undefined angle. Radial motion has no orbital plane and returns an
 error. Invalid, nonfinite, unrepresentable or physically inaccessible inputs
@@ -49,6 +52,7 @@ errors are reported when a result cannot be represented or a solve fails.
 ### Example: state to elements and back
 
 ```rust
+fn main() -> Result<(), odd_astro::elements::ElementsError> {
 use odd_astro::elements::Elements;
 use odd_core::frames::State;
 
@@ -61,8 +65,9 @@ let elements = Elements::from_state(state, mu)?;
 let back = elements.to_state(mu)?;
 // For a non-parabolic example, the signed semi-major axis is available.
 let a_m = elements.semi_major_axis_m();
-# let _ = (back, a_m);
-# Ok::<(), odd_astro::elements::ElementsError>(())
+let _ = (back, a_m);
+Ok(())
+}
 ```
 
 ## Transfers and patched-conic building blocks

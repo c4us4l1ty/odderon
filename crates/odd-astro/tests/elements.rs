@@ -395,3 +395,58 @@ fn near_parabolic_apocenter_radius_avoids_cancellation() {
         Err(ElementsError::OutsidePhysicalBranch)
     );
 }
+
+#[test]
+fn construct_exact_singular_orbits_from_combined_angles() {
+    use odd_astro::elements::EquatorialDirection::{Prograde, Retrograde};
+    let radius = 7_000_000.0;
+    let longitude = 0.7;
+    for direction in [Prograde, Retrograde] {
+        let el = Elements::circular_equatorial(radius, direction, longitude).unwrap();
+        let state = el.to_state(MU).unwrap();
+        near(state.position_m[0], radius * longitude.cos(), 1e-8);
+        near(state.position_m[1], radius * longitude.sin(), 1e-8);
+        let sign = if direction == Prograde { 1.0 } else { -1.0 };
+        let speed = (MU / radius).sqrt();
+        near(
+            state.velocity_m_s[0],
+            -sign * speed * longitude.sin(),
+            1e-10,
+        );
+        near(state.velocity_m_s[1], sign * speed * longitude.cos(), 1e-10);
+        let recovered = Elements::from_state(state, MU).unwrap();
+        match recovered.special_angles().unwrap() {
+            SpecialAngles::CircularEquatorial { true_longitude_rad } => {
+                near(true_longitude_rad, longitude, 1e-14)
+            }
+            _ => panic!("wrong class"),
+        }
+        let peri = 1.3;
+        let el = Elements::eccentric_equatorial(radius, 0.4, direction, peri, 0.0).unwrap();
+        let state = el.to_state(MU).unwrap();
+        near(state.position_m[1].atan2(state.position_m[0]), peri, 1e-14);
+        let recovered = Elements::from_state(state, MU).unwrap();
+        match recovered.special_angles().unwrap() {
+            SpecialAngles::EccentricEquatorial {
+                longitude_of_periapsis_rad,
+            } => near(longitude_of_periapsis_rad, peri, 1e-14),
+            _ => panic!("wrong class"),
+        }
+    }
+    let el = Elements::circular_inclined(radius, 0.8, 1.2, 2.3).unwrap();
+    let recovered = Elements::from_state(el.to_state(MU).unwrap(), MU).unwrap();
+    match recovered.special_angles().unwrap() {
+        SpecialAngles::CircularInclined {
+            argument_of_latitude_rad,
+        } => near(argument_of_latitude_rad, 2.3, 1e-14),
+        _ => panic!("wrong class"),
+    }
+    assert_eq!(
+        Elements::circular_inclined(radius, 0.0, 0.0, 0.0),
+        Err(ElementsError::InvalidInput)
+    );
+    assert_eq!(
+        Elements::eccentric_equatorial(radius, 2.0, Prograde, 0.0, PI),
+        Err(ElementsError::OutsidePhysicalBranch)
+    );
+}
