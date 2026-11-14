@@ -83,6 +83,19 @@ pub fn fingerprint() -> [u8; 32] {
     assert!((b.state.position_m[0] - 0.623_456_789).abs() < 1e-9);
     let separation = b.state.position_m[0] - a.state.position_m[0];
     assert!((separation - 0.5).abs() < 1e-9);
+    let relative = tree.transform_relative(b, a).unwrap();
+    assert!((relative.state.position_m[0] - 0.5).abs() < 1e-12);
+    tree.add_frame(
+        FrameId::Camera(1),
+        FrameId::BodyFixed(9001),
+        mk([0.123_456_789, 0.0, 0.0]),
+    )
+    .unwrap();
+    let projection = tree
+        .project_to_camera(point(0.623_456_789), FrameId::Camera(1))
+        .unwrap();
+    assert!((f64::from(projection[0]) - 0.5).abs() < 1e-7);
+    assert!(tree.transform(point(0.0), FrameId::Camera(1)).is_err());
     assert_ne!(
         canonical_hash(1, &1.0_f64).unwrap(),
         canonical_hash(1, &f64::from_bits(1.0_f64.to_bits() + 1)).unwrap()
