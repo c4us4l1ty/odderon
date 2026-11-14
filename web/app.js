@@ -5,9 +5,11 @@ import { polyline, vector } from './overlay.js';
 const $=id=>document.getElementById(id);
 const scene=$('scene'), canvas=$('world'), overlay=$('overlay'), date=$('date'), error=$('error');
 const J2000_UNIX_MS=Date.UTC(2000,0,1,12), DAY=86400;
-let renderer, wasm, snapshot, contextLost=false, camera={yaw:-1.30,pitch:-.35,zoom:1}, pointer=null, draws=0;
+let renderer, wasm, snapshot, contextLost=false, camera={yaw:-1.30,pitch:-.35,zoom:1}, pointer=null, draws=0, overlayDraws=0, worldDirty=true, overlayDirty=true, lastQuality=null;
 const showError=message=>{error.hidden=false;error.textContent=message;};
 const governor=new Governor(quality=>{try{draw(quality);}catch(e){governor.suspend();showError(`The view could not be rendered: ${e.message}`);}});
+const invalidateWorld=()=>{worldDirty=true;overlayDirty=true;governor.invalidate();};
+const invalidateOverlay=()=>{overlayDirty=true;governor.invalidate();};
 const dot=(a,b)=>a.reduce((s,x,i)=>s+x*b[i],0);
 const norm=a=>{const m=Math.hypot(...a);return a.map(v=>v/m);};
 const subtract=(a,b)=>a.map((v,i)=>v-b[i]);
@@ -15,14 +17,14 @@ const columns=matrix=>[matrix[0],matrix[3],matrix[6],matrix[1],matrix[4],matrix[
 function loadDate(){
   // Calendar arithmetic only: selected midnight is explicitly TDB, not UTC.
   const time=Date.parse(`${date.value}T00:00:00Z`), seconds=(time-J2000_UNIX_MS)/1000;
-  if(!Number.isFinite(time)||!wasm.view_load(seconds)){snapshot=null;$('distance').textContent='—';$('speed').textContent='—';showError('Date outside the available ephemeris (2020–2035 TDB).');return false;}
+  if(!Number.isFinite(time)||!wasm.view_load(seconds)){snapshot=null;canvas.style.visibility='hidden';overlay.style.visibility='hidden';$('distance').textContent='—';$('speed').textContent='—';$('prev').disabled=true;$('next').disabled=true;$('render-status').textContent='NO VALID DATE';if(!contextLost)showError('Date outside the available ephemeris (2020–2035 TDB).');return false;}
   const value=i=>wasm.view_value(i), count=value(27), samples=[];
   for(let i=0;i<count;i++)samples.push({time:value(28+4*i),pos:[value(29+4*i),value(30+4*i),value(31+4*i)]});
   snapshot={seconds,moon:[value(0),value(1),value(2)],velocity:[value(3),value(4),value(5)],sun:[value(6),value(7),value(8)],earthOrientation:columns(Array.from({length:9},(_,i)=>value(9+i))),moonOrientation:columns(Array.from({length:9},(_,i)=>value(18+i))),samples};
   $('distance').textContent=Math.round(Math.hypot(...snapshot.moon)/1000).toLocaleString('en-US');
   $('speed').textContent=(Math.hypot(...snapshot.velocity)/1000).toFixed(3);
   $('prev').disabled=date.value===date.min;$('next').disabled=date.value===date.max;
-  if(!contextLost)error.hidden=true;governor.invalidate();return true;
+  if(!contextLost)error.hidden=true;invalidateWorld();return true;
 }
 function geometry(){
   const {yaw,pitch,zoom}=camera, c=Math.cos(pitch),s=Math.sin(pitch), cy=Math.cos(yaw),sy=Math.sin(yaw);
@@ -35,8 +37,10 @@ function geometry(){
 function draw(quality){
   if(!snapshot||!renderer)return;
   const rect=scene.getBoundingClientRect();if(rect.width<1||rect.height<1)return;
-  const model=geometry();renderer.draw(model,quality);drawOverlay(model,rect);draws++;
-  $('render-status').textContent=quality==='interactive'?'INTERACTIVE QUALITY':'RENDERED · RESTING';
+  const model=geometry(), updateWorld=worldDirty||lastQuality!==quality;
+  if(updateWorld){renderer.draw(model,quality);draws++;lastQuality=quality;$('render-status').textContent=quality==='interactive'?'INTERACTIVE QUALITY':'RENDERED · RESTING';}
+  if(updateWorld||overlayDirty){drawOverlay(model,rect);overlayDraws++;}
+  canvas.style.visibility='';overlay.style.visibility='';worldDirty=false;overlayDirty=false;
 }
 function drawOverlay(model,rect){
   const dpr=Math.min(window.devicePixelRatio||1,2), w=Math.round(rect.width*dpr),h=Math.round(rect.height*dpr);
@@ -67,27 +71,27 @@ function drawOverlay(model,rect){
   }
   label(model.earth,'EARTH','Our home');label(model.moon,'MOON','Natural satellite');
 }
-function zoom(factor){camera.zoom=Math.max(.55,Math.min(4,camera.zoom*factor));governor.invalidate();}
+function zoom(factor){const value=Math.max(.55,Math.min(4,camera.zoom*factor));if(value!==camera.zoom){camera.zoom=value;invalidateWorld();}}
 function changeDay(amount){if(!date.value)return;const d=new Date(Date.parse(`${date.value}T00:00:00Z`)+amount*DAY*1000);const next=d.toISOString().slice(0,10);if(next>=date.min&&next<=date.max){date.value=next;loadDate();}}
 scene.addEventListener('pointerdown',e=>{if(e.button!==0||pointer)return;pointer={id:e.pointerId,x:e.clientX,y:e.clientY};scene.setPointerCapture(e.pointerId);governor.begin();});
-scene.addEventListener('pointermove',e=>{if(!pointer||e.pointerId!==pointer.id)return;camera.yaw+=(e.clientX-pointer.x)*.006;camera.pitch=Math.max(-1.52,Math.min(1.52,camera.pitch+(e.clientY-pointer.y)*.006));pointer.x=e.clientX;pointer.y=e.clientY;governor.move();});
+scene.addEventListener('pointermove',e=>{if(!pointer||e.pointerId!==pointer.id)return;camera.yaw+=(e.clientX-pointer.x)*.006;camera.pitch=Math.max(-1.52,Math.min(1.52,camera.pitch+(e.clientY-pointer.y)*.006));pointer.x=e.clientX;pointer.y=e.clientY;worldDirty=true;overlayDirty=true;governor.move();});
 function endPointer(e){if(pointer&&e.pointerId===pointer.id){pointer=null;governor.end();}}
 scene.addEventListener('pointerup',endPointer);scene.addEventListener('pointercancel',endPointer);scene.addEventListener('lostpointercapture',endPointer);
 scene.addEventListener('wheel',e=>{e.preventDefault();zoom(Math.exp(-Math.max(-100,Math.min(100,e.deltaY))*.002));},{passive:false});
-scene.addEventListener('keydown',e=>{let used=true;switch(e.key){case 'ArrowLeft':camera.yaw-=.12;break;case 'ArrowRight':camera.yaw+=.12;break;case 'ArrowUp':camera.pitch=Math.max(-1.52,camera.pitch-.12);break;case 'ArrowDown':camera.pitch=Math.min(1.52,camera.pitch+.12);break;case '+':case '=':zoom(1.2);break;case '-':zoom(1/1.2);break;default:used=false;}if(used){e.preventDefault();governor.invalidate();}});
-$('zoom-in').addEventListener('click',()=>zoom(1.2));$('zoom-out').addEventListener('click',()=>zoom(1/1.2));$('reset').addEventListener('click',()=>{camera={yaw:-1.30,pitch:-.35,zoom:1};governor.invalidate();});
-for(const id of ['show-path','show-velocity','show-vehicle'])$(id).addEventListener('change',()=>governor.invalidate());date.addEventListener('change',loadDate);$('prev').addEventListener('click',()=>changeDay(-1));$('next').addEventListener('click',()=>changeDay(1));$('today-reset').addEventListener('click',()=>{date.value='2026-01-01';loadDate();});
-new ResizeObserver(()=>governor.invalidate()).observe(scene);
+scene.addEventListener('keydown',e=>{let used=true;switch(e.key){case 'ArrowLeft':camera.yaw-=.12;break;case 'ArrowRight':camera.yaw+=.12;break;case 'ArrowUp':camera.pitch=Math.max(-1.52,camera.pitch-.12);break;case 'ArrowDown':camera.pitch=Math.min(1.52,camera.pitch+.12);break;case '+':case '=':zoom(1.2);break;case '-':zoom(1/1.2);break;default:used=false;}if(used){e.preventDefault();invalidateWorld();}});
+$('zoom-in').addEventListener('click',()=>zoom(1.2));$('zoom-out').addEventListener('click',()=>zoom(1/1.2));$('reset').addEventListener('click',()=>{camera={yaw:-1.30,pitch:-.35,zoom:1};invalidateWorld();});
+for(const id of ['show-path','show-velocity'])$(id).addEventListener('change',invalidateOverlay);$('show-vehicle').addEventListener('change',invalidateWorld);date.addEventListener('change',loadDate);$('prev').addEventListener('click',()=>changeDay(-1));$('next').addEventListener('click',()=>changeDay(1));$('today-reset').addEventListener('click',()=>{date.value='2026-01-01';loadDate();});
+new ResizeObserver(invalidateWorld).observe(scene);
 function syncVisibility(){if(document.hidden||contextLost){pointer=null;governor.suspend();}else governor.resume();}
 document.addEventListener('visibilitychange',syncVisibility);
 canvas.addEventListener('webglcontextlost',event=>{event.preventDefault();contextLost=true;syncVisibility();showError('Graphics context lost. Waiting for the browser to restore it.');});
-canvas.addEventListener('webglcontextrestored',()=>{try{renderer.init();contextLost=false;if(wasm&&!snapshot)showError('Date outside the available ephemeris (2020–2035 TDB).');else error.hidden=true;syncVisibility();}catch(e){showError(`Could not restore graphics: ${e.message}`);}});
+canvas.addEventListener('webglcontextrestored',()=>{try{renderer.init();worldDirty=true;overlayDirty=true;lastQuality=null;contextLost=false;if(wasm&&!snapshot)showError('Date outside the available ephemeris (2020–2035 TDB).');else error.hidden=true;syncVisibility();}catch(e){showError(`Could not restore graphics: ${e.message}`);}});
 if(document.hidden)governor.suspend();
 // Read-only diagnostics make the idle gate observable without creating a poller.
-window.odderonDiagnostics=Object.freeze({get draws(){return draws;},get pendingFrame(){return governor.frame!==null;},get pendingTimer(){return governor.timer!==null;},get quality(){return $('render-status').textContent;},get circles(){if(!snapshot)return null;const g=geometry();return {earth:[...g.earth],moon:[...g.moon]};}});
+window.odderonDiagnostics=Object.freeze({get draws(){return draws;},get overlayDraws(){return overlayDraws;},get pendingFrame(){return governor.frame!==null;},get pendingTimer(){return governor.timer!==null;},get quality(){return $('render-status').textContent;},get circles(){if(!snapshot)return null;const g=geometry();return {earth:[...g.earth],moon:[...g.moon]};}});
 try {
   renderer=new Renderer(canvas);
   const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error(`Ephemeris module not found (${response.status}). Build the browser app first.`);
   ({instance:{exports:wasm}}=await WebAssembly.instantiate(await response.arrayBuffer(),{}));
-  loadDate();
+  date.disabled=false;$('today-reset').disabled=false;loadDate();
 } catch(e){showError(`Unable to start the observatory: ${e.message}`);}

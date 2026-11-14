@@ -16,12 +16,24 @@ let browser;
 try{
   browser=await chromium.launch({executablePath:process.env.CHROME_BIN||execFileSync('which',['google-chrome'],{encoding:'utf8'}).trim(),headless:true,args:['--no-sandbox','--enable-webgl','--use-angle=swiftshader','--enable-unsafe-swiftshader','--disable-dev-shm-usage']});
   const page=await browser.newPage({viewport:{width:1440,height:1000},deviceScaleFactor:1});
+  // Date controls cannot race the asynchronous WebAssembly download.
+  const slow=await browser.newPage();let release;const barrier=new Promise(r=>{release=r;});let requestStarted;const requested=new Promise(r=>{requestStarted=r;});
+  await slow.route('**/odd_view.wasm',async route=>{requestStarted();await barrier;await route.continue();});
+  await slow.goto(`http://127.0.0.1:${server.address().port}/`,{waitUntil:'domcontentloaded'});await requested;
+  assert.equal(await slow.locator('#date').isDisabled(),true);assert.equal(await slow.locator('#next').isDisabled(),true);
+  release();await slow.waitForFunction(()=>window.odderonDiagnostics?.draws>0,null,{timeout:30000});assert.equal(await slow.locator('#date').isEnabled(),true);await slow.close();
   const errors=[];page.on('pageerror',e=>errors.push(String(e)));page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
   await page.waitForFunction(()=>window.odderonDiagnostics?.draws>0,{timeout:30000});
   await page.waitForTimeout(500);
   assert.equal(await page.locator('#error').isHidden(),true);
   assert.equal(await page.locator('#distance').textContent(),'361,026');
+  // Telemetry-only controls must not re-run the expensive world layer.
+  const layerBefore=await page.evaluate(()=>({world:odderonDiagnostics.draws,overlay:odderonDiagnostics.overlayDraws}));
+  await page.locator('#show-path').uncheck();await page.waitForFunction(n=>odderonDiagnostics.overlayDraws>n,layerBefore.overlay);
+  assert.equal(await page.evaluate(()=>odderonDiagnostics.draws),layerBefore.world,'path toggle repainted the world');
+  await page.locator('#show-path').check();await page.waitForFunction(n=>odderonDiagnostics.overlayDraws>n,layerBefore.overlay+1);
+  assert.equal(await page.evaluate(()=>odderonDiagnostics.draws),layerBefore.world,'path toggle repainted the world');
   // Exercise the real filter against a synthetic two-region/noise fixture.
   // A constant image must stay constant; noise should decrease without
   // washing out a sharp edge. This is an implementation check, not an art score.
@@ -70,8 +82,8 @@ try{
   assert.equal(await page.locator('#date').inputValue(),'2026-01-02');
   await page.locator('#date').fill('2020-01-01');await page.locator('#date').dispatchEvent('change');assert.equal(await page.locator('#prev').isDisabled(),true);
   await page.locator('#date').fill('2035-12-31');await page.locator('#date').dispatchEvent('change');assert.equal(await page.locator('#next').isDisabled(),true);
-  await page.locator('#date').fill('2019-01-01');await page.locator('#date').dispatchEvent('change');assert.equal(await page.locator('#error').isVisible(),true);assert.equal(await page.locator('#distance').textContent(),'—');
-  await page.locator('#today-reset').click();assert.equal(await page.locator('#error').isHidden(),true);await page.locator('#show-path').uncheck();await page.locator('#show-velocity').check();await page.locator('#show-vehicle').check();await page.locator('#zoom-in').click();await page.locator('#reset').click();
+  await page.locator('#date').fill('2019-01-01');await page.locator('#date').dispatchEvent('change');assert.equal(await page.locator('#error').isVisible(),true);assert.equal(await page.locator('#distance').textContent(),'—');assert.equal(await page.locator('#world').isVisible(),false);assert.equal(await page.locator('#overlay').isVisible(),false);assert.equal(await page.locator('#next').isDisabled(),true);
+  await page.locator('#today-reset').click();await page.waitForFunction(()=>getComputedStyle(document.getElementById('world')).visibility==='visible');assert.equal(await page.locator('#error').isHidden(),true);await page.locator('#show-path').uncheck();await page.locator('#show-velocity').check();await page.locator('#show-vehicle').check();await page.locator('#zoom-in').click();await page.locator('#reset').click();
   await page.locator('#scene').focus();await page.keyboard.press('ArrowRight');
   await page.waitForTimeout(300);
   const glResult=await page.locator('#world').evaluate(canvas=>{const gl=canvas.getContext('webgl2');return {error:gl.getError(),w:canvas.width,h:canvas.height};});
