@@ -2,8 +2,7 @@
 
 This is an initial subset of Work Package 0.1, not a complete game or a completed
 coordinate kernel. `odd-core` is pure Rust and has no runtime dependencies. It
-contains split TDB epochs, defined astronomical constants, and translation-only
-local frames. CI checks native tests, formatting, Clippy, and a WebAssembly build.
+contains split TDB epochs, defined astronomical constants, and local frame transformations, including instantaneous rotation and velocity. CI checks native tests, formatting, Clippy, and a WebAssembly build.
 
 ## Scientific and engineering decisions
 
@@ -20,6 +19,10 @@ local frames. CI checks native tests, formatting, Clippy, and a WebAssembly buil
   measurement uncertainty, epoch, and reference-frame metadata. Nearby
   calculations must stay local; reconstructing and subtracting huge f64 global
   coordinates will lose precision.
+- A rotating frame needs a velocity correction, not just a position rotation.
+  `KinematicTransform` uses the standard rotation-plus-angular-velocity transport
+  equation; see [NAIF RAV2XF](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/IDL/icy/cspice_rav2xf.html).
+  Its inputs are supplied at one epoch; it does not model Earth orientation.
 - f32 camera coordinates are a one-way rendering projection. They cannot in
   general preserve a nanometer-level round trip. The docking test instead checks
   a particular local f64 transform and separation; it is not a universal
@@ -28,8 +31,8 @@ local frames. CI checks native tests, formatting, Clippy, and a WebAssembly buil
 
 ## Remaining work before WP 0.1 is complete
 
-Define and validate frame identity/tree, time-dependent rotations, velocity
-transforms and cross-system residuals. Add robust epoch/calendar conversions
+Define and validate frame identity/tree, time-dependent rotation models, and
+cross-system residuals. Add robust epoch/calendar conversions
 with versioned leap-second and time-scale data, SI quantity types, versioned
 canonical serialization and hashing, additional independent reference cases,
 and native/Wasm replay-parity tests. The current crate should not be used as
