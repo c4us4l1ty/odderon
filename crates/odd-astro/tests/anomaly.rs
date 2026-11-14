@@ -102,3 +102,30 @@ fn independent_satkit_elliptic_anomalies() {
     }
     assert_eq!(count, 100);
 }
+
+#[test]
+fn unrepresentably_small_anomalies_are_errors() {
+    use odd_astro::anomaly::elliptic_mean;
+    assert_eq!(
+        hyperbolic_from_mean(1e300, 1e-100),
+        Err(AnomalyError::NumericalRange)
+    );
+    assert_eq!(
+        elliptic_mean(1.0 - f64::EPSILON, f64::from_bits(1)),
+        Err(AnomalyError::NumericalRange)
+    );
+    assert_eq!(
+        hyperbolic_mean(1.0 + f64::EPSILON, f64::from_bits(1)),
+        Err(AnomalyError::NumericalRange)
+    );
+}
+
+#[test]
+fn hyperbolic_tiny_angles_remain_representable() {
+    let e = 1.0 + f64::EPSILON;
+    let f = f64::from_bits(1);
+    let nu = true_from_hyperbolic(e, f).unwrap();
+    assert!(nu > 0.0);
+    let recovered = hyperbolic_from_true(e, nu).unwrap();
+    assert_eq!(recovered, f);
+}

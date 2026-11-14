@@ -32,7 +32,7 @@ pub fn hyperbolic_from_true(e: f64, true_anomaly_rad: f64) -> Result<f64, Anomal
     if denominator <= 0.0 {
         return Err(AnomalyError::OutsidePhysicalBranch);
     }
-    let ratio = ((e - 1.0).sqrt() * (e + 1.0).sqrt()) * (sn / denominator);
+    let ratio = (((e - 1.0).sqrt() * (e + 1.0).sqrt()) / denominator) * sn;
     if !ratio.is_finite() {
         return Err(AnomalyError::NumericalRange);
     }
@@ -43,7 +43,13 @@ pub fn hyperbolic_from_true(e: f64, true_anomaly_rad: f64) -> Result<f64, Anomal
 pub fn true_from_hyperbolic(e: f64, anomaly: f64) -> Result<f64, AnomalyError> {
     validate(e, anomaly)?;
     let scale = (e + 1.0).sqrt() / (e - 1.0).sqrt();
-    let result = 2.0 * (scale * (anomaly * 0.5).tanh()).atan();
+    // Halving a subnormal F can erase it before scaling. The linear limit
+    // is accurate here even for the largest representable scale.
+    let result = if anomaly.abs() < 1e-160 {
+        scale * anomaly
+    } else {
+        2.0 * (scale * (anomaly * 0.5).tanh()).atan()
+    };
     if result.is_finite() {
         Ok(result)
     } else {
@@ -66,7 +72,7 @@ fn mean_unchecked(e: f64, f: f64) -> f64 {
 pub fn hyperbolic_mean(e: f64, anomaly: f64) -> Result<f64, AnomalyError> {
     validate(e, anomaly)?;
     let result = mean_unchecked(e, anomaly);
-    if result.is_finite() {
+    if result.is_finite() && (result != 0.0 || anomaly == 0.0) {
         Ok(result)
     } else {
         Err(AnomalyError::NumericalRange)
@@ -91,8 +97,17 @@ pub fn hyperbolic_from_mean(e: f64, mean: f64) -> Result<f64, AnomalyError> {
     }
     // Both estimates are upper bounds near F=0, and remain finite for small M.
     let linear = m / (e - 1.0);
+    // The true solution is no larger than this linear estimate; if it has
+    // underflowed, no nonzero result can be represented.
+    if linear == 0.0 {
+        return Err(AnomalyError::NumericalRange);
+    }
     let cubic = (m / e * 6.0).cbrt();
-    let mut x = linear.min(cubic).min(hi);
+    let mut x = if cubic == 0.0 {
+        linear.min(hi)
+    } else {
+        linear.min(cubic).min(hi)
+    };
     if x <= 0.0 || !x.is_finite() {
         x = hi * 0.5;
     }
@@ -155,7 +170,7 @@ fn elliptic_mean_unchecked(e: f64, anomaly: f64) -> f64 {
 pub fn elliptic_mean(e: f64, anomaly: f64) -> Result<f64, AnomalyError> {
     validate_ellipse(e, anomaly)?;
     let result = elliptic_mean_unchecked(e, anomaly);
-    if result.is_finite() {
+    if result.is_finite() && (result != 0.0 || anomaly == 0.0) {
         Ok(result)
     } else {
         Err(AnomalyError::NumericalRange)
