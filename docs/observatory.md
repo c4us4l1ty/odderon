@@ -61,42 +61,33 @@ controls select a midnight **TDB**, not local time or UTC. The date range is
 
 ## Rendering and idle behavior
 
-The first WebGL2 pass renders analytic spheres and illustrative geometry into
-an offscreen color/normal framebuffer. Instanced brushstroke quads sample those
-buffers, align to the projected surface-normal tangent and blend into a
-persistent accumulation framebuffer. Batch 0 submits 60,000 coarse instances;
-15 finer batches submit 96,000 each, for 1,500,000 instances. Samples are
-distributed over the projected physical discs, and fragments are clipped by the
-G-buffer silhouette so strokes cannot enlarge a body. This count is GPU
-*instances submitted*, not a promise that every stroke produces visible
-fragments (bodies can be offscreen, occluded or subpixel). The result is an
-illustrative style, not measured surface data. A separate Canvas2D layer draws
-labels and vectors. No external textures or 3D models are used.
+The WebGL2 world is rendered in one fullscreen pass, with a warm key,
+amber terminator, cool shadow and sun-gated limb rim. Cloud bands and their
+cast shadows are procedural decoration, not measured surface data. A separate
+Canvas2D layer draws labels and vectors. No external textures or 3D models are
+used. The optional screen-space vehicle is a decorative study, not a vessel
+at an orbital position; physically positioned spacecraft bounce light is not
+implemented yet.
 
-The governor coalesces invalidations. While dragging it draws a single coarse
-batch at half resolution; after a minimum 50 ms release debounce it rebuilds
-at final resolution and schedules the 15 finite refinement frames. A new
-interaction, resize, date change, context loss or visibility change cancels
-or restarts stale work. When the last batch completes no further animation
-frame is scheduled. High-density rendering is capped at 1.5 device pixels per
-CSS pixel and 2048 pixels on the longest side. Overlay-only changes do not
-repaint the world. Browser and GPU scheduling mean neither completion time
-nor CPU/GPU usage is guaranteed.
+The governor coalesces invalidations. Dragging draws at half resolution; release
+coalesces into one final-resolution frame and then schedules no further frames.
+High-density rendering is capped at 1.5 device pixels per CSS pixel and 2048
+pixels on the longest side. Overlay-only changes do not repaint the world.
+Browser and GPU scheduling mean neither completion time nor CPU/GPU usage is
+guaranteed.
 
 ## Verification and performance
 
 `npm test` checks scheduling, scale, and the absence of recurring timers and CSS
-keyframes. `npm run test:browser` exercises actual WebGL2 and, after batch 15,
-checks that both animation callback and worker message counts stay unchanged
-for two seconds. The application currently creates no workers. This is a
-**deterministic no-scheduled-work check**, not a measurement of browser, OS,
-or GPU utilization. The earlier Linux process-tree CPU test remains available
-as an optional diagnostic (`npm run test:idle`) but is no longer a CI gate.
-The finite progressive workload and target laptop still need performance
-profiling; zero idle CPU/GPU cannot be promised.
+keyframes. `npm run test:browser` exercises actual WebGL2 and checks that both
+animation callback and worker message counts stay unchanged for two seconds.
+The application currently creates no workers. This is a **no-scheduled-work
+check**, not a measurement of browser, OS, or GPU utilization. The optional
+Linux process-tree CPU diagnostic is `npm run test:idle`. Target laptop
+performance remains unmeasured.
 
 ## Research
 
 * [MDN: WebGL best practices](https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/WebGL_best_practices) — resizing on demand, context loss, conservative GPU memory.
-* [Kyprianidis et al., anisotropic Kuwahara filtering with polynomial weights](https://diglib.eg.org/server/api/core/bitstreams/3309663a-3134-44bc-9297-2fa33554277d/content) — research for the earlier post-process, now replaced by instanced progressive strokes.
+* [Kyprianidis et al., anisotropic Kuwahara filtering with polynomial weights](https://diglib.eg.org/server/api/core/bitstreams/3309663a-3134-44bc-9297-2fa33554277d/content) — research for the earlier post-process; not used by the current shader.
 * [NASA Moon Phase and Libration](https://svs.gsfc.nasa.gov/5415/) — phases depend on the Sun–Moon–observer geometry; this view uses geometric light directions, not a photometric model.

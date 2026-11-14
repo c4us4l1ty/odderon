@@ -52,17 +52,17 @@ function geometry(){
   const e=project([0,0,0]),m=project(snapshot.moon);
   return {right,up,view,project,earth:[e[0],e[1],projectedRadius(EARTH_RADIUS_M,span),e[2]],moon:[m[0],m[1],projectedRadius(MOON_RADIUS_M,span),m[2]],earthLight:norm(snapshot.sun),moonLight:norm(subtract(snapshot.sun,snapshot.moon)),earthOrientation:snapshot.earthOrientation,moonOrientation:snapshot.moonOrientation,vehicle:$('show-vehicle').checked};
 }
-function draw(quality,batch){
+function draw(quality){
   if(!snapshot||!renderer)return false;
   const rect=scene.getBoundingClientRect();if(rect.width<1||rect.height<1)return false;
   const model=geometry();
-  if(quality==='interactive'||(quality==='final'&&batch===0)){
+  if(quality==='interactive'||quality==='final'){
     if(!renderer.start(model,quality))return false;
     draws++;lastQuality=quality;worldDirty=false;overlayDirty=true;
-  } else if(quality==='final'&&batch>0){renderer.batch(batch);draws++;}
+  }
   if(overlayDirty){drawOverlay(model,rect);overlayDraws++;overlayDirty=false;}
   if(quality==='interactive')$('render-status').textContent='INTERACTIVE QUALITY';
-  else if(quality==='final')$('render-status').textContent=batch===15?'RENDERED · RESTING':`PAINTING · ${batch}/15`;
+  else if(quality==='final')$('render-status').textContent='RENDERED · RESTING';
   canvas.style.visibility='';overlay.style.visibility='';return true;
 }
 function drawOverlay(model,rect){
@@ -126,7 +126,7 @@ canvas.addEventListener('webglcontextlost',event=>{event.preventDefault();contex
 canvas.addEventListener('webglcontextrestored',()=>{try{renderer.init();worldDirty=true;overlayDirty=true;lastQuality=null;contextLost=false;if(wasm&&!snapshot)showError('Date outside the available ephemeris (2020–2035 TDB).');else error.hidden=true;syncVisibility();}catch(e){showError(`Could not restore graphics: ${e.message}`);}});
 if(document.hidden)governor.suspend();
 // Read-only diagnostics make the idle gate observable without creating a poller.
-window.odderonDiagnostics=Object.freeze({get draws(){return draws;},get frameCount(){return governor.frameCount;},get orbitProjection(){return snapshot&&activeOrbit?geometry().project(activeOrbit.position):null;},get orbit(){return activeOrbit?{samples:activeOrbit.points.length,closed:activeOrbit.closed,markers:activeOrbit.markers.map(m=>m.name)}:null;},get batchIndex(){return renderer?.batchIndex??-1;},get strokeCount(){return renderer?.strokeCount??0;},get overlayDraws(){return overlayDraws;},get pendingFrame(){return governor.frame!==null;},get pendingTimer(){return governor.timer!==null;},get quality(){return $('render-status').textContent;},get circles(){if(!snapshot)return null;const g=geometry();return {earth:[...g.earth],moon:[...g.moon]};}});
+window.odderonDiagnostics=Object.freeze({get draws(){return draws;},get frameCount(){return governor.frameCount;},get orbitProjection(){return snapshot&&activeOrbit?geometry().project(activeOrbit.position):null;},get orbit(){return activeOrbit?{samples:activeOrbit.points.length,closed:activeOrbit.closed,markers:activeOrbit.markers.map(m=>m.name)}:null;},get overlayDraws(){return overlayDraws;},get pendingFrame(){return governor.frame!==null;},get quality(){return $('render-status').textContent;},get circles(){if(!snapshot)return null;const g=geometry();return {earth:[...g.earth],moon:[...g.moon]};}});
 try {
   renderer=new Renderer(canvas);
   const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error(`Ephemeris module not found (${response.status}). Build the browser app first.`);

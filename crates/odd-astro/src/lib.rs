@@ -8,6 +8,7 @@ pub mod anomaly;
 pub mod elements;
 pub mod patched_conics;
 pub mod propagation;
+pub mod spline;
 
 /// Invalid physical inputs, or results outside finite floating-point range.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

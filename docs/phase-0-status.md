@@ -47,7 +47,7 @@ performance on every device, or a waiver of scientific accuracy in later work.
   displayed. It is not a propagated mission or a B-plane solution; targeting
   data and higher-fidelity trajectories still require later physics work.
 - Idle means no continuously scheduled application frames, not a guarantee of
-  zero CPU or GPU use. The browser now submits a finite progressive sequence;
+  zero CPU or GPU use. The browser renders a single world pass on demand;
   its deterministic idle test checks animation and worker-message counters,
   not OS CPU or hardware GPU utilization. The target laptop has not been
   measured. See [observatory.md](observatory.md) for details and caveats.

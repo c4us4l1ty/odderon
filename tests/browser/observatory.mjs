@@ -25,16 +25,13 @@ try{
   // Capture the actual MediaQueryList objects so we can deliver a monitor
   // change notification even on headless Chrome versions whose CDP metrics
   // override updates matchMedia results without emitting a change event.
-  await page.addInitScript(()=>{const raf=window.requestAnimationFrame.bind(window);window.testFrameCallbacks=0;window.requestAnimationFrame=fn=>raf(time=>{window.testFrameCallbacks++;fn(time);});window.testWorkerMessages=0;window.testStrokes=[];window.testClears=0;const proto=WebGL2RenderingContext.prototype;const instanced=proto.drawArraysInstanced;proto.drawArraysInstanced=function(mode,first,count,instances){window.testStrokes.push({instances,fbo:this.getParameter(this.DRAW_FRAMEBUFFER_BINDING)});return instanced.call(this,mode,first,count,instances);};const clear=proto.clear;proto.clear=function(...args){window.testClears++;return clear.apply(this,args);};const NativeWorker=window.Worker;window.Worker=class extends NativeWorker{constructor(...args){super(...args);this.addEventListener('message',()=>window.testWorkerMessages++);}postMessage(...args){window.testWorkerMessages++;return super.postMessage(...args);}};const original=window.matchMedia.bind(window);window.testDensityQueries=[];window.matchMedia=query=>{const result=original(query);if(query.startsWith('(resolution: '))window.testDensityQueries.push(result);return result;};});
+  await page.addInitScript(()=>{const raf=window.requestAnimationFrame.bind(window);window.testFrameCallbacks=0;window.requestAnimationFrame=fn=>raf(time=>{window.testFrameCallbacks++;fn(time);});window.testWorkerMessages=0;window.testWorldPasses=0;window.testInstancedPasses=0;const proto=WebGL2RenderingContext.prototype;const drawArrays=proto.drawArrays;proto.drawArrays=function(...args){window.testWorldPasses++;return drawArrays.apply(this,args);};const instanced=proto.drawArraysInstanced;proto.drawArraysInstanced=function(...args){window.testInstancedPasses++;return instanced.apply(this,args);};const NativeWorker=window.Worker;window.Worker=class extends NativeWorker{constructor(...args){super(...args);this.addEventListener('message',()=>window.testWorkerMessages++);}postMessage(...args){window.testWorkerMessages++;return super.postMessage(...args);}};const original=window.matchMedia.bind(window);window.testDensityQueries=[];window.matchMedia=query=>{const result=original(query);if(query.startsWith('(resolution: '))window.testDensityQueries.push(result);return result;};});
   const errors=[];page.on('pageerror',e=>errors.push(String(e)));page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
   await page.waitForFunction(()=>window.odderonDiagnostics?.draws>0,{timeout:30000});
-  await page.waitForFunction(()=>odderonDiagnostics.batchIndex===15&&!odderonDiagnostics.pendingFrame,null,{timeout:60000});
-  assert.equal(await page.evaluate(()=>odderonDiagnostics.strokeCount),1500000);
-  const submission=await page.evaluate(()=>{const entries=window.testStrokes.slice(-16);return {counts:entries.map(e=>e.instances),same:entries.length===16&&entries[0].fbo!==null&&entries.every(e=>e.fbo===entries[0].fbo),clears:window.testClears};});
-  assert.deepEqual(submission.counts,[60000,...Array(15).fill(96000)]);
-  assert.equal(submission.same,true,'progressive strokes must target one persistent framebuffer');
-  assert.equal(submission.clears,0,'progressive accumulation must not clear between batches');
+  await page.waitForFunction(()=>odderonDiagnostics.quality.includes('RESTING')&&!odderonDiagnostics.pendingFrame,null,{timeout:60000});
+  assert.equal(await page.evaluate(()=>window.testWorldPasses),1,'initial view must use one world pass');
+  assert.equal(await page.evaluate(()=>window.testInstancedPasses),0,'no brushstroke batches');
   assert.equal(await page.locator('#error').isHidden(),true);
   assert.equal(await page.locator('#distance').textContent(),'361,026');
   // Telemetry-only controls must not re-run the expensive world layer.
@@ -52,22 +49,21 @@ try{
     return {earth:sample(circles.earth),moon:sample(circles.moon),background:read(10,10),error:gl.getError()};
   });
   assert.equal(pixels.error,0);for(const body of ['earth','moon'])assert.ok(pixels[body].slice(0,3).some((v,i)=>Math.abs(v-pixels.background[i])>12),`${body} center is indistinguishable from empty sky: ${JSON.stringify(pixels)}`);
-  const stats=await page.evaluate(()=>({draws:odderonDiagnostics.draws,pendingFrame:odderonDiagnostics.pendingFrame,pendingTimer:odderonDiagnostics.pendingTimer,quality:odderonDiagnostics.quality}));
-  assert.equal(stats.pendingFrame,false);assert.equal(stats.pendingTimer,false);assert.match(stats.quality,/RESTING/);
+  const stats=await page.evaluate(()=>({draws:odderonDiagnostics.draws,pendingFrame:odderonDiagnostics.pendingFrame,quality:odderonDiagnostics.quality}));
+  assert.equal(stats.pendingFrame,false);assert.match(stats.quality,/RESTING/);
   const before=await page.evaluate(()=>({frames:window.testFrameCallbacks,messages:window.testWorkerMessages,renderFrames:odderonDiagnostics.frameCount}));
   await page.waitForTimeout(2000);
   const after=await page.evaluate(()=>({frames:window.testFrameCallbacks,messages:window.testWorkerMessages,renderFrames:odderonDiagnostics.frameCount}));
   assert.deepEqual(after,before,'idle must schedule no animation callbacks or worker messages');
-  assert.equal(await page.evaluate(()=>odderonDiagnostics.pendingFrame||odderonDiagnostics.pendingTimer),false);
-  console.log('Idle 2s after batch 15: 0 animation callbacks and 0 worker messages.');
+  assert.equal(await page.evaluate(()=>odderonDiagnostics.pendingFrame),false);
+  console.log('Idle 2s after single frame: 0 animation callbacks and 0 worker messages.');
   const cdp=await page.context().newCDPSession(page);
   const box=await page.locator('#scene').boundingBox();
   await page.mouse.move(box.x+box.width*.5,box.y+box.height*.5);await page.mouse.down();await page.mouse.move(box.x+box.width*.6,box.y+box.height*.55,{steps:4});await page.waitForTimeout(200);
   assert.equal(await page.evaluate(()=>odderonDiagnostics.quality),'INTERACTIVE QUALITY');
   assert.ok(await page.evaluate(()=>odderonDiagnostics.draws)>stats.draws);
-  const interactiveWidth=await page.locator('#world').evaluate(c=>c.width);await page.mouse.up();await page.waitForFunction(()=>odderonDiagnostics.batchIndex===15&&!odderonDiagnostics.pendingFrame,null,{timeout:60000});
+  const interactiveWidth=await page.locator('#world').evaluate(c=>c.width);await page.mouse.up();await page.waitForFunction(()=>odderonDiagnostics.quality.includes('RESTING')&&!odderonDiagnostics.pendingFrame,null,{timeout:60000});
   assert.match(await page.evaluate(()=>odderonDiagnostics.quality),/RESTING/);
-  assert.equal(await page.evaluate(()=>odderonDiagnostics.strokeCount),1500000);
   const released=await page.evaluate(()=>({frames:window.testFrameCallbacks,messages:window.testWorkerMessages,renderFrames:odderonDiagnostics.frameCount}));
   await page.waitForTimeout(2000);
   const releasedAfter=await page.evaluate(()=>({frames:window.testFrameCallbacks,messages:window.testWorkerMessages,renderFrames:odderonDiagnostics.frameCount}));
@@ -89,12 +85,12 @@ try{
   assert.equal(await page.evaluate(()=>devicePixelRatio),1);
   await page.evaluate(i=>window.testDensityQueries[i].dispatchEvent(new Event('change')),queryIndex);
   await page.waitForFunction(n=>odderonDiagnostics.draws>n,beforeRestoreDensity,{timeout:10000});
-  await page.waitForFunction(()=>odderonDiagnostics.batchIndex===15&&!odderonDiagnostics.pendingFrame,null,{timeout:60000});
+  await page.waitForFunction(()=>odderonDiagnostics.quality.includes('RESTING')&&!odderonDiagnostics.pendingFrame,null,{timeout:60000});
   assert.equal(await page.locator('#world').evaluate(c=>c.width),initialSize.width);
   // The displayed test orbit is calculated in odd-astro, not a drawn ellipse.
   assert.deepEqual(await page.evaluate(()=>odderonDiagnostics.orbit),{samples:180,closed:true,markers:['PE','AP','AN','DN']});
   await page.locator('#show-orbit').check();
-  await page.waitForFunction(()=>odderonDiagnostics.batchIndex===15&&!odderonDiagnostics.pendingFrame,null,{timeout:60000});
+  await page.waitForFunction(()=>odderonDiagnostics.quality.includes('RESTING')&&!odderonDiagnostics.pendingFrame,null,{timeout:60000});
   assert.equal(await page.evaluate(()=>odderonDiagnostics.orbit.samples),180);
   const fit=await page.evaluate(()=>{
     const radius=2e8,mu=3.986004418e14;

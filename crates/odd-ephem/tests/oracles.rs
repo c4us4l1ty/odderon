@@ -120,7 +120,7 @@ fn cspice_independent_evaluation_at_boundaries_and_fractional_epoch() {
             ],
         ),
     ];
-    let e = Ephemeris::bundled().unwrap();
+    let e = Ephemeris::from_bytes(include_bytes!("../../../data/packed/de440s-2020-2036.ephb")).unwrap();
     for (s, f, target, center, pos, vel) in vectors {
         let got = e
             .state(target, center, Epoch::new(s, f).unwrap())
@@ -485,5 +485,33 @@ fn custom_coverage_supports_past_and_future_de440_records() {
             ),
             Err(EphemerisError::OutsideCoverage)
         );
+    }
+}
+
+#[test]
+fn blended_boundaries_are_c1_and_velocity_is_position_derivative() {
+    let e = Ephemeris::bundled().unwrap();
+    let (start, end) = e.coverage();
+    let blend = 30 * 86_400;
+    for (target, center) in [(Body::Moon, Body::Earth), (Body::Earth, Body::SolarSystemBarycenter)] {
+        for boundary in [start, start + blend, end - blend, end] {
+            let get = |offset: f64| e.state(target, center, Epoch::new(boundary, offset).unwrap()).unwrap().state;
+            let left = get(-0.5);
+            let middle = get(0.0);
+            let right = get(0.5);
+            assert!(difference(left.velocity_m_s, right.velocity_m_s) < 0.1);
+            let finite_difference = std::array::from_fn(|i| right.position_m[i] - left.position_m[i]);
+            assert!(difference(finite_difference, middle.velocity_m_s) < 0.01,
+                "{target:?} {boundary}: {finite_difference:?} vs {:?}", middle.velocity_m_s);
+        }
+        for boundary in [start + blend / 2, end - blend / 2] {
+            let epoch = Epoch::new(boundary, 0.0).unwrap();
+            let mid = e.state(target, center, epoch).unwrap();
+            assert_eq!(mid.model, odd_ephem::EphemerisModel::Blended);
+            let before = e.state(target, center, epoch.checked_add_seconds(-0.5).unwrap()).unwrap().state;
+            let after = e.state(target, center, epoch.checked_add_seconds(0.5).unwrap()).unwrap().state;
+            let derivative = std::array::from_fn(|i| after.position_m[i] - before.position_m[i]);
+            assert!(difference(derivative, mid.state.velocity_m_s) < 0.01);
+        }
     }
 }
