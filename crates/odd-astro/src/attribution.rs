@@ -90,6 +90,86 @@ impl Counterfactuals {
     }
 }
 
+/// An impulsive baseline command in inertial axes at a known relative time.
+/// Fuel is removed instantaneously for bookkeeping; no dry-mass model is implied.
+#[derive(Clone, Copy, Debug)]
+pub struct Impulse {
+    pub time: f64,
+    pub delta_v_m_s: [f64; 3],
+    pub propellant_kg: f64,
+}
+
+/// Run the seven specified models and evaluate the same metric at the same
+/// final epoch. Finite burn directions and timings are supplied explicitly:
+/// this routine does not invent steering, events, encounters or dry-mass limits.
+/// The environment callback must be deterministic and stateless across runs.
+#[allow(clippy::too_many_arguments)] // Explicitly separates both models and their commands.
+pub fn propagate_counterfactuals<F, M>(
+    initial: crate::spline::Keyframe,
+    end: f64,
+    options: crate::integrator::Options,
+    full_model: crate::force_model::ForceModel,
+    burns: &[crate::perturb::burn::Burn],
+    impulses: &[Impulse],
+    mut environment: F,
+    metric: M,
+) -> Result<Counterfactuals, crate::integrator::IntegrationError>
+where
+    F: FnMut(f64) -> Result<crate::force_model::Environment, crate::integrator::IntegrationError>,
+    M: Fn(crate::spline::Keyframe) -> Result<f64, crate::integrator::IntegrationError>,
+{
+    use crate::integrator::IntegrationError;
+    if impulses.iter().any(|b| {
+        !b.time.is_finite() || b.time < initial.time || b.time > end
+            || !b.propellant_kg.is_finite() || b.propellant_kg < 0.0
+            || !b.delta_v_m_s.iter().all(|x| x.is_finite())
+    }) || impulses.windows(2).any(|w| w[0].time >= w[1].time) {
+        return Err(IntegrationError::InvalidInput);
+    }
+    let mut plain = full_model;
+    plain.zonal = None;
+    plain.drag = None;
+    plain.radiation = None;
+    plain.third_body = false;
+    plain.burn = None;
+    let mut state = initial;
+    for impulse in impulses {
+        state = plain.propagate_with_burns(state, impulse.time, options, &[], &mut environment)?
+            .sample(impulse.time).map_err(|_| IntegrationError::NumericalRange)?;
+        for i in 0..3 { state.velocity[i] += impulse.delta_v_m_s[i]; }
+        state.mass -= impulse.propellant_kg;
+        if state.mass <= 0.0 || !state.mass.is_finite() || !state.velocity.iter().all(|x| x.is_finite()) {
+            return Err(IntegrationError::NumericalRange);
+        }
+    }
+    state = plain.propagate_with_burns(state, end, options, &[], &mut environment)?
+        .sample(end).map_err(|_| IntegrationError::NumericalRange)?;
+    let outcome = |s: crate::spline::Keyframe| -> Result<Outcome, IntegrationError> {
+        Ok(Outcome { position_m: s.position, metric: metric(s)? })
+    };
+    let impulsive = outcome(state)?;
+    let mut run = |model: crate::force_model::ForceModel| -> Result<Outcome, IntegrationError> {
+        let state = model.propagate_with_burns(initial, end, options, burns, &mut environment)?
+            .sample(end).map_err(|_| IntegrationError::NumericalRange)?;
+        outcome(state)
+    };
+    let finite_only = run(plain)?;
+    let full = run(full_model)?;
+    let mut without = full_model;
+    without.zonal = None;
+    let no_j2 = run(without)?;
+    without = full_model;
+    without.third_body = false;
+    let no_third_body = run(without)?;
+    without = full_model;
+    without.drag = None;
+    let no_drag = run(without)?;
+    without = full_model;
+    without.radiation = None;
+    let no_srp = run(without)?;
+    Ok(Counterfactuals { impulsive, finite_only, full, no_j2, no_third_body, no_drag, no_srp })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

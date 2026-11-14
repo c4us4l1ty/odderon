@@ -91,9 +91,17 @@ impl CommandTimeline {
             }
             let thrust = e.thrust_newtons * (f64::from(throttle_u16) / f64::from(u16::MAX));
             let force_newtons = thrust_direction(quat_i16)?.map(|x| x * thrust);
+            let start_s = command.t_us as f64 / 1e6;
+            let end_s = end as f64 / 1e6;
+            if end_s <= start_s
+                || libm::round(start_s * 1e6) != command.t_us as f64
+                || libm::round(end_s * 1e6) != end as f64
+            {
+                return Err(CommandError::NumericalRange);
+            }
             burns.push(odd_astro::perturb::burn::Burn {
-                start: command.t_us as f64 / 1e6,
-                end: end as f64 / 1e6,
+                start: start_s,
+                end: end_s,
                 force_newtons,
                 specific_impulse_seconds: e.specific_impulse_seconds,
             });
@@ -283,7 +291,7 @@ mod tests {
         let CommandKind::Burn {
             dur_us, quat_i16, ..
         } = out.command.kind;
-        assert!((out.ideal_propellant_kg - 9123.844_563_655_58).abs() < 1e-9);
+        assert!((out.ideal_propellant_kg - 9_123.844_563_655_58).abs() < 1e-9);
         assert!(
             (out.commanded_propellant_kg - out.ideal_propellant_kg).abs()
                 <= engine().thrust_newtons / (engine().specific_impulse_seconds * STANDARD_GRAVITY)
