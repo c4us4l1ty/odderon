@@ -1,8 +1,9 @@
 # WP 1.3 / 1.4 planning: model contracts and feasibility
 
-This is an implementation-in-progress, not a playable mission loop. The
-scenario specifications require additional choices and several numeric gates
-must not be presented as universal physical truths.
+This is an implementation in progress: two experimental mission loops are
+available, but the three-mission package and its acceptance gates are not
+complete. Several numeric gates must not be presented as universal physical
+truths.
 
 ## Apsides, directions and time quantization
 
