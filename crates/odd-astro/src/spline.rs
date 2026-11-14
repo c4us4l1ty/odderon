@@ -41,7 +41,12 @@ impl TrajectorySpline {
     /// Retrieve an accepted integration keyframe, without interpolation.
     pub fn keyframe(&self, index: usize) -> Option<Keyframe> {
         let &time = self.times.get(index)?;
-        Some(Keyframe { time, position: std::array::from_fn(|i| self.positions[i][index]), velocity: std::array::from_fn(|i| self.velocities[i][index]), mass: self.masses[index] })
+        Some(Keyframe {
+            time,
+            position: std::array::from_fn(|i| self.positions[i][index]),
+            velocity: std::array::from_fn(|i| self.velocities[i][index]),
+            mass: self.masses[index],
+        })
     }
 
     pub fn push(&mut self, frame: Keyframe) -> Result<(), SplineError> {

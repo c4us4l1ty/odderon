@@ -264,7 +264,7 @@ mod tests {
         };
         let angular = |k: Keyframe| k.position[0] * k.velocity[1] - k.position[1] * k.velocity[0];
         for index in 0..trajectory.len() {
-            let s=trajectory.keyframe(index).unwrap();
+            let s = trajectory.keyframe(index).unwrap();
             assert!((energy(s) / energy(initial) - 1.0).abs() < 1e-9);
             assert!((angular(s) / angular(initial) - 1.0).abs() < 1e-9);
         }
