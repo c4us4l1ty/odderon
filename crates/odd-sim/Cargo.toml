@@ -9,3 +9,6 @@ license = "MIT OR Apache-2.0"
 odd-astro = { path = "../odd-astro" }
 odd-core = { path = "../odd-core" }
 libm = "0.2"
+
+[dev-dependencies]
+odd-ephem = { path = "../odd-ephem" }

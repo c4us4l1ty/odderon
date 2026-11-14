@@ -59,3 +59,13 @@ percentages of apoapsis shortfall or node drift. The requested >85% nodal and
 same position-distance shares. A zero-sensitivity case must report that shares
 are undefined instead of inventing a 100% distribution. See the discussion of
 interaction effects in [Zhao et al.](https://proceedings.mlr.press/v216/zhao23a/zhao23a.pdf).
+
+## Current implementation progress
+
+The Rust foundation now compiles sorted multi-node ideal conics and quantized
+burns, rejects overlapping/out-of-plan commands and planned fuel deficits,
+locks an immutable prediction, and performs seven counterfactual propagations.
+A first explicit scoring rule exists for the 550 km orbit-rescue objective.
+The WebAssembly bridge, interactive handles, accessible lens, mission selector,
+debrief and real browser end-to-end mission gate remain to be implemented. The
+point-Earth perigee-kick regression is not proof of the complete lunar mission.

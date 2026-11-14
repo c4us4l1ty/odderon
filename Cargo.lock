@@ -131,6 +131,7 @@ dependencies = [
  "libm",
  "odd-astro",
  "odd-core",
+ "odd-ephem",
 ]
 
 [[package]]

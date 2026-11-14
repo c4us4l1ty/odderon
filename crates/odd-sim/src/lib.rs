@@ -4,6 +4,7 @@
 //! thrust direction. Decoding normalizes the signed 16-bit components.
 //! Commands alone do not specify the engine: replay must also retain the exact
 //! engine, mass, spacecraft and force-model configuration.
+pub mod mission;
 pub mod planner;
 
 use odd_astro::maneuver::{ManeuverError, TnwBasis};
