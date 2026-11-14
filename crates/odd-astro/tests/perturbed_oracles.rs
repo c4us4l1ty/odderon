@@ -96,7 +96,10 @@ fn oracle_sso_j2_precession() {
     assert!((mean_inc / count as f64 - target_inc).abs() < 0.000_2);
     let measured = (count as f64 * sxy - sx * sy) / (count as f64 * sxx - sx * sx);
     let p = target_a * (1.0 - target_e * target_e);
-    let predicted = -1.5 * 1.082_626_68e-3 * (R / p) * (R / p)
+    let predicted = -1.5
+        * 1.082_626_68e-3
+        * (R / p)
+        * (R / p)
         * libm::sqrt(MU / (target_a * target_a * target_a))
         * libm::cos(target_inc);
     assert!(
