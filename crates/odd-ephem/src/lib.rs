@@ -1,9 +1,13 @@
-//! Bounded geometric JPL DE440 ephemeris, expressed in ICRF-aligned axes.
+//! Geometric JPL DE440 ephemeris with a lower-accuracy analytical fallback.
 //!
-//! This crate performs no I/O. The bundled data are type-2 Chebyshev records
-//! from a documented 2020–2036 SPK subset. No extrapolation is performed.
-//! These are geometric coordinate states, not light-time-corrected observations.
+//! The bundled Chebyshev records cover 2020–2036 TDB. Outside that range the
+//! bundled ephemeris uses JPL secular elements and truncated Meeus lunar terms
+//! from 3000 BC through AD 3000. Outputs identify the model; see the project
+//! documentation for uncertainty, boundary discontinuities and limitations.
+//! Caller-supplied packed files remain bounded and never silently extrapolate.
+//! These geometric states are not light-time-corrected observations.
 
+mod analytical;
 pub mod orientation;
 pub mod physical;
 
@@ -26,12 +30,23 @@ pub enum EphemerisError {
     OutsideCoverage,
 }
 
+/// Source and fidelity of a geometric state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EphemerisModel {
+    /// Original packed JPL DE440 Chebyshev coefficients.
+    PackedDe440,
+    /// Approximate secular planetary and truncated analytical lunar model.
+    Analytical,
+}
+
 /// A geometric state with an explicitly labelled origin, axes and epoch.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EphemerisState {
     pub target: Body,
     pub center: Body,
     pub epoch: Epoch,
+    /// Identifies which model generated this result; analytical is lower accuracy.
+    pub model: EphemerisModel,
     /// JPL SPK J2000 (ICRF-aligned) axes; meters and meters per second.
     pub state: State,
 }
@@ -54,6 +69,7 @@ pub struct Ephemeris {
     segments: Vec<Segment>,
     start: i64,
     end: i64,
+    analytical_fallback: bool,
 }
 
 const EXPECTED: [(Body, Body); 4] = [
@@ -175,17 +191,22 @@ impl Ephemeris {
             segments,
             start,
             end,
+            analytical_fallback: false,
         })
     }
     /// Load the embedded 2020-01-01 to 2036-01-01 TDB DE440 subset.
     pub fn bundled() -> Result<Self, EphemerisError> {
-        Self::from_bytes(BUNDLED)
+        let mut result = Self::from_bytes(BUNDLED)?;
+        result.analytical_fallback = true;
+        Ok(result)
     }
-    /// Common coverage, as TDB seconds from J2000. Start inclusive, end exclusive.
+    /// Common *packed table* coverage, as TDB seconds from J2000.
+    /// Start inclusive, end exclusive. The bundled analytical tier extends it.
     pub fn coverage(&self) -> (i64, i64) {
         (self.start, self.end)
     }
-    /// Geometric target relative to center. Inputs outside common coverage fail closed.
+    /// Geometric target relative to center. Bundled queries outside packed
+    /// coverage use the documented analytical tier; custom files fail closed.
     pub fn state(
         &self,
         target: Body,
@@ -193,7 +214,17 @@ impl Ephemeris {
         epoch: Epoch,
     ) -> Result<EphemerisState, EphemerisError> {
         if epoch.seconds() < self.start || epoch.seconds() >= self.end {
-            return Err(EphemerisError::OutsideCoverage);
+            if !self.analytical_fallback {
+                return Err(EphemerisError::OutsideCoverage);
+            }
+            let state = analytical::state(target, center, epoch)?;
+            return Ok(EphemerisState {
+                target,
+                center,
+                epoch,
+                model: EphemerisModel::Analytical,
+                state,
+            });
         }
         let target_path = path(target);
         let center_path = path(center);
@@ -234,6 +265,7 @@ impl Ephemeris {
             target,
             center,
             epoch,
+            model: EphemerisModel::PackedDe440,
             state: result,
         })
     }

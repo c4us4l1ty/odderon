@@ -28,10 +28,10 @@ performance on every device, or a waiver of scientific accuracy in later work.
   Moon states, plus bounded approximate body orientations. The 2026 Earth–Moon
   reference test and independent implementation checks are documented in
   [ephemeris.md](ephemeris.md).
-- Limit: bundled coverage is 2020-01-01 inclusive to 2036-01-01 exclusive TDB,
-  not all dates; unsupported dates fail rather than extrapolate. The results
-  are model estimates, not exact observations. Other stars and planets are not
-  included. Earth orientation is approximate, not a full EOP-based frame.
+- Packed DE440 coverage is 2020–2035; a lower-accuracy analytical fallback
+  now covers 3000 BC–AD 3000 and identifies its model. Switching models can
+  introduce jumps; other stars and planets are not exposed. Earth orientation
+  is approximate, not a full EOP-based frame.
 - Chebyshev coefficients are evaluated directly; the separately specified
   five-iteration Kepler solver is not implemented by this package. A local
   warmed native benchmark is not a universal sub-microsecond guarantee.

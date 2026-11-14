@@ -31,6 +31,11 @@ jobs:
           result=$(cargo run --release --locked -p odd-astro --example elements_benchmark)
           echo "$result"
           echo "::notice::$result"
+      - name: Report analytical lunar throughput (informational)
+        run: |
+          result=$(cargo run --release --locked -p odd-ephem --example analytical_benchmark)
+          echo "$result"
+          echo "::notice::$result"
       - name: Reproduce the packed ephemeris from the pinned SPK subset
         env:
           GH_TOKEN: ${{ github.token }}
