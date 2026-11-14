@@ -36,10 +36,10 @@ geopotential height. Height above the oblate reference ellipsoid is measured
 radially, not as geodetic or terrain height.
 
 The SRP shadow is a planar apparent-disk approximation for spherical occultors.
-Earth and Moon are evaluated separately; taking the smaller illumination avoids
-double-counting aligned eclipses but is not an exact union for partially
-intersecting shadows. It ignores oblateness, atmospheric absorption and solar
-limb darkening. Burns have fixed inertial direction and fixed Isp; there is no
+Earth and Moon's overlapping silhouettes are combined with a two-disk
+union clipped by the solar disk, including their triple intersection. The
+disk-plane geometry is still an approximation: it ignores spherical sky
+curvature, oblateness, atmospheric absorption and solar limb darkening. Burns have fixed inertial direction and fixed Isp; there is no
 dry-mass cutoff, throttle/guidance, state-triggered event detection, impact
 handling, backwards integration or operational constraint model. An attempted
 trajectory that reaches below the atmospheric reference surface fails, rather

@@ -90,7 +90,7 @@ fn poly(t: f64, c: &[f64]) -> (f64, f64) {
     (v, d)
 }
 fn sin_term(sum: &mut f64, derivative: &mut f64, coefficient: f64, angle: f64, rate: f64) {
-    let (s, c) = angle.sin_cos();
+    let (s, c) = libm::sincos(angle);
     *sum += coefficient * s;
     *derivative += coefficient * c * rate;
 }
@@ -103,7 +103,7 @@ fn rotate_kinematic(
     rate: f64,
     axis: usize,
 ) -> ([f64; 3], [f64; 3]) {
-    let (s, c) = angle.sin_cos();
+    let (s, c) = libm::sincos(angle);
     let rotate = |v: [f64; 3]| match axis {
         0 => [v[0], c * v[1] - s * v[2], s * v[1] + c * v[2]],
         1 => [c * v[0] + s * v[2], v[1], -s * v[0] + c * v[2]],
@@ -161,7 +161,7 @@ fn rotate_date_state(t: f64, pos: [f64; 3], vel: [f64; 3]) -> ([f64; 3], [f64; 3
 // This avoids dozens of expensive transcendental evaluations per query.
 fn harmonics(angles: [f64; 4]) -> [[(f64, f64); 5]; 4] {
     std::array::from_fn(|i| {
-        let (s, c) = angles[i].sin_cos();
+        let (s, c) = libm::sincos(angles[i]);
         let mut powers = [(0.0, 1.0); 5];
         for n in 1..5 {
             let (ps, pc) = powers[n - 1];
@@ -283,8 +283,8 @@ fn lunar(t: f64) -> State {
     let lonrate = (lpd + dl * 1e-6 * RAD) / CENTURY;
     let latrate = db * 1e-6 * RAD / CENTURY;
     let rrate = dr / CENTURY;
-    let (sl, cl) = lon.sin_cos();
-    let (sb, cb) = lat.sin_cos();
+    let (sl, cl) = libm::sincos(lon);
+    let (sb, cb) = libm::sincos(lat);
     let unit = [cb * cl, cb * sl, sb];
     let dunit = [
         -sb * latrate * cl - cb * sl * lonrate,
@@ -478,22 +478,22 @@ fn planet(index: usize, t: f64) -> [f64; 3] {
         el[5] * RAD,
     );
     let q = extra[3] * RAD * t;
-    let mean = ((long - el[4] + extra[0] * t * t + extra[1] * q.cos() + extra[2] * q.sin()) * RAD)
+    let mean = ((long - el[4] + extra[0] * t * t + extra[1] * libm::cos(q) + extra[2] * libm::sin(q)) * RAD)
         .rem_euclid(2.0 * PI);
     let mut ecc = mean;
     for _ in 0..6 {
-        ecc -= (ecc - e * ecc.sin() - mean) / (1.0 - e * ecc.cos());
+        ecc -= (ecc - e * libm::sin(ecc) - mean) / (1.0 - e * libm::cos(ecc));
     }
-    let (sin_e, cos_e) = ecc.sin_cos();
+    let (sin_e, cos_e) = libm::sincos(ecc);
     let x = a * (cos_e - e);
-    let y = a * (1.0 - e * e).sqrt() * sin_e;
-    let (sw, cw) = (peri - node).sin_cos();
-    let (sn, cn) = node.sin_cos();
-    let (si, ci) = inc.sin_cos();
+    let y = a * libm::sqrt(1.0 - e * e) * sin_e;
+    let (sw, cw) = libm::sincos(peri - node);
+    let (sn, cn) = libm::sincos(node);
+    let (si, ci) = libm::sincos(inc);
     let xe = (cw * cn - sw * sn * ci) * x + (-sw * cn - cw * sn * ci) * y;
     let ye = (cw * sn + sw * cn * ci) * x + (-sw * sn + cw * cn * ci) * y;
     let ze = sw * si * x + cw * si * y;
-    let (s, c) = (23.43928 * RAD).sin_cos();
+    let (s, c) = libm::sincos(23.43928 * RAD);
     [xe, c * ye - s * ze, s * ye + c * ze]
 }
 fn planetary_state(index: usize, t: f64) -> State {

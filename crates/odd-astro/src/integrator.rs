@@ -94,7 +94,16 @@ where
         if h <= 0.0 || t + h == t {
             return Err(IntegrationError::StepUnderflow);
         }
-        let landed = h == remaining;
+        // Rounding can place t+h exactly on the boundary even when h is
+        // smaller than boundary-t. Use the actual represented interval;
+        // never label a shorter integration step as the boundary state.
+        let landed = h == remaining || t + h >= boundary;
+        if landed {
+            if remaining > max_step {
+                return Err(IntegrationError::StepUnderflow);
+            }
+            h = remaining;
+        }
         let next_t = if landed { boundary } else { t + h };
         let at_event = landed && event < events.len() && boundary == events[event];
         // End-stage samples use the left limit at a discontinuity. The next
@@ -115,7 +124,13 @@ where
             if z[6] <= 0.0 || !z.iter().all(|x| x.is_finite()) {
                 return Err(IntegrationError::NumericalRange);
             }
-            let st = if C[i] == 1.0 { stage_end } else { t + C[i] * h };
+            let st = if C[i] == 1.0 {
+                stage_end
+            } else if at_event {
+                (t + C[i] * h).min(stage_end)
+            } else {
+                t + C[i] * h
+            };
             let (acc, mass_rate) = force(st, [z[0], z[1], z[2]], [z[3], z[4], z[5]], z[6])?;
             k[i] = [z[3], z[4], z[5], acc[0], acc[1], acc[2], mass_rate];
             if !k[i].iter().all(|x| x.is_finite()) {
@@ -268,6 +283,21 @@ mod tests {
             assert!((energy(s) / energy(initial) - 1.0).abs() < 1e-9);
             assert!((angular(s) / angular(initial) - 1.0).abs() < 1e-9);
         }
+    }
+    #[test]
+    fn rounded_step_landing_uses_actual_interval_and_left_limit() {
+        let t = 4_503_599_627_370_496.0;
+        let boundary = t + 1.0;
+        let initial = Keyframe { time: t, position: [0.0; 3], velocity: [0.0; 3], mass: 1.0 };
+        let mut o = options();
+        o.initial_step = 0.75;
+        o.max_step = 1.0;
+        let out = integrate(initial, boundary, &[boundary], o, |time, _, _, _| {
+            Ok((if time < boundary { [1.0, 0.0, 0.0] } else { [0.0; 3] }, 0.0))
+        }).unwrap();
+        let end = out.sample(boundary).unwrap();
+        assert!((end.velocity[0] - 1.0).abs() < 1e-12);
+        assert!((end.position[0] - 0.5).abs() < 1e-12);
     }
     #[test]
     fn event_splits_force_and_mass_rate() {

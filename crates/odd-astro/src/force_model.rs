@@ -94,14 +94,10 @@ impl ForceModel {
                     let sun = std::array::from_fn(|i| env.sun.position[i] - r[i]);
                     let central = r.map(|x| -x);
                     let companion = std::array::from_fn(|i| env.companion.position[i] - r[i]);
-                    let e = srp::illumination(sun, env.sun.radius, central, s.central_radius)
-                        .map_err(|_| IntegrationError::ForceFailure)?;
-                    let moon =
-                        srp::illumination(sun, env.sun.radius, companion, env.companion.radius)
-                            .map_err(|_| IntegrationError::ForceFailure)?;
-                    // Separate spherical occultors; min avoids double-counting
-                    // aligned silhouettes but is approximate for partial overlap.
-                    add(srp::acceleration(sun, s.cr, s.area, m, e.min(moon))
+                    let visible = srp::illumination_two(
+                        sun, env.sun.radius, central, s.central_radius, companion, env.companion.radius,
+                    ).map_err(|_| IntegrationError::ForceFailure)?;
+                    add(srp::acceleration(sun, s.cr, s.area, m, visible)
                         .map_err(|_| IntegrationError::ForceFailure)?);
                 }
             }

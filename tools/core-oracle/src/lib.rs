@@ -229,6 +229,20 @@ pub extern "C" fn oracle_byte(index: u32) -> u32 {
 
 /// Canonical final-state hash for a ten-day perturbed, event-split orbit.
 pub fn integrator_fingerprint() -> [u8; 32] {
+    integrator_fingerprint_epoch(820_497_600)
+}
+
+/// Ten-day equivalent through the packed/analytical transition.
+pub fn blended_integrator_fingerprint() -> [u8; 32] {
+    integrator_fingerprint_epoch(631_108_800)
+}
+
+/// Ten-day equivalent entirely in the long-range analytical ephemeris.
+pub fn analytical_integrator_fingerprint() -> [u8; 32] {
+    integrator_fingerprint_epoch(4_733_640_000)
+}
+
+fn integrator_fingerprint_epoch(start_epoch: i64) -> [u8; 32] {
     use odd_astro::{
         force_model::{Environment, ForceModel, Radiation, ThirdBody, Zonal},
         integrator::Options,
@@ -284,7 +298,7 @@ pub fn integrator_fingerprint() -> [u8; 32] {
                 max_steps: 1_000_000,
             },
             |t| {
-                let epoch = Epoch::new(820_497_600, t).unwrap();
+                let epoch = Epoch::new(start_epoch, t).unwrap();
                 let sun = eph
                     .state(odd_ephem::Body::Sun, odd_ephem::Body::Earth, epoch)
                     .unwrap()
@@ -332,4 +346,18 @@ pub extern "C" fn integrator_oracle_byte(index: u32) -> u32 {
         .get(index as usize)
         .copied()
         .map_or(256, u32::from)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[no_mangle]
+pub extern "C" fn blended_integrator_oracle_byte(index: u32) -> u32 {
+    static FINGERPRINT: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
+    FINGERPRINT.get_or_init(blended_integrator_fingerprint).get(index as usize).copied().map_or(256, u32::from)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[no_mangle]
+pub extern "C" fn analytical_integrator_oracle_byte(index: u32) -> u32 {
+    static FINGERPRINT: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
+    FINGERPRINT.get_or_init(analytical_integrator_fingerprint).get(index as usize).copied().map_or(256, u32::from)
 }
