@@ -6,6 +6,10 @@ contains split TDB epochs, defined astronomical constants, and local frame trans
 `odd-astro` also provides an initial ideal two-body Hohmann transfer calculator.
 Its published [FreeFlyer worked example](https://ai-solutions.com/_freeflyeruniversityguide/hohmann_transfer.htm)
 is an independent rounded reference, not an ephemeris or high-fidelity simulation.
+A fixed-step velocity-Verlet propagator also models ideal two-body coasts. Tests
+compare against a circular analytic orbit, time reversal, energy conservation,
+and second-order step convergence. It does not yet pass the proposed high-fidelity
+NASA/J2 oracle gate or detect impacts between steps.
 
 ## Scientific and engineering decisions
 

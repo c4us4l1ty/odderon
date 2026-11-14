@@ -6,3 +6,4 @@ description = "Analytical astrodynamics for Odderon"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+odd-core = { path = "../odd-core" }

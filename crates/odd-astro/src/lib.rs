@@ -1,8 +1,10 @@
-//! Analytical, two-body astrodynamics for preliminary mission design.
+//! Two-body astrodynamics for preliminary mission design.
 //!
-//! These calculations are not a flight simulation: burns are instantaneous,
-//! bodies are point masses, and perturbations and operational constraints are
-//! absent. All inputs and outputs use SI units.
+//! Analytical planning assumes instantaneous burns. Numerical propagation is
+//! an ideal point-mass, two-body model without burns or perturbations. Neither
+//! model includes operational constraints. All inputs and outputs use SI units.
+
+pub mod propagation;
 
 /// Invalid physical inputs, or results outside finite floating-point range.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
