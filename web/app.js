@@ -34,6 +34,10 @@ function setOrbit(state,mu,soi=149_598_023_000*(3.986004418e14/1.327124400412794
   if(trajectoryWorker){trajectoryWorker.terminate();trajectoryWorker=null;}
   activeOrbit=null;invalidateWorld();
   if(!simulation||typeof simulation!=='object')return false;
+  const duration=simulation.duration??86400,mass=simulation.mass??500,burn=simulation.burn??null;
+  if(!Number.isFinite(duration)||duration<=0||duration>864000||!Number.isFinite(mass)||mass<=0)return false;
+  if(burn&&(!Number.isFinite(burn.start)||!Number.isFinite(burn.end)||burn.end<=burn.start||!Number.isFinite(burn.isp)||burn.isp<=0||!Array.isArray(burn.force)||burn.force.length!==3||!burn.force.every(Number.isFinite)))return false;
+  simulation={duration,mass,burn:burn?{start:burn.start,end:burn.end,isp:burn.isp,force:[...burn.force]}:null};
   if(!wasm||!state||!Array.isArray(state.position)||!Array.isArray(state.velocity)||state.position.length!==3||state.velocity.length!==3)return false;
   if(!(soi===null?wasm.orbit_load(mu,...state.position,...state.velocity):wasm.orbit_load_soi(mu,...state.position,...state.velocity,soi)))return false;
   const count=wasm.orbit_value(0),points=[];

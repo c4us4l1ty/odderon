@@ -46,7 +46,8 @@ trajectory that reaches below the atmospheric reference surface fails, rather
 than representing a landing. No model here should be used for flight operations.
 
 Tests compare ten-period two-body conserved quantities, ten-day J2 nodal
-precession, five-day drag decay with a separately integrated circular
+precession against the first-order formula evaluated on mean osculating
+elements (the formula is a mean-element result), five-day drag decay with a separately integrated circular
 energy-balance model, and a finite perigee burn against an impulsive transfer.
 The native/Node/Chromium parity fixture hashes the final state of a ten-day
 J2 + Moon + Sun + drag + SRP + burn run. Parity is tested for these builds and
