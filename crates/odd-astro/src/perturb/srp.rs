@@ -93,7 +93,7 @@ mod tests {
     fn eclipses_and_pressure_direction() {
         let sun = [AU, 0.0, 0.0];
         assert_eq!(
-            illumination(sun, 695_700e3, [4e8, 0.0, 0.0], 1_737_400.0).unwrap(),
+            illumination(sun, 695_700e3, [3e8, 0.0, 0.0], 1_737_400.0).unwrap(),
             0.0
         );
         assert_eq!(

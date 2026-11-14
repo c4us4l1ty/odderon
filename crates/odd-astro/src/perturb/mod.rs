@@ -1,4 +1,5 @@
 //! Inertial-frame perturbation acceleration building blocks (SI units).
+pub mod burn;
 pub mod drag;
 pub mod j2;
 pub mod srp;
