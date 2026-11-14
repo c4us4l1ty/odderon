@@ -26,9 +26,11 @@ jobs:
       - name: Show generated dependency lockfile
         run: |
           python3 -c 'import base64; from pathlib import Path; b=base64.b64encode(Path("Cargo.lock").read_bytes()).decode(); [print("::notice title=Lock%02d::%s" % (i//2000,b[i:i+2000])) for i in range(0,len(b),2000)]'
-          echo "::notice title=Rustfmt version::$(rustfmt --version)"
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo build --workspace --target wasm32-unknown-unknown
+      - run: cargo build -p odd-core-oracle && cargo build -p odd-core-oracle --lib --target wasm32-unknown-unknown
+      - name: Compare native and browser WebAssembly fixtures
+        run: node tools/core-oracle/check-parity.mjs
       - name: Check formatting
         shell: bash
         run: |

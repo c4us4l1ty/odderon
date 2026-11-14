@@ -23,21 +23,39 @@ macro_rules! si_quantity {
     };
 }
 
-si_quantity!(/// Distance in meters.
-    Meters);
-si_quantity!(/// Mass in kilograms.
-    Kilograms);
-si_quantity!(/// Duration in SI seconds.
-    Seconds);
-si_quantity!(/// Thermodynamic temperature in kelvins.
-    Kelvin);
-si_quantity!(/// Pressure in pascals.
-    Pascals);
-si_quantity!(/// Power in watts.
-    Watts);
-si_quantity!(/// Energy in joules.
-    Joules);
-si_quantity!(/// Angle in radians.
-    Radians);
-si_quantity!(/// Speed in meters per second.
-    MetersPerSecond);
+si_quantity!(
+    /// Distance in meters.
+    Meters
+);
+si_quantity!(
+    /// Mass in kilograms.
+    Kilograms
+);
+si_quantity!(
+    /// Duration in SI seconds.
+    Seconds
+);
+si_quantity!(
+    /// Thermodynamic temperature in kelvins.
+    Kelvin
+);
+si_quantity!(
+    /// Pressure in pascals.
+    Pascals
+);
+si_quantity!(
+    /// Power in watts.
+    Watts
+);
+si_quantity!(
+    /// Energy in joules.
+    Joules
+);
+si_quantity!(
+    /// Angle in radians.
+    Radians
+);
+si_quantity!(
+    /// Speed in meters per second.
+    MetersPerSecond
+);
