@@ -54,13 +54,13 @@ pub fn fingerprint() -> [u8; 32] {
     )
     .unwrap();
     tree.add_frame(
-        FrameId::Camera(1),
+        FrameId::BodyFixed(9001),
         FrameId::BodyCentered(1),
         mk([20.0, 30.0, 40.0]),
     )
     .unwrap();
     let point = |x| FramedState {
-        frame: FrameId::Camera(1),
+        frame: FrameId::BodyFixed(9001),
         epoch,
         state: State {
             position_m: [x, 0.0, 0.0],
@@ -70,13 +70,13 @@ pub fn fingerprint() -> [u8; 32] {
     let a = tree
         .from_galactic(
             tree.to_galactic(point(0.123_456_789)).unwrap(),
-            FrameId::Camera(1),
+            FrameId::BodyFixed(9001),
         )
         .unwrap();
     let b = tree
         .from_galactic(
             tree.to_galactic(point(0.623_456_789)).unwrap(),
-            FrameId::Camera(1),
+            FrameId::BodyFixed(9001),
         )
         .unwrap();
     assert!((a.state.position_m[0] - 0.123_456_789).abs() < 1e-9);

@@ -450,3 +450,44 @@ fn construct_exact_singular_orbits_from_combined_angles() {
         Err(ElementsError::OutsidePhysicalBranch)
     );
 }
+
+#[test]
+fn equinoctial_near_singular_roundtrip() {
+    use odd_astro::elements::ModifiedEquinoctialElements as Mee;
+    for (e, i) in [(0.0, 0.0), (1e-10, 1e-10), (0.5, 1.2), (1.5, 0.9)] {
+        let original = elements(e, i, 1.1, 0.7, 0.5).to_state(MU).unwrap();
+        let equinoctial = Mee::from_state(original, MU).unwrap();
+        let back = equinoctial.to_state(MU).unwrap();
+        for (got, want) in [
+            (back.position_m, original.position_m),
+            (back.velocity_m_s, original.velocity_m_s),
+        ] {
+            let err = got
+                .iter()
+                .zip(want)
+                .map(|(x, y)| (x - y) * (x - y))
+                .sum::<f64>()
+                .sqrt();
+            let scale = want.iter().map(|x| x * x).sum::<f64>().sqrt();
+            assert!(err / scale < 1e-13, "{e} {i}: {err} / {scale}");
+        }
+    }
+    let retro = Elements::circular_equatorial(
+        7e6,
+        odd_astro::elements::EquatorialDirection::Retrograde,
+        0.0,
+    )
+    .unwrap()
+    .to_state(MU)
+    .unwrap();
+    // sin(π) is not exactly zero in binary64; check an exact retrograde state.
+    let exact = odd_core::frames::State {
+        position_m: [7e6, 0.0, 0.0],
+        velocity_m_s: [0.0, -(MU / 7e6).sqrt(), 0.0],
+    };
+    assert_eq!(
+        Mee::from_state(exact, MU),
+        Err(ElementsError::EquinoctialSingularity)
+    );
+    let _ = retro;
+}

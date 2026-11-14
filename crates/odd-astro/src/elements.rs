@@ -15,6 +15,8 @@ pub const SINGULAR_TOLERANCE: f64 = 1e-8;
 pub enum ElementsError {
     InvalidInput,
     RadialTrajectory,
+    /// Posigrade equinoctial chart is singular for exactly retrograde equatorial motion.
+    EquinoctialSingularity,
     OutsidePhysicalBranch,
     NumericalRange,
 }
@@ -421,6 +423,128 @@ impl Elements {
                 longitude_of_periapsis_rad: longitude(self.argument_of_periapsis_rad),
             },
             (false, false) => SpecialAngles::General,
+        })
+    }
+}
+
+/// Posigrade modified equinoctial elements (Walker et al.). SI meters/radians.
+/// This chart is nonsingular at zero eccentricity and inclination but cannot
+/// represent an exactly retrograde equatorial orbit (inclination π).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ModifiedEquinoctialElements {
+    pub p: f64,
+    pub f: f64,
+    pub g: f64,
+    pub h: f64,
+    pub k: f64,
+    pub l: f64,
+}
+
+impl ModifiedEquinoctialElements {
+    fn basis(h: f64, k: f64) -> Result<([f64; 3], [f64; 3]), ElementsError> {
+        let hh = h * h;
+        let kk = k * k;
+        let s = 1.0 + hh + kk;
+        if !s.is_finite() {
+            return Err(ElementsError::NumericalRange);
+        }
+        Ok((
+            [(1.0 + hh - kk) / s, 2.0 * h * k / s, -2.0 * k / s],
+            [2.0 * h * k / s, (1.0 - hh + kk) / s, 2.0 * h / s],
+        ))
+    }
+
+    /// Convert directly from a Cartesian state, without singular classical angles.
+    pub fn from_state(state: State, mu: f64) -> Result<Self, ElementsError> {
+        if !valid_mu(mu)
+            || !state
+                .position_m
+                .iter()
+                .chain(&state.velocity_m_s)
+                .all(|v| v.is_finite())
+        {
+            return Err(ElementsError::InvalidInput);
+        }
+        let r = state.position_m;
+        let v = state.velocity_m_s;
+        let radius = norm(r);
+        if radius == 0.0 {
+            return Err(ElementsError::InvalidInput);
+        }
+        if !radius.is_finite() {
+            return Err(ElementsError::NumericalRange);
+        }
+        let angular = cross(r, v);
+        let angular_mag = norm(angular);
+        if angular_mag == 0.0 {
+            return Err(ElementsError::RadialTrajectory);
+        }
+        if !angular_mag.is_finite() {
+            return Err(ElementsError::NumericalRange);
+        }
+        let n = angular.map(|x| x / angular_mag);
+        let transverse = n[0].hypot(n[1]);
+        if transverse == 0.0 && n[2] < 0.0 {
+            return Err(ElementsError::EquinoctialSingularity);
+        }
+        // Avoid cancellation in 1+n_z near i=π.
+        let factor = if n[2] >= 0.0 {
+            1.0 / (1.0 + n[2])
+        } else {
+            (1.0 - n[2]) / transverse / transverse
+        };
+        let h = -n[1] * factor;
+        let k = n[0] * factor;
+        let (fhat, ghat) = Self::basis(h, k)?;
+        let evec = cross(v, angular);
+        let eccentricity = std::array::from_fn(|j| evec[j] / mu - r[j] / radius);
+        let p = (angular_mag / mu) * angular_mag;
+        let f = dot(eccentricity, fhat);
+        let g = dot(eccentricity, ghat);
+        let l = dot(r, ghat).atan2(dot(r, fhat));
+        if ![p, f, g, h, k, l].iter().all(|x| x.is_finite()) || p <= 0.0 {
+            return Err(ElementsError::NumericalRange);
+        }
+        Ok(Self { p, f, g, h, k, l })
+    }
+
+    /// Convert directly to Cartesian state. Open conics must be on their
+    /// physically reachable branch; true longitude is periodic.
+    pub fn to_state(self, mu: f64) -> Result<State, ElementsError> {
+        if !valid_mu(mu)
+            || ![self.p, self.f, self.g, self.h, self.k, self.l]
+                .iter()
+                .all(|v| v.is_finite())
+            || self.p <= 0.0
+        {
+            return Err(ElementsError::InvalidInput);
+        }
+        let (fhat, ghat) = Self::basis(self.h, self.k)?;
+        let (sl, cl) = self.l.sin_cos();
+        let w = 1.0 + self.f * cl + self.g * sl;
+        if !w.is_finite() {
+            return Err(ElementsError::NumericalRange);
+        }
+        if w <= 0.0 {
+            return Err(ElementsError::OutsidePhysicalBranch);
+        }
+        let radius = self.p / w;
+        let speed = (mu / self.p).sqrt();
+        let position_m = std::array::from_fn(|j| radius * (cl * fhat[j] + sl * ghat[j]));
+        let velocity_m_s =
+            std::array::from_fn(|j| speed * (-(self.g + sl) * fhat[j] + (self.f + cl) * ghat[j]));
+        if radius <= 0.0
+            || speed <= 0.0
+            || !position_m
+                .iter()
+                .chain(&velocity_m_s)
+                .all(|v| v.is_finite())
+        {
+            return Err(ElementsError::NumericalRange);
+        }
+        Ok(State {
+            position_m,
+            velocity_m_s,
         })
     }
 }

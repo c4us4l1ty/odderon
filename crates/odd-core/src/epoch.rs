@@ -22,6 +22,33 @@ impl Epoch {
         fraction: 0.0,
     };
 
+    /// Convert a proleptic Gregorian UTC label under the fixed leap-table
+    /// extrapolation documented in [`crate::utc`]. `second` may include a
+    /// fractional part and is validated against known leap-second dates.
+    pub fn from_utc(
+        year: i32,
+        month: u8,
+        day: u8,
+        hour: u8,
+        minute: u8,
+        second: f64,
+    ) -> Result<Self, crate::utc::UtcError> {
+        if !second.is_finite() || !(0.0..61.0).contains(&second) {
+            return Err(crate::utc::UtcError::InvalidCalendar);
+        }
+        let whole = second.floor();
+        crate::utc::UtcDateTime {
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second: whole as u8,
+            fraction: second - whole,
+        }
+        .to_tdb()
+    }
+
     /// Constructs an epoch, normalizing `fraction` into [0, 1).
     pub fn new(seconds: i64, fraction: f64) -> Result<Self, EpochRangeError> {
         if !fraction.is_finite() {

@@ -1,10 +1,9 @@
 //! UTC calendar input to TDB seconds since J2000.0.
 //!
-//! The leap table is a fixed historical snapshot (NAIF naif0012, last leap
-//! 2016-12-31); [IERS Bulletin C 72](https://hpiers.obspm.fr/iers/bul/bulc/bulletinc.72)
-//! confirms no leap at the end of 2026. This implementation accepts UTC from
-//! 1972-01-01 through 2026-12-31 inclusive and fails closed outside coverage.
-//! It does not extrapolate future leap decisions or support pre-1972 drift.
+//! The leap table is a fixed historical snapshot (NAIF naif0012). For dates
+//! before 1972, ΔAT is clamped to 10 s; after the last entry it is held at
+//! 37 s. These are extrapolations, NOT historical or future UTC truth. The
+//! calendar is proleptic Gregorian with astronomical year numbering.
 //!
 //! The NAIF periodic TDB−TT approximation ignores small terms and is accurate
 //! to about 30 microseconds, not nanoseconds. See the [SPICE time required
@@ -66,11 +65,8 @@ const LEAPS: [(i32, u8, u8, i64); 28] = [
 ];
 
 impl UtcDateTime {
-    /// Convert with the documented NAIF approximation and snapshot coverage.
+    /// Convert using the documented extrapolated leap table and NAIF approximation.
     pub fn to_tdb(self) -> Result<Epoch, UtcError> {
-        if !(1972..=2026).contains(&self.year) {
-            return Err(UtcError::OutsideTableCoverage);
-        }
         if !(1..=12).contains(&self.month)
             || self.day == 0
             || self.day > days_in_month(self.year, self.month)
