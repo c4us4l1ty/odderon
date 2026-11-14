@@ -1,8 +1,9 @@
 //! Two-body astrodynamics for preliminary mission design.
 //!
-//! Analytical planning assumes instantaneous burns. Numerical propagation is
-//! an ideal point-mass, two-body model without burns or perturbations. Neither
-//! model includes operational constraints. All inputs and outputs use SI units.
+//! Analytical planning assumes instantaneous burns. The experimental adaptive
+//! integrator exposes force callbacks and separate perturbation building blocks;
+//! it is not yet a complete validated mission propagator. Models do not include
+//! operational constraints. All inputs and outputs use SI units.
 
 pub mod anomaly;
 pub mod elements;
