@@ -54,13 +54,13 @@ pub fn fingerprint() -> [u8; 32] {
     )
     .unwrap();
     tree.add_frame(
-        FrameId::Camera(1),
+        FrameId::BodyFixed(9001),
         FrameId::BodyCentered(1),
         mk([20.0, 30.0, 40.0]),
     )
     .unwrap();
     let point = |x| FramedState {
-        frame: FrameId::Camera(1),
+        frame: FrameId::BodyFixed(9001),
         epoch,
         state: State {
             position_m: [x, 0.0, 0.0],
@@ -70,19 +70,32 @@ pub fn fingerprint() -> [u8; 32] {
     let a = tree
         .from_galactic(
             tree.to_galactic(point(0.123_456_789)).unwrap(),
-            FrameId::Camera(1),
+            FrameId::BodyFixed(9001),
         )
         .unwrap();
     let b = tree
         .from_galactic(
             tree.to_galactic(point(0.623_456_789)).unwrap(),
-            FrameId::Camera(1),
+            FrameId::BodyFixed(9001),
         )
         .unwrap();
     assert!((a.state.position_m[0] - 0.123_456_789).abs() < 1e-9);
     assert!((b.state.position_m[0] - 0.623_456_789).abs() < 1e-9);
     let separation = b.state.position_m[0] - a.state.position_m[0];
     assert!((separation - 0.5).abs() < 1e-9);
+    let relative = tree.transform_relative(b, a).unwrap();
+    assert!((relative.state.position_m[0] - 0.5).abs() < 1e-12);
+    tree.add_frame(
+        FrameId::Camera(1),
+        FrameId::BodyFixed(9001),
+        mk([0.123_456_789, 0.0, 0.0]),
+    )
+    .unwrap();
+    let projection = tree
+        .project_to_camera(point(0.623_456_789), FrameId::Camera(1))
+        .unwrap();
+    assert!((f64::from(projection[0]) - 0.5).abs() < 1e-7);
+    assert!(tree.transform(point(0.0), FrameId::Camera(1)).is_err());
     assert_ne!(
         canonical_hash(1, &1.0_f64).unwrap(),
         canonical_hash(1, &f64::from_bits(1.0_f64.to_bits() + 1)).unwrap()
@@ -98,6 +111,32 @@ pub fn fingerprint() -> [u8; 32] {
         .state;
     assert!((moon.position_m[0] - 144_325_478.673_459_95).abs() < 0.001);
     assert!((moon.velocity_m_s[0] - (-1_004.314_447_402_294_5)).abs() < 0.000_001);
+    // The lower-accuracy tier is explicitly tagged and exercised in native,
+    // Node and browser Wasm without assuming bit-identical transcendental math.
+    let future = Epoch::from_utc(2150, 6, 15, 0, 0, 0.0).unwrap();
+    let fallback = odd_ephem::Ephemeris::bundled()
+        .unwrap()
+        .state(odd_ephem::Body::Moon, odd_ephem::Body::Earth, future)
+        .unwrap();
+    assert_eq!(fallback.model, odd_ephem::EphemerisModel::Analytical);
+    let distance = fallback
+        .state
+        .position_m
+        .iter()
+        .map(|v| v * v)
+        .sum::<f64>()
+        .sqrt();
+    assert!((distance - 399_833_795.0).abs() < 100.0);
+    let mee = odd_astro::elements::ModifiedEquinoctialElements::from_state(
+        State {
+            position_m: [7e6, 0.0, 0.0],
+            velocity_m_s: [0.0, (3.986_004_418e14_f64 / 7e6).sqrt(), 0.0],
+        },
+        3.986_004_418e14,
+    )
+    .unwrap();
+    let restored = mee.to_state(3.986_004_418e14).unwrap();
+    assert!((restored.position_m[0] - 7e6).abs() < 1e-6);
     let lunar_orientation =
         odd_ephem::orientation::moon_orientation(Epoch::new(820_497_600, 0.25).unwrap()).unwrap();
     let (gmst, obliquity) = odd_ephem::orientation::earth_mean_angles(9496.5, 9496.5008).unwrap();

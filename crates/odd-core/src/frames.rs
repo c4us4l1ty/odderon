@@ -280,6 +280,8 @@ pub enum TreeError {
     GalacticNeedsSplitState,
     EpochMismatch,
     NonFinite,
+    /// Render-only camera frames cannot be used as simulation states.
+    CameraIsRenderOnly,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -333,6 +335,7 @@ impl FrameTree {
     ) -> Result<(), TreeError> {
         if matches!(id, FrameId::Galactic | FrameId::StellarSystem(_))
             || parent == FrameId::Galactic
+            || matches!(parent, FrameId::Camera(_))
         {
             return Err(TreeError::InvalidParent);
         }
@@ -386,6 +389,80 @@ impl FrameTree {
     /// limited by f64 at the separation scale. Galactic states use the split
     /// representation and cannot be returned through this local-state API.
     pub fn transform(&self, source: FramedState, to: FrameId) -> Result<FramedState, TreeError> {
+        if matches!(source.frame, FrameId::Camera(_)) || matches!(to, FrameId::Camera(_)) {
+            return Err(TreeError::CameraIsRenderOnly);
+        }
+        self.transform_impl(source, to)
+    }
+
+    /// Project a simulation position to a camera frame. The f32 result is
+    /// deliberately not a simulation state and has no inverse conversion.
+    pub fn project_to_camera(
+        &self,
+        source: FramedState,
+        camera: FrameId,
+    ) -> Result<[f32; 3], TreeError> {
+        if matches!(source.frame, FrameId::Camera(_)) || !matches!(camera, FrameId::Camera(_)) {
+            return Err(TreeError::CameraIsRenderOnly);
+        }
+        let relative = self.transform_impl(source, camera)?;
+        render_position(relative.state.position_m).map_err(|_| TreeError::NonFinite)
+    }
+
+    /// Difference A−B in their lowest common ancestor's axes and velocity
+    /// coordinates. Integer galactic anchors are subtracted before conversion
+    /// to meters when no local ancestor is shared.
+    pub fn transform_relative(
+        &self,
+        a: FramedState,
+        b: FramedState,
+    ) -> Result<FramedState, TreeError> {
+        self.check_epoch(a.epoch)?;
+        self.check_epoch(b.epoch)?;
+        if matches!(a.frame, FrameId::Camera(_)) || matches!(b.frame, FrameId::Camera(_)) {
+            return Err(TreeError::CameraIsRenderOnly);
+        }
+        let pa = self.path(a.frame)?;
+        let pb = self.path(b.frame)?;
+        let common = pa.iter().find(|id| pb.contains(id)).copied();
+        let (mut x, y, frame) = if let Some(id) = common {
+            let mut x = PreciseState::from_state(a.state)?;
+            let mut y = PreciseState::from_state(b.state)?;
+            for node in pa.iter().take_while(|node| **node != id) {
+                x = x.to_parent(self.nodes[node].pose)?;
+            }
+            for node in pb.iter().take_while(|node| **node != id) {
+                y = y.to_parent(self.nodes[node].pose)?;
+            }
+            (x, y, id)
+        } else {
+            let ga = self.to_galactic(a)?;
+            let gb = self.to_galactic(b)?;
+            let mut x = PreciseState::from_state(ga.state)?;
+            let mut y = PreciseState::from_state(gb.state)?;
+            for i in 0..3 {
+                x.position.add_component(i, ga.position_correction_m[i])?;
+                y.position.add_component(i, gb.position_correction_m[i])?;
+                let delta =
+                    i128::from(ga.anchor.milliparsecs[i]) - i128::from(gb.anchor.milliparsecs[i]);
+                x.position
+                    .add_component(i, (delta as f64) * (crate::consts::PARSEC_M / 1000.0))?;
+            }
+            (x, y, FrameId::Galactic)
+        };
+        x.position = x
+            .position
+            .translate(y.position.high, -1.0)?
+            .translate(y.position.low, -1.0)?;
+        x.velocity = sub(x.velocity, y.velocity);
+        Ok(FramedState {
+            frame,
+            epoch: self.epoch,
+            state: x.rounded()?,
+        })
+    }
+
+    fn transform_impl(&self, source: FramedState, to: FrameId) -> Result<FramedState, TreeError> {
         self.check_epoch(source.epoch)?;
         let from_path = self.path(source.frame)?;
         let to_path = self.path(to)?;
@@ -409,12 +486,15 @@ impl FrameTree {
                 state: state.rounded()?,
             })
         } else {
-            self.from_galactic(self.to_galactic(source)?, to)
+            self.galactic_to_local_impl(self.to_galactic(source)?, to)
         }
     }
 
     /// Transform to galactic axes while retaining the stellar anchor separately.
     pub fn to_galactic(&self, source: FramedState) -> Result<GalacticState, TreeError> {
+        if matches!(source.frame, FrameId::Camera(_)) {
+            return Err(TreeError::CameraIsRenderOnly);
+        }
         self.check_epoch(source.epoch)?;
         let path = self.path(source.frame)?;
         let mut state = PreciseState::from_state(source.state)?;
@@ -438,6 +518,17 @@ impl FrameTree {
     /// Transform from a split galactic state to a local frame. If the anchors
     /// differ, the offset conversion is necessarily rounded to f64 meters.
     pub fn from_galactic(
+        &self,
+        source: GalacticState,
+        to: FrameId,
+    ) -> Result<FramedState, TreeError> {
+        if matches!(to, FrameId::Camera(_)) {
+            return Err(TreeError::CameraIsRenderOnly);
+        }
+        self.galactic_to_local_impl(source, to)
+    }
+
+    fn galactic_to_local_impl(
         &self,
         source: GalacticState,
         to: FrameId,

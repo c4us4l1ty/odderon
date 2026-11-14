@@ -1,11 +1,38 @@
 # Work Package 0.2: bounded Earth–Moon ephemeris
 
-`odd-ephem` evaluates real JPL DE440 position coefficients, rather than
-inventing circular or coplanar orbits. The bundled model covers **2020-01-01
-00:00:00 TDB inclusive to 2036-01-01 00:00:00 TDB exclusive**. All queries
-outside coverage return an error; there is no extrapolation. Supported objects
-are the Sun, Earth–Moon barycenter, Earth, Moon, and solar-system barycenter.
-The package does not yet provide other planets or stars.
+`odd-ephem` evaluates real JPL DE440 position coefficients for the packed
+2020-01-01 inclusive through 2036-01-01 exclusive TDB interval. The bundled
+instance now automatically switches outside that table to a **lower-accuracy**
+analytical tier, from 3000 BC (astronomical year −2999) through AD 3000,
+using a proleptic Gregorian calendar. The interval ends at 3001-01-01 TDB.
+Out-of-range dates fail. `coverage()` still reports the packed table's bounds;
+`EphemerisState::model` identifies the tier. Caller-supplied packed files from
+`from_bytes` remain bounded and do not silently use the fallback. Supported
+objects are the Sun, Earth–Moon barycenter, Earth, Moon, and solar-system
+barycenter; the package does not yet provide other planets or stars.
+
+The analytical tier uses JPL/Standish Table 2a secular fitted heliocentric
+Earth–Moon barycenter elements, a truncated Meeus/ELP2000 lunar series (40
+longitude/distance and 30 latitude terms), and an approximate IAU 1976
+precession transformation to J2000. For solar-system-barycentric queries it
+estimates the Sun's barycentric offset from eight secular planetary orbits and
+approximate mass ratios; this is **not** the DE440 barycenter. Lunar velocity
+and its precession-frame rotation rate are differentiated analytically. Mean-equinox precession becomes less reliable far from J2000.
+The tier changes discontinuously at the packed boundaries: do not treat it as
+a seamless high-precision spacecraft ephemeris or as an uncertainty bound.
+Future UTC and pre-1972 UTC inputs also use assumed leap offsets, not knowledge
+of future timekeeping or historically accurate UTC.
+
+At 2150-06-15 UTC (using that assumed future offset), the approximate lunar
+distance is about 399,834 km. Independent CSPICE/de440s checks at selected
+1950, 2000 and January 2150 epochs show Moon vector errors of about 10–25 km;
+158 samples spanning 2020–2035 compared with the bundled DE440 table had a
+maximum of about 41.6 km and 0.286 m/s. Those samples are **not** an accuracy
+guarantee for the full long interval. In the same sample, the secular
+Earth–Moon barycenter/Sun vector differed by up to 28,243 km. References:
+[JPL approximate positions](https://ssd.jpl.nasa.gov/planets/approx_pos.html)
+and Meeus chapter 47; the lunar table transcription attribution is in
+`data/attribution/meeus-soniakeys-MIT.txt`.
 
 States are geometric (no light-time or aberration), in meters and meters per
 second, at an `odd-core` TDB `Epoch`, with an explicit target and center and

@@ -450,3 +450,124 @@ fn construct_exact_singular_orbits_from_combined_angles() {
         Err(ElementsError::OutsidePhysicalBranch)
     );
 }
+
+#[test]
+fn equinoctial_near_singular_roundtrip() {
+    use odd_astro::elements::ModifiedEquinoctialElements as Mee;
+    for (e, i) in [(0.0, 0.0), (1e-10, 1e-10), (0.5, 1.2), (1.5, 0.9)] {
+        let original = elements(e, i, 1.1, 0.7, 0.5).to_state(MU).unwrap();
+        let equinoctial = Mee::from_state(original, MU).unwrap();
+        // Independently compare the documented classical-to-MEE identities,
+        // then check both representations against the original Cartesian state.
+        near(equinoctial.p, 8_000_000.0, 1e-7);
+        near(equinoctial.f, e * (1.1_f64 + 0.7).cos(), 2e-15);
+        near(equinoctial.g, e * (1.1_f64 + 0.7).sin(), 2e-15);
+        near(equinoctial.h, (i * 0.5).tan() * 1.1_f64.cos(), 2e-15);
+        near(equinoctial.k, (i * 0.5).tan() * 1.1_f64.sin(), 2e-15);
+        let classical_back = Elements::from_state(original, MU)
+            .unwrap()
+            .to_state(MU)
+            .unwrap();
+        for (got, want) in [
+            (classical_back.position_m, original.position_m),
+            (classical_back.velocity_m_s, original.velocity_m_s),
+        ] {
+            let err = got
+                .iter()
+                .zip(want)
+                .map(|(x, y)| (x - y) * (x - y))
+                .sum::<f64>()
+                .sqrt();
+            let scale = want.iter().map(|x| x * x).sum::<f64>().sqrt();
+            assert!(err / scale < 1e-13, "classical {e} {i}: {err} / {scale}");
+        }
+        let back = equinoctial.to_state(MU).unwrap();
+        for (got, want) in [
+            (back.position_m, original.position_m),
+            (back.velocity_m_s, original.velocity_m_s),
+        ] {
+            let err = got
+                .iter()
+                .zip(want)
+                .map(|(x, y)| (x - y) * (x - y))
+                .sum::<f64>()
+                .sqrt();
+            let scale = want.iter().map(|x| x * x).sum::<f64>().sqrt();
+            assert!(err / scale < 1e-13, "{e} {i}: {err} / {scale}");
+        }
+    }
+    let retro = Elements::circular_equatorial(
+        7e6,
+        odd_astro::elements::EquatorialDirection::Retrograde,
+        0.0,
+    )
+    .unwrap()
+    .to_state(MU)
+    .unwrap();
+    // sin(π) is not exactly zero in binary64; check an exact retrograde state.
+    let exact = odd_core::frames::State {
+        position_m: [7e6, 0.0, 0.0],
+        velocity_m_s: [0.0, -(MU / 7e6).sqrt(), 0.0],
+    };
+    assert_eq!(
+        Mee::from_state(exact, MU),
+        Err(ElementsError::EquinoctialSingularity)
+    );
+    let _ = retro;
+}
+
+#[test]
+fn equinoctial_near_parabolic_radius_is_stable() {
+    use odd_astro::elements::ModifiedEquinoctialElements as Mee;
+    let el = Mee {
+        p: 8_000_000.0,
+        f: 1.0 - f64::EPSILON,
+        g: 0.0,
+        h: 0.0,
+        k: 0.0,
+        l: PI - 1e-8,
+    };
+    let state = el.to_state(MU).unwrap();
+    let radius = state.position_m[0].hypot(state.position_m[1]);
+    assert!((radius / 2.940_694_223_310_72e22 - 1.0).abs() < 2e-15);
+    // mpmath 80-digit transverse velocity from the exact f64 inputs.
+    assert!((state.velocity_m_s[1] / -1.214_408_927_286_618_2e-12 - 1.0).abs() < 2e-15);
+}
+
+#[test]
+fn equinoctial_large_longitude_preserves_phase() {
+    use odd_astro::elements::ModifiedEquinoctialElements as Mee;
+    // 90-digit mpmath with exact binary64 inputs (including longitude).
+    let parabolic = Mee {
+        p: 8e6,
+        f: 1.0,
+        g: 0.0,
+        h: 0.0,
+        k: 0.0,
+        l: PI,
+    };
+    assert_eq!(
+        parabolic.to_state(MU),
+        Err(ElementsError::OutsidePhysicalBranch)
+    );
+    for (f, g, l, expected) in [
+        (0.4, 0.3, 1e16, 8_134_718.067_552_062),
+        (0.6, 0.4, 1e17, 28_283_186.427_805_5),
+    ] {
+        let state = Mee {
+            p: 8_000_000.0,
+            f,
+            g,
+            h: 0.0,
+            k: 0.0,
+            l,
+        }
+        .to_state(MU)
+        .unwrap();
+        let radius = state.position_m[0].hypot(state.position_m[1]);
+        assert!(
+            (radius / expected - 1.0).abs() < 2e-15,
+            "{radius} != {expected}"
+        );
+    }
+}

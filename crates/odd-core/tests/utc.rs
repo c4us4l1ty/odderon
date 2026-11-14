@@ -40,13 +40,17 @@ fn leap_second_is_distinct_and_continuous() {
 
 #[test]
 fn rejects_unknown_and_invalid_dates() {
+    assert!(utc(1971, 12, 31, 23, 59, 59).to_tdb().is_ok());
+    assert!(utc(2027, 1, 1, 0, 0, 0).to_tdb().is_ok());
+    assert!(utc(-2999, 1, 1, 0, 0, 0).to_tdb().is_ok());
+    assert!(utc(3000, 12, 31, 0, 0, 0).to_tdb().is_ok());
     assert_eq!(
-        utc(1971, 12, 31, 23, 59, 59).to_tdb(),
-        Err(UtcError::OutsideTableCoverage)
+        odd_core::epoch::Epoch::from_utc(2150, 6, 15, 0, 0, 0.0),
+        utc(2150, 6, 15, 0, 0, 0).to_tdb()
     );
     assert_eq!(
-        utc(2027, 1, 1, 0, 0, 0).to_tdb(),
-        Err(UtcError::OutsideTableCoverage)
+        odd_core::epoch::Epoch::from_utc(2150, 6, 15, 0, 0, 60.0),
+        Err(UtcError::InvalidLeapSecond)
     );
     assert!(utc(2026, 12, 31, 23, 59, 59).to_tdb().is_ok());
     assert_eq!(

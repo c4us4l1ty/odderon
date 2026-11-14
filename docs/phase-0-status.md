@@ -18,9 +18,9 @@ performance on every device, or a waiver of scientific accuracy in later work.
   especially across distant systems. Catalog residuals and frame metadata are
   still required. The original proposal's 2,452,809 parsecs for 8,000 light-years
   is a unit error: it should be approximately 2,452,809 milliparsecs.
-- UTC conversion is bounded through 2026-12-31 and requires a deliberate
-  leap-second data update for later dates. See [foundation.md](foundation.md)
-  for the complete contract and scientific limitations.
+- UTC conversion now extrapolates the fixed leap table outside its historical
+  range. The assumed 10 s before 1972 and 37 s after 2017 are not historical
+  or future truth. See [foundation.md](foundation.md) for the contract.
 
 ## 0.2: Earth–Moon ephemeris foundation
 
@@ -28,10 +28,10 @@ performance on every device, or a waiver of scientific accuracy in later work.
   Moon states, plus bounded approximate body orientations. The 2026 Earth–Moon
   reference test and independent implementation checks are documented in
   [ephemeris.md](ephemeris.md).
-- Limit: bundled coverage is 2020-01-01 inclusive to 2036-01-01 exclusive TDB,
-  not all dates; unsupported dates fail rather than extrapolate. The results
-  are model estimates, not exact observations. Other stars and planets are not
-  included. Earth orientation is approximate, not a full EOP-based frame.
+- Packed DE440 coverage is 2020–2035; a lower-accuracy analytical fallback
+  now covers 3000 BC–AD 3000 and identifies its model. Switching models can
+  introduce jumps; other stars and planets are not exposed. Earth orientation
+  is approximate, not a full EOP-based frame.
 - Chebyshev coefficients are evaluated directly; the separately specified
   five-iteration Kepler solver is not implemented by this package. A local
   warmed native benchmark is not a universal sub-microsecond guarantee.
@@ -40,18 +40,17 @@ performance on every device, or a waiver of scientific accuracy in later work.
 
 - Delivered: procedural WebGL2 Earth–Moon view with painterly filtering and a
   separate vector overlay, interactive camera, and demand-driven rendering.
-  The sampled Moon path and velocity come from the ephemeris; the surfaces and
-  optional vehicle are illustrations, not a terrain map or simulated mission.
-- Limit: spacecraft trajectory ellipses, computed apsides and B-plane
-  solutions are not displayed. Reusable drawing primitives exist, but real
-  orbital and targeting data must be supplied by later physics work; they must
-  not be fabricated to fill the viewport.
+  The sampled Moon path and velocity come from the ephemeris; physical body
+  radii use the same scale as their positions. Surfaces and the optional
+  vehicle are illustrations, not a terrain map or simulated mission.
+- An optional ideal test conic with computed apsides and nodes is now
+  displayed. It is not a propagated mission or a B-plane solution; targeting
+  data and higher-fidelity trajectories still require later physics work.
 - Idle means no continuously scheduled application frames, not a guarantee of
-  zero CPU or GPU use. The release debounce targets 50 ms, not a real-time
-  deadline. The headless CI tests have passed the <0.2% CPU gate, but an
-  intermittent software-GPU failure was also observed; hardware GPU usage and
-  the target laptop have not been measured. See [observatory.md](observatory.md)
-  for the method, results and other caveats.
+  zero CPU or GPU use. The browser now submits a finite progressive sequence;
+  its deterministic idle test checks animation and worker-message counters,
+  not OS CPU or hardware GPU utilization. The target laptop has not been
+  measured. See [observatory.md](observatory.md) for details and caveats.
 
 ## Verification and next step
 

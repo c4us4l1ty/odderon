@@ -29,3 +29,9 @@ export function bPlane(ctx, center, radius, {target=null, label='B-plane', color
   if(target){ctx.beginPath();ctx.arc(target[0],target[1],3,0,Math.PI*2);ctx.fill();}
   ctx.font='10px system-ui';ctx.fillText(label,x-radius,y-radius-8);ctx.restore();
 }
+
+// A screen-space locator, not an enlargement of the physical object.
+export function reticle(ctx, point, {color='#dce8d5'}={}) {
+  if(!finitePoint(point))return;
+  const [x,y]=point;ctx.save();ctx.strokeStyle=color;ctx.lineWidth=1;ctx.beginPath();ctx.arc(x,y,5,0,Math.PI*2);ctx.moveTo(x-8,y);ctx.lineTo(x-4,y);ctx.moveTo(x+4,y);ctx.lineTo(x+8,y);ctx.moveTo(x,y-8);ctx.lineTo(x,y-4);ctx.moveTo(x,y+4);ctx.lineTo(x,y+8);ctx.stroke();ctx.restore();
+}

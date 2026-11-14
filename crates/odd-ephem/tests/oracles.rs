@@ -149,12 +149,16 @@ fn coverage_origins_and_relative_states() {
             Body::Earth,
             Body::Moon,
             Epoch::new(start - 1, 0.999).unwrap()
-        ),
-        Err(EphemerisError::OutsideCoverage)
+        )
+        .unwrap()
+        .model,
+        odd_ephem::EphemerisModel::Analytical
     );
     assert_eq!(
-        e.state(Body::Earth, Body::Earth, Epoch::new(end, 0.0).unwrap()),
-        Err(EphemerisError::OutsideCoverage)
+        e.state(Body::Earth, Body::Earth, Epoch::new(end, 0.0).unwrap())
+            .unwrap()
+            .model,
+        odd_ephem::EphemerisModel::Analytical
     );
     let epoch = Epoch::new(820_497_600, 0.123).unwrap();
     let m = e.state(Body::Moon, Body::Earth, epoch).unwrap().state;

@@ -9,4 +9,5 @@ crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 odd-core = { path = "../odd-core" }
+odd-astro = { path = "../odd-astro" }
 odd-ephem = { path = "../odd-ephem" }

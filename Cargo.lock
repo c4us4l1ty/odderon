@@ -127,6 +127,7 @@ dependencies = [
 name = "odd-view"
 version = "0.1.0"
 dependencies = [
+ "odd-astro",
  "odd-core",
  "odd-ephem",
 ]

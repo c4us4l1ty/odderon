@@ -23,7 +23,7 @@ fn sample_tree() -> FrameTree {
     )
     .unwrap();
     tree.add_frame(
-        FrameId::Camera(1),
+        FrameId::BodyFixed(9001),
         FrameId::BodyCentered(1),
         translate([20.0, 30.0, 40.0]),
     )
@@ -36,7 +36,7 @@ fn split_8000_light_year_anchor_preserves_local_docking_separation() {
     // 2,452,809 milliparsecs, not parsecs, is approximately 8,000 ly.
     let tree = sample_tree();
     let state = |x| FramedState {
-        frame: FrameId::Camera(1),
+        frame: FrameId::BodyFixed(9001),
         epoch: Epoch::J2000,
         state: State {
             position_m: [x, 0.0, 0.0],
@@ -46,8 +46,8 @@ fn split_8000_light_year_anchor_preserves_local_docking_separation() {
     let g1 = tree.to_galactic(state(0.0)).unwrap();
     let g2 = tree.to_galactic(state(0.5)).unwrap();
     assert_eq!(g1.anchor.milliparsecs[0], 2_452_809);
-    let p1 = tree.from_galactic(g1, FrameId::Camera(1)).unwrap();
-    let p2 = tree.from_galactic(g2, FrameId::Camera(1)).unwrap();
+    let p1 = tree.from_galactic(g1, FrameId::BodyFixed(9001)).unwrap();
+    let p2 = tree.from_galactic(g2, FrameId::BodyFixed(9001)).unwrap();
     assert!((p2.state.position_m[0] - p1.state.position_m[0] - 0.5).abs() < 1e-9);
     assert_eq!(p2.state.velocity_m_s, [1.0, 0.0, 0.0]);
     assert_eq!(
@@ -95,7 +95,7 @@ fn crossing_systems_and_invalid_hierarchies() {
     );
     assert_eq!(
         tree.add_frame(
-            FrameId::Camera(1),
+            FrameId::BodyFixed(9001),
             FrameId::StellarSystem(1),
             translate([0.0; 3])
         ),
@@ -107,7 +107,7 @@ fn crossing_systems_and_invalid_hierarchies() {
                 epoch: Epoch::new(1, 0.0).unwrap(),
                 ..source
             },
-            FrameId::Camera(1)
+            FrameId::BodyFixed(9001)
         ),
         Err(TreeError::EpochMismatch)
     );
@@ -129,7 +129,7 @@ fn rotated_sibling_frames_use_lowest_common_ancestor() {
             velocity_m_s: [0.0; 3],
         },
     };
-    let camera = tree.transform(start, FrameId::Camera(1)).unwrap();
+    let camera = tree.transform(start, FrameId::BodyFixed(9001)).unwrap();
     assert_eq!(camera.state.position_m, [-19.0, -25.0, -40.0]);
     assert_eq!(camera.state.velocity_m_s, [-3.0, 0.0, 0.0]);
     assert_eq!(
@@ -164,13 +164,13 @@ fn galactic_round_trip_preserves_docking_with_realistic_large_offsets() {
     )
     .unwrap();
     tree.add_frame(
-        FrameId::Camera(17),
+        FrameId::BodyFixed(9017),
         FrameId::BodyCentered(17),
         translate([20.0, 30.0, 40.0]),
     )
     .unwrap();
     let point = |x| FramedState {
-        frame: FrameId::Camera(17),
+        frame: FrameId::BodyFixed(9017),
         epoch: Epoch::J2000,
         state: State {
             position_m: [x, 0.0, 0.0],
@@ -240,4 +240,64 @@ fn compensated_round_trip_transforms_velocity_through_rotating_frames() {
         tree.from_galactic(invalid, start.frame),
         Err(TreeError::NonFinite)
     );
+}
+
+#[test]
+fn oracle_8000ly_lca_precision() {
+    // The literal specification's 2,452,809 pc is ~8 million light-years,
+    // not 8,000; exercise its larger requested value as well.
+    for anchor in [2_452_809, 2_452_809_000] {
+        let mut tree = FrameTree::new(Epoch::J2000);
+        tree.add_stellar_system(
+            1,
+            GalacticAnchor {
+                milliparsecs: [anchor, 0, 0],
+            },
+            translate([1e13, 0.0, 0.0]),
+        )
+        .unwrap();
+        tree.add_frame(
+            FrameId::BodyCentered(1),
+            FrameId::StellarSystem(1),
+            translate([149_597_870_700.123, 0.0, 0.0]),
+        )
+        .unwrap();
+        tree.add_frame(
+            FrameId::Camera(1),
+            FrameId::BodyCentered(1),
+            translate([0.123_456_789, 0.0, 0.0]),
+        )
+        .unwrap();
+        let point = |x| FramedState {
+            frame: FrameId::BodyCentered(1),
+            epoch: Epoch::J2000,
+            state: State {
+                position_m: [x, 0.0, 0.0],
+                velocity_m_s: [0.0; 3],
+            },
+        };
+        let a = point(0.123_456_789);
+        let b = point(0.623_456_789);
+        let a_back = tree
+            .from_galactic(tree.to_galactic(a).unwrap(), a.frame)
+            .unwrap();
+        let b_back = tree
+            .from_galactic(tree.to_galactic(b).unwrap(), b.frame)
+            .unwrap();
+        let relative = tree.transform_relative(b_back, a_back).unwrap();
+        assert!((relative.state.position_m[0] - 0.5).abs() < 1e-12);
+        let projected = tree.project_to_camera(b, FrameId::Camera(1)).unwrap();
+        assert!((f64::from(projected[0]) - 0.5).abs() < 1e-7);
+        assert_eq!(
+            tree.transform(b, FrameId::Camera(1)),
+            Err(TreeError::CameraIsRenderOnly)
+        );
+        assert_eq!(
+            tree.to_galactic(FramedState {
+                frame: FrameId::Camera(1),
+                ..b
+            }),
+            Err(TreeError::CameraIsRenderOnly)
+        );
+    }
 }
