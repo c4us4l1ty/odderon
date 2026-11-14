@@ -48,6 +48,9 @@ controls select a midnight **TDB**, not local time or UTC. The date range is
   not a propagated path.
 * Orbital elements, apsides, B-plane targeting and vehicle trajectories require
   later physics packages. This viewport does not fabricate those results.
+  `web/overlay.js` provides reusable polyline, vector, apsis-marker and B-plane
+  bullseye drawing primitives for callers that have genuine computed data;
+  they do not calculate those inputs.
 
 ## Rendering and idle behavior
 
@@ -75,7 +78,7 @@ hiding the document cancels pending work.
 
 ```sh
 npm ci
-npm test                       # governor state-machine tests
+npm test                       # governor and overlay primitive tests
 npm run test:browser           # Chrome/Chromium and built web/odd_view.wasm
 # CHROME_BIN=/path/to/chromium npm run test:browser
 ```

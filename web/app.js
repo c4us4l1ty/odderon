@@ -1,5 +1,6 @@
 import { Governor } from './governor.js';
 import { Renderer } from './renderer.js';
+import { polyline, vector } from './overlay.js';
 
 const $=id=>document.getElementById(id);
 const scene=$('scene'), canvas=$('world'), overlay=$('overlay'), date=$('date'), error=$('error');
@@ -44,17 +45,16 @@ function drawOverlay(model,rect){
   const pixel=p=>[rect.width/2+p[0]*rect.height/2,rect.height/2-p[1]*rect.height/2];
   if($('show-path').checked){
     for(const future of [false,true]){
-      ctx.beginPath();let started=false;for(const sample of snapshot.samples){if(future ? sample.time<snapshot.seconds : sample.time>snapshot.seconds)continue;const [x,y]=pixel(model.project(sample.pos));if(!started){ctx.moveTo(x,y);started=true;}else ctx.lineTo(x,y);}
-      ctx.strokeStyle=future?'rgba(194,211,189,.25)':'rgba(194,211,189,.55)';ctx.lineWidth=1;ctx.setLineDash(future?[3,5]:[]);ctx.stroke();
-    } ctx.setLineDash([]);
+      const points=snapshot.samples.filter(sample=>future ? sample.time>=snapshot.seconds : sample.time<=snapshot.seconds).map(sample=>pixel(model.project(sample.pos)));
+      polyline(ctx,points,{stroke:future?'rgba(194,211,189,.25)':'rgba(194,211,189,.55)',dashed:future});
+    }
   }
   if($('show-velocity').checked){
     const from=pixel(model.project(snapshot.moon));
     // A 1-day tangent scaled from instantaneous geometric velocity, not an orbit prediction.
     const to=pixel(model.project(snapshot.moon.map((x,i)=>x+snapshot.velocity[i]*86400)));
-    const angle=Math.atan2(to[1]-from[1],to[0]-from[0]);
-    ctx.strokeStyle='#e1bd78';ctx.fillStyle='#e1bd78';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(...from);ctx.lineTo(...to);ctx.stroke();
-    ctx.beginPath();ctx.moveTo(...to);ctx.lineTo(to[0]-8*Math.cos(angle-.45),to[1]-8*Math.sin(angle-.45));ctx.lineTo(to[0]-8*Math.cos(angle+.45),to[1]-8*Math.sin(angle+.45));ctx.closePath();ctx.fill();
+    vector(ctx,from,to);
+    ctx.fillStyle='#e1bd78';
     ctx.font='10px system-ui';ctx.fillText('VELOCITY · 1 DAY AT CURRENT SPEED',20,rect.height-(model.vehicle?62:45));
   }
   if(model.vehicle){ctx.fillStyle='#d5bb80';ctx.font='10px system-ui';ctx.fillText('VEHICLE STUDY · NOT A SIMULATED MISSION',20,rect.height-45);}

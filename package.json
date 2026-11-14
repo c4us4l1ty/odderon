@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test tests/browser/governor.test.js",
+    "test": "node --test tests/browser/*.test.js",
     "test:browser": "node tests/browser/observatory.mjs"
   },
   "devDependencies": {
