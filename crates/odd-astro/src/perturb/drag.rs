@@ -58,8 +58,8 @@ pub fn earth_density(height: f64) -> Result<f64, PerturbationError> {
     const L: [f64; 7] = [-0.0065, 0.0, 0.001, 0.0028, 0.0, -0.0028, -0.002];
     let h = 6_356_766.0 * height / (6_356_766.0 + height);
     let mut i = 0;
-    for j in 1..7 {
-        if h >= H[j] {
+    for (j, &base) in H.iter().enumerate().skip(1) {
+        if h >= base {
             i = j;
         }
     }
@@ -73,20 +73,23 @@ pub fn earth_density(height: f64) -> Result<f64, PerturbationError> {
     Ok(pressure / (287.05287 * temp))
 }
 
+/// Parameters of the reference body and spacecraft, in SI units.
+#[derive(Clone, Copy, Debug)]
+pub struct DragParameters {
+    pub pole: [f64; 3],
+    pub omega: [f64; 3],
+    pub equatorial_radius: f64,
+    pub polar_radius: f64,
+    pub cd: f64,
+    pub area: f64,
+    pub mass: f64,
+}
+
 /// Drag for an oblate body whose symmetry axis is `pole`. Altitude is the
 /// geocentric radial distance above the ellipsoid in that direction, not
 /// terrain or geodetic height. `omega` is inertial angular velocity (rad/s).
-pub fn acceleration(
-    r: [f64; 3],
-    v: [f64; 3],
-    pole: [f64; 3],
-    omega: [f64; 3],
-    equatorial_radius: f64,
-    polar_radius: f64,
-    cd: f64,
-    area: f64,
-    mass: f64,
-) -> Result<[f64; 3], PerturbationError> {
+pub fn acceleration(r: [f64; 3], v: [f64; 3], params: DragParameters) -> Result<[f64; 3], PerturbationError> {
+    let DragParameters { pole, omega, equatorial_radius, polar_radius, cd, area, mass } = params;
     if !r
         .iter()
         .chain(v.iter())
@@ -138,13 +141,15 @@ mod tests {
         let a = acceleration(
             [6_678_137.0, 0.0, 0.0],
             [0.0, 486.9, 0.0],
-            [0.0, 0.0, 1.0],
-            [0.0, 0.0, 486.9 / 6_678_137.0],
-            6_378_137.0,
-            6_356_752.314,
-            2.2,
-            4.0,
-            500.0,
+            DragParameters {
+                pole: [0.0, 0.0, 1.0],
+                omega: [0.0, 0.0, 486.9 / 6_678_137.0],
+                equatorial_radius: 6_378_137.0,
+                polar_radius: 6_356_752.314,
+                cd: 2.2,
+                area: 4.0,
+                mass: 500.0,
+            },
         )
         .unwrap();
         assert!(norm(a) < 1e-25);
