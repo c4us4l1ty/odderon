@@ -82,6 +82,13 @@ scene.addEventListener('keydown',e=>{let used=true;switch(e.key){case 'ArrowLeft
 $('zoom-in').addEventListener('click',()=>zoom(1.2));$('zoom-out').addEventListener('click',()=>zoom(1/1.2));$('reset').addEventListener('click',()=>{camera={yaw:-1.30,pitch:-.35,zoom:1};invalidateWorld();});
 for(const id of ['show-path','show-velocity'])$(id).addEventListener('change',invalidateOverlay);$('show-vehicle').addEventListener('change',invalidateWorld);date.addEventListener('change',loadDate);$('prev').addEventListener('click',()=>changeDay(-1));$('next').addEventListener('click',()=>changeDay(1));$('today-reset').addEventListener('click',()=>{date.value='2026-01-01';loadDate();});
 new ResizeObserver(invalidateWorld).observe(scene);
+// A monitor or browser zoom change can alter pixel density without resizing the
+// CSS box. Re-arm a one-shot media query rather than polling while idle.
+function watchPixelDensity(){
+  const query=matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+  query.addEventListener('change',()=>{watchPixelDensity();invalidateWorld();},{once:true});
+}
+watchPixelDensity();
 function syncVisibility(){if(document.hidden||contextLost){pointer=null;governor.suspend();}else governor.resume();}
 document.addEventListener('visibilitychange',syncVisibility);
 canvas.addEventListener('webglcontextlost',event=>{event.preventDefault();contextLost=true;syncVisibility();showError('Graphics context lost. Waiting for the browser to restore it.');});

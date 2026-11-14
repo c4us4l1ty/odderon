@@ -71,7 +71,7 @@ resolution; on release it schedules one final-quality pass after a **minimum**
 pass and can render sooner; browser scheduling and GPU work can also delay it.
 The debounce is not a real-time deadline. High-density rendering is capped at 1.5 device
 pixels per CSS pixel and 2048 pixels on the longest side to bound memory/cost.
-The cached compositor image stays visible until invalidated. Resizing, zoom,
+The cached compositor image stays visible until invalidated. Resizing, display pixel-density changes, zoom,
 keyboard input, date, overlay changes and context restoration wake the scheduler;
 path and velocity toggles repaint only the vector layer when the world is already
 settled. An invalid date hides the previous scene until a valid date is rendered;

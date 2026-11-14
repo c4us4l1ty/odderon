@@ -78,6 +78,17 @@ try{
   const interactiveWidth=await page.locator('#world').evaluate(c=>c.width);await page.mouse.up();await page.waitForTimeout(300);
   assert.match(await page.evaluate(()=>odderonDiagnostics.quality),/RESTING/);
   assert.ok(await page.locator('#world').evaluate(c=>c.width)>interactiveWidth,'full resolution after drag');
+  // DPR can change without a CSS resize (e.g. moving between monitors).
+  const initialSize=await page.locator('#world').evaluate(c=>({width:c.width,css:c.getBoundingClientRect().width}));
+  const beforeDensity=await page.evaluate(()=>odderonDiagnostics.draws);
+  await cdp.send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:2,mobile:false});
+  await page.waitForFunction(n=>odderonDiagnostics.draws>n,beforeDensity,{timeout:10000});
+  const denseSize=await page.locator('#world').evaluate(c=>({width:c.width,css:c.getBoundingClientRect().width}));
+  assert.equal(denseSize.css,initialSize.css);assert.ok(denseSize.width>initialSize.width,'DPR change did not resize the world canvas');
+  const beforeRestoreDensity=await page.evaluate(()=>odderonDiagnostics.draws);
+  await cdp.send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
+  await page.waitForFunction(n=>odderonDiagnostics.draws>n,beforeRestoreDensity,{timeout:10000});
+  assert.equal(await page.locator('#world').evaluate(c=>c.width),initialSize.width);
   const beforeDate=await page.locator('#distance').textContent();await page.locator('#next').click();assert.notEqual(await page.locator('#distance').textContent(),beforeDate);
   assert.equal(await page.locator('#date').inputValue(),'2026-01-02');
   await page.locator('#date').fill('2020-01-01');await page.locator('#date').dispatchEvent('change');assert.equal(await page.locator('#prev').isDisabled(),true);
