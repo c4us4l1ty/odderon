@@ -1,4 +1,4 @@
-//! Shared native/wasm WP 0.1 parity fixture, not a security attestation.
+//! Shared native/wasm foundation and ephemeris parity fixture, not a security attestation.
 use odd_core::canon::canonical_hash;
 use odd_core::epoch::Epoch;
 use odd_core::frames::{
@@ -87,6 +87,20 @@ pub fn fingerprint() -> [u8; 32] {
         canonical_hash(1, &1.0_f64).unwrap(),
         canonical_hash(1, &f64::from_bits(1.0_f64.to_bits() + 1)).unwrap()
     );
+    let moon = odd_ephem::Ephemeris::bundled()
+        .unwrap()
+        .state(
+            odd_ephem::Body::Moon,
+            odd_ephem::Body::Earth,
+            Epoch::new(820_497_600, 0.25).unwrap(),
+        )
+        .unwrap()
+        .state;
+    assert!((moon.position_m[0] - 144_325_478.673_459_95).abs() < 0.001);
+    assert!((moon.velocity_m_s[0] - (-1_004.314_447_402_294_5)).abs() < 0.000_001);
+    let lunar_orientation =
+        odd_ephem::orientation::moon_orientation(Epoch::new(820_497_600, 0.25).unwrap()).unwrap();
+    let (gmst, obliquity) = odd_ephem::orientation::earth_mean_angles(9496.5, 9496.5008).unwrap();
     let values = [
         century.seconds() as u64,
         century.fraction().to_bits(),
@@ -95,6 +109,16 @@ pub fn fingerprint() -> [u8; 32] {
         utc.fraction().to_bits(),
         separation.to_bits(),
         b.state.velocity_m_s[0].to_bits(),
+        moon.position_m[0].to_bits(),
+        moon.position_m[1].to_bits(),
+        moon.position_m[2].to_bits(),
+        moon.velocity_m_s[0].to_bits(),
+        moon.velocity_m_s[1].to_bits(),
+        moon.velocity_m_s[2].to_bits(),
+        lunar_orientation.body_to_j2000[0][0].to_bits(),
+        lunar_orientation.body_to_j2000[2][2].to_bits(),
+        gmst.to_bits(),
+        obliquity.to_bits(),
     ];
     canonical_hash(1, &values).unwrap()
 }
