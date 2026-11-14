@@ -25,10 +25,11 @@ struct Settings {
     dry_mass: f64,
     engine: Engine,
     nodes: Vec<ManeuverNode>,
+    node_metric: bool,
 }
 struct Execution {
     trajectory: TrajectorySpline,
-    report: [f64; 26],
+    report: [f64; 29],
 }
 static SETTINGS: Mutex<Option<Settings>> = Mutex::new(None);
 static PLAN: Mutex<Option<Plan>> = Mutex::new(None);
@@ -96,7 +97,20 @@ pub extern "C" fn mission_setup(
             engine: 0,
         },
         nodes: Vec::new(),
+        node_metric: false,
     });
+    1
+}
+/// Select apoapsis (0) or change in ascending-node longitude (1) for the
+/// counterfactual sensitivity report. Node angles are unwrapped near the
+/// initial node, suitable only when the total change stays below 180 degrees.
+#[no_mangle]
+pub extern "C" fn mission_metric(metric: u32) -> i32 {
+    if metric > 1 { return 0; }
+    let mut settings = SETTINGS.lock().unwrap();
+    let Some(settings) = settings.as_mut() else { return 0; };
+    settings.node_metric = metric == 1;
+    *EXECUTION.lock().unwrap() = None;
     1
 }
 #[no_mangle]
@@ -237,6 +251,22 @@ pub extern "C" fn mission_execute() -> i32 {
     let Ok(orb) = apsides(final_state, MU, EARTH) else {
         return 0;
     };
+    let initial_elements = odd_astro::elements::Elements::from_state(
+        odd_core::frames::State { position_m: s.initial.position, velocity_m_s: s.initial.velocity }, MU,
+    );
+    let final_elements = odd_astro::elements::Elements::from_state(
+        odd_core::frames::State { position_m: final_state.position, velocity_m_s: final_state.velocity }, MU,
+    );
+    let (Ok(initial_elements), Ok(final_elements)) = (initial_elements, final_elements) else { return 0; };
+    if s.node_metric && initial_elements.inclination_rad.sin().abs() < 1e-8 { return 0; }
+    let node_change = |state: Keyframe| -> Result<f64, IntegrationError> {
+        let el = odd_astro::elements::Elements::from_state(
+            odd_core::frames::State { position_m: state.position, velocity_m_s: state.velocity }, MU,
+        ).map_err(|_| IntegrationError::ForceFailure)?;
+        if el.inclination_rad.sin().abs() < 1e-8 { return Err(IntegrationError::ForceFailure); }
+        Ok((el.ascending_node_rad - initial_elements.ascending_node_rad + std::f64::consts::PI)
+            .rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI)
+    };
     let Ok(runs) = propagate_counterfactuals(
         s.initial,
         end,
@@ -245,14 +275,14 @@ pub extern "C" fn mission_execute() -> i32 {
         &burns,
         &plan.impulses,
         |t| environment(eph, s.epoch, t),
-        |state| metric_apoapsis(state, MU, EARTH),
+        |state| if s.node_metric { node_change(state) } else { metric_apoapsis(state, MU, EARTH) },
     ) else {
         return 0;
     };
     let Ok(sensitivity) = runs.sensitivities() else {
         return 0;
     };
-    let mut report = [f64::NAN; 26];
+    let mut report = [f64::NAN; 29];
     report[0] = final_state.mass;
     report[1] = orb.apoapsis_altitude_m;
     report[2] = orb.periapsis_altitude_m;
@@ -267,6 +297,9 @@ pub extern "C" fn mission_execute() -> i32 {
     }
     report[16..21].copy_from_slice(&sensitivity.signed_metric_deltas);
     report[21..26].copy_from_slice(&sensitivity.position_distances_m);
+    report[26] = final_elements.inclination_rad;
+    report[27] = final_elements.ascending_node_rad;
+    report[28] = if s.node_metric { runs.full.metric } else { f64::NAN };
     *EXECUTION.lock().unwrap() = Some(Execution { trajectory, report });
     1
 }

@@ -128,6 +128,13 @@ fn sso_node_regression_is_dominated_by_j2_sensitivity() {
         node_angle,
     )
     .unwrap();
+    let actual = model(initial.mass)
+        .propagate_with_burns(initial, 432_000.0, opts(), &burns, |t| env(&eph, t))
+        .unwrap().sample(432_000.0).unwrap();
+    let apsis = odd_sim::mission::apsides(actual, MU, R).unwrap();
+    assert!((apsis.apoapsis_altitude_m - 800_000.0).abs() < 10_000.0, "{apsis:?}");
+    assert!((apsis.periapsis_altitude_m - 800_000.0).abs() < 10_000.0, "{apsis:?}");
+    assert!(apsis.eccentricity < 0.005);
     let stats = runs.sensitivities().unwrap();
     let shares = stats.metric_shares.unwrap();
     assert!(
