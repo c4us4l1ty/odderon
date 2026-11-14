@@ -59,27 +59,57 @@ void main(){
  normalOut=vec4(local*.5+.5,isEarth?.7:.9,1.0);
 }`;
 
-// Four-sector minimum-variance filter, stretched along the analytic normal's
-// tangent. It is a compact anisotropic Kuwahara-inspired pass, not a full
-// structure-tensor implementation of Kyprianidis et al.
+// Eight overlapping polynomial sectors, with ellipse orientation and eccentricity
+// derived from the locally smoothed image structure tensor. Formulation follows
+// Kyprianidis et al. (2010), with a small fixed radius for modest GPU budgets.
 export const paintFragment = `#version 300 es
 precision highp float;
 in vec2 uv; out vec4 outColor;
 uniform sampler2D uColor; uniform sampler2D uNormal; uniform vec2 uResolution; uniform float uQuality;
+vec3 colorAt(vec2 pixelOffset){return texture(uColor,uv+pixelOffset/uResolution).rgb;}
 void main(){
- vec3 base=texture(uColor,uv).rgb; vec3 n=texture(uNormal,uv).rgb;
- if(n.b<.1 || uQuality<.5){outColor=vec4(base,1);return;}
- vec2 radial=n.xy*2.0-1.0; vec2 tangent=length(radial)>.05?normalize(vec2(-radial.y,radial.x)):vec2(1,0);
- vec2 across=vec2(-tangent.y,tangent.x); vec3 best=base; float bestVariance=1e6;
- for(int sector=0;sector<4;sector++){
-   vec3 sum=vec3(0), sq=vec3(0); float count=0.0;
-   for(int i=0;i<3;i++)for(int j=0;j<3;j++){
-    float a=float(i)*(sector<2?1.0:-1.0);float b=float(j)*((sector==0||sector==2)?1.0:-1.0);
-    vec2 at=uv+(tangent*a*2.0+across*b*.75)/uResolution;
-    vec3 c=texture(uColor,at).rgb; sum+=c; sq+=c*c; count+=1.0;
-   }
-   vec3 mean=sum/count; vec3 var=max(sq/count-mean*mean,vec3(0)); float v=dot(var,vec3(1));
-   if(v<bestVariance){bestVariance=v;best=mean;}
+ vec3 base=colorAt(vec2(0)); vec3 normal=texture(uNormal,uv).rgb;
+ if(normal.b<.1 || uQuality<.5){outColor=vec4(base,1);return;}
+ // Gaussian-smoothed structure tensor of RGB gradients. Its major eigenvector
+ // points across an edge; the minor eigenvector is the direction of the brush.
+ float jxx=0.0, jxy=0.0, jyy=0.0, total=0.0;
+ for(int x=-1;x<=1;x++)for(int y=-1;y<=1;y++){
+   vec2 p=vec2(float(x),float(y));
+   vec3 gx=(colorAt(p+vec2(1,0))-colorAt(p-vec2(1,0)))*.5;
+   vec3 gy=(colorAt(p+vec2(0,1))-colorAt(p-vec2(0,1)))*.5;
+   float w=(x==0?2.0:1.0)*(y==0?2.0:1.0);
+   jxx+=w*dot(gx,gx);jxy+=w*dot(gx,gy);jyy+=w*dot(gy,gy);total+=w;
  }
- outColor=vec4(mix(base,best,.65),1.0);
+ jxx/=total;jxy/=total;jyy/=total;
+ float diff=sqrt(max(0.0,(jxx-jyy)*(jxx-jyy)+4.0*jxy*jxy));
+ float anisotropy=clamp(diff/max(jxx+jyy,0.000001),0.0,1.0);
+ float angle=diff>0.0000001?.5*atan(2.0*jxy,jxx-jyy):0.0; vec2 across=vec2(cos(angle),sin(angle));
+ vec2 tangent=vec2(-across.y,across.x);
+ // In flat regions use the analytic surface normal's tangent for a stable
+ // normal-aligned brush direction; the isotropic kernel has no preferred axis.
+ if(jxx+jyy<0.00001){vec2 radial=normal.xy*2.0-1.0;if(length(radial)>.05){tangent=normalize(vec2(-radial.y,radial.x));across=vec2(-tangent.y,tangent.x);}}
+ float a=2.0*(1.0+anisotropy), b=2.0/(1.0+anisotropy);
+ vec3 sums[8]; vec3 squares[8]; float weights[8];
+ for(int k=0;k<8;k++){sums[k]=vec3(0);squares[k]=vec3(0);weights[k]=0.0;}
+ for(int x=-2;x<=2;x++)for(int y=-2;y<=2;y++){
+   vec2 v=vec2(float(x),float(y))*.5; float r2=dot(v,v); if(r2>1.0)continue;
+   vec2 offset=tangent*v.x*a+across*v.y*b; vec3 c=colorAt(offset);
+   float sectors[8];float sectorSum=0.0;
+   for(int k=0;k<8;k++){
+     float theta=6.28318530718*float(k)/8.0; vec2 dir=vec2(cos(theta),sin(theta));
+     float longitudinal=dot(v,dir), lateral=dot(v,vec2(-dir.y,dir.x));
+     float z=max(0.0,longitudinal+0.3333333333-3.77*lateral*lateral);
+     sectors[k]=z*z;sectorSum+=sectors[k];
+   }
+   float radialWeight=exp(-3.125*r2)/max(sectorSum,0.000001);
+   for(int k=0;k<8;k++){float wk=sectors[k]*radialWeight;sums[k]+=c*wk;squares[k]+=c*c*wk;weights[k]+=wk;}
+ }
+ vec3 result=vec3(0);float all=0.0;
+ for(int k=0;k<8;k++){
+   vec3 mean=sums[k]/max(weights[k],0.000001);
+   vec3 variance=max(squares[k]/max(weights[k],0.000001)-mean*mean,vec3(0));
+   float sigma=10.0*sqrt(dot(variance,vec3(1)));
+   float alpha=1.0/(1.0+pow(sigma,8.0)); result+=mean*alpha; all+=alpha;
+ }
+ outColor=vec4(mix(base,result/max(all,0.000001),.7),1.0);
 }`;

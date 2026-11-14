@@ -22,6 +22,26 @@ try{
   await page.waitForTimeout(500);
   assert.equal(await page.locator('#error').isHidden(),true);
   assert.equal(await page.locator('#distance').textContent(),'361,026');
+  // Exercise the real filter against a synthetic two-region/noise fixture.
+  // A constant image must stay constant; noise should decrease without
+  // washing out a sharp edge. This is an implementation check, not an art score.
+  const filter=await page.evaluate(async()=>{
+    const {vertex,paintFragment}=await import('./shaders.js');const canvas=document.createElement('canvas');canvas.width=32;canvas.height=32;
+    const gl=canvas.getContext('webgl2',{preserveDrawingBuffer:true});
+    const shader=(kind,src)=>{const s=gl.createShader(kind);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(s));return s;};
+    const p=gl.createProgram();gl.attachShader(p,shader(gl.VERTEX_SHADER,vertex));gl.attachShader(p,shader(gl.FRAGMENT_SHADER,paintFragment));gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(p));gl.useProgram(p);
+    const rgba=(generator)=>{const bytes=new Uint8Array(32*32*4);for(let y=0;y<32;y++)for(let x=0;x<32;x++){const i=(y*32+x)*4;const v=generator(x,y);bytes.set([v,v,v,255],i);}return bytes;};
+    const texture=(index,bytes)=>{const t=gl.createTexture();gl.activeTexture(gl.TEXTURE0+index);gl.bindTexture(gl.TEXTURE_2D,t);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,32,32,0,gl.RGBA,gl.UNSIGNED_BYTE,bytes);};
+    const input=rgba((x,y)=>(x<16?48:205)+(((x*13+y*17)%11)-5)*3);const normal=new Uint8Array(32*32*4);for(let i=0;i<normal.length;i+=4)normal.set([128,128,179,255],i);
+    texture(0,input);texture(1,normal);gl.uniform1i(gl.getUniformLocation(p,'uColor'),0);gl.uniform1i(gl.getUniformLocation(p,'uNormal'),1);gl.uniform2f(gl.getUniformLocation(p,'uResolution'),32,32);gl.uniform1f(gl.getUniformLocation(p,'uQuality'),1);gl.viewport(0,0,32,32);gl.drawArrays(gl.TRIANGLES,0,3);let output=new Uint8Array(input.length);gl.readPixels(0,0,32,32,gl.RGBA,gl.UNSIGNED_BYTE,output);
+    const variance=(bytes)=>{let s=0,q=0,n=0;for(let y=4;y<28;y++)for(let x=3;x<12;x++){let v=bytes[(y*32+x)*4];s+=v;q+=v*v;n++;}return q/n-(s/n)**2;};
+    const sample=(x)=>{let sum=0;for(let y=4;y<28;y++)sum+=output[(y*32+x)*4];return sum/24;};
+    const result={inputVariance:variance(input),outputVariance:variance(output),left:sample(15),right:sample(16)};
+    texture(0,rgba(()=>96));gl.drawArrays(gl.TRIANGLES,0,3);gl.readPixels(0,0,32,32,gl.RGBA,gl.UNSIGNED_BYTE,output);result.constant=output[(16*32+16)*4];result.error=gl.getError();return result;
+  });
+  assert.equal(filter.error,0);assert.ok(Math.abs(filter.constant-96)<=2,`constant field ${JSON.stringify(filter)}`);
+  assert.ok(filter.outputVariance<filter.inputVariance*.8,`noise not reduced ${JSON.stringify(filter)}`);
+  assert.ok(filter.left<85 && filter.right>170,`edge blurred ${JSON.stringify(filter)}`);
   // Check actual GPU pixels at the analytically projected centers, not just
   // a draw counter: shader compilation or a blank framebuffer must fail.
   const pixels=await page.locator('#world').evaluate(canvas=>{

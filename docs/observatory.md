@@ -55,11 +55,11 @@ controls select a midnight **TDB**, not local time or UTC. The date range is
 ## Rendering and idle behavior
 
 The first WebGL2 pass renders analytic spheres and illustrative geometry into
-an offscreen color/normal framebuffer. A tangent-aligned, anisotropic
-Kuwahara-inspired four-sector minimum-variance pass adds painterly flattening;
-procedural tangent pigment strokes are shader-generated. This is a compact
-approximation, not the full structure-tensor filter or 1.5 million instanced
-strokes proposed in the brainstorming documents. A separate Canvas2D layer
+an offscreen color/normal framebuffer. A second pass computes a Gaussian-smoothed RGB structure tensor, extracts its
+orientation and anisotropy, and applies an eight-sector polynomial-weighted
+anisotropic Kuwahara filter; procedural normal-tangent pigment strokes are
+shader-generated. Its small fixed sample radius is a quality/performance
+choice, not the 1.5 million instanced strokes proposed in brainstorming. A separate Canvas2D layer
 renders sharp labels, samples and optional vector independently of the filter.
 No external textures or 3D models are used. WebGL errors, unsupported WebGL2,
 and lost/restored contexts have visible handling.
@@ -97,5 +97,5 @@ not guaranteed. Real-world graphics performance and appearance vary by driver.
 ## Research
 
 * [MDN: WebGL best practices](https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/WebGL_best_practices) — resizing on demand, context loss, conservative GPU memory.
-* [Kyprianidis et al., anisotropic Kuwahara filtering](https://www.kyprianidis.com/p/gpupro/) — directional feature-preserving painterly filtering; this implementation is a smaller normal-directed approximation.
+* [Kyprianidis et al., anisotropic Kuwahara filtering with polynomial weights](https://diglib.eg.org/server/api/core/bitstreams/3309663a-3134-44bc-9297-2fa33554277d/content) — tensor-aligned elliptical kernels, smoothly overlapping sectors, and variance-weighted means.
 * [NASA Moon Phase and Libration](https://svs.gsfc.nasa.gov/5415/) — phases depend on the Sun–Moon–observer geometry; this view uses geometric light directions, not a photometric model.
