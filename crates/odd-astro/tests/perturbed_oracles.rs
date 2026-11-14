@@ -124,14 +124,19 @@ fn oracle_leo_drag_decay() {
     // Integrate the independently derived circular-orbit energy balance:
     // dε/dt = -0.5 ρ Cd A/m * v * (v-ωa)^2, da/dt=2a²/μ dε/dt.
     // A fixed initial density is inadequate here: decay changes the density.
-    let rate = |axis:f64| {
-        let v=libm::sqrt(MU/axis);
-        let rho=odd_astro::perturb::drag::earth_density(axis-R).unwrap();
-        -axis*axis/MU * rho*drag.cd*drag.area/drag.mass*v*(v-drag.omega[2]*axis).powi(2)
+    let rate = |axis: f64| {
+        let v = libm::sqrt(MU / axis);
+        let rho = odd_astro::perturb::drag::earth_density(axis - R).unwrap();
+        -axis * axis / MU * rho * drag.cd * drag.area / drag.mass
+            * v
+            * (v - drag.omega[2] * axis).powi(2)
     };
-    let mut secular=a;
-    for _ in 0..(5*1440) { let k=rate(secular); secular+=60.0*rate(secular+30.0*k); }
-    let expected = secular-a;
+    let mut secular = a;
+    for _ in 0..(5 * 1440) {
+        let k = rate(secular);
+        secular += 60.0 * rate(secular + 30.0 * k);
+    }
+    let expected = secular - a;
     assert!(
         (measured / expected - 1.0).abs() < 0.05,
         "measured {measured}, expected {expected}"
