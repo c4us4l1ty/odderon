@@ -1,4 +1,5 @@
 import { Governor } from './governor.js';
+import { planetShine } from './lighting.js';
 import { Renderer } from './renderer.js';
 import { polyline, vector, reticle, apsis } from './overlay.js';
 import { EARTH_RADIUS_M, MOON_RADIUS_M, projectedRadius, needsReticle, orbitViewSpan } from './scale.js';
@@ -66,7 +67,12 @@ function geometry(){
   const half=orbitMode?[0,0,0]:snapshot.moon.map(x=>x/2), span=(fit??520e6)/zoom;
   const project=v=>[2*dot(subtract(v,half),right)/span,2*dot(subtract(v,half),up)/span,dot(subtract(v,half),view)/span];
   const e=project([0,0,0]),m=project(snapshot.moon);
-  return {right,up,view,project,earth:[e[0],e[1],projectedRadius(EARTH_RADIUS_M,span),e[2]],moon:[m[0],m[1],projectedRadius(MOON_RADIUS_M,span),m[2]],earthLight:norm(snapshot.sun),moonLight:norm(subtract(snapshot.sun,snapshot.moon)),earthOrientation:snapshot.earthOrientation,moonOrientation:snapshot.moonOrientation,vehicle:$('show-vehicle').checked};
+  const craft=orbitMode?activeOrbit.position:null;
+  const craftProjection=craft?project(craft):[0,0,0];
+  const earthShine=craft?planetShine([0,0,0],snapshot.sun,craft,EARTH_RADIUS_M,.30):{direction:[0,0,1],strength:0};
+  const moonShine=craft?planetShine(snapshot.moon,snapshot.sun,craft,MOON_RADIUS_M,.12):{direction:[0,0,1],strength:0};
+  const craftLight=craft?norm(subtract(snapshot.sun,craft)):[1,0,0];
+  return {right,up,view,project,earth:[e[0],e[1],projectedRadius(EARTH_RADIUS_M,span),e[2]],moon:[m[0],m[1],projectedRadius(MOON_RADIUS_M,span),m[2]],earthLight:norm(snapshot.sun),moonLight:norm(subtract(snapshot.sun,snapshot.moon)),earthOrientation:snapshot.earthOrientation,moonOrientation:snapshot.moonOrientation,vehicle:$('show-vehicle').checked&&!!craft,craftProjection,craftLight,earthShine,moonShine};
 }
 function draw(quality){
   if(!snapshot||!renderer)return false;
@@ -108,7 +114,7 @@ function drawOverlay(model,rect){
     ctx.fillStyle='#e1bd78';
     ctx.font='10px system-ui';ctx.fillText(visible?'VELOCITY · 1 DAY AT CURRENT SPEED':'VELOCITY · ALMOST ALONG VIEW',20,rect.height-(model.vehicle?62:45));
   }
-  if(model.vehicle){ctx.fillStyle='#d5bb80';ctx.font='10px system-ui';ctx.fillText('VEHICLE STUDY · NOT A SIMULATED MISSION',20,rect.height-45);}
+  if(model.vehicle){ctx.fillStyle='#d5bb80';ctx.font='10px system-ui';ctx.fillText('VEHICLE GLYPH · NOT TO SCALE',20,rect.height-45);}
   function label(body,name,detail){
     const [x,y]=pixel(body),radius=body[2]*rect.height/2;
     if(x < -radius||x>rect.width+radius||y < -radius||y>rect.height+radius)return;
@@ -143,7 +149,7 @@ canvas.addEventListener('webglcontextlost',event=>{event.preventDefault();contex
 canvas.addEventListener('webglcontextrestored',()=>{try{renderer.init();worldDirty=true;overlayDirty=true;lastQuality=null;contextLost=false;if(wasm&&!snapshot)showError('Date outside the available ephemeris (2020–2035 TDB).');else error.hidden=true;syncVisibility();}catch(e){showError(`Could not restore graphics: ${e.message}`);}});
 if(document.hidden)governor.suspend();
 // Read-only diagnostics make the idle gate observable without creating a poller.
-window.odderonDiagnostics=Object.freeze({get draws(){return draws;},get frameCount(){return governor.frameCount;},get orbitProjection(){return snapshot&&activeOrbit?geometry().project(activeOrbit.position):null;},get orbit(){return activeOrbit?{samples:activeOrbit.points.length,closed:activeOrbit.closed,markers:activeOrbit.markers.map(m=>m.name)}:null;},get overlayDraws(){return overlayDraws;},get pendingFrame(){return governor.frame!==null;},get quality(){return $('render-status').textContent;},get circles(){if(!snapshot)return null;const g=geometry();return {earth:[...g.earth],moon:[...g.moon]};}});
+window.odderonDiagnostics=Object.freeze({get draws(){return draws;},get frameCount(){return governor.frameCount;},get trajectory(){return {samples:activeOrbit?.perturbed?.length??0,pending:!!trajectoryWorker};},get orbitProjection(){return snapshot&&activeOrbit?geometry().project(activeOrbit.position):null;},get orbit(){return activeOrbit?{samples:activeOrbit.points.length,closed:activeOrbit.closed,markers:activeOrbit.markers.map(m=>m.name)}:null;},get overlayDraws(){return overlayDraws;},get pendingFrame(){return governor.frame!==null;},get quality(){return $('render-status').textContent;},get circles(){if(!snapshot)return null;const g=geometry();return {earth:[...g.earth],moon:[...g.moon]};}});
 try {
   renderer=new Renderer(canvas);
   const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error(`Ephemeris module not found (${response.status}). Build the browser app first.`);

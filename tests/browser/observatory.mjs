@@ -92,6 +92,8 @@ try{
   await page.locator('#show-orbit').check();
   await page.waitForFunction(()=>odderonDiagnostics.quality.includes('RESTING')&&!odderonDiagnostics.pendingFrame,null,{timeout:60000});
   assert.equal(await page.evaluate(()=>odderonDiagnostics.orbit.samples),180);
+  await page.waitForFunction(()=>odderonDiagnostics.trajectory.samples===241&&!odderonDiagnostics.trajectory.pending,null,{timeout:120000});
+  assert.match(await page.locator('#trajectory-status').textContent(),/24 HOUR MODEL/);
   const fit=await page.evaluate(()=>{
     const radius=2e8,mu=3.986004418e14;
     const accepted=window.odderonSetOrbit({position:[radius,0,0],velocity:[0,Math.sqrt(mu/radius),0]},mu);

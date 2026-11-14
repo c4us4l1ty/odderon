@@ -306,6 +306,24 @@ mod orbit_tests {
         assert!(r > 6_378_137.0);
     }
     #[test]
+    fn hyperbolic_soi_markers_are_true_radius_and_curve_is_capped() {
+        use odd_astro::elements::Elements;
+        let mu=3.986_004_418e14;
+        let state=Elements{semi_latus_rectum_m:8e6,eccentricity:2.0,inclination_rad:0.4,ascending_node_rad:0.2,argument_of_periapsis_rad:0.7,true_anomaly_rad:0.0}.to_state(mu).unwrap();
+        let soi=9.25e8;
+        let out=orbit_snapshot(state,mu,Some(soi)).unwrap();
+        for index in [4,5] {
+            let j=ORBIT_MARKERS+index*4;
+            assert_eq!(out[j],1.0);
+            let r=out[j+1..j+4].iter().map(|x|x*x).sum::<f64>().sqrt();
+            assert!((r/soi-1.0).abs()<1e-12);
+        }
+        for i in 0..ORBIT_SAMPLES {
+            let r=out[1+i*3..4+i*3].iter().map(|x|x*x).sum::<f64>().sqrt();
+            assert!(r<=soi*(1.0+1e-12));
+        }
+    }
+    #[test]
     fn open_orbit_samples_include_far_outbound_craft() {
         use odd_astro::{anomaly::true_from_hyperbolic, elements::Elements};
         let mu = 3.986_004_418e14;

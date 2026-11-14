@@ -13,6 +13,7 @@ uniform vec2 uResolution;
 uniform vec4 uEarth; uniform vec4 uMoon; uniform float uVehicle;
 uniform vec3 uRight; uniform vec3 uUp; uniform vec3 uView;
 uniform vec3 uEarthLight; uniform vec3 uMoonLight;
+uniform vec3 uCraft; uniform vec3 uCraftLight; uniform vec3 uEarthShine; uniform vec3 uMoonShine; uniform vec2 uBounce;
 uniform mat3 uEarthOrientation; uniform mat3 uMoonOrientation;
 float hash(vec3 p){return fract(sin(dot(p,vec3(127.1,311.7,74.7)))*43758.5453);}
 float noise(vec3 p){vec3 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f); float a=mix(hash(i),hash(i+vec3(1,0,0)),f.x);float b=mix(hash(i+vec3(0,1,0)),hash(i+vec3(1,1,0)),f.x);float c=mix(hash(i+vec3(0,0,1)),hash(i+vec3(1,0,1)),f.x);float d=mix(hash(i+vec3(0,1,1)),hash(i+vec3(1,1,1)),f.x);return mix(mix(a,b,f.y),mix(c,d,f.y),f.z);}
@@ -26,16 +27,24 @@ void main(){
  float halo=exp(-max(de-1.0,0.0)*8.0)*.11*(1.0-smoothstep(.98,1.0,de));
  // An atmosphere glow extends beyond the silhouette.
  bg+=vec3(.12,.32,.29)*exp(-abs(de-1.0)*13.0)*step(1.0,de)*.55;
- // An optional, screen-space parametric vehicle study. It is a non-physical
- // illustration, not a simulated spacecraft or a reported location.
+ // Small screen-space spacecraft glyph anchored at the supplied orbit state.
+ // Its size and surface are illustrative, but light vectors come from the
+ // craft/body/Sun geometry. Depth test against the visible spherical bodies.
  if(uVehicle>.5){
-   vec2 q=(p-vec2(-uResolution.x/uResolution.y*.76,-.64))/0.075;
+   vec2 q=(p-uCraft.xy)/0.035;
    float hull=max(abs(q.x)-.22,max(-q.y-.60,q.y-.45));
    float nose=max(abs(q.x)*1.6+q.y-.82,-q.y-.45);
    float fin=max(abs(q.x)-(.22+max(0.0,-q.y-.2)*.8),max(q.y+.25,-q.y-.65));
-   float plume=max(abs(q.x)-(.10+max(0.0,-q.y-.63)*.36),max(q.y+.63,-q.y-1.45));
-   if(plume<0.0){float flicker=fbm(vec3(q*5.0,3.0));bg+=vec3(.7,.29,.09)*(1.0-smoothstep(-.35,0.0,plume))*(.6+flicker*.4);}
-   if(min(min(hull,nose),fin)<0.0){colorOut=vec4(mix(vec3(.42,.48,.43),vec3(.83,.80,.64),clamp(q.x+0.6,0.0,1.0)),1);return;}
+   bool hidden=(de<1.0&&uCraft.z<uEarth.w+uEarth.z*.5*sqrt(max(0.0,1.0-de*de)))||(dm<1.0&&uCraft.z<uMoon.w+uMoon.z*.5*sqrt(max(0.0,1.0-dm*dm)));
+   if(min(min(hull,nose),fin)<0.0&&!hidden){
+     vec3 n=normalize(uRight*q.x+uUp*(q.y*.5)+uView*.7);
+     float sun=dot(n,normalize(uCraftLight));
+     vec3 key=vec3(1.0,.957,.863), shadow=vec3(.118,.227,.431), amber=vec3(.88,.42,.24);
+     vec3 light=sun>.12?key:(sun>=-.06?amber:shadow);
+     float bounce=uBounce.x*max(dot(n,uEarthShine),0.0)+uBounce.y*max(dot(n,uMoonShine),0.0);
+     float rim=pow(1.0-max(dot(n,uView),0.0),4.0)*smoothstep(-.06,.12,sun);
+     colorOut=vec4(vec3(.64,.68,.65)*(light+vec3(.45,.58,.7)*bounce)+key*rim*.45,1);return;
+   }
  }
  bool earth=de<1.0, moon=dm<1.0; bool isEarth=earth && (!moon || uEarth.w>=uMoon.w);
  if(!earth&&!moon){colorOut=vec4(bg,1);return;}
