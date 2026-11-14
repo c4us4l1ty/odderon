@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1518">
+  <title>Odderon · Earth–Moon observatory</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <a class="brand" href="./" aria-label="Odderon home"><span class="brand-mark">◒</span><span>ODDERON<small>SPACE ENGINEERING, MADE TANGIBLE</small></span></a>
+      <div class="top-meta"><span class="live-dot"></span> OBSERVATORY <span class="divider"></span> FOUNDATION / 0.3</div>
+    </header>
+    <main>
+      <div class="intro"><div><div class="eyebrow"><span>01 / THE OBSERVATORY</span><span class="eyebrow-line"></span> EARTH–MOON SYSTEM</div><h1>A little closer to <em>the cosmos.</em></h1><p>Explore our nearest celestial neighbor, grounded in real ephemeris data.</p></div><div class="intro-note"><span>✳</span><p>Real positions.<br><strong>Room to wonder.</strong></p></div></div>
+      <div class="workspace">
+        <section class="viewport-card" aria-label="Earth Moon viewport">
+          <div class="viewport-head"><div><span class="section-label">THE VIEWPORT</span><span class="head-separator">/</span><span class="head-muted">GEOCENTRIC VIEW</span></div><span class="view-badge"><span class="live-dot"></span> J2000 FRAME</span></div>
+          <div id="scene" class="scene" tabindex="0" aria-label="Interactive Earth Moon view. Drag to rotate; use arrow keys to rotate, plus and minus to zoom.">
+            <canvas id="world" aria-hidden="true"></canvas><canvas id="overlay" aria-hidden="true"></canvas>
+            <div class="scene-top"><span>EARTH <span class="muted">↔</span> MOON</span><span>DE440s <span class="muted">/</span> GEOMETRIC</span></div>
+            <div class="scene-bottom"><span><span class="drag-icon">✥</span> DRAG TO ORBIT <span class="scene-hint"> · SCROLL TO ZOOM</span></span><span id="render-status">RENDERING ON DEMAND</span></div>
+            <div id="error" class="error" role="alert" hidden></div>
+          </div>
+          <div class="viewport-foot"><div><span class="scale-icon">◉</span><span><strong>Sizes enlarged for visibility</strong><small>Surface patterns are illustrative, not mapped terrain.</small></span></div><div class="view-controls"><button id="zoom-out" aria-label="Zoom out">−</button><button id="zoom-in" aria-label="Zoom in">+</button><button id="reset" class="reset">↺ <span>Reset view</span></button></div></div>
+        </section>
+        <aside class="sidebar" aria-label="Observation details">
+          <div class="side-heading"><div><div class="section-label">OBSERVATION 001</div><h2>Our celestial<br><em>neighborhood.</em></h2></div><span class="orbit-icon">✳</span></div>
+          <p class="side-copy">A snapshot of the Moon’s journey around Earth, with sunlight and positions calculated for your chosen date.</p>
+          <div class="rule"></div>
+          <div class="metric-label">EARTH–MOON DISTANCE <span title="Center-to-center geometric distance">ⓘ</span></div><div class="metric"><span id="distance">—</span><small>km</small></div><div class="metric-sub">Center to center <span>↗</span></div>
+          <div class="metric-label second">RELATIVE SPEED <span title="Magnitude of Moon velocity relative to Earth">ⓘ</span></div><div class="metric secondary"><span id="speed">—</span><small>km/s</small></div><div class="metric-sub">Moon relative to Earth <span>↗</span></div>
+          <div class="rule"></div>
+          <label class="toggle-row"><span><strong>Show Moon’s path</strong><small>Sampled geometric positions</small></span><input id="show-path" type="checkbox" checked><span class="switch" aria-hidden="true"></span></label>
+          <div class="side-note"><span>✦</span><p><strong>A note on scale</strong><br>The bodies are enlarged so you can see them. Their center positions and the path use the same spatial scale.</p></div>
+        </aside>
+      </div>
+      <section class="timeline" aria-label="Observation date"><div class="time-title"><span class="section-label">TRAVEL THROUGH TIME</span><span class="time-sub">A still moment, anywhere in our dataset</span></div><div class="time-controls"><button id="prev" aria-label="Previous day">←</button><label for="date">OBSERVATION DATE <span class="time-scale">TDB</span></label><input id="date" type="date" value="2026-01-01" min="2020-01-01" max="2035-12-31"><button id="next" aria-label="Next day">→</button><button id="today-reset" class="date-reset">Return to 2026</button></div><p class="time-explain">Dates are midnight in TDB, a time scale used for solar-system calculations—not your local time. Coverage: 2020–2035.</p></section>
+      <footer><span>ODDERON <span class="muted">/</span> A UNIVERSE BUILT ON CURIOSITY</span><a href="https://ssd.jpl.nasa.gov/planets/eph_export.html" target="_blank" rel="noreferrer">ABOUT JPL EPHEMERIDES ↗</a><span>EARLY FOUNDATION · NOT YET A GAME</span></footer>
+    </main>
+  </div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

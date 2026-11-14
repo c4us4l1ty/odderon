@@ -1,0 +1,6 @@
+{
+  "name": "odderon-observatory",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test tests/browser/governor.test.js" }
+}
