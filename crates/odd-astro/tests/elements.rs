@@ -319,3 +319,12 @@ fn singular_combinations_remain_correct_for_nearby_states() {
         _ => panic!("wrong class"),
     }
 }
+
+#[test]
+fn tiny_inbound_anomalies_do_not_wrap_away() {
+    for e in [0.5, 2.0] {
+        let source = elements(e, 0.0, 0.0, 0.0, -1e-16);
+        let out = Elements::from_state(source.to_state(MU).unwrap(), MU).unwrap();
+        near(out.true_anomaly_rad, -1e-16, 1e-29);
+    }
+}

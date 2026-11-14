@@ -1,4 +1,6 @@
-use odd_astro::patched_conics::{bi_elliptic_transfer, patch_to_secondary, sphere_of_influence};
+use odd_astro::patched_conics::{
+    bi_elliptic_transfer, patch_to_primary, patch_to_secondary, sphere_of_influence,
+};
 use odd_astro::{hohmann_transfer, vis_viva_speed, OrbitError};
 use odd_core::frames::State;
 const MU: f64 = 3.986_004_418e14;
@@ -54,6 +56,10 @@ fn soi_and_patch_are_instantaneous_approximations() {
         position_m: [5., 7., 11.],
         velocity_m_s: [0.5, 1., 1.5],
     };
+    assert_eq!(
+        patch_to_primary(patch_to_secondary(craft, body).unwrap(), body).unwrap(),
+        craft
+    );
     assert_eq!(
         patch_to_secondary(craft, body).unwrap(),
         State {

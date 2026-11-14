@@ -19,6 +19,7 @@ pub enum ElementsError {
 }
 
 /// Classical osculating elements, with SI length and radian angles.
+/// Derived true anomaly is signed in [-π, π], preserving small inbound angles.
 /// `p` is positive for ellipses, parabolas, and hyperbolas. Inclination is
 /// in [0, π]. Angles are measured in the caller's inertial reference frame.
 /// For an exactly circular orbit ω is set to zero. For an exactly equatorial
@@ -60,8 +61,8 @@ fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
 fn norm(v: [f64; 3]) -> f64 {
     v[0].hypot(v[1]).hypot(v[2])
 }
-fn angle(a: [f64; 3], b: [f64; 3], normal: [f64; 3]) -> f64 {
-    dot(cross(a, b), normal).atan2(dot(a, b)).rem_euclid(TAU)
+fn signed_angle(a: [f64; 3], b: [f64; 3], normal: [f64; 3]) -> f64 {
+    dot(cross(a, b), normal).atan2(dot(a, b))
 }
 fn valid_mu(mu: f64) -> bool {
     mu.is_finite() && mu > 0.0
@@ -171,11 +172,11 @@ impl Elements {
         let (argument, anomaly) = if e > 0.0 {
             let ehat = evec.map(|x| x / e);
             (
-                angle(reference, ehat, hhat),
-                angle(ehat, r.map(|x| x / radius), hhat),
+                signed_angle(reference, ehat, hhat).rem_euclid(TAU),
+                signed_angle(ehat, r.map(|x| x / radius), hhat),
             )
         } else {
-            (0.0, angle(reference, r.map(|x| x / radius), hhat))
+            (0.0, signed_angle(reference, r.map(|x| x / radius), hhat))
         };
         let result = Self {
             semi_latus_rectum_m: p,

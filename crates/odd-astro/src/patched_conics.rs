@@ -32,6 +32,16 @@ pub fn sphere_of_influence(
 /// This only changes origin: it does not find an SOI crossing, apply a maneuver,
 /// or model either body's gravitational influence during an encounter.
 pub fn patch_to_secondary(vehicle: State, secondary: State) -> Result<State, OrbitError> {
+    translate(vehicle, secondary, -1.0)
+}
+
+/// Inverse origin change: secondary-relative vehicle to primary-relative
+/// vehicle, with the same common-epoch inertial-axis requirements.
+pub fn patch_to_primary(vehicle: State, secondary: State) -> Result<State, OrbitError> {
+    translate(vehicle, secondary, 1.0)
+}
+
+fn translate(vehicle: State, secondary: State, sign: f64) -> Result<State, OrbitError> {
     if !vehicle
         .position_m
         .iter()
@@ -42,8 +52,10 @@ pub fn patch_to_secondary(vehicle: State, secondary: State) -> Result<State, Orb
     {
         return Err(OrbitError::InvalidInput);
     }
-    let position_m = std::array::from_fn(|i| vehicle.position_m[i] - secondary.position_m[i]);
-    let velocity_m_s = std::array::from_fn(|i| vehicle.velocity_m_s[i] - secondary.velocity_m_s[i]);
+    let position_m =
+        std::array::from_fn(|i| vehicle.position_m[i] + sign * secondary.position_m[i]);
+    let velocity_m_s =
+        std::array::from_fn(|i| vehicle.velocity_m_s[i] + sign * secondary.velocity_m_s[i]);
     if !position_m
         .iter()
         .chain(&velocity_m_s)

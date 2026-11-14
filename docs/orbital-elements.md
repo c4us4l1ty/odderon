@@ -11,6 +11,7 @@ mission constraints. The browser observatory is not yet a maneuver planner.
 
 `elements::Elements::from_state` converts a Cartesian `odd_core::frames::State`
 and gravitational parameter μ to elements; `to_state` converts them back.
+Derived true anomaly is signed in [-π, π], including inbound hyperbolic motion.
 `Elements::from_classical` accepts the six conventional elements `(a, e, i,
 Ω, ω, ν)`. Elliptic `a` is positive and hyperbolic `a` is negative. Internally
 the size is the **semilatus rectum** `p`, so a parabola (`e = 1`) can also be
@@ -56,7 +57,7 @@ errors are reported when a result cannot be represented or a solve fails.
   motion and no additional waiting for orbital phasing.
 - `sphere_of_influence` evaluates the conventional Laplace approximation
   `a (m/M)^(2/5)` for a smaller secondary around a primary. It is not a real
-  discontinuity in gravity. `patch_to_secondary` changes the origin of a state
+  discontinuity in gravity. `patch_to_secondary` and `patch_to_primary` change the origin of a state
   using another same-epoch, same-inertial-axis state; it does **not** find an
   SOI crossing, plan an encounter, or propagate a complete interplanetary
   trajectory. Subtracting large nearby floating-point positions may lose detail.
