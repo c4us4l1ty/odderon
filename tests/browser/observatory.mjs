@@ -158,7 +158,8 @@ try{
   await page.locator('#node-t').fill('81.50942505');
   await page.locator('#prefill').click();
   await page.locator('#execute').click();
-  await page.waitForFunction(()=>!document.getElementById('debrief').hidden,null,{timeout:120000});
+  await page.waitForFunction(()=>!document.getElementById('debrief').hidden||(missionDiagnostics.locked&&!missionDiagnostics.pending),null,{timeout:120000});
+  assert.equal(await page.locator('#debrief').isHidden(),false,`mission error: ${await page.locator('#execute-status').textContent()}, page errors: ${errors}`);
   const debrief=await page.locator('#debrief-content').textContent();
   const score=Number(debrief.match(/([0-9.]+)%Mission score/)?.[1]);
   assert.ok(score>80,`rescue score: ${score}; ${debrief}`);
@@ -173,7 +174,8 @@ try{
   await page.locator('#example').click();
   assert.equal(await page.evaluate(()=>missionDiagnostics.nodes.length),1);
   await page.locator('#execute').click();
-  await page.waitForFunction(()=>!document.getElementById('debrief').hidden,null,{timeout:180000});
+  await page.waitForFunction(()=>!document.getElementById('debrief').hidden||(missionDiagnostics.locked&&!missionDiagnostics.pending),null,{timeout:180000});
+  assert.equal(await page.locator('#debrief').isHidden(),false,`mission error: ${await page.locator('#execute-status').textContent()}, page errors: ${errors}`);
   const sso=await page.locator('#debrief-content').textContent();
   const ssoScore=Number(sso.match(/([0-9.]+)%Mission score/)?.[1]);
   assert.ok(ssoScore>80,`sun-synchronous score: ${ssoScore}; ${sso}`);
