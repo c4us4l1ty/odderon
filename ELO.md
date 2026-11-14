@@ -26,7 +26,7 @@ How It Works Under the Hood:
         (Or, if they prefer a Mullvad-style key, those exact 12 words represent a 128-bit number that can also be displayed as a compact hexadecimal Flight Key: ODD-4F9A-82C1-00E4-77B2-91D3 — both represent the exact same secret key!)
 
     Downloadable "Black Box" Certificate:
-    Give them a one-click button to download a tiny .odderon-key file (or a cool-looking NASA-style ID badge image with a QR code/metadata embedded inside it). To log in on a new computer, they either type their 12 words, paste their Mullvad-style key, or drag-and-drop their badge image into the browser!
+    Give them a one-click button to download a tiny .odderon file (or a cool-looking NASA-style ID badge image with a QR code/metadata embedded inside it). To log in on a new computer, they either type their 12 words, paste their Mullvad-style key, or drag-and-drop their badge image into the browser!
 
 2. The Crucial Problem: How Do You Make "Astro-Elo" Cheat-Proof on a $0 Budget?
 
