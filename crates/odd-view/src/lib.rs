@@ -114,7 +114,7 @@ static ORBIT: Mutex<[f64; ORBIT_SIZE]> = Mutex::new([0.0; ORBIT_SIZE]);
 
 fn orbit_snapshot(state: odd_core::frames::State, mu: f64) -> Option<[f64; ORBIT_SIZE]> {
     use odd_astro::{
-        anomaly::{true_from_elliptic, true_from_hyperbolic},
+        anomaly::{hyperbolic_from_true, true_from_elliptic, true_from_hyperbolic},
         elements::{Elements, SINGULAR_TOLERANCE},
     };
     use std::f64::consts::{PI, TAU};
@@ -125,16 +125,30 @@ fn orbit_snapshot(state: odd_core::frames::State, mu: f64) -> Option<[f64; ORBIT
     } else {
         -(ORBIT_SAMPLES as f64)
     };
+    // Include the supplied craft even when it is farther along an open
+    // conic than the normal display interval. Infinite curves necessarily
+    // use a finite segment, but must not omit the current state.
+    let extent = if el.eccentricity > 1.0 {
+        let current = hyperbolic_from_true(el.eccentricity, el.true_anomaly_rad)
+            .ok()?
+            .abs();
+        3.0_f64.max(current + current.max(1.0) * 0.1)
+    } else if el.eccentricity == 1.0 {
+        let current = (el.true_anomaly_rad * 0.5).tan().abs();
+        20.0_f64.max(current + current.max(1.0) * 0.1)
+    } else {
+        0.0
+    };
     for i in 0..ORBIT_SAMPLES {
         let fraction = i as f64 / (ORBIT_SAMPLES - 1) as f64;
         let nu = if el.eccentricity < 1.0 {
             true_from_elliptic(el.eccentricity, TAU * i as f64 / ORBIT_SAMPLES as f64).ok()?
         } else if el.eccentricity > 1.0 {
-            // Hyperbolas extend to infinity. Show a finite F∈[-3,3] segment.
-            true_from_hyperbolic(el.eccentricity, 6.0 * fraction - 3.0).ok()?
+            // Hyperbolas extend to infinity; sample a finite F interval.
+            true_from_hyperbolic(el.eccentricity, extent * (2.0 * fraction - 1.0)).ok()?
         } else {
             // Parabolic Barker parameter D is similarly bounded for display.
-            2.0 * (40.0 * fraction - 20.0).atan()
+            2.0 * (extent * (2.0 * fraction - 1.0)).atan()
         };
         let position = Elements {
             true_anomaly_rad: nu,
@@ -240,6 +254,32 @@ mod orbit_tests {
             + out[ORBIT_MARKERS + 3].powi(2))
         .sqrt();
         assert!(r > 6_378_137.0);
+    }
+    #[test]
+    fn open_orbit_samples_include_far_outbound_craft() {
+        use odd_astro::{anomaly::true_from_hyperbolic, elements::Elements};
+        let mu = 3.986_004_418e14;
+        let original = Elements {
+            semi_latus_rectum_m: 8e6,
+            eccentricity: 2.0,
+            inclination_rad: 0.4,
+            ascending_node_rad: 0.2,
+            argument_of_periapsis_rad: 0.7,
+            true_anomaly_rad: true_from_hyperbolic(2.0, 5.0).unwrap(),
+        }
+        .to_state(mu)
+        .unwrap();
+        let out = orbit_snapshot(original, mu).unwrap();
+        assert_eq!(out[0], -180.0);
+        let length = |p: &[f64]| p.iter().map(|x| x * x).sum::<f64>().sqrt();
+        let craft = length(&original.position_m);
+        let max_radius = (0..ORBIT_SAMPLES)
+            .map(|i| length(&out[1 + 3 * i..4 + 3 * i]))
+            .fold(0.0_f64, f64::max);
+        assert!(
+            max_radius > craft,
+            "craft radius {craft} exceeds segment max {max_radius}"
+        );
     }
     #[test]
     fn invalid_orbit_clears_output() {

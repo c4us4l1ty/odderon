@@ -96,6 +96,14 @@ try{
   await page.locator('#show-orbit').check();
   await page.waitForFunction(()=>odderonDiagnostics.batchIndex===15&&!odderonDiagnostics.pendingFrame,null,{timeout:60000});
   assert.equal(await page.evaluate(()=>odderonDiagnostics.orbit.samples),180);
+  const fit=await page.evaluate(()=>{
+    const radius=2e8,mu=3.986004418e14;
+    const accepted=window.odderonSetOrbit({position:[radius,0,0],velocity:[0,Math.sqrt(mu/radius),0]},mu);
+    const p=odderonDiagnostics.orbitProjection, rect=document.getElementById('scene').getBoundingClientRect();
+    return {accepted,p,aspect:rect.width/rect.height};
+  });
+  assert.ok(fit.accepted&&Math.abs(fit.p[0])<fit.aspect&&Math.abs(fit.p[1])<1,'distant craft must fit the viewport');
+
   await page.locator('#show-orbit').uncheck();
   const beforeDate=await page.locator('#distance').textContent();await page.locator('#next').click();assert.notEqual(await page.locator('#distance').textContent(),beforeDate);
   assert.equal(await page.locator('#date').inputValue(),'2026-01-02');

@@ -40,3 +40,9 @@ a1, a2 = (r1+rb)/2, (r2+rb)/2
 v = lambda r, axis: mp.sqrt(mu*(2/r-1/axis))
 for burn in [v(r1,a1)-mp.sqrt(mu/r1), v(rb,a2)-v(rb,a1), mp.sqrt(mu/r2)-v(r2,a2)]:
     print(f"close-orbit bi-elliptic burn={mp.nstr(burn, 40)}")
+
+# Large equinoctial longitudes must retain their original trigonometric phase.
+for f, g, longitude in [(0.4, 0.3, 1e16), (0.6, 0.4, 1e17)]:
+    f, g, longitude = map(mp.mpf, (f, g, longitude))
+    radius = mp.mpf(8_000_000) / (1 + f*mp.cos(longitude) + g*mp.sin(longitude))
+    print(f"large-longitude equinoctial radius={mp.nstr(radius, 40)}")

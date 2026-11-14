@@ -8,3 +8,10 @@ test('new drag and suspension cancel stale work',()=>{const c=fakeClock(),r=[],g
 test('overlay-only invalidation does not restart progressive rendering',()=>{const c=fakeClock(),r=[],g=new Governor((q,b)=>r.push([q,b]),c);g.invalidate();c.settle();g.invalidate(false);c.flushFrame();assert.deepEqual(r.at(-1),['overlay',null]);assert.equal(c.frames.size,0);});
 test('world invalidation restarts an incomplete accumulation',()=>{const c=fakeClock(),r=[],g=new Governor((q,b)=>r.push([q,b]),c);g.invalidate();c.flushFrame();c.flushFrame();g.invalidate();c.settle();assert.deepEqual(r.slice(0,3),[['final',0],['final',1],['final',0]]);assert.deepEqual(r.at(-1),['final',15]);});
 test('failed drawing does not loop',()=>{const c=fakeClock(),g=new Governor(()=>false,c);g.invalidate();c.settle();assert.equal(g.frameCount,1);assert.equal(c.frames.size,0);});
+test('world invalidation from inside batch zero restarts at zero',()=>{
+  const c=fakeClock(),r=[];let g;
+  g=new Governor((quality,batch)=>{r.push([quality,batch]);if(r.length===1)g.invalidate(true);},c);
+  g.invalidate();c.settle();
+  assert.deepEqual(r.slice(0,3),[['final',0],['final',0],['final',1]]);
+  assert.deepEqual(r.at(-1),['final',15]);
+});

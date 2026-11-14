@@ -52,7 +52,9 @@ controls select a midnight **TDB**, not local time or UTC. The date range is
 * An optional ideal Earth test orbit is calculated from an explicitly supplied
   inertial state by `odd-astro` and drawn with 180 eccentric-anomaly samples.
   PE/AP and node markers are omitted when undefined; open conics are shown as
-  finite segments, not as an impossible drawing of their infinite extent. The
+  finite segments, not as an impossible drawing of their infinite extent; the
+  segment expands to include the supplied state. The initial view fits the
+  sampled orbit and vehicle at zoom 1 (manual zoom may crop them). The
   initial example is not a mission. `window.odderonSetOrbit` accepts a caller's
   SI position/velocity and μ to replace it. This is an instantaneous two-body
   conic, not a perturbed trajectory, collision check or B-plane solution.

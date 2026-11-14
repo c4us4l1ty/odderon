@@ -526,14 +526,29 @@ impl ModifiedEquinoctialElements {
             return Err(ElementsError::NumericalRange);
         }
         let radial_e = self.f * cl + self.g * sl;
-        // Near a parabolic far side, 1 + e cos(ν) catastrophically
-        // cancels. Use the same stable half-angle form as classical elements.
-        let w = if radial_e < 0.0 {
-            let nu = self.l - self.g.atan2(self.f);
-            conic_denominator(eccentricity, nu, nu.cos())
+        // Use the already-reduced sin/cos of L. Subtracting the periapsis
+        // angle from a huge unwrapped L can erase it and change the phase.
+        // Near a parabolic far side, evaluate 1 + e cos(ν) via
+        // 1+cos(ν) = sin²(ν)/(1-cos(ν)) to avoid cancellation.
+        let cos_nu = if eccentricity > 0.0 {
+            radial_e / eccentricity
+        } else {
+            1.0
+        };
+        let mut w = if cos_nu < -0.9 && radial_e < -0.9 && eccentricity < 2.0 {
+            let sin_nu = (self.f / eccentricity) * sl - (self.g / eccentricity) * cl;
+            (1.0 - eccentricity) + eccentricity * (sin_nu * sin_nu / (1.0 - cos_nu))
         } else {
             1.0 + radial_e
         };
+        // Match the classical chart's convention for the exact binary64 π
+        // parabolic asymptote, without subtracting angles at large L.
+        if eccentricity == 1.0 && self.l.abs() <= 2.0 * TAU {
+            let nu = self.l - self.g.atan2(self.f);
+            if (nu % TAU).abs() == PI {
+                w = 0.0;
+            }
+        }
         if !w.is_finite() {
             return Err(ElementsError::NumericalRange);
         }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { EARTH_RADIUS_M, MOON_RADIUS_M, projectedRadius, needsReticle } from '../../web/scale.js';
+import { EARTH_RADIUS_M, MOON_RADIUS_M, projectedRadius, needsReticle, orbitViewSpan } from '../../web/scale.js';
 
 test('bodies and an orbit share one physical scale',()=>{
   const span=520e6;
@@ -10,4 +10,13 @@ test('bodies and an orbit share one physical scale',()=>{
   assert.ok(lowOrbit>surface);
   assert.equal(needsReticle(projectedRadius(MOON_RADIUS_M,span),600),true);
   assert.equal(needsReticle(projectedRadius(EARTH_RADIUS_M,span),600),false);
+});
+
+
+test('test orbit auto-fit includes distant trajectory and craft on narrow screens',()=>{
+  const radius=4e8,span=orbitViewSpan(radius,300,600);
+  assert.ok(Number.isFinite(span));
+  assert.ok(2*radius/span < 300/600);
+  assert.equal(orbitViewSpan(Infinity,300,600),null);
+  assert.equal(orbitViewSpan(radius,0,600),null);
 });

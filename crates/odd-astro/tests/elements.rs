@@ -533,3 +533,41 @@ fn equinoctial_near_parabolic_radius_is_stable() {
     // mpmath 80-digit transverse velocity from the exact f64 inputs.
     assert!((state.velocity_m_s[1] / -1.214_408_927_286_618_2e-12 - 1.0).abs() < 2e-15);
 }
+
+#[test]
+fn equinoctial_large_longitude_preserves_phase() {
+    use odd_astro::elements::ModifiedEquinoctialElements as Mee;
+    // 90-digit mpmath with exact binary64 inputs (including longitude).
+    let parabolic = Mee {
+        p: 8e6,
+        f: 1.0,
+        g: 0.0,
+        h: 0.0,
+        k: 0.0,
+        l: PI,
+    };
+    assert_eq!(
+        parabolic.to_state(MU),
+        Err(ElementsError::OutsidePhysicalBranch)
+    );
+    for (f, g, l, expected) in [
+        (0.4, 0.3, 1e16, 8_134_718.067_552_062),
+        (0.6, 0.4, 1e17, 28_283_186.427_805_5),
+    ] {
+        let state = Mee {
+            p: 8_000_000.0,
+            f,
+            g,
+            h: 0.0,
+            k: 0.0,
+            l,
+        }
+        .to_state(MU)
+        .unwrap();
+        let radius = state.position_m[0].hypot(state.position_m[1]);
+        assert!(
+            (radius / expected - 1.0).abs() < 2e-15,
+            "{radius} != {expected}"
+        );
+    }
+}

@@ -1,7 +1,7 @@
 import { Governor } from './governor.js';
 import { Renderer } from './renderer.js';
 import { polyline, vector, reticle, apsis } from './overlay.js';
-import { EARTH_RADIUS_M, MOON_RADIUS_M, projectedRadius, needsReticle } from './scale.js';
+import { EARTH_RADIUS_M, MOON_RADIUS_M, projectedRadius, needsReticle, orbitViewSpan } from './scale.js';
 
 const $=id=>document.getElementById(id);
 const scene=$('scene'), canvas=$('world'), overlay=$('overlay'), date=$('date'), error=$('error');
@@ -36,14 +36,18 @@ function setOrbit(state,mu){
   const count=wasm.orbit_value(0),points=[];
   for(let i=0;i<Math.abs(count);i++)points.push([wasm.orbit_value(1+3*i),wasm.orbit_value(2+3*i),wasm.orbit_value(3+3*i)]);
   const markers=[];for(let i=0;i<4;i++){const index=541+4*i;if(wasm.orbit_value(index))markers.push({name:['PE','AP','AN','DN'][i],pos:[wasm.orbit_value(index+1),wasm.orbit_value(index+2),wasm.orbit_value(index+3)]});}
-  activeOrbit={points,markers,closed:count>0,position:[...state.position]};invalidateWorld();return true;
+  const position=state.position.map(Number), maxRadius=Math.max(Math.hypot(...position),...points.map(p=>Math.hypot(...p)));
+  if(!Number.isFinite(maxRadius)||!Number.isFinite(maxRadius*2.2))return false;
+  activeOrbit={points,markers,closed:count>0,position,maxRadius};invalidateWorld();return true;
 }
 window.odderonSetOrbit=setOrbit;
 function geometry(){
   const {yaw,pitch,zoom}=camera, c=Math.cos(pitch),s=Math.sin(pitch), cy=Math.cos(yaw),sy=Math.sin(yaw);
   const right=[-sy,cy,0],up=[-s*cy,-s*sy,c],view=[c*cy,c*sy,s];
   const orbitMode=$('show-orbit').checked&&activeOrbit;
-  const half=orbitMode?[0,0,0]:snapshot.moon.map(x=>x/2), span=(orbitMode?30e6:520e6)/zoom;
+  const rect=scene.getBoundingClientRect();
+  const fit=orbitMode?orbitViewSpan(activeOrbit.maxRadius,Math.max(1,rect.width),Math.max(1,rect.height)):null;
+  const half=orbitMode?[0,0,0]:snapshot.moon.map(x=>x/2), span=(fit??520e6)/zoom;
   const project=v=>[2*dot(subtract(v,half),right)/span,2*dot(subtract(v,half),up)/span,dot(subtract(v,half),view)/span];
   const e=project([0,0,0]),m=project(snapshot.moon);
   return {right,up,view,project,earth:[e[0],e[1],projectedRadius(EARTH_RADIUS_M,span),e[2]],moon:[m[0],m[1],projectedRadius(MOON_RADIUS_M,span),m[2]],earthLight:norm(snapshot.sun),moonLight:norm(subtract(snapshot.sun,snapshot.moon)),earthOrientation:snapshot.earthOrientation,moonOrientation:snapshot.moonOrientation,vehicle:$('show-vehicle').checked};
@@ -122,7 +126,7 @@ canvas.addEventListener('webglcontextlost',event=>{event.preventDefault();contex
 canvas.addEventListener('webglcontextrestored',()=>{try{renderer.init();worldDirty=true;overlayDirty=true;lastQuality=null;contextLost=false;if(wasm&&!snapshot)showError('Date outside the available ephemeris (2020–2035 TDB).');else error.hidden=true;syncVisibility();}catch(e){showError(`Could not restore graphics: ${e.message}`);}});
 if(document.hidden)governor.suspend();
 // Read-only diagnostics make the idle gate observable without creating a poller.
-window.odderonDiagnostics=Object.freeze({get draws(){return draws;},get frameCount(){return governor.frameCount;},get orbit(){return activeOrbit?{samples:activeOrbit.points.length,closed:activeOrbit.closed,markers:activeOrbit.markers.map(m=>m.name)}:null;},get batchIndex(){return renderer?.batchIndex??-1;},get strokeCount(){return renderer?.strokeCount??0;},get overlayDraws(){return overlayDraws;},get pendingFrame(){return governor.frame!==null;},get pendingTimer(){return governor.timer!==null;},get quality(){return $('render-status').textContent;},get circles(){if(!snapshot)return null;const g=geometry();return {earth:[...g.earth],moon:[...g.moon]};}});
+window.odderonDiagnostics=Object.freeze({get draws(){return draws;},get frameCount(){return governor.frameCount;},get orbitProjection(){return snapshot&&activeOrbit?geometry().project(activeOrbit.position):null;},get orbit(){return activeOrbit?{samples:activeOrbit.points.length,closed:activeOrbit.closed,markers:activeOrbit.markers.map(m=>m.name)}:null;},get batchIndex(){return renderer?.batchIndex??-1;},get strokeCount(){return renderer?.strokeCount??0;},get overlayDraws(){return overlayDraws;},get pendingFrame(){return governor.frame!==null;},get pendingTimer(){return governor.timer!==null;},get quality(){return $('render-status').textContent;},get circles(){if(!snapshot)return null;const g=geometry();return {earth:[...g.earth],moon:[...g.moon]};}});
 try {
   renderer=new Renderer(canvas);
   const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error(`Ephemeris module not found (${response.status}). Build the browser app first.`);
