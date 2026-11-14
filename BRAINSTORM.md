@@ -656,3 +656,5 @@ Because Odderon's full vision spans from chemical turbopumps to relativistic int
 
 https://patch.gg/blendi/painted-valley - for the game art, someone used fable 5.2 (AI agent) to create that art style in .js - see the image. (For RUST, use the github CI as compiler)
 <img width="925" height="836" alt="image" src="https://github.com/user-attachments/assets/e85d4d7d-049a-40dd-b3e6-23b47c97baab" />
+<img width="897" height="912" alt="image" src="https://github.com/user-attachments/assets/f353fd77-825e-4cf9-87f9-3aef192a5708" />
+
