@@ -50,7 +50,8 @@ precession against the first-order formula for the requested mean elements,
 using a fitted osculating initial state (the formula is a mean-element result), five-day drag decay with a separately integrated circular
 energy-balance model, and a finite perigee burn against an impulsive transfer.
 The native/Node/Chromium parity fixture hashes the final state of a ten-day
-J2 + Moon + Sun + drag + SRP + burn run. Parity is tested for these builds and
+J2 + Moon + Sun + drag + SRP + burn run, with separate packed, blended, and
+long-range analytical ephemeris epochs. Parity is tested for these builds and
 inputs; it is not a claim about every compiler, CPU or configuration.
 
 The mean/osculating distinction matters for the stated SSO tolerance. An

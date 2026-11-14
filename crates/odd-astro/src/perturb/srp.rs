@@ -152,6 +152,20 @@ fn intersection_area(circles: &[Circle]) -> f64 {
         {
             continue;
         }
+        // With no proper crossings, tangency at the midpoint is not evidence
+        // that the entire arc lies inside the other disk.
+        if circles.iter().enumerate().any(|(j, o)| {
+            if i == j {
+                return false;
+            }
+            let dx = o.x - c.x;
+            let dy = o.y - c.y;
+            let d = libm::sqrt(dx * dx + dy * dy);
+            (d >= c.radius + o.radius || d <= (c.radius - o.radius).abs())
+                && d + c.radius > o.radius
+        }) {
+            continue;
+        }
         let mut angles = vec![0.0, tau];
         for (j, o) in circles.iter().enumerate() {
             if i == j {
@@ -252,6 +266,28 @@ mod tests {
         );
         assert!(disjoint < one && disjoint > 0.0);
     }
+    #[test]
+    fn tangent_disks_do_not_contribute_spurious_full_arcs() {
+        let big = Circle {
+            x: 0.0,
+            y: 0.0,
+            radius: 1.0,
+        };
+        let small = Circle {
+            x: -0.5,
+            y: 0.0,
+            radius: 0.5,
+        };
+        let area = intersection_area(&[big, small]);
+        assert!((area - std::f64::consts::PI * 0.25).abs() < 1e-14);
+        let external = Circle {
+            x: -2.0,
+            y: 0.0,
+            radius: 1.0,
+        };
+        assert_eq!(intersection_area(&[big, external]), 0.0);
+    }
+
     #[test]
     fn overlapping_occulter_union_matches_independent_quadrature() {
         // SciPy adaptive integration of vertical disk-union chords; see
