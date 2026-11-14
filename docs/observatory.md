@@ -99,9 +99,17 @@ CPU core. It fails if the process or thread set changes, if any app frames or
 work remain scheduled, or if the measured CPU is not below 0.2%. It excludes the
 Node test runner, external browser processes, hardware GPU utilization and
 other system processes; it is a headless, software-rendered measurement, not a
-physical-device profiler. The sample must be repeated on the target laptop with
-a normal visible browser and GPU to establish its device-specific result.
-Zero CPU and sub-0.2% on all devices are not guaranteed.
+physical-device profiler. CI runs the strict gate with the system Chrome and a
+pinned Chromium 141 binary; `ODDERON_BASELINE=1` first records a separate
+blank-tab control and gives browser startup activity time to settle. It does
+not subtract the control from the application result. In CI run 43575937861,
+the system Chrome measured 0.0679% and the pinned Chromium measured 0.0399%
+over their respective ten-second windows; the earlier blank-tab control was
+0.4318%. Earlier runs that began sampling closer to Chrome startup exceeded the
+limit (5.5–7.2%), mainly browser/network-service threads. These measurements
+are workload- and environment-specific, not a guarantee. Repeat on the target
+laptop with a normal visible browser and GPU to establish its result. Zero CPU
+and sub-0.2% on all devices are not guaranteed.
 
 ## Research
 
