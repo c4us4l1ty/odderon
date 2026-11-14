@@ -80,19 +80,28 @@ hiding the document cancels pending work.
 npm ci
 npm test                       # governor and overlay primitive tests
 npm run test:browser           # Chrome/Chromium and built web/odd_view.wasm
-# CHROME_BIN=/path/to/chromium npm run test:browser
+npm run test:idle              # Linux-only, after camera drag
+# CHROME_BIN=/path/to/chromium npm run test:idle
 ```
 
 The browser test uses real WebGL2, checks the 2026-01-01 Earth–Moon distance,
 5.2 seconds with no application frames/pending work, drag and final-resolution
 rendering, dates, toggles, keyboard, context restoration, WebGL errors and mobile
-layout. It logs Chrome main-thread task time during the idle interval; that is
-**not** total browser CPU or GPU utilization. Headless software rendering and
-CI do not prove behavior or CPU usage on every physical device. To assess the
-original `<0.2%` aspiration, profile an idle visible tab for at least five
-seconds on the intended device, including browser/GPU processes and background
-activity. Zero idle frames is enforced; zero CPU or an absolute percentage is
-not guaranteed. Real-world graphics performance and appearance vary by driver.
+layout. It checks the filter on constant/noisy/high-contrast test images. It
+logs Chrome main-thread task time; this alone is **not** total browser CPU.
+
+The separate Linux idle gate opens the page, calibrates `/proc` accounting with
+a busy browser loop, rotates/releases the camera, waits for the settled render,
+finishes GPU work and measures ten seconds with no interaction. It adds up
+scheduler execution time for all threads in the browser's descendant process
+tree, including GPU and renderer processes, expressed as a percentage of one
+CPU core. It fails if the process or thread set changes, if any app frames or
+work remain scheduled, or if the measured CPU is not below 0.2%. It excludes the
+Node test runner, external browser processes, hardware GPU utilization and
+other system processes; it is a headless, software-rendered measurement, not a
+physical-device profiler. The sample must be repeated on the target laptop with
+a normal visible browser and GPU to establish its device-specific result.
+Zero CPU and sub-0.2% on all devices are not guaranteed.
 
 ## Research
 

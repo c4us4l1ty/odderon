@@ -91,7 +91,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          (npm test && npm run test:browser) 2>&1 | tee /tmp/odderon-browser.log
+          (npm test && npm run test:browser && npm run test:idle) 2>&1 | tee /tmp/odderon-browser.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
             python3 -c 'from pathlib import Path; s="\n".join(Path("/tmp/odderon-browser.log").read_text().splitlines()[-50:]); print("::error::" + s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))'
