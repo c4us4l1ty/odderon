@@ -67,6 +67,11 @@ try{
   assert.ok(await page.evaluate(()=>odderonDiagnostics.draws)>stats.draws);
   const interactiveWidth=await page.locator('#world').evaluate(c=>c.width);await page.mouse.up();await page.waitForFunction(()=>odderonDiagnostics.batchIndex===15&&!odderonDiagnostics.pendingFrame,null,{timeout:60000});
   assert.match(await page.evaluate(()=>odderonDiagnostics.quality),/RESTING/);
+  assert.equal(await page.evaluate(()=>odderonDiagnostics.strokeCount),1500000);
+  const released=await page.evaluate(()=>({frames:window.testFrameCallbacks,messages:window.testWorkerMessages,renderFrames:odderonDiagnostics.frameCount}));
+  await page.waitForTimeout(2000);
+  const releasedAfter=await page.evaluate(()=>({frames:window.testFrameCallbacks,messages:window.testWorkerMessages,renderFrames:odderonDiagnostics.frameCount}));
+  assert.deepEqual(releasedAfter,released,'camera release must settle with zero frames and worker messages');
   assert.ok(await page.locator('#world').evaluate(c=>c.width)>interactiveWidth,'full resolution after drag');
   // DPR can change without a CSS resize (e.g. moving between monitors).
   const initialSize=await page.locator('#world').evaluate(c=>({width:c.width,css:c.getBoundingClientRect().width}));
