@@ -239,3 +239,234 @@ fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
         a[0] * b[1] - a[1] * b[0],
     ]
 }
+
+/// Identifiers in a snapshot frame tree. IDs are application-assigned and
+/// scoped to their variant; the galactic origin is the Solar System barycenter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum FrameId {
+    Galactic,
+    StellarSystem(u64),
+    BodyCentered(u64),
+    BodyFixed(u64),
+    Camera(u64),
+}
+
+/// A frame-qualified state, with TDB epoch to prevent mixing snapshots.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FramedState {
+    pub frame: FrameId,
+    pub epoch: crate::epoch::Epoch,
+    pub state: State,
+}
+
+/// A galactic state retains a coarse anchor plus a local SI-meter residual.
+/// It is not a single enormous f64 position, so nearby offsets are preserved.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GalacticState {
+    pub anchor: GalacticAnchor,
+    pub epoch: crate::epoch::Epoch,
+    pub state: State,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TreeError {
+    UnknownFrame,
+    DuplicateFrame,
+    InvalidParent,
+    GalacticNeedsSplitState,
+    EpochMismatch,
+    NonFinite,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FrameNode {
+    parent: FrameId,
+    pose: KinematicTransform,
+    anchor: Option<GalacticAnchor>,
+}
+
+/// An immutable-epoch snapshot of a frame hierarchy. Pose data must be
+/// supplied by a future ephemeris/orientation model at exactly this epoch.
+/// The parent must already exist when a node is added, so cycles are impossible.
+#[derive(Clone, Debug)]
+pub struct FrameTree {
+    epoch: crate::epoch::Epoch,
+    nodes: std::collections::BTreeMap<FrameId, FrameNode>,
+}
+
+impl FrameTree {
+    pub fn new(epoch: crate::epoch::Epoch) -> Self {
+        Self {
+            epoch,
+            nodes: std::collections::BTreeMap::new(),
+        }
+    }
+
+    /// Add a stellar frame relative to a fixed coarse galactic anchor. Its
+    /// pose's origin is the residual in meters, not the global position.
+    pub fn add_stellar_system(
+        &mut self,
+        star: u64,
+        anchor: GalacticAnchor,
+        pose: KinematicTransform,
+    ) -> Result<(), TreeError> {
+        self.insert(
+            FrameId::StellarSystem(star),
+            FrameNode {
+                parent: FrameId::Galactic,
+                pose,
+                anchor: Some(anchor),
+            },
+        )
+    }
+
+    /// Add a non-galactic, non-stellar child to an existing local frame.
+    pub fn add_frame(
+        &mut self,
+        id: FrameId,
+        parent: FrameId,
+        pose: KinematicTransform,
+    ) -> Result<(), TreeError> {
+        if matches!(id, FrameId::Galactic | FrameId::StellarSystem(_))
+            || parent == FrameId::Galactic
+        {
+            return Err(TreeError::InvalidParent);
+        }
+        if !self.nodes.contains_key(&parent) {
+            return Err(TreeError::UnknownFrame);
+        }
+        self.insert(
+            id,
+            FrameNode {
+                parent,
+                pose,
+                anchor: None,
+            },
+        )
+    }
+
+    fn insert(&mut self, id: FrameId, node: FrameNode) -> Result<(), TreeError> {
+        if self.nodes.contains_key(&id) {
+            return Err(TreeError::DuplicateFrame);
+        }
+        self.nodes.insert(id, node);
+        Ok(())
+    }
+
+    fn path(&self, mut id: FrameId) -> Result<Vec<FrameId>, TreeError> {
+        if id == FrameId::Galactic {
+            return Err(TreeError::GalacticNeedsSplitState);
+        }
+        let mut path = Vec::new();
+        loop {
+            let node = self.nodes.get(&id).ok_or(TreeError::UnknownFrame)?;
+            path.push(id);
+            if node.parent == FrameId::Galactic {
+                break;
+            }
+            id = node.parent;
+        }
+        Ok(path)
+    }
+
+    fn check_epoch(&self, epoch: crate::epoch::Epoch) -> Result<(), TreeError> {
+        if self.epoch == epoch {
+            Ok(())
+        } else {
+            Err(TreeError::EpochMismatch)
+        }
+    }
+
+    /// Transform local frames through their lowest common ancestor. Across
+    /// star systems, a coarse-anchor subtraction is required and precision is
+    /// limited by f64 at the separation scale. Galactic states use the split
+    /// representation and cannot be returned through this local-state API.
+    pub fn transform(&self, source: FramedState, to: FrameId) -> Result<FramedState, TreeError> {
+        self.check_epoch(source.epoch)?;
+        let from_path = self.path(source.frame)?;
+        let to_path = self.path(to)?;
+        let common = from_path.iter().position(|id| to_path.contains(id));
+        let result = if let Some(from_end) = common {
+            let ancestor = from_path[from_end];
+            let to_end = to_path
+                .iter()
+                .position(|id| *id == ancestor)
+                .ok_or(TreeError::UnknownFrame)?;
+            let mut state = source.state;
+            check_state(state).map_err(|_| TreeError::NonFinite)?;
+            for id in &from_path[..from_end] {
+                state = self.nodes[id]
+                    .pose
+                    .to_parent(state)
+                    .map_err(|_| TreeError::NonFinite)?;
+            }
+            for id in to_path[..to_end].iter().rev() {
+                state = self.nodes[id]
+                    .pose
+                    .from_parent(state)
+                    .map_err(|_| TreeError::NonFinite)?;
+            }
+            state
+        } else {
+            return self.from_galactic(self.to_galactic(source)?, to);
+        };
+        Ok(FramedState {
+            frame: to,
+            epoch: self.epoch,
+            state: result,
+        })
+    }
+
+    /// Transform to galactic axes while retaining the stellar anchor separately.
+    pub fn to_galactic(&self, source: FramedState) -> Result<GalacticState, TreeError> {
+        self.check_epoch(source.epoch)?;
+        let path = self.path(source.frame)?;
+        let mut state = source.state;
+        for id in &path {
+            state = self.nodes[id]
+                .pose
+                .to_parent(state)
+                .map_err(|_| TreeError::NonFinite)?;
+        }
+        let anchor = self.nodes[path.last().ok_or(TreeError::UnknownFrame)?]
+            .anchor
+            .ok_or(TreeError::InvalidParent)?;
+        Ok(GalacticState {
+            anchor,
+            epoch: self.epoch,
+            state,
+        })
+    }
+
+    /// Transform from a split galactic state to a local frame. If the anchors
+    /// differ, the offset conversion is necessarily rounded to f64 meters.
+    pub fn from_galactic(
+        &self,
+        source: GalacticState,
+        to: FrameId,
+    ) -> Result<FramedState, TreeError> {
+        self.check_epoch(source.epoch)?;
+        let path = self.path(to)?;
+        let anchor = self.nodes[path.last().ok_or(TreeError::UnknownFrame)?]
+            .anchor
+            .ok_or(TreeError::InvalidParent)?;
+        let mut state = source.state;
+        check_state(state).map_err(|_| TreeError::NonFinite)?;
+        for i in 0..3 {
+            let delta =
+                i128::from(source.anchor.milliparsecs[i]) - i128::from(anchor.milliparsecs[i]);
+            state.position_m[i] += (delta as f64) * (crate::consts::PARSEC_M / 1000.0);
+        }
+        for id in path.iter().rev() {
+            state = self.nodes[id]
+                .pose
+                .from_parent(state)
+                .map_err(|_| TreeError::NonFinite)?;
+        }
+        Ok(FramedState {
+            frame: to,
+            epoch: self.epoch,
+            state,
+        })
+    }
+}
