@@ -4,8 +4,13 @@ use odd_core::frames::{render_position, GalacticAnchor, Translation};
 
 #[test]
 fn j2000_and_julian_century() {
-    assert_eq!(Epoch::from_julian_date_tdb(2_451_545.0).unwrap(), Epoch::J2000);
-    let later = Epoch::J2000.checked_add_seconds(86_400.0 * 36_525.0).unwrap();
+    assert_eq!(
+        Epoch::from_julian_date_tdb(2_451_545.0).unwrap(),
+        Epoch::J2000
+    );
+    let later = Epoch::J2000
+        .checked_add_seconds(86_400.0 * 36_525.0)
+        .unwrap();
     assert_eq!(later.seconds(), 3_155_760_000);
     assert_eq!(later.fraction(), 0.0);
 }
@@ -34,7 +39,9 @@ fn eight_thousand_light_years_is_about_2453_parsecs() {
 #[test]
 fn nearby_docking_ports_stay_local_in_a_distant_system() {
     // Galactic index does not enter the local arithmetic.
-    let _star = GalacticAnchor { milliparsecs: [2_452_809, 0, 0] };
+    let _star = GalacticAnchor {
+        milliparsecs: [2_452_809, 0, 0],
+    };
     let body = Translation::new([100_000.0, -500_000.0, 10.0]).unwrap();
     let camera = Translation::new([20.0, 30.0, 40.0]).unwrap();
     let p1 = [20.0, 30.0, 40.0];
@@ -56,5 +63,8 @@ fn rendering_is_lossy_and_invalid_inputs_are_rejected() {
     assert_eq!(projected[0], 1.0);
     assert!(render_position([f64::MAX, 0.0, 0.0]).is_err());
     assert!(Translation::new([f64::NAN, 0.0, 0.0]).is_err());
-    assert!(Translation::new([0.0; 3]).unwrap().to_parent([f64::INFINITY, 0.0, 0.0]).is_err());
+    assert!(Translation::new([0.0; 3])
+        .unwrap()
+        .to_parent([f64::INFINITY, 0.0, 0.0])
+        .is_err());
 }

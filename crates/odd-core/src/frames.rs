@@ -45,9 +45,17 @@ impl Translation {
     fn apply(self, position: [f64; 3], subtract: bool) -> Result<[f64; 3], NonFiniteCoordinate> {
         let mut result = [0.0; 3];
         for i in 0..3 {
-            result[i] = if subtract { position[i] - self.origin_m[i] } else { position[i] + self.origin_m[i] };
+            result[i] = if subtract {
+                position[i] - self.origin_m[i]
+            } else {
+                position[i] + self.origin_m[i]
+            };
         }
-        if result.iter().all(|x| x.is_finite()) { Ok(result) } else { Err(NonFiniteCoordinate) }
+        if result.iter().all(|x| x.is_finite()) {
+            Ok(result)
+        } else {
+            Err(NonFiniteCoordinate)
+        }
     }
 }
 
@@ -55,5 +63,9 @@ impl Translation {
 /// Never use this output to reconstruct simulation coordinates.
 pub fn render_position(camera_relative_m: [f64; 3]) -> Result<[f32; 3], NonFiniteCoordinate> {
     let result = camera_relative_m.map(|x| x as f32);
-    if result.iter().all(|x| x.is_finite()) { Ok(result) } else { Err(NonFiniteCoordinate) }
+    if result.iter().all(|x| x.is_finite()) {
+        Ok(result)
+    } else {
+        Err(NonFiniteCoordinate)
+    }
 }

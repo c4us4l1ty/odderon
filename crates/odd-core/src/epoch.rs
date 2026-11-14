@@ -17,7 +17,10 @@ pub struct Epoch {
 pub struct EpochRangeError;
 
 impl Epoch {
-    pub const J2000: Self = Self { seconds: 0, fraction: 0.0 };
+    pub const J2000: Self = Self {
+        seconds: 0,
+        fraction: 0.0,
+    };
 
     /// Constructs an epoch, normalizing `fraction` into [0, 1).
     pub fn new(seconds: i64, fraction: f64) -> Result<Self, EpochRangeError> {
@@ -49,8 +52,12 @@ impl Epoch {
         Self::new(0, (jd - J2000_JULIAN_DATE_TDB) * 86_400.0)
     }
 
-    pub fn seconds(self) -> i64 { self.seconds }
-    pub fn fraction(self) -> f64 { self.fraction }
+    pub fn seconds(self) -> i64 {
+        self.seconds
+    }
+    pub fn fraction(self) -> f64 {
+        self.fraction
+    }
 
     /// Adds a duration in SI seconds. Non-finite values and overflow are errors.
     pub fn checked_add_seconds(self, duration: f64) -> Result<Self, EpochRangeError> {
