@@ -4,7 +4,7 @@ import { Renderer } from './renderer.js';
 const $=id=>document.getElementById(id);
 const scene=$('scene'), canvas=$('world'), overlay=$('overlay'), date=$('date'), error=$('error');
 const J2000_UNIX_MS=Date.UTC(2000,0,1,12), DAY=86400;
-let renderer, wasm, snapshot, camera={yaw:-1.30,pitch:-.35,zoom:1}, pointer=null, draws=0;
+let renderer, wasm, snapshot, contextLost=false, camera={yaw:-1.30,pitch:-.35,zoom:1}, pointer=null, draws=0;
 const showError=message=>{error.hidden=false;error.textContent=message;};
 const governor=new Governor(quality=>{try{draw(quality);}catch(e){governor.suspend();showError(`The view could not be rendered: ${e.message}`);}});
 const dot=(a,b)=>a.reduce((s,x,i)=>s+x*b[i],0);
@@ -77,9 +77,11 @@ scene.addEventListener('keydown',e=>{let used=true;switch(e.key){case 'ArrowLeft
 $('zoom-in').addEventListener('click',()=>zoom(1.2));$('zoom-out').addEventListener('click',()=>zoom(1/1.2));$('reset').addEventListener('click',()=>{camera={yaw:-1.30,pitch:-.35,zoom:1};governor.invalidate();});
 for(const id of ['show-path','show-velocity','show-vehicle'])$(id).addEventListener('change',()=>governor.invalidate());date.addEventListener('change',loadDate);$('prev').addEventListener('click',()=>changeDay(-1));$('next').addEventListener('click',()=>changeDay(1));$('today-reset').addEventListener('click',()=>{date.value='2026-01-01';loadDate();});
 new ResizeObserver(()=>governor.invalidate()).observe(scene);
-document.addEventListener('visibilitychange',()=>{if(document.hidden){pointer=null;governor.suspend();}else governor.resume();});
-canvas.addEventListener('webglcontextlost',event=>{event.preventDefault();pointer=null;governor.suspend();showError('Graphics context lost. Waiting for the browser to restore it.');});
-canvas.addEventListener('webglcontextrestored',()=>{try{renderer.init();error.hidden=true;governor.resume();}catch(e){showError(`Could not restore graphics: ${e.message}`);}});
+function syncVisibility(){if(document.hidden||contextLost){pointer=null;governor.suspend();}else governor.resume();}
+document.addEventListener('visibilitychange',syncVisibility);
+canvas.addEventListener('webglcontextlost',event=>{event.preventDefault();contextLost=true;syncVisibility();showError('Graphics context lost. Waiting for the browser to restore it.');});
+canvas.addEventListener('webglcontextrestored',()=>{try{renderer.init();contextLost=false;error.hidden=true;syncVisibility();}catch(e){showError(`Could not restore graphics: ${e.message}`);}});
+if(document.hidden)governor.suspend();
 // Read-only diagnostics make the idle gate observable without creating a poller.
 window.odderonDiagnostics=Object.freeze({get draws(){return draws;},get pendingFrame(){return governor.frame!==null;},get pendingTimer(){return governor.timer!==null;},get quality(){return $('render-status').textContent;}});
 try {
