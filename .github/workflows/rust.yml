@@ -13,7 +13,16 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
           components: rustfmt, clippy
-      - run: cargo test --workspace
+      - name: Run workspace tests
+        shell: bash
+        run: |
+          set +e
+          cargo test --workspace --color never 2>&1 | tee /tmp/odderon-cargo-test.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            python3 -c 'from pathlib import Path; s="\n".join(Path("/tmp/odderon-cargo-test.log").read_text().splitlines()[-50:]); print("::error::" + s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))'
+          fi
+          exit "$status"
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo build --workspace --target wasm32-unknown-unknown
       - run: cargo fmt --all -- --check
