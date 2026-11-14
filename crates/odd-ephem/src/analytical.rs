@@ -241,7 +241,8 @@ fn lunar(t: f64) -> State {
 // JPL table 2a/2b: long-range heliocentric approximate elements. Planetary
 // masses are used only to estimate the otherwise unavailable solar barycenter;
 // this is not the DE440 barycenter and includes no asteroid/TNO corrections.
-const PLANETS: [([f64; 6], [f64; 6], [f64; 4], f64); 8] = [
+type PlanetFit = ([f64; 6], [f64; 6], [f64; 4], f64);
+const PLANETS: [PlanetFit; 8] = [
     (
         [
             0.38709843,
