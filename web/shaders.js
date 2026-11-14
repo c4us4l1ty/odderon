@@ -118,13 +118,19 @@ void main(){
 // The analytic surface normal supplies a projected tangential flow direction.
 export const strokeVertex = `#version 300 es
 precision highp float; precision highp int;
-uniform sampler2D uNormal; uniform vec2 uResolution; uniform int uBatch;
+uniform sampler2D uNormal; uniform vec2 uResolution; uniform vec4 uEarth; uniform vec4 uMoon; uniform int uBatch;
 out vec2 vBrush; out vec2 vSample; flat out float vSurface;
 uint mixbits(uint x){x^=x>>16;x*=0x7feb352du;x^=x>>15;x*=0x846ca68bu;x^=x>>16;return x;}
 float rnd(uint x){return float(mixbits(x)&0x00ffffffu)/16777216.0;}
 void main(){
  uint id=uint(gl_InstanceID)+uint(uBatch)*100003u;
- vec2 center=vec2(rnd(id*2u+31u),rnd(id*2u+32u));
+ // Sample physical projected discs, not random empty sky. Surface clipping
+ // in the fragment shader prevents brush quads enlarging the body silhouette.
+ float earthWeight=uEarth.z*uEarth.z/(uEarth.z*uEarth.z+uMoon.z*uMoon.z);
+ vec4 body=rnd(id*5u+1u)<earthWeight?uEarth:uMoon;
+ float theta=6.28318530718*rnd(id*5u+2u),radialDistance=sqrt(rnd(id*5u+3u));
+ vec2 point=body.xy+body.z*radialDistance*vec2(cos(theta),sin(theta));
+ vec2 center=(uResolution+point*uResolution.y)/(2.0*uResolution);
  vec3 normal=texture(uNormal,center).rgb;
  vec2 radial=normal.xy*2.0-1.0;
  vec2 tangent=length(radial)>.001?normalize(vec2(-radial.y,radial.x)):vec2(1,0);
@@ -138,9 +144,10 @@ void main(){
 }`;
 export const strokeFragment = `#version 300 es
 precision highp float;
-uniform sampler2D uColor; in vec2 vBrush; in vec2 vSample; flat in float vSurface; out vec4 outColor;
+uniform sampler2D uColor; uniform sampler2D uNormal; uniform vec2 uResolution; in vec2 vBrush; in vec2 vSample; flat in float vSurface; out vec4 outColor;
 void main(){
- if(vSurface<.1)discard;
+ float fragmentSurface=texture(uNormal,gl_FragCoord.xy/uResolution).b;
+ if(vSurface<.1 || abs(fragmentSurface-vSurface)>.08)discard;
  float shape=max(0.0,1.0-dot(vBrush,vBrush));
  if(shape<=0.0)discard;
  vec3 pigment=texture(uColor,vSample).rgb;

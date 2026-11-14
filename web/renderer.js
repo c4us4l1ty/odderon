@@ -36,14 +36,14 @@ export class Renderer {
     gl.drawArrays(gl.TRIANGLES,0,3);
     // Seed accumulation once from the G-buffer; subsequent batches never clear it.
     gl.bindFramebuffer(gl.READ_FRAMEBUFFER,this.fbo);gl.readBuffer(gl.COLOR_ATTACHMENT0);gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER,this.accumFbo);gl.blitFramebuffer(0,0,w,h,0,0,w,h,gl.COLOR_BUFFER_BIT,gl.NEAREST);
-    this.batchIndex=-1;this.strokeCount=0;this.batch(0);return true;
+    this.bodyEarth=model.earth;this.bodyMoon=model.moon;this.batchIndex=-1;this.strokeCount=0;this.batch(0);return true;
   }
   batch(index){
     if(index!==this.batchIndex+1 || index<0 || index>15)throw Error('Invalid progressive stroke batch.');
     const gl=this.gl,w=this.width,h=this.height,count=index===0?60_000:96_000;
     gl.bindFramebuffer(gl.FRAMEBUFFER,this.accumFbo);gl.drawBuffers([gl.COLOR_ATTACHMENT0]);gl.viewport(0,0,w,h);gl.bindVertexArray(this.vao);gl.useProgram(this.strokes);
     this.textures.forEach((t,i)=>{gl.activeTexture(gl.TEXTURE0+i);gl.bindTexture(gl.TEXTURE_2D,t);gl.uniform1i(gl.getUniformLocation(this.strokes,i?'uNormal':'uColor'),i);});
-    gl.uniform2f(gl.getUniformLocation(this.strokes,'uResolution'),w,h);gl.uniform1i(gl.getUniformLocation(this.strokes,'uBatch'),index);
+    gl.uniform2f(gl.getUniformLocation(this.strokes,'uResolution'),w,h);gl.uniform4fv(gl.getUniformLocation(this.strokes,'uEarth'),this.bodyEarth);gl.uniform4fv(gl.getUniformLocation(this.strokes,'uMoon'),this.bodyMoon);gl.uniform1i(gl.getUniformLocation(this.strokes,'uBatch'),index);
     gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.drawArraysInstanced(gl.TRIANGLES,0,6,count);gl.disable(gl.BLEND);
     gl.bindFramebuffer(gl.READ_FRAMEBUFFER,this.accumFbo);gl.readBuffer(gl.COLOR_ATTACHMENT0);gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER,null);gl.blitFramebuffer(0,0,w,h,0,0,w,h,gl.COLOR_BUFFER_BIT,gl.NEAREST);gl.bindFramebuffer(gl.FRAMEBUFFER,null);
     this.batchIndex=index;this.strokeCount+=count;

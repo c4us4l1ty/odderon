@@ -63,9 +63,11 @@ The first WebGL2 pass renders analytic spheres and illustrative geometry into
 an offscreen color/normal framebuffer. Instanced brushstroke quads sample those
 buffers, align to the projected surface-normal tangent and blend into a
 persistent accumulation framebuffer. Batch 0 submits 60,000 coarse instances;
-15 finer batches submit 96,000 each, for 1,500,000 instances. Strokes whose
-samples lie in empty sky are discarded. This count is GPU *instances submitted*,
-not a promise that every stroke produces visible fragments. The result is an
+15 finer batches submit 96,000 each, for 1,500,000 instances. Samples are
+distributed over the projected physical discs, and fragments are clipped by the
+G-buffer silhouette so strokes cannot enlarge a body. This count is GPU
+*instances submitted*, not a promise that every stroke produces visible
+fragments (bodies can be offscreen, occluded or subpixel). The result is an
 illustrative style, not measured surface data. A separate Canvas2D layer draws
 labels and vectors. No external textures or 3D models are used.
 
