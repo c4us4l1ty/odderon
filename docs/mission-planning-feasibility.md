@@ -15,7 +15,9 @@ both osculating apsides. A normal burn changes orbital angular momentum; torque
 is r × F, generally not along the line of nodes. Explanations and diagrams must
 not claim these approximations hold everywhere.
 
-The compiler uses integer microseconds and a normalized, quantized quaternion;
+The selected oracle convention checks the ideal rocket equation separately
+from the explicitly bounded quantization error in the executed command. The
+compiler uses integer microseconds and a normalized, quantized quaternion;
 it reports both the unquantized rocket-equation mass and commanded mass. For
 example, the 18,000 kg tug, 18,000 N, 450 s, 3,120 m/s burn has an ideal
 2,236.858757254 s duration; rounding that duration to microseconds changes
@@ -46,7 +48,9 @@ there is no proof here that a single burn is universally impossible.
 
 ## Attribution is metric- and model-dependent
 
-The proposed 3D position-distance leave-one-out deltas are nonnegative
+The selected debrief convention is to label these as model-dependent
+sensitivity shares and compute separate shares for position, node and
+apoapsis metrics. The proposed 3D position-distance leave-one-out deltas are nonnegative
 sensitivity magnitudes, not signed contributions and not a unique additive
 breakdown of the actual error. Effects interact and can cancel. Normalizing
 these magnitudes produces shares of the sensitivity sum, not exact causal
