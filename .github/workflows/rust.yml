@@ -24,7 +24,18 @@ jobs:
           fi
           exit "$status"
       - name: Show generated dependency lockfile
-        run: echo "::notice title=Dependency lock::$(base64 -w0 Cargo.lock)"
+        run: |
+          python3 -c 'import base64; from pathlib import Path; b=base64.b64encode(Path("Cargo.lock").read_bytes()).decode(); [print("::notice title=Lock%02d::%s" % (i//2000,b[i:i+2000])) for i in range(0,len(b),2000)]'
+          echo "::notice title=Rustfmt version::$(rustfmt --version)"
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo build --workspace --target wasm32-unknown-unknown
-      - run: cargo fmt --all -- --check
+      - name: Check formatting
+        shell: bash
+        run: |
+          set +e
+          cargo fmt --all -- --check 2>&1 | tee /tmp/odderon-fmt.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            python3 -c 'from pathlib import Path; s=Path("/tmp/odderon-fmt.log").read_text(); print("::error::" + s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))'
+          fi
+          exit "$status"
