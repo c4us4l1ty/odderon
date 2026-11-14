@@ -84,7 +84,7 @@ canvas.addEventListener('webglcontextlost',event=>{event.preventDefault();contex
 canvas.addEventListener('webglcontextrestored',()=>{try{renderer.init();contextLost=false;error.hidden=true;syncVisibility();}catch(e){showError(`Could not restore graphics: ${e.message}`);}});
 if(document.hidden)governor.suspend();
 // Read-only diagnostics make the idle gate observable without creating a poller.
-window.odderonDiagnostics=Object.freeze({get draws(){return draws;},get pendingFrame(){return governor.frame!==null;},get pendingTimer(){return governor.timer!==null;},get quality(){return $('render-status').textContent;}});
+window.odderonDiagnostics=Object.freeze({get draws(){return draws;},get pendingFrame(){return governor.frame!==null;},get pendingTimer(){return governor.timer!==null;},get quality(){return $('render-status').textContent;},get circles(){if(!snapshot)return null;const g=geometry();return {earth:[...g.earth],moon:[...g.moon]};}});
 try {
   renderer=new Renderer(canvas);
   const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error(`Ephemeris module not found (${response.status}). Build the browser app first.`);

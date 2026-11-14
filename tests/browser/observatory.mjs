@@ -22,6 +22,15 @@ try{
   await page.waitForTimeout(500);
   assert.equal(await page.locator('#error').isHidden(),true);
   assert.equal(await page.locator('#distance').textContent(),'361,026');
+  // Check actual GPU pixels at the analytically projected centers, not just
+  // a draw counter: shader compilation or a blank framebuffer must fail.
+  const pixels=await page.locator('#world').evaluate(canvas=>{
+    const gl=canvas.getContext('webgl2'), circles=window.odderonDiagnostics.circles;
+    const read=(x,y)=>{const out=new Uint8Array(4);gl.readPixels(x,y,1,1,gl.RGBA,gl.UNSIGNED_BYTE,out);return [...out];};
+    const sample=c=>read(Math.floor((canvas.width+c[0]*canvas.height)/2),Math.floor((canvas.height+c[1]*canvas.height)/2));
+    return {earth:sample(circles.earth),moon:sample(circles.moon),background:read(10,10),error:gl.getError()};
+  });
+  assert.equal(pixels.error,0);for(const body of ['earth','moon'])assert.ok(pixels[body].slice(0,3).some((v,i)=>Math.abs(v-pixels.background[i])>12),`${body} center is indistinguishable from empty sky: ${JSON.stringify(pixels)}`);
   const stats=await page.evaluate(()=>({draws:odderonDiagnostics.draws,pendingFrame:odderonDiagnostics.pendingFrame,pendingTimer:odderonDiagnostics.pendingTimer,quality:odderonDiagnostics.quality}));
   assert.equal(stats.pendingFrame,false);assert.equal(stats.pendingTimer,false);assert.match(stats.quality,/RESTING/);
   const cdp=await page.context().newCDPSession(page);await cdp.send('Performance.enable');
