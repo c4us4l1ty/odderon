@@ -49,3 +49,35 @@ fn hyperbolic_solver_round_trips_across_scales() {
         }
     }
 }
+
+#[test]
+fn elliptic_kepler_round_trips_at_singular_limits() {
+    use odd_astro::anomaly::{
+        elliptic_from_mean, elliptic_from_true, elliptic_mean, true_from_elliptic,
+    };
+    for e in [0.0, 0.4, 0.9, 0.999, 1.0 - 1e-12] {
+        for a in [
+            -3.0, -1.0, -0.01, -1e-7, -1e-20, 0.0, 1e-20, 1e-7, 0.01, 1.0, 3.0,
+        ] {
+            let mean = elliptic_mean(e, a).unwrap();
+            near(
+                elliptic_from_mean(e, mean).unwrap(),
+                a,
+                3e-12 * a.abs().max(1e-20),
+            );
+            if e < 0.99999 {
+                let nu = true_from_elliptic(e, a).unwrap();
+                near(
+                    elliptic_from_true(e, nu).unwrap(),
+                    a,
+                    3e-12 * a.abs().max(1.0),
+                );
+            }
+        }
+    }
+    near(elliptic_from_mean(0.0, 2.0 * PI + 0.5).unwrap(), 0.5, 1e-14);
+    assert_eq!(
+        elliptic_from_mean(1.0, 0.0),
+        Err(AnomalyError::InvalidInput)
+    );
+}

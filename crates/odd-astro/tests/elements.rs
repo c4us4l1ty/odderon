@@ -254,3 +254,68 @@ fn independent_cspice_parabolic_states() {
     }
     assert_eq!(count, 50);
 }
+
+#[test]
+fn classical_axes_and_degenerate_parabolic_size() {
+    for (a, e) in [(12_000_000.0, 0.4), (-12_000_000.0, 1.4)] {
+        let el = Elements::from_classical(a, e, 0.3, 0.7, 0.9, 0.2).unwrap();
+        near(el.semi_major_axis_m().unwrap(), a, 1e-8);
+        let state = el.to_state(MU).unwrap();
+        same_state(
+            Elements::from_state(state, MU)
+                .unwrap()
+                .to_state(MU)
+                .unwrap(),
+            state,
+            2e-7,
+            2e-10,
+        );
+    }
+    assert_eq!(
+        Elements::from_classical(10.0, 1.0, 0.0, 0.0, 0.0, 0.0),
+        Err(ElementsError::InvalidInput)
+    );
+    assert_eq!(
+        Elements::from_classical(-10.0, 0.5, 0.0, 0.0, 0.0, 0.0),
+        Err(ElementsError::InvalidInput)
+    );
+    assert_eq!(
+        Elements::from_classical(-10.0, 2.0, 0.0, 0.0, 0.0, PI),
+        Err(ElementsError::OutsidePhysicalBranch)
+    );
+}
+
+#[test]
+fn singular_combinations_remain_correct_for_nearby_states() {
+    for &i in &[1e-10, PI - 1e-10] {
+        let original = elements(1e-10, i, 1.3, 0.8, 2.1);
+        let state = original.to_state(MU).unwrap();
+        let out = Elements::from_state(state, MU).unwrap();
+        let actual = match out.special_angles().unwrap() {
+            SpecialAngles::CircularEquatorial { true_longitude_rad } => true_longitude_rad,
+            _ => panic!("wrong class"),
+        };
+        let expected = state.position_m[1]
+            .atan2(state.position_m[0])
+            .rem_euclid(TAU);
+        near(actual, expected, 1e-14);
+        let original = elements(0.3, i, 1.3, 0.8, 2.1);
+        let out = Elements::from_state(original.to_state(MU).unwrap(), MU).unwrap();
+        let actual = match out.special_angles().unwrap() {
+            SpecialAngles::EccentricEquatorial {
+                longitude_of_periapsis_rad,
+            } => longitude_of_periapsis_rad,
+            _ => panic!("wrong class"),
+        };
+        let direction = if i > PI / 2.0 { -1.0 } else { 1.0 };
+        near(actual, (1.3_f64 + direction * 0.8).rem_euclid(TAU), 1e-13);
+    }
+    let original = elements(1e-10, 0.8, 1.3, 0.8, 2.1);
+    let out = Elements::from_state(original.to_state(MU).unwrap(), MU).unwrap();
+    match out.special_angles().unwrap() {
+        SpecialAngles::CircularInclined {
+            argument_of_latitude_rad,
+        } => near(argument_of_latitude_rad, 2.9, 1e-13),
+        _ => panic!("wrong class"),
+    }
+}

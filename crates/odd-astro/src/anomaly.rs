@@ -1,7 +1,8 @@
-//! Hyperbolic anomaly conversions for ideal two-body motion.
+//! Elliptic and hyperbolic anomaly conversions for ideal two-body motion.
 //!
 //! The mean anomaly is dimensionless and unwrapped. These functions use a
 //! safeguarded numerical inversion, not a universal five-iteration guarantee.
+use std::f64::consts::{PI, TAU};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AnomalyError {
@@ -119,4 +120,102 @@ pub fn hyperbolic_from_mean(e: f64, mean: f64) -> Result<f64, AnomalyError> {
         x = next;
     }
     Err(AnomalyError::NoConvergence)
+}
+
+fn validate_ellipse(e: f64, value: f64) -> Result<(), AnomalyError> {
+    if e.is_finite() && (0.0..1.0).contains(&e) && value.is_finite() {
+        Ok(())
+    } else {
+        Err(AnomalyError::InvalidInput)
+    }
+}
+
+// Preserve small negative angles (rem_euclid would round them toward 2π).
+fn principal(value: f64) -> f64 {
+    let mut v = value % TAU;
+    if v > PI {
+        v -= TAU;
+    } else if v < -PI {
+        v += TAU;
+    }
+    v
+}
+
+fn elliptic_mean_unchecked(e: f64, anomaly: f64) -> f64 {
+    let rem = if anomaly.abs() < 0.1 {
+        let a2 = anomaly * anomaly;
+        anomaly * a2 * (1.0 / 6.0 - a2 * (1.0 / 120.0 - a2 * (1.0 / 5040.0 - a2 / 362880.0)))
+    } else {
+        anomaly - anomaly.sin()
+    };
+    (1.0 - e) * anomaly + e * rem
+}
+
+/// Elliptic mean anomaly M = E - e sin(E), unwrapped.
+pub fn elliptic_mean(e: f64, anomaly: f64) -> Result<f64, AnomalyError> {
+    validate_ellipse(e, anomaly)?;
+    let result = elliptic_mean_unchecked(e, anomaly);
+    if result.is_finite() {
+        Ok(result)
+    } else {
+        Err(AnomalyError::NumericalRange)
+    }
+}
+
+/// Solve the elliptic Kepler equation. Returns the principal eccentric
+/// anomaly in [-π, π]; integer revolutions are deliberately not returned.
+/// For very large M, the input float may already have lost phase precision.
+pub fn elliptic_from_mean(e: f64, mean: f64) -> Result<f64, AnomalyError> {
+    validate_ellipse(e, mean)?;
+    let m = principal(mean);
+    if m == 0.0 {
+        return Ok(m);
+    }
+    let target = m.abs();
+    let mut lo = 0.0;
+    let mut hi = PI;
+    let linear = target / (1.0 - e);
+    let cubic = (target * 6.0 / e).cbrt();
+    let mut x = linear.min(cubic).min(hi);
+    if x <= 0.0 || !x.is_finite() {
+        x = target;
+    }
+    for _ in 0..160 {
+        let value = elliptic_mean_unchecked(e, x);
+        let residual = value - target;
+        if residual.abs() <= target * 2e-14 || value == target {
+            return Ok(x.copysign(m));
+        }
+        if residual > 0.0 {
+            hi = x;
+        } else {
+            lo = x;
+        }
+        let derivative = (1.0 - e) + 2.0 * e * (x * 0.5).sin().powi(2);
+        let candidate = x - residual / derivative;
+        let next = if candidate.is_finite() && candidate > lo && candidate < hi {
+            candidate
+        } else {
+            lo + (hi - lo) * 0.5
+        };
+        if next == x {
+            return Ok(x.copysign(m));
+        }
+        x = next;
+    }
+    Err(AnomalyError::NoConvergence)
+}
+
+/// Eccentric anomaly E from true anomaly, in [-π, π].
+pub fn elliptic_from_true(e: f64, true_anomaly_rad: f64) -> Result<f64, AnomalyError> {
+    validate_ellipse(e, true_anomaly_rad)?;
+    let (s, c) = true_anomaly_rad.sin_cos();
+    Ok(((1.0 - e).sqrt() * (1.0 + e).sqrt() * s).atan2(e + c))
+}
+
+/// True anomaly from eccentric anomaly E, in [-π, π].
+pub fn true_from_elliptic(e: f64, anomaly: f64) -> Result<f64, AnomalyError> {
+    validate_ellipse(e, anomaly)?;
+    let (s, c) = anomaly.sin_cos();
+    Ok(((1.0 - e).sqrt() * (1.0 + e).sqrt() * s).atan2(c - e))
 }

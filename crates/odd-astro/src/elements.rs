@@ -68,6 +68,57 @@ fn valid_mu(mu: f64) -> bool {
 }
 
 impl Elements {
+    /// Construct from the usual signed semi-major axis and five classical
+    /// elements. Ellipses require a > 0 and e < 1; hyperbolas require a < 0
+    /// and e > 1. Parabolas have no finite a and must be specified with p.
+    pub fn from_classical(
+        semi_major_axis_m: f64,
+        eccentricity: f64,
+        inclination_rad: f64,
+        ascending_node_rad: f64,
+        argument_of_periapsis_rad: f64,
+        true_anomaly_rad: f64,
+    ) -> Result<Self, ElementsError> {
+        let a = semi_major_axis_m;
+        let e = eccentricity;
+        if !a.is_finite()
+            || a == 0.0
+            || !e.is_finite()
+            || e < 0.0
+            || e == 1.0
+            || (a > 0.0) != (e < 1.0)
+            || !inclination_rad.is_finite()
+            || !(0.0..=PI).contains(&inclination_rad)
+            || ![
+                ascending_node_rad,
+                argument_of_periapsis_rad,
+                true_anomaly_rad,
+            ]
+            .iter()
+            .all(|v| v.is_finite())
+        {
+            return Err(ElementsError::InvalidInput);
+        }
+        let p = (a * (1.0 - e)) * (1.0 + e);
+        if !p.is_finite() || p <= 0.0 {
+            return Err(ElementsError::NumericalRange);
+        }
+        let denominator = 1.0 + e * true_anomaly_rad.cos();
+        if !denominator.is_finite() {
+            return Err(ElementsError::NumericalRange);
+        }
+        if denominator <= 0.0 {
+            return Err(ElementsError::OutsidePhysicalBranch);
+        }
+        Ok(Self {
+            semi_latus_rectum_m: p,
+            eccentricity: e,
+            inclination_rad,
+            ascending_node_rad,
+            argument_of_periapsis_rad,
+            true_anomaly_rad,
+        })
+    }
     /// Derive osculating elements from an inertial central-body-relative state.
     pub fn from_state(state: State, mu_m3_s2: f64) -> Result<Self, ElementsError> {
         if !valid_mu(mu_m3_s2)
