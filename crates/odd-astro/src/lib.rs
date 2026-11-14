@@ -6,6 +6,7 @@
 
 pub mod anomaly;
 pub mod elements;
+pub mod patched_conics;
 pub mod propagation;
 
 /// Invalid physical inputs, or results outside finite floating-point range.
@@ -68,6 +69,33 @@ pub fn elliptical_speed(
         return Err(OrbitError::RadiusOutsideEllipse);
     }
     finite(squared_speed.sqrt())
+}
+
+/// Vis-viva speed in m/s at radius `radius_m`. A positive semi-major axis
+/// denotes an ellipse, a negative one a hyperbola, and `None` a parabola.
+/// This is a scalar speed, not a complete state or a reachability test for a
+/// specific angular momentum. An ellipse cannot reach r >= 2a.
+pub fn vis_viva_speed(
+    mu_m3_s2: f64,
+    radius_m: f64,
+    semi_major_axis_m: Option<f64>,
+) -> Result<f64, OrbitError> {
+    positive(mu_m3_s2)?;
+    positive(radius_m)?;
+    if let Some(a) = semi_major_axis_m {
+        if !a.is_finite() || a == 0.0 {
+            return Err(OrbitError::InvalidInput);
+        }
+        if a > 0.0 {
+            return elliptical_speed(mu_m3_s2, radius_m, a);
+        }
+    }
+    let inverse_a = semi_major_axis_m.map_or(0.0, |a| 1.0 / a);
+    let square = finite((mu_m3_s2 / radius_m) * 2.0 - mu_m3_s2 * inverse_a)?;
+    if square <= 0.0 {
+        return Err(OrbitError::NumericalRange);
+    }
+    finite(square.sqrt())
 }
 
 /// An ideal coplanar circular-to-circular Hohmann maneuver. Signed burn values
