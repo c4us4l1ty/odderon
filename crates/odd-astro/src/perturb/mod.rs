@@ -1,5 +1,7 @@
 //! Inertial-frame perturbation acceleration building blocks (SI units).
+pub mod drag;
 pub mod j2;
+pub mod srp;
 pub mod third_body;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
