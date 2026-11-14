@@ -94,25 +94,95 @@ fn sin_term(sum: &mut f64, derivative: &mut f64, coefficient: f64, angle: f64, r
     *sum += coefficient * s;
     *derivative += coefficient * c * rate;
 }
-fn rotate_date(t: f64, v: [f64; 3]) -> [f64; 3] {
-    // Meeus mean ecliptic/equinox of date to J2000 using IAU 1976
-    // precession and mean obliquity. Far from J2000 this is approximate.
-    let eps =
-        (23.4392911111 - (46.8150 * t + 0.00059 * t * t - 0.001813 * t * t * t) / 3600.0) * RAD;
-    let (se, ce) = eps.sin_cos();
-    let q = [v[0], ce * v[1] - se * v[2], se * v[1] + ce * v[2]];
-    let zeta = (2306.2181 * t + 0.30188 * t * t + 0.017998 * t * t * t) * RAD / 3600.0;
-    let z = (2306.2181 * t + 1.09468 * t * t + 0.018203 * t * t * t) * RAD / 3600.0;
-    let theta = (2004.3109 * t - 0.42665 * t * t - 0.041833 * t * t * t) * RAD / 3600.0;
-    let (sa, ca) = zeta.sin_cos();
-    let (sb, cb) = z.sin_cos();
-    let (st, ct) = theta.sin_cos();
-    let p = [
-        [ca * ct * cb - sa * sb, -sa * ct * cb - ca * sb, -st * cb],
-        [ca * ct * sb + sa * cb, -sa * ct * sb + ca * cb, -st * sb],
-        [ca * st, -sa * st, ct],
-    ];
-    std::array::from_fn(|i| p[0][i] * q[0] + p[1][i] * q[1] + p[2][i] * q[2])
+// Rotate both a vector and its derivative; angle rates are radians/second.
+// The frame-motion term is angular velocity cross the rotated position.
+fn rotate_kinematic(
+    pos: [f64; 3],
+    vel: [f64; 3],
+    angle: f64,
+    rate: f64,
+    axis: usize,
+) -> ([f64; 3], [f64; 3]) {
+    let (s, c) = angle.sin_cos();
+    let rotate = |v: [f64; 3]| match axis {
+        0 => [v[0], c * v[1] - s * v[2], s * v[1] + c * v[2]],
+        1 => [c * v[0] + s * v[2], v[1], -s * v[0] + c * v[2]],
+        _ => [c * v[0] - s * v[1], s * v[0] + c * v[1], v[2]],
+    };
+    let p = rotate(pos);
+    let v = rotate(vel);
+    let spin = match axis {
+        0 => [0.0, -rate * p[2], rate * p[1]],
+        1 => [rate * p[2], 0.0, -rate * p[0]],
+        _ => [-rate * p[1], rate * p[0], 0.0],
+    };
+    (p, std::array::from_fn(|i| v[i] + spin[i]))
+}
+fn rotate_date_state(t: f64, pos: [f64; 3], vel: [f64; 3]) -> ([f64; 3], [f64; 3]) {
+    // Mean ecliptic/equinox of date to J2000 using IAU 1976 precession.
+    // Differentiate the rotations analytically instead of differencing frames.
+    let (eps, eps_rate) = poly(
+        t,
+        &[
+            23.4392911111,
+            -46.8150 / 3600.0,
+            -0.00059 / 3600.0,
+            0.001813 / 3600.0,
+        ],
+    );
+    let (zeta, zeta_rate) = poly(t, &[0.0, 2306.2181, 0.30188, 0.017998]);
+    let (z, z_rate) = poly(t, &[0.0, 2306.2181, 1.09468, 0.018203]);
+    let (theta, theta_rate) = poly(t, &[0.0, 2004.3109, -0.42665, -0.041833]);
+    let (pos, vel) = rotate_kinematic(pos, vel, eps * RAD, eps_rate * RAD / CENTURY, 0);
+    let (pos, vel) = rotate_kinematic(
+        pos,
+        vel,
+        -z * RAD / 3600.0,
+        -z_rate * RAD / (3600.0 * CENTURY),
+        2,
+    );
+    let (pos, vel) = rotate_kinematic(
+        pos,
+        vel,
+        theta * RAD / 3600.0,
+        theta_rate * RAD / (3600.0 * CENTURY),
+        1,
+    );
+    rotate_kinematic(
+        pos,
+        vel,
+        -zeta * RAD / 3600.0,
+        -zeta_rate * RAD / (3600.0 * CENTURY),
+        2,
+    )
+}
+// The lunar terms are integer multiples of four fundamental angles. Build
+// their small harmonics once, then combine unit complex numbers per term.
+// This avoids dozens of expensive transcendental evaluations per query.
+fn harmonics(angles: [f64; 4]) -> [[(f64, f64); 5]; 4] {
+    std::array::from_fn(|i| {
+        let (s, c) = angles[i].sin_cos();
+        let mut powers = [(0.0, 1.0); 5];
+        for n in 1..5 {
+            let (ps, pc) = powers[n - 1];
+            powers[n] = (ps * c + pc * s, pc * c - ps * s);
+        }
+        powers
+    })
+}
+fn term_sin_cos(terms: &[f64], powers: &[[(f64, f64); 5]; 4]) -> (f64, f64) {
+    let (mut s, mut c) = (0.0, 1.0);
+    for i in 0..4 {
+        let n = terms[i] as i32;
+        if n != 0 {
+            let (mut sn, cn) = powers[i][n.unsigned_abs() as usize];
+            if n < 0 {
+                sn = -sn;
+            }
+            (s, c) = (s * cn + c * sn, c * cn - s * sn);
+        }
+    }
+    (s, c)
 }
 /// Truncated Meeus ELP2000/82 Moon relative to Earth, in J2000 axes.
 fn lunar(t: f64) -> State {
@@ -182,10 +252,10 @@ fn lunar(t: f64) -> State {
     ] {
         sin_term(&mut latitude, &mut db, c, x, dx);
     }
+    let powers = harmonics(a);
     for row in TA {
-        let angle = (0..4).map(|i| row[i] * a[i]).sum::<f64>();
         let rate = (0..4).map(|i| row[i] * d[i]).sum::<f64>();
-        let (s, c) = angle.sin_cos();
+        let (s, c) = term_sin_cos(&row, &powers);
         let (factor, df) = match row[1].abs() as u8 {
             1 => (e, ed),
             2 => (e * e, 2.0 * e * ed),
@@ -197,9 +267,8 @@ fn lunar(t: f64) -> State {
         dr += row[5] * (df * c - factor * s * rate);
     }
     for row in TB {
-        let angle = (0..4).map(|i| row[i] * a[i]).sum::<f64>();
         let rate = (0..4).map(|i| row[i] * d[i]).sum::<f64>();
-        let (s, c) = angle.sin_cos();
+        let (s, c) = term_sin_cos(&row, &powers);
         let (factor, df) = match row[1].abs() as u8 {
             1 => (e, ed),
             2 => (e * e, 2.0 * e * ed),
@@ -224,14 +293,7 @@ fn lunar(t: f64) -> State {
     ];
     let pos = unit.map(|x| x * r);
     let vel = std::array::from_fn(|i| rrate * unit[i] + r * dunit[i]);
-    let position_m = rotate_date(t, pos);
-    let mut velocity_m_s = rotate_date(t, vel);
-    let dt = 1e-4;
-    let plus = rotate_date(t + dt, pos);
-    let minus = rotate_date(t - dt, pos);
-    for i in 0..3 {
-        velocity_m_s[i] += (plus[i] - minus[i]) / (2.0 * dt * CENTURY);
-    }
+    let (position_m, velocity_m_s) = rotate_date_state(t, pos, vel);
     State {
         position_m,
         velocity_m_s,
@@ -677,6 +739,28 @@ mod tests {
             );
             assert!(error(got.position_m, p) < 100_000.0);
             assert!(error(got.velocity_m_s, v) < 1.0);
+        }
+    }
+    #[test]
+    fn harmonic_evaluation_matches_direct_trig_at_extreme_dates() {
+        for t in [-50.0, -20.0, 0.0, 1.5, 10.0] {
+            let angles = [
+                (297.8501921 + 445267.1114034 * t) * RAD,
+                (357.5291092 + 35999.0502909 * t) * RAD,
+                (134.9633964 + 477198.8675055 * t) * RAD,
+                (93.272095 + 483202.0175233 * t) * RAD,
+            ];
+            let powers = harmonics(angles);
+            for row in TA {
+                let angle = (0..4).map(|i| row[i] * angles[i]).sum::<f64>();
+                let (s, c) = term_sin_cos(&row, &powers);
+                assert!((s - angle.sin()).abs() < 3e-8 && (c - angle.cos()).abs() < 3e-8);
+            }
+            for row in TB {
+                let angle = (0..4).map(|i| row[i] * angles[i]).sum::<f64>();
+                let (s, c) = term_sin_cos(&row, &powers);
+                assert!((s - angle.sin()).abs() < 3e-8 && (c - angle.cos()).abs() < 3e-8);
+            }
         }
     }
 }

@@ -17,8 +17,7 @@ longitude/distance and 30 latitude terms), and an approximate IAU 1976
 precession transformation to J2000. For solar-system-barycentric queries it
 estimates the Sun's barycentric offset from eight secular planetary orbits and
 approximate mass ratios; this is **not** the DE440 barycenter. Lunar velocity
-is differentiated from the analytical series, with a finite-difference frame
-rotation rate. Mean-equinox precession becomes less reliable far from J2000.
+and its precession-frame rotation rate are differentiated analytically. Mean-equinox precession becomes less reliable far from J2000.
 The tier changes discontinuously at the packed boundaries: do not treat it as
 a seamless high-precision spacecraft ephemeris or as an uncertainty bound.
 Future UTC and pre-1972 UTC inputs also use assumed leap offsets, not knowledge
