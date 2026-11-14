@@ -85,3 +85,9 @@ jobs:
         with:
           name: odd-view-wasm
           path: web/odd_view.wasm
+      - name: Install browser test dependency
+        run: npm ci
+      - name: Test browser viewport and idle governor
+        run: |
+          npm test
+          npm run test:browser

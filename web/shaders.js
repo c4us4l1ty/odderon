@@ -11,7 +11,7 @@ in vec2 uv;
 layout(location=0) out vec4 colorOut;
 layout(location=1) out vec4 normalOut;
 uniform vec2 uResolution;
-uniform vec4 uEarth; uniform vec4 uMoon;
+uniform vec4 uEarth; uniform vec4 uMoon; uniform float uVehicle;
 uniform vec3 uRight; uniform vec3 uUp; uniform vec3 uView;
 uniform vec3 uEarthLight; uniform vec3 uMoonLight;
 uniform mat3 uEarthOrientation; uniform mat3 uMoonOrientation;
@@ -20,12 +20,23 @@ float noise(vec3 p){vec3 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f); float a=mix(
 float fbm(vec3 p){return noise(p)*.55+noise(p*2.03)*.28+noise(p*4.11)*.12;}
 void main(){
  vec2 p=(2.0*gl_FragCoord.xy-uResolution)/uResolution.y;
- vec2 cell=floor(gl_FragCoord.xy/5.0); float star=step(.996,hash(vec3(cell,37.0)))*.18;
+ vec2 cell=floor(gl_FragCoord.xy/5.0); float star=step(.996,hash(vec3(cell,37.0)))*smoothstep(.42,.05,length(fract(gl_FragCoord.xy/5.0)-.5))*.20;
  vec3 bg=mix(vec3(.018,.039,.041),vec3(.039,.076,.070),clamp(1.0-length(p)*.65,0.0,1.0))+star;
  float de=length(p-uEarth.xy)/uEarth.z, dm=length(p-uMoon.xy)/uMoon.z;
  float halo=exp(-max(de-1.0,0.0)*8.0)*.11*(1.0-smoothstep(.98,1.0,de));
  // An atmosphere glow extends beyond the silhouette.
  bg+=vec3(.12,.32,.29)*exp(-abs(de-1.0)*13.0)*step(1.0,de)*.55;
+ // An optional, screen-space parametric vehicle study. It is a non-physical
+ // illustration, not a simulated spacecraft or a reported location.
+ if(uVehicle>.5){
+   vec2 q=(p-vec2(-uResolution.x/uResolution.y*.76,-.64))/0.075;
+   float hull=max(abs(q.x)-.22,max(-q.y-.60,q.y-.45));
+   float nose=max(abs(q.x)*1.6+q.y-.82,-q.y-.45);
+   float fin=max(abs(q.x)-(.22+max(0.0,-q.y-.2)*.8),max(q.y+.25,-q.y-.65));
+   float plume=max(abs(q.x)-(.10+max(0.0,-q.y-.63)*.36),max(q.y+.63,-q.y-1.45));
+   if(plume<0.0){float flicker=fbm(vec3(q*5.0,3.0));bg+=vec3(.7,.29,.09)*(1.0-smoothstep(-.35,0.0,plume))*(.6+flicker*.4);}
+   if(min(min(hull,nose),fin)<0.0){colorOut=vec4(mix(vec3(.42,.48,.43),vec3(.83,.80,.64),clamp(q.x+0.6,0.0,1.0)),1);normalOut=vec4(.5,.5,.7,1);return;}
+ }
  bool earth=de<1.0, moon=dm<1.0; bool isEarth=earth && (!moon || uEarth.w>=uMoon.w);
  if(!earth&&!moon){colorOut=vec4(bg,1);normalOut=vec4(.5,.5,0,1);return;}
  vec4 body=isEarth?uEarth:uMoon; vec2 local=(p-body.xy)/body.z;

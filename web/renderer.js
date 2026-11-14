@@ -31,7 +31,7 @@ export class Renderer {
     const w=this.width,h=this.height; gl.viewport(0,0,w,h);gl.bindVertexArray(this.vao);gl.bindFramebuffer(gl.FRAMEBUFFER,this.fbo);gl.drawBuffers([gl.COLOR_ATTACHMENT0,gl.COLOR_ATTACHMENT1]);gl.useProgram(this.scene);
     const set=(name,method,...args)=>gl[method](gl.getUniformLocation(this.scene,name),...args);
     set('uResolution','uniform2f',w,h);set('uEarth','uniform4fv',model.earth);set('uMoon','uniform4fv',model.moon);
-    set('uRight','uniform3fv',model.right);set('uUp','uniform3fv',model.up);set('uView','uniform3fv',model.view);set('uEarthLight','uniform3fv',model.earthLight);set('uMoonLight','uniform3fv',model.moonLight);
+    set('uVehicle','uniform1f',model.vehicle?1:0);set('uRight','uniform3fv',model.right);set('uUp','uniform3fv',model.up);set('uView','uniform3fv',model.view);set('uEarthLight','uniform3fv',model.earthLight);set('uMoonLight','uniform3fv',model.moonLight);
     set('uEarthOrientation','uniformMatrix3fv',false,model.earthOrientation);set('uMoonOrientation','uniformMatrix3fv',false,model.moonOrientation);
     gl.drawArrays(gl.TRIANGLES,0,3);
     gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.drawBuffers([gl.BACK]);gl.useProgram(this.paint);

@@ -4,7 +4,7 @@ import { Renderer } from './renderer.js';
 const $=id=>document.getElementById(id);
 const scene=$('scene'), canvas=$('world'), overlay=$('overlay'), date=$('date'), error=$('error');
 const J2000_UNIX_MS=Date.UTC(2000,0,1,12), DAY=86400;
-let renderer, wasm, snapshot, camera={yaw:1.25,pitch:1.04,zoom:1}, pointer=null, draws=0;
+let renderer, wasm, snapshot, camera={yaw:-1.30,pitch:-.35,zoom:1}, pointer=null, draws=0;
 const showError=message=>{error.hidden=false;error.textContent=message;};
 const governor=new Governor(quality=>{try{draw(quality);}catch(e){governor.suspend();showError(`The view could not be rendered: ${e.message}`);}});
 const dot=(a,b)=>a.reduce((s,x,i)=>s+x*b[i],0);
@@ -29,7 +29,7 @@ function geometry(){
   const half=snapshot.moon.map(x=>x/2), span=520e6/zoom;
   const project=v=>[2*dot(subtract(v,half),right)/span,2*dot(subtract(v,half),up)/span,dot(subtract(v,half),view)/span];
   const e=project([0,0,0]),m=project(snapshot.moon);
-  return {right,up,view,project,earth:[e[0],e[1],2*6378136.6*7.5/span,e[2]],moon:[m[0],m[1],2*1737400*7.5/span,m[2]],earthLight:norm(snapshot.sun),moonLight:norm(subtract(snapshot.sun,snapshot.moon)),earthOrientation:snapshot.earthOrientation,moonOrientation:snapshot.moonOrientation};
+  return {right,up,view,project,earth:[e[0],e[1],2*6378136.6*7.5/span,e[2]],moon:[m[0],m[1],2*1737400*7.5/span,m[2]],earthLight:norm(snapshot.sun),moonLight:norm(subtract(snapshot.sun,snapshot.moon)),earthOrientation:snapshot.earthOrientation,moonOrientation:snapshot.moonOrientation,vehicle:$('show-vehicle').checked};
 }
 function draw(quality){
   if(!snapshot||!renderer)return;
@@ -44,10 +44,20 @@ function drawOverlay(model,rect){
   const pixel=p=>[rect.width/2+p[0]*rect.height/2,rect.height/2-p[1]*rect.height/2];
   if($('show-path').checked){
     for(const future of [false,true]){
-      ctx.beginPath();let started=false;for(const sample of snapshot.samples){if((sample.time>snapshot.seconds)!==future)continue;const [x,y]=pixel(model.project(sample.pos));if(!started){ctx.moveTo(x,y);started=true;}else ctx.lineTo(x,y);}
+      ctx.beginPath();let started=false;for(const sample of snapshot.samples){if(future ? sample.time<snapshot.seconds : sample.time>snapshot.seconds)continue;const [x,y]=pixel(model.project(sample.pos));if(!started){ctx.moveTo(x,y);started=true;}else ctx.lineTo(x,y);}
       ctx.strokeStyle=future?'rgba(194,211,189,.25)':'rgba(194,211,189,.55)';ctx.lineWidth=1;ctx.setLineDash(future?[3,5]:[]);ctx.stroke();
     } ctx.setLineDash([]);
   }
+  if($('show-velocity').checked){
+    const from=pixel(model.project(snapshot.moon));
+    // A 1-day tangent scaled from instantaneous geometric velocity, not an orbit prediction.
+    const to=pixel(model.project(snapshot.moon.map((x,i)=>x+snapshot.velocity[i]*86400)));
+    const angle=Math.atan2(to[1]-from[1],to[0]-from[0]);
+    ctx.strokeStyle='#e1bd78';ctx.fillStyle='#e1bd78';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(...from);ctx.lineTo(...to);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(...to);ctx.lineTo(to[0]-8*Math.cos(angle-.45),to[1]-8*Math.sin(angle-.45));ctx.lineTo(to[0]-8*Math.cos(angle+.45),to[1]-8*Math.sin(angle+.45));ctx.closePath();ctx.fill();
+    ctx.font='10px system-ui';ctx.fillText('VELOCITY DIRECTION · 1 DAY AT CURRENT SPEED',20,rect.height-(model.vehicle?62:45));
+  }
+  if(model.vehicle){ctx.fillStyle='#d5bb80';ctx.font='10px system-ui';ctx.fillText('VEHICLE STUDY · NOT A SIMULATED MISSION',20,rect.height-45);}
   function label(body,name,detail){
     const [x,y]=pixel(body),radius=body[2]*rect.height/2, tx=x+radius+16,ty=y-radius*.22;
     if(x < -radius||x>rect.width+radius||y < -radius||y>rect.height+radius)return;
@@ -64,8 +74,8 @@ function endPointer(e){if(pointer&&e.pointerId===pointer.id){pointer=null;govern
 scene.addEventListener('pointerup',endPointer);scene.addEventListener('pointercancel',endPointer);scene.addEventListener('lostpointercapture',endPointer);
 scene.addEventListener('wheel',e=>{e.preventDefault();zoom(Math.exp(-Math.max(-100,Math.min(100,e.deltaY))*.002));},{passive:false});
 scene.addEventListener('keydown',e=>{let used=true;switch(e.key){case 'ArrowLeft':camera.yaw-=.12;break;case 'ArrowRight':camera.yaw+=.12;break;case 'ArrowUp':camera.pitch=Math.max(-1.52,camera.pitch-.12);break;case 'ArrowDown':camera.pitch=Math.min(1.52,camera.pitch+.12);break;case '+':case '=':zoom(1.2);break;case '-':zoom(1/1.2);break;default:used=false;}if(used){e.preventDefault();governor.invalidate();}});
-$('zoom-in').addEventListener('click',()=>zoom(1.2));$('zoom-out').addEventListener('click',()=>zoom(1/1.2));$('reset').addEventListener('click',()=>{camera={yaw:1.25,pitch:1.04,zoom:1};governor.invalidate();});
-$('show-path').addEventListener('change',()=>governor.invalidate());date.addEventListener('change',loadDate);$('prev').addEventListener('click',()=>changeDay(-1));$('next').addEventListener('click',()=>changeDay(1));$('today-reset').addEventListener('click',()=>{date.value='2026-01-01';loadDate();});
+$('zoom-in').addEventListener('click',()=>zoom(1.2));$('zoom-out').addEventListener('click',()=>zoom(1/1.2));$('reset').addEventListener('click',()=>{camera={yaw:-1.30,pitch:-.35,zoom:1};governor.invalidate();});
+for(const id of ['show-path','show-velocity','show-vehicle'])$(id).addEventListener('change',()=>governor.invalidate());date.addEventListener('change',loadDate);$('prev').addEventListener('click',()=>changeDay(-1));$('next').addEventListener('click',()=>changeDay(1));$('today-reset').addEventListener('click',()=>{date.value='2026-01-01';loadDate();});
 new ResizeObserver(()=>governor.invalidate()).observe(scene);
 document.addEventListener('visibilitychange',()=>{if(document.hidden){pointer=null;governor.suspend();}else governor.resume();});
 canvas.addEventListener('webglcontextlost',event=>{event.preventDefault();pointer=null;governor.suspend();showError('Graphics context lost. Waiting for the browser to restore it.');});
