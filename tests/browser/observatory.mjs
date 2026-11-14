@@ -111,7 +111,14 @@ try{
   });
   assert.ok(fit.accepted&&Math.abs(fit.p[0])<fit.aspect&&Math.abs(fit.p[1])<1,'distant craft must fit the viewport');
 
+  // Rejected inputs and cancelled workers must not leave stale model results.
+  assert.equal(await page.evaluate(()=>odderonSetOrbit(null,3.986004418e14)),false);
+  assert.equal(await page.locator('#trajectory-status').textContent(),'L3 · NOT CALCULATED');
+  assert.equal(await page.evaluate(()=>odderonDiagnostics.trajectory.samples),0);
+  assert.equal(await page.evaluate(()=>odderonSetOrbit({position:[7e6,0,0],velocity:[0,7600,2000]},3.986004418e14)),true);
   await page.locator('#show-orbit').uncheck();
+  assert.equal(await page.locator('#trajectory-status').textContent(),'L3 · NOT CALCULATED');
+  assert.equal(await page.evaluate(()=>odderonDiagnostics.trajectory.pending),false);
   const beforeDate=await page.locator('#distance').textContent();await page.locator('#next').click();assert.notEqual(await page.locator('#distance').textContent(),beforeDate);
   assert.equal(await page.locator('#date').inputValue(),'2026-01-02');
   await page.locator('#date').fill('2020-01-01');await page.locator('#date').dispatchEvent('change');assert.equal(await page.locator('#prev').isDisabled(),true);

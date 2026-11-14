@@ -19,7 +19,7 @@ const columns=matrix=>[matrix[0],matrix[3],matrix[6],matrix[1],matrix[4],matrix[
 function loadDate(){
   // Calendar arithmetic only: selected midnight is explicitly TDB, not UTC.
   const time=Date.parse(`${date.value}T00:00:00Z`), seconds=(time-J2000_UNIX_MS)/1000;
-  if(!Number.isFinite(time)||!wasm.view_load(seconds)){if(trajectoryWorker){trajectoryWorker.terminate();trajectoryWorker=null;}if(activeOrbit)activeOrbit.perturbed=null;snapshot=null;canvas.style.visibility='hidden';overlay.style.visibility='hidden';$('distance').textContent='—';$('speed').textContent='—';$('prev').disabled=true;$('next').disabled=true;$('render-status').textContent='NO VALID DATE';if(!contextLost)showError('Date outside the available ephemeris (2020–2035 TDB).');return false;}
+  if(!Number.isFinite(time)||!wasm.view_load(seconds)){if(trajectoryWorker){trajectoryWorker.terminate();trajectoryWorker=null;}if(activeOrbit){activeOrbit.perturbed=null;activeOrbit.finalMass=null;activeOrbit.maxRadius=activeOrbit.idealMaxRadius;}$('trajectory-status').textContent='L3 · NOT CALCULATED';snapshot=null;canvas.style.visibility='hidden';overlay.style.visibility='hidden';$('distance').textContent='—';$('speed').textContent='—';$('prev').disabled=true;$('next').disabled=true;$('render-status').textContent='NO VALID DATE';if(!contextLost)showError('Date outside the available ephemeris (2020–2035 TDB).');return false;}
   const value=i=>wasm.view_value(i), count=value(27), samples=[];
   for(let i=0;i<count;i++)samples.push({time:value(28+4*i),pos:[value(29+4*i),value(30+4*i),value(31+4*i)]});
   snapshot={seconds,moon:[value(0),value(1),value(2)],velocity:[value(3),value(4),value(5)],sun:[value(6),value(7),value(8)],earthOrientation:columns(Array.from({length:9},(_,i)=>value(9+i))),moonOrientation:columns(Array.from({length:9},(_,i)=>value(18+i))),samples};
@@ -32,7 +32,7 @@ function loadDate(){
 // numerical propagation. A failed update clears stale orbit geometry.
 function setOrbit(state,mu,soi=149_598_023_000*(3.986004418e14/1.3271244004127942e20)**0.4,simulation={}){
   if(trajectoryWorker){trajectoryWorker.terminate();trajectoryWorker=null;}
-  activeOrbit=null;invalidateWorld();
+  activeOrbit=null;$('trajectory-status').textContent='L3 · NOT CALCULATED';invalidateWorld();
   if(!simulation||typeof simulation!=='object')return false;
   const duration=simulation.duration??86400,mass=simulation.mass??500,burn=simulation.burn??null;
   if(!Number.isFinite(duration)||duration<=0||duration>864000||!Number.isFinite(mass)||mass<=0)return false;
@@ -45,13 +45,13 @@ function setOrbit(state,mu,soi=149_598_023_000*(3.986004418e14/1.327124400412794
   const markers=[];for(let i=0;i<6;i++){const index=541+4*i;if(wasm.orbit_value(index))markers.push({name:['PE','AP','AN','DN','SOI IN','SOI OUT'][i],pos:[wasm.orbit_value(index+1),wasm.orbit_value(index+2),wasm.orbit_value(index+3)]});}
   const position=state.position.map(Number), maxRadius=Math.max(Math.hypot(...position),...points.map(p=>Math.hypot(...p)),...markers.map(m=>Math.hypot(...m.pos)));
   if(!Number.isFinite(maxRadius)||!Number.isFinite(maxRadius*2.2))return false;
-  activeOrbit={points,markers,closed:count>0,position,velocity:state.velocity.map(Number),mu,maxRadius,perturbed:null,simulation};invalidateWorld();if($('show-orbit').checked)startTrajectory();return true;
+  activeOrbit={points,markers,closed:count>0,position,velocity:state.velocity.map(Number),mu,maxRadius,idealMaxRadius:maxRadius,perturbed:null,simulation};invalidateWorld();if($('show-orbit').checked)startTrajectory();return true;
 }
 window.odderonSetOrbit=setOrbit;
 function startTrajectory(){
   if(trajectoryWorker){trajectoryWorker.terminate();trajectoryWorker=null;}
   if(!snapshot||!activeOrbit||!$('show-orbit').checked)return;
-  const orbit=activeOrbit;orbit.perturbed=null;orbit.finalMass=null;invalidateOverlay();
+  const orbit=activeOrbit;orbit.perturbed=null;orbit.finalMass=null;orbit.maxRadius=orbit.idealMaxRadius;invalidateWorld();
   const worker=new Worker('./trajectory-worker.js',{type:'module'});trajectoryWorker=worker;
   worker.onmessage=({data})=>{if(trajectoryWorker!==worker)return;worker.terminate();trajectoryWorker=null;
     if(activeOrbit!==orbit)return;
@@ -140,7 +140,7 @@ scene.addEventListener('pointerup',endPointer);scene.addEventListener('pointerca
 scene.addEventListener('wheel',e=>{e.preventDefault();zoom(Math.exp(-Math.max(-100,Math.min(100,e.deltaY))*.002));},{passive:false});
 scene.addEventListener('keydown',e=>{let used=true;switch(e.key){case 'ArrowLeft':camera.yaw-=.12;break;case 'ArrowRight':camera.yaw+=.12;break;case 'ArrowUp':camera.pitch=Math.max(-1.52,camera.pitch-.12);break;case 'ArrowDown':camera.pitch=Math.min(1.52,camera.pitch+.12);break;case '+':case '=':zoom(1.2);break;case '-':zoom(1/1.2);break;default:used=false;}if(used){e.preventDefault();invalidateWorld();}});
 $('zoom-in').addEventListener('click',()=>zoom(1.2));$('zoom-out').addEventListener('click',()=>zoom(1/1.2));$('reset').addEventListener('click',()=>{camera={yaw:-1.30,pitch:-.35,zoom:1};invalidateWorld();});
-for(const id of ['show-path','show-velocity'])$(id).addEventListener('change',invalidateOverlay);$('show-vehicle').addEventListener('change',invalidateWorld);$('show-orbit').addEventListener('change',()=>{invalidateWorld();if($('show-orbit').checked)startTrajectory();else if(trajectoryWorker){trajectoryWorker.terminate();trajectoryWorker=null;}});date.addEventListener('change',loadDate);$('prev').addEventListener('click',()=>changeDay(-1));$('next').addEventListener('click',()=>changeDay(1));$('today-reset').addEventListener('click',()=>{date.value='2026-01-01';loadDate();});
+for(const id of ['show-path','show-velocity'])$(id).addEventListener('change',invalidateOverlay);$('show-vehicle').addEventListener('change',invalidateWorld);$('show-orbit').addEventListener('change',()=>{invalidateWorld();if($('show-orbit').checked)startTrajectory();else {if(trajectoryWorker){trajectoryWorker.terminate();trajectoryWorker=null;}if(activeOrbit){activeOrbit.perturbed=null;activeOrbit.finalMass=null;activeOrbit.maxRadius=activeOrbit.idealMaxRadius;}$('trajectory-status').textContent='L3 · NOT CALCULATED';}});date.addEventListener('change',loadDate);$('prev').addEventListener('click',()=>changeDay(-1));$('next').addEventListener('click',()=>changeDay(1));$('today-reset').addEventListener('click',()=>{date.value='2026-01-01';loadDate();});
 new ResizeObserver(invalidateWorld).observe(scene);
 // A monitor or browser zoom change can alter pixel density without resizing the
 // CSS box. Re-arm a one-shot media query rather than polling while idle.

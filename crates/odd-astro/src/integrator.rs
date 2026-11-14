@@ -91,20 +91,22 @@ where
         };
         let remaining = boundary - t;
         h = h.min(max_step).min(remaining);
-        if h <= 0.0 || t + h == t {
+        // Integrate over the represented time interval, not the unrounded
+        // proposal: at large epochs t+h can differ significantly from h.
+        // Respect max_step even when rounding would overshoot it.
+        let mut next_t = if h == remaining {
+            boundary
+        } else {
+            (t + h).min(boundary)
+        };
+        if next_t - t > max_step {
+            next_t = next_down(next_t);
+        }
+        if next_t <= t {
             return Err(IntegrationError::StepUnderflow);
         }
-        // Rounding can place t+h exactly on the boundary even when h is
-        // smaller than boundary-t. Use the actual represented interval;
-        // never label a shorter integration step as the boundary state.
-        let landed = h == remaining || t + h >= boundary;
-        if landed {
-            if remaining > max_step {
-                return Err(IntegrationError::StepUnderflow);
-            }
-            h = remaining;
-        }
-        let next_t = if landed { boundary } else { t + h };
+        h = next_t - t;
+        let landed = next_t == boundary;
         let at_event = landed && event < events.len() && boundary == events[event];
         // End-stage samples use the left limit at a discontinuity. The next
         // step starts at the exact event and evaluates the new force law.
@@ -311,6 +313,31 @@ mod tests {
         let end = out.sample(boundary).unwrap();
         assert!((end.velocity[0] - 1.0).abs() < 1e-12);
         assert!((end.position[0] - 0.5).abs() < 1e-12);
+    }
+    #[test]
+    fn rounded_interior_steps_integrate_the_represented_interval() {
+        let t = 281_474_976_710_656.0;
+        let initial = Keyframe {
+            time: t,
+            position: [0.0; 3],
+            velocity: [0.0; 3],
+            mass: 1.0,
+        };
+        let mut o = options();
+        o.initial_step = 0.1;
+        o.max_step = 0.1;
+        let out = integrate(initial, t + 2.0, &[], o, |_, _, _, _| {
+            Ok(([1.0, 0.0, 0.0], 0.0))
+        })
+        .unwrap();
+        let end = out.sample(t + 2.0).unwrap();
+        assert!((end.velocity[0] - 2.0).abs() < 1e-12);
+        assert!((end.position[0] - 2.0).abs() < 1e-12);
+        for i in 1..out.len() {
+            assert!(
+                out.keyframe(i).unwrap().time - out.keyframe(i - 1).unwrap().time <= o.max_step
+            );
+        }
     }
     #[test]
     fn event_splits_force_and_mass_rate() {
