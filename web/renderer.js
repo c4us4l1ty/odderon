@@ -1,4 +1,5 @@
 import { vertex, sceneFragment, paintFragment } from './shaders.js';
+import { renderSize } from './resolution.js';
 
 function program(gl, frag) {
   function shader(type, source) { const s=gl.createShader(type); gl.shaderSource(s,source); gl.compileShader(s); if (!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw Error(gl.getShaderInfoLog(s)); return s; }
@@ -25,9 +26,8 @@ export class Renderer {
   draw(model, quality) {
     const gl=this.gl, rect=this.canvas.getBoundingClientRect(); if(rect.width<1||rect.height<1)return;
     // Bound pixel cost and memory, while retaining half linear resolution in motion.
-    const dpr=Math.min(window.devicePixelRatio||1,1.5), factor=quality==='interactive'?.5:1;
-    const scale=Math.min(dpr*factor,2048/Math.max(rect.width,rect.height));
-    this.size(Math.max(1,Math.round(rect.width*scale)),Math.max(1,Math.round(rect.height*scale)));
+    const [width,height]=renderSize(rect.width,rect.height,window.devicePixelRatio,quality);
+    this.size(width,height);
     const w=this.width,h=this.height; gl.viewport(0,0,w,h);gl.bindVertexArray(this.vao);gl.bindFramebuffer(gl.FRAMEBUFFER,this.fbo);gl.drawBuffers([gl.COLOR_ATTACHMENT0,gl.COLOR_ATTACHMENT1]);gl.useProgram(this.scene);
     const set=(name,method,...args)=>gl[method](gl.getUniformLocation(this.scene,name),...args);
     set('uResolution','uniform2f',w,h);set('uEarth','uniform4fv',model.earth);set('uMoon','uniform4fv',model.moon);
