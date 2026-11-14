@@ -93,6 +93,7 @@ jobs:
           set +e
           (npm test && npm run test:browser && ODDERON_CPU_REPORT_ONLY=1 ODDERON_BASELINE=1 npm run test:idle && ODDERON_PINNED_CHROMIUM=1 npm run test:idle) 2>&1 | tee /tmp/odderon-browser.log
           status=${PIPESTATUS[0]}
+          while IFS= read -r line; do echo "::notice::$line"; done < <(grep -E '^(Blank-tab control|Idle after camera drag|CPU report only)' /tmp/odderon-browser.log)
           if [ "$status" -ne 0 ]; then
             python3 -c 'from pathlib import Path; s="\n".join(Path("/tmp/odderon-browser.log").read_text().splitlines()[-50:]); print("::error::" + s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))'
           fi
