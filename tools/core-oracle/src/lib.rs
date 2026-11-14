@@ -228,29 +228,108 @@ pub extern "C" fn oracle_byte(index: u32) -> u32 {
 }
 
 /// Canonical final-state hash for a ten-day perturbed, event-split orbit.
-pub fn integrator_fingerprint() -> [u8;32] {
-    use odd_astro::{force_model::{Environment,ForceModel,Radiation,ThirdBody,Zonal},integrator::Options,perturb::{burn::Burn,drag::DragParameters},spline::Keyframe};
-    let eph=odd_ephem::Ephemeris::bundled().unwrap();
-    let model=ForceModel{mu:3.986_004_418e14,zonal:Some(Zonal{pole:[0.0,0.0,1.0],radius:6_378_137.0,j2:1.082_626_68e-3}),
-        drag:Some(DragParameters{pole:[0.0,0.0,1.0],omega:[0.0,0.0,7.292_115e-5],equatorial_radius:6_378_137.0,polar_radius:6_356_752.314,cd:2.2,area:4.0,mass:500.0}),
-        radiation:Some(Radiation{cr:1.3,area:4.0,central_radius:6_378_137.0}),third_body:true,
-        burn:Some(Burn{start:350_000.0,end:350_600.0,force_newtons:[0.0,0.02,0.0],specific_impulse_seconds:450.0})};
-    let initial=Keyframe{time:0.0,position:[7_000_000.0,0.0,0.0],velocity:[0.0,7_500.0,1000.0],mass:500.0};
-    let end=864_000.0;
-    let trajectory=model.propagate(initial,end,Options{relative_tolerance:1e-9,absolute_tolerance:1e-9,initial_step:10.0,max_step:120.0,max_steps:1_000_000},|t|{
-        let epoch=Epoch::new(820_497_600,t).unwrap();
-        let sun=eph.state(odd_ephem::Body::Sun,odd_ephem::Body::Earth,epoch).unwrap().state.position_m;
-        let moon=eph.state(odd_ephem::Body::Moon,odd_ephem::Body::Earth,epoch).unwrap().state.position_m;
-        Ok(Environment{sun:ThirdBody{position:sun,mu:1.327_124_400_412_794_2e20,radius:695_700_000.0},companion:ThirdBody{position:moon,mu:4.902_800_118e12,radius:1_737_400.0}})
-    }).unwrap();
-    let state=trajectory.sample(end).unwrap();
-    let values=[state.position[0].to_bits(),state.position[1].to_bits(),state.position[2].to_bits(),state.velocity[0].to_bits(),state.velocity[1].to_bits(),state.velocity[2].to_bits(),state.mass.to_bits()];
-    canonical_hash(1,&values).unwrap()
+pub fn integrator_fingerprint() -> [u8; 32] {
+    use odd_astro::{
+        force_model::{Environment, ForceModel, Radiation, ThirdBody, Zonal},
+        integrator::Options,
+        perturb::{burn::Burn, drag::DragParameters},
+        spline::Keyframe,
+    };
+    let eph = odd_ephem::Ephemeris::bundled().unwrap();
+    let model = ForceModel {
+        mu: 3.986_004_418e14,
+        zonal: Some(Zonal {
+            pole: [0.0, 0.0, 1.0],
+            radius: 6_378_137.0,
+            j2: 1.082_626_68e-3,
+        }),
+        drag: Some(DragParameters {
+            pole: [0.0, 0.0, 1.0],
+            omega: [0.0, 0.0, 7.292_115e-5],
+            equatorial_radius: 6_378_137.0,
+            polar_radius: 6_356_752.314,
+            cd: 2.2,
+            area: 4.0,
+            mass: 500.0,
+        }),
+        radiation: Some(Radiation {
+            cr: 1.3,
+            area: 4.0,
+            central_radius: 6_378_137.0,
+        }),
+        third_body: true,
+        burn: Some(Burn {
+            start: 350_000.0,
+            end: 350_600.0,
+            force_newtons: [0.0, 0.02, 0.0],
+            specific_impulse_seconds: 450.0,
+        }),
+    };
+    let initial = Keyframe {
+        time: 0.0,
+        position: [7_000_000.0, 0.0, 0.0],
+        velocity: [0.0, 7_500.0, 1000.0],
+        mass: 500.0,
+    };
+    let end = 864_000.0;
+    let trajectory = model
+        .propagate(
+            initial,
+            end,
+            Options {
+                relative_tolerance: 1e-9,
+                absolute_tolerance: 1e-9,
+                initial_step: 10.0,
+                max_step: 120.0,
+                max_steps: 1_000_000,
+            },
+            |t| {
+                let epoch = Epoch::new(820_497_600, t).unwrap();
+                let sun = eph
+                    .state(odd_ephem::Body::Sun, odd_ephem::Body::Earth, epoch)
+                    .unwrap()
+                    .state
+                    .position_m;
+                let moon = eph
+                    .state(odd_ephem::Body::Moon, odd_ephem::Body::Earth, epoch)
+                    .unwrap()
+                    .state
+                    .position_m;
+                Ok(Environment {
+                    sun: ThirdBody {
+                        position: sun,
+                        mu: 1.327_124_400_412_794_2e20,
+                        radius: 695_700_000.0,
+                    },
+                    companion: ThirdBody {
+                        position: moon,
+                        mu: 4.902_800_118e12,
+                        radius: 1_737_400.0,
+                    },
+                })
+            },
+        )
+        .unwrap();
+    let state = trajectory.sample(end).unwrap();
+    let values = [
+        state.position[0].to_bits(),
+        state.position[1].to_bits(),
+        state.position[2].to_bits(),
+        state.velocity[0].to_bits(),
+        state.velocity[1].to_bits(),
+        state.velocity[2].to_bits(),
+        state.mass.to_bits(),
+    ];
+    canonical_hash(1, &values).unwrap()
 }
 
-#[cfg(target_arch="wasm32")]
+#[cfg(target_arch = "wasm32")]
 #[no_mangle]
-pub extern "C" fn integrator_oracle_byte(index:u32)->u32 {
-    static FINGERPRINT:std::sync::OnceLock<[u8;32]>=std::sync::OnceLock::new();
-    FINGERPRINT.get_or_init(integrator_fingerprint).get(index as usize).copied().map_or(256,u32::from)
+pub extern "C" fn integrator_oracle_byte(index: u32) -> u32 {
+    static FINGERPRINT: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
+    FINGERPRINT
+        .get_or_init(integrator_fingerprint)
+        .get(index as usize)
+        .copied()
+        .map_or(256, u32::from)
 }
