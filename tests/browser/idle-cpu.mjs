@@ -70,5 +70,9 @@ try{
   assert.equal(await page.evaluate(()=>odderonDiagnostics.draws),draws,'frames rendered during idle window');
   assert.equal(await page.evaluate(()=>odderonDiagnostics.pendingFrame||odderonDiagnostics.pendingTimer),false,'scheduled work during idle window');
   console.log(`Idle after camera drag: 0 app frames, ${cpuSeconds.toFixed(6)} s CPU / ${wallSeconds.toFixed(3)} s wall = ${percent.toFixed(4)}% of one core; ${end.processes.length} processes, ${end.threads.size} threads. Calibration ${(Number(busy)/1e6).toFixed(1)} ms.`);
+  if(percent>=0.2){
+    const top=[...end.threads].map(([id,v])=>({id,ns:Number(v-start.threads.get(id))})).sort((a,b)=>b.ns-a.ns).slice(0,10);
+    for(const t of top){const [pid,,tid]=t.id.split(':');let name='unknown',cmd='unknown';try{name=readFileSync(`/proc/${pid}/task/${tid}/comm`,'utf8').trim();cmd=readFileSync(`/proc/${pid}/cmdline`,'utf8').replaceAll('\0',' ').slice(0,160);}catch{}console.log(`  ${(t.ns/1e6).toFixed(3)} ms ${name} (${cmd})`);}
+  }
   assert.ok(percent<0.2,`Browser process-tree CPU ${percent.toFixed(4)}% exceeds the <0.2% one-core gate`);
 }finally{if(browser)await browser.close();await new Promise(r=>server.close(r));}
