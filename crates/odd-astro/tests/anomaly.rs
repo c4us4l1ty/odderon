@@ -81,3 +81,24 @@ fn elliptic_kepler_round_trips_at_singular_limits() {
         Err(AnomalyError::InvalidInput)
     );
 }
+
+#[test]
+fn independent_satkit_elliptic_anomalies() {
+    use odd_astro::anomaly::{
+        elliptic_from_mean, elliptic_from_true, elliptic_mean, true_from_elliptic,
+    };
+    let mut count = 0;
+    for line in include_str!("../../../data/oracles/elliptic-anomaly-satkit.csv")
+        .lines()
+        .skip(1)
+    {
+        let row: Vec<f64> = line.split(',').map(|x| x.parse().unwrap()).collect();
+        let (e, anomaly, mean, nu) = (row[0], row[1], row[2], row[3]);
+        near(elliptic_mean(e, anomaly).unwrap(), mean, 2e-14);
+        near(elliptic_from_mean(e, mean).unwrap(), anomaly, 5e-14);
+        near(true_from_elliptic(e, anomaly).unwrap(), nu, 2e-14);
+        near(elliptic_from_true(e, nu).unwrap(), anomaly, 2e-14);
+        count += 1;
+    }
+    assert_eq!(count, 100);
+}

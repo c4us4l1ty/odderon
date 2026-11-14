@@ -60,10 +60,9 @@ its [CI run](https://github.com/c4us4l1ty/odderon/actions/runs/43577676948)
 passed. These checks cover the implemented contracts and selected reference
 cases, not all epochs, hardware, browsers, or future physics.
 
-The next roadmap item is **WP 1.1**, the analytical orbital-elements and
-patched-conics foundation. It should extend the existing ideal two-body and
-Hohmann code, validate edge cases and independent reference examples, and
-identify any tolerance or modeling assumptions honestly. Real orbit/apsis
+WP 1.1 extends the ideal two-body and Hohmann code with analytical elements,
+transfers and patched-conic building blocks. See [orbital-elements.md](orbital-elements.md)
+for validation, assumptions and remaining limitations. Real orbit/apsis
 visualization can follow when validated data is available; B-plane targeting
 requires additional physics. Revisit the Phase 0 coverage, orientation,
 precision and physical-device performance limits when the product needs them.

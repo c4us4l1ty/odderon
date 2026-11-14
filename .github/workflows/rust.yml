@@ -25,6 +25,8 @@ jobs:
             python3 -c 'from pathlib import Path; s="\n".join(Path("/tmp/odderon-cargo-test.log").read_text().splitlines()[-50:]); print("::error::" + s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))'
           fi
           exit "$status"
+      - name: Report warmed orbital conversion throughput (informational)
+        run: cargo run --release --locked -p odd-astro --example elements_benchmark
       - name: Reproduce the packed ephemeris from the pinned SPK subset
         env:
           GH_TOKEN: ${{ github.token }}
