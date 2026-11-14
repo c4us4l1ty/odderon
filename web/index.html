@@ -25,7 +25,7 @@
             <div class="scene-bottom"><span><span class="drag-icon">✥</span> DRAG TO ORBIT <span class="scene-hint"> · SCROLL TO ZOOM</span></span><span id="render-status">RENDERING ON DEMAND</span></div>
             <div id="error" class="error" role="alert" hidden></div>
           </div>
-          <div class="viewport-foot"><div><span class="scale-icon">◉</span><span><strong>Sizes enlarged for visibility</strong><small>Surface patterns are illustrative, not mapped terrain.</small></span></div><div class="view-controls"><button id="zoom-out" aria-label="Zoom out">−</button><button id="zoom-in" aria-label="Zoom in">+</button><button id="reset" class="reset">↺ <span>Reset view</span></button></div></div>
+          <div class="viewport-foot"><div><span class="scale-icon">◉</span><span><strong>Bodies shown at true scale</strong><small>Surface patterns are illustrative, not mapped terrain.</small></span></div><div class="view-controls"><button id="zoom-out" aria-label="Zoom out">−</button><button id="zoom-in" aria-label="Zoom in">+</button><button id="reset" class="reset">↺ <span>Reset view</span></button></div></div>
         </section>
         <aside class="sidebar" aria-label="Observation details">
           <div class="side-heading"><div><div class="section-label">OBSERVATION 001</div><h2>Our celestial<br><em>neighborhood.</em></h2></div><span class="orbit-icon">✳</span></div>
@@ -37,7 +37,7 @@
           <label class="toggle-row"><span><strong>Show Moon’s path</strong><small>Sampled geometric positions</small></span><input id="show-path" type="checkbox" checked><span class="switch" aria-hidden="true"></span></label>
           <label class="toggle-row extra-toggle"><span><strong>Show velocity direction</strong><small>Current Moon motion relative to Earth</small></span><input id="show-velocity" type="checkbox"><span class="switch" aria-hidden="true"></span></label>
           <label class="toggle-row extra-toggle"><span><strong>Show vehicle study</strong><small>Illustrative sketch, not a mission</small></span><input id="show-vehicle" type="checkbox"><span class="switch" aria-hidden="true"></span></label>
-          <div class="side-note"><span>✦</span><p><strong>A note on scale</strong><br>The bodies are enlarged so you can see them. Their center positions and the path use the same spatial scale.</p></div>
+          <div class="side-note"><span>✦</span><p><strong>A note on scale</strong><br>Bodies, positions and paths use the same spatial scale. A reticle marks a body when it is too small to see clearly.</p></div>
         </aside>
       </div>
       <section class="timeline" aria-label="Observation date"><div class="time-title"><span class="section-label">TRAVEL THROUGH TIME</span><span class="time-sub">A still moment, anywhere in our dataset</span></div><div class="time-controls"><button id="prev" disabled aria-label="Previous day">←</button><label for="date">OBSERVATION DATE <span class="time-scale">TDB</span></label><input id="date" disabled type="date" value="2026-01-01" min="2020-01-01" max="2035-12-31"><button id="next" disabled aria-label="Next day">→</button><button id="today-reset" disabled class="date-reset">Return to 2026</button></div><p class="time-explain">Dates are midnight in TDB, a time scale used for solar-system calculations—not your local time. Coverage: 2020–2035.</p></section>

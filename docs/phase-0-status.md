@@ -40,8 +40,9 @@ performance on every device, or a waiver of scientific accuracy in later work.
 
 - Delivered: procedural WebGL2 Earth–Moon view with painterly filtering and a
   separate vector overlay, interactive camera, and demand-driven rendering.
-  The sampled Moon path and velocity come from the ephemeris; the surfaces and
-  optional vehicle are illustrations, not a terrain map or simulated mission.
+  The sampled Moon path and velocity come from the ephemeris; physical body
+  radii use the same scale as their positions. Surfaces and the optional
+  vehicle are illustrations, not a terrain map or simulated mission.
 - Limit: spacecraft trajectory ellipses, computed apsides and B-plane
   solutions are not displayed. Reusable drawing primitives exist, but real
   orbital and targeting data must be supplied by later physics work; they must

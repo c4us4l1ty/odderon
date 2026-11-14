@@ -37,8 +37,10 @@ controls select a midnight **TDB**, not local time or UTC. The date range is
   notes, **not** measured Earth orientation parameters or the DE440 lunar
   principal-axes frame. Light is a simple diffuse model without eclipses or
   physical atmosphere scattering.
-* Each radius is enlarged 7.5 times while centers and path remain to the same
-  scale; body shapes are spheres, not reference ellipsoids or topography.
+* The spherical body radii, centers and path use the same spatial scale
+  (Earth 6,378,137 m, Moon 1,737,400 m). Sub-eight-pixel diameters get
+  screen-space locator reticles. Shapes are spheres, not reference ellipsoids
+  or topography.
   Procedural colors, clouds, polar pigment, atmospheric halo and brushwork are
   artistic stand-ins—not a map of land, weather or lunar surface. The background
   has paper grain but no fabricated catalog of stars. The optional little

@@ -1,6 +1,7 @@
 import { Governor } from './governor.js';
 import { Renderer } from './renderer.js';
-import { polyline, vector } from './overlay.js';
+import { polyline, vector, reticle } from './overlay.js';
+import { EARTH_RADIUS_M, MOON_RADIUS_M, projectedRadius, needsReticle } from './scale.js';
 
 const $=id=>document.getElementById(id);
 const scene=$('scene'), canvas=$('world'), overlay=$('overlay'), date=$('date'), error=$('error');
@@ -32,7 +33,7 @@ function geometry(){
   const half=snapshot.moon.map(x=>x/2), span=520e6/zoom;
   const project=v=>[2*dot(subtract(v,half),right)/span,2*dot(subtract(v,half),up)/span,dot(subtract(v,half),view)/span];
   const e=project([0,0,0]),m=project(snapshot.moon);
-  return {right,up,view,project,earth:[e[0],e[1],2*6378136.6*7.5/span,e[2]],moon:[m[0],m[1],2*1737400*7.5/span,m[2]],earthLight:norm(snapshot.sun),moonLight:norm(subtract(snapshot.sun,snapshot.moon)),earthOrientation:snapshot.earthOrientation,moonOrientation:snapshot.moonOrientation,vehicle:$('show-vehicle').checked};
+  return {right,up,view,project,earth:[e[0],e[1],projectedRadius(EARTH_RADIUS_M,span),e[2]],moon:[m[0],m[1],projectedRadius(MOON_RADIUS_M,span),m[2]],earthLight:norm(snapshot.sun),moonLight:norm(subtract(snapshot.sun,snapshot.moon)),earthOrientation:snapshot.earthOrientation,moonOrientation:snapshot.moonOrientation,vehicle:$('show-vehicle').checked};
 }
 function draw(quality){
   if(!snapshot||!renderer)return;
@@ -65,7 +66,8 @@ function drawOverlay(model,rect){
   function label(body,name,detail){
     const [x,y]=pixel(body),radius=body[2]*rect.height/2;
     if(x < -radius||x>rect.width+radius||y < -radius||y>rect.height+radius)return;
-    const side=x+radius+140>rect.width?-1:1, tx=x+side*(radius+16),ty=Math.max(42,Math.min(rect.height-40,y-radius*.22));
+    if(needsReticle(body[2],rect.height))reticle(ctx,[x,y]);
+    const side=x+radius+140>rect.width?-1:1, tx=x+side*(Math.max(radius,6)+16),ty=Math.max(42,Math.min(rect.height-40,y-radius*.22));
     ctx.textAlign=side===1?'left':'right';ctx.strokeStyle='rgba(205,223,203,.55)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x+side*radius*.76,y-radius*.3);ctx.lineTo(tx-side*5,ty);ctx.stroke();
     ctx.font='700 10px system-ui';ctx.letterSpacing='1.2px';ctx.fillStyle='#dce8d5';ctx.fillText(name,tx,ty-3);ctx.font='10px system-ui';ctx.letterSpacing='0px';ctx.fillStyle='#91a89a';ctx.fillText(detail,tx,ty+11);ctx.textAlign='left';
   }
