@@ -284,10 +284,17 @@ impl Ephemeris {
                 for i in 0..3 {
                     let delta = result.position_m[i] - a.position_m[i];
                     result.velocity_m_s[i] = a.velocity_m_s[i]
-                        + w * (result.velocity_m_s[i] - a.velocity_m_s[i]) + dw * delta;
+                        + w * (result.velocity_m_s[i] - a.velocity_m_s[i])
+                        + dw * delta;
                     result.position_m[i] = a.position_m[i] + w * delta;
                 }
-                return Ok(EphemerisState { target, center, epoch, model: EphemerisModel::Blended, state: result });
+                return Ok(EphemerisState {
+                    target,
+                    center,
+                    epoch,
+                    model: EphemerisModel::Blended,
+                    state: result,
+                });
             }
         }
         Ok(EphemerisState {
