@@ -62,7 +62,7 @@ fn bounded_days(epoch: Epoch) -> Result<f64, OrientationError> {
 fn orientation(ra_deg: f64, dec_deg: f64, w_deg: f64) -> BodyOrientation {
     let ra = ra_deg.to_radians().rem_euclid(TAU);
     let dec = dec_deg.to_radians();
-    let w = w_deg.to_radians().rem_euclid(TAU);
+    let w = w_deg.rem_euclid(360.0).to_radians();
     let (sa, ca) = (libm::sin(ra), libm::cos(ra));
     let (sd, cd) = (libm::sin(dec), libm::cos(dec));
     let (sw, cw) = (libm::sin(w), libm::cos(w));
@@ -89,6 +89,20 @@ pub fn sun_orientation(epoch: Epoch) -> Result<BodyOrientation, OrientationError
     let d = bounded_days(epoch)?;
     Ok(orientation(286.13, 63.87, 84.176 + 14.18440 * d))
 }
+/// Approximate IAU_EARTH orientation from the 2009 model in NAIF pck00011.
+/// This is a low-accuracy visualization model, NOT a substitute for an
+/// Earth-orientation-parameter-based ITRF transformation. NAIF warns its
+/// prime-meridian error is at least 150 arcseconds; it does not use UT1.
+pub fn earth_approx_orientation(epoch: Epoch) -> Result<BodyOrientation, OrientationError> {
+    let d = bounded_days(epoch)?;
+    let t = d / 36_525.0;
+    Ok(orientation(
+        -0.641 * t,
+        90.0 - 0.557 * t,
+        190.147 + 360.9856235 * d,
+    ))
+}
+
 /// IAU_MOON orientation for epochs within the bundled ephemeris coverage.
 pub fn moon_orientation(epoch: Epoch) -> Result<BodyOrientation, OrientationError> {
     let d = bounded_days(epoch)?;

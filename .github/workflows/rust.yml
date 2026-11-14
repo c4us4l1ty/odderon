@@ -13,6 +13,8 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
           components: rustfmt, clippy
+      - name: Verify bundled ephemeris checksum
+        run: echo '8f651100deaaffbae85ae4dac2a577b805993e8e4cfbe7dd8b710913ece36335  data/packed/de440s-2020-2036.ephb' | sha256sum --check
       - name: Run workspace tests
         shell: bash
         run: |

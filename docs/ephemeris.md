@@ -99,12 +99,15 @@ mean-Earth frame. The Sun's rotating meridian is conventional; the plasma
 rotates differentially. These models are restricted to the shipped coverage.
 CSPICE frame matrices check the implementation.
 
-For Earth, `earth_mean_angles` computes IAU 2006 **mean** sidereal angle and
+For Earth, `earth_approx_orientation` supplies the NAIF IAU_EARTH low-accuracy
+visualization model; NAIF warns its prime-meridian error is at least 150
+arcseconds. It is not UT1-based and must not be used as a precise terrestrial
+frame. `earth_mean_angles` separately computes IAU 2006 **mean** sidereal angle and
 mean obliquity from separately supplied UT1 and TT days, checked against ERFA.
 GMST is not *apparent* sidereal time: the latter needs nutation. A true
 terrestrial-to-celestial transform additionally needs measured Earth orientation
 parameters, polar motion, precession and nutation. Neither those measurements
-nor a complete Earth orientation matrix are provided; do not treat GMST alone as
+nor a high-accuracy Earth orientation matrix are provided; do not treat GMST alone as
 an accurate ICRF Earth-fixed transform. UT1 cannot be inferred exactly from TDB
 or UTC, and no future Earth orientation is known exactly. This is a deliberate
 correction to the blueprint's conflation of “true” rotation and GMST.

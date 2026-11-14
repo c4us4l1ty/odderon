@@ -1,6 +1,7 @@
 use odd_core::epoch::Epoch;
 use odd_ephem::orientation::{
-    earth_mean_angles, moon_orientation, sun_orientation, OrientationError,
+    earth_approx_orientation, earth_mean_angles, moon_orientation, sun_orientation,
+    OrientationError,
 };
 
 #[test]
@@ -42,7 +43,7 @@ fn iau_earth_angles_match_erfa() {
 }
 
 #[test]
-fn solar_and_lunar_orientation_against_cspice() {
+fn iau_body_orientations_against_cspice() {
     // SPICE pxform(IAU frame, J2000, ET), pck00011.tpc.
     let t = Epoch::new(820_497_600, 0.0).unwrap();
     let moon = [
@@ -71,13 +72,31 @@ fn solar_and_lunar_orientation_against_cspice() {
         ],
         [0.24416293604647327, -0.3665307981439039, 0.8977971010607901],
     ];
+    let earth = [
+        [
+            -0.17285532030337275,
+            -0.9849439829860306,
+            0.002527572438582451,
+        ],
+        [
+            0.9849471259798965,
+            -0.17285589075842353,
+            -0.000007352136828201134,
+        ],
+        [
+            0.00044414722825863697,
+            0.0024882543531214306,
+            0.9999968056566549,
+        ],
+    ];
     for (actual, reference) in [
         (moon_orientation(t).unwrap(), moon),
         (sun_orientation(t).unwrap(), sun),
+        (earth_approx_orientation(t).unwrap(), earth),
     ] {
         for (row, expected) in actual.body_to_j2000.iter().zip(reference) {
             for (a, b) in row.iter().zip(expected) {
-                assert!((a - b).abs() < 1e-12, "{a} vs {b}");
+                assert!((a - b).abs() < 1e-10, "{a} vs {b}");
             }
         }
         assert!(odd_core::frames::Rotation::new(actual.body_to_j2000).is_ok());

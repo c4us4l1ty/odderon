@@ -261,3 +261,81 @@ fn horizons_barycentric_states_2026() {
         assert!(difference(actual.velocity_m_s, v) < 0.0001, "{body:?}");
     }
 }
+
+#[test]
+fn horizons_relative_vectors_across_coverage() {
+    // Horizons DE441 geometric Moon relative Earth, sampled on Jan 1 TDB.
+    let fixtures = [
+        (
+            2_458_849.5,
+            [
+                390_185_639.340_002_8,
+                -76_522_595.353_777_91,
+                -70_724_654.104_453_4,
+            ],
+            [
+                248.727_717_750_581_4,
+                872.460_718_991_747_2,
+                340.065_126_450_2,
+            ],
+        ),
+        (
+            2_460_310.5,
+            [
+                -367_952_531.141_940_3,
+                142_774_973.142_968_2,
+                89_342_281.180_850_49,
+            ],
+            [
+                -409.767_849_622_084_9,
+                -779.797_775_074_751_7,
+                -402.679_166_164_837_1,
+            ],
+        ),
+        (
+            2_464_328.5,
+            [
+                -391_640_178.488_842_8,
+                -36_656_630.519_584_92,
+                -3_853_625.397_539_497,
+            ],
+            [
+                30.486_136_732_401_92,
+                -942.433_468_376_086_8,
+                -315.889_649_711_020_3,
+            ],
+        ),
+    ];
+    let ephem = Ephemeris::bundled().unwrap();
+    for (jd, p, v) in fixtures {
+        let state = ephem
+            .state(
+                Body::Moon,
+                Body::Earth,
+                Epoch::from_julian_date_tdb(jd).unwrap(),
+            )
+            .unwrap()
+            .state;
+        assert!(
+            difference(state.position_m, p) / norm(p) < 0.001,
+            "JD {jd} position"
+        );
+        assert!(
+            difference(state.velocity_m_s, v) / norm(v) < 0.001,
+            "JD {jd} velocity"
+        );
+    }
+}
+
+#[test]
+fn physical_parameters_are_named_and_barycenters_are_not_bodies() {
+    use odd_ephem::physical::physical;
+    assert!(physical(Body::SolarSystemBarycenter).is_none());
+    assert!(physical(Body::EarthMoonBarycenter).is_none());
+    assert_eq!(
+        physical(Body::Earth).unwrap().gravitational_parameter_m3_s2,
+        398_600.435_507e9
+    );
+    assert_eq!(physical(Body::Moon).unwrap().radii_m, [1_737_400.0; 3]);
+    assert_eq!(physical(Body::Sun).unwrap().radii_m, [695_700_000.0; 3]);
+}

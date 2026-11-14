@@ -101,6 +101,9 @@ pub fn fingerprint() -> [u8; 32] {
     let lunar_orientation =
         odd_ephem::orientation::moon_orientation(Epoch::new(820_497_600, 0.25).unwrap()).unwrap();
     let (gmst, obliquity) = odd_ephem::orientation::earth_mean_angles(9496.5, 9496.5008).unwrap();
+    let earth_orientation =
+        odd_ephem::orientation::earth_approx_orientation(Epoch::new(820_497_600, 0.25).unwrap())
+            .unwrap();
     let values = [
         century.seconds() as u64,
         century.fraction().to_bits(),
@@ -117,6 +120,7 @@ pub fn fingerprint() -> [u8; 32] {
         moon.velocity_m_s[2].to_bits(),
         lunar_orientation.body_to_j2000[0][0].to_bits(),
         lunar_orientation.body_to_j2000[2][2].to_bits(),
+        earth_orientation.body_to_j2000[0][0].to_bits(),
         gmst.to_bits(),
         obliquity.to_bits(),
     ];
@@ -126,7 +130,11 @@ pub fn fingerprint() -> [u8; 32] {
 #[cfg(target_arch = "wasm32")]
 #[no_mangle]
 pub extern "C" fn oracle_byte(index: u32) -> u32 {
-    fingerprint()
+    // The JS harness reads the hash one byte at a time. Decode the ephemeris
+    // and evaluate the fixture only once per WebAssembly instance.
+    static FINGERPRINT: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
+    FINGERPRINT
+        .get_or_init(fingerprint)
         .get(index as usize)
         .copied()
         .map_or(256, u32::from)
