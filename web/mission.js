@@ -117,7 +117,7 @@ $('split-kick').addEventListener('click',()=>{
 function toCanvas(point){const rect=canvas.getBoundingClientRect(),span=2.45*TARGET;return [rect.width/2+point[0]*rect.height/span,rect.height/2-(point[1]*plane[0]+point[2]*plane[1])*rect.height/span];}
 function draw(){
   const rect=canvas.getBoundingClientRect();if(!rect.width||!rect.height)return;const dpr=Math.min(devicePixelRatio||1,2);canvas.width=Math.round(rect.width*dpr);canvas.height=Math.round(rect.height*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,rect.width,rect.height);draws++;
-  const center=toCanvas([0,0]),earth=R*rect.height/(2.45*TARGET);
+  const center=toCanvas([0,0,0]),earth=R*rect.height/(2.45*TARGET);
   const gradient=ctx.createRadialGradient(center[0]-earth*.25,center[1]-earth*.3,earth*.04,center[0],center[1],earth);gradient.addColorStop(0,'#607f71');gradient.addColorStop(.75,'#254b4a');gradient.addColorStop(1,'#102b33');ctx.beginPath();ctx.arc(...center,earth,0,Math.PI*2);ctx.fillStyle=gradient;ctx.fill();ctx.strokeStyle='#6e9e8c';ctx.lineWidth=1;ctx.stroke();
   const line=(pts,color,dashed)=>{ctx.beginPath();ctx.setLineDash(dashed?[4,5]:[]);ctx.strokeStyle=color;ctx.lineWidth=2;pts.forEach((p,i)=>{const xy=toCanvas(p);if(i)ctx.lineTo(...xy);else ctx.moveTo(...xy);});ctx.stroke();ctx.setLineDash([]);};
   if(preview.length)line(preview.map(p=>p.state),'#70d7dc',true);if(actual)line(actual,'#e2bc79',false);
