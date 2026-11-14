@@ -94,6 +94,10 @@ try{
   assert.equal(await page.evaluate(()=>odderonDiagnostics.orbit.samples),180);
   await page.waitForFunction(()=>odderonDiagnostics.trajectory.samples===241&&!odderonDiagnostics.trajectory.pending,null,{timeout:120000});
   assert.match(await page.locator('#trajectory-status').textContent(),/24 HOUR MODEL/);
+  await page.waitForFunction(()=>odderonDiagnostics.quality.includes('RESTING')&&!odderonDiagnostics.pendingFrame,null,{timeout:60000});
+  const afterWorker=await page.evaluate(()=>({frames:window.testFrameCallbacks,messages:window.testWorkerMessages}));
+  await page.waitForTimeout(2000);
+  assert.deepEqual(await page.evaluate(()=>({frames:window.testFrameCallbacks,messages:window.testWorkerMessages})),afterWorker,'trajectory completion must return to idle');
   const fit=await page.evaluate(()=>{
     const radius=2e8,mu=3.986004418e14;
     const accepted=window.odderonSetOrbit({position:[radius,0,0],velocity:[0,Math.sqrt(mu/radius),0]},mu);

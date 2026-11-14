@@ -19,7 +19,7 @@ const columns=matrix=>[matrix[0],matrix[3],matrix[6],matrix[1],matrix[4],matrix[
 function loadDate(){
   // Calendar arithmetic only: selected midnight is explicitly TDB, not UTC.
   const time=Date.parse(`${date.value}T00:00:00Z`), seconds=(time-J2000_UNIX_MS)/1000;
-  if(!Number.isFinite(time)||!wasm.view_load(seconds)){snapshot=null;canvas.style.visibility='hidden';overlay.style.visibility='hidden';$('distance').textContent='—';$('speed').textContent='—';$('prev').disabled=true;$('next').disabled=true;$('render-status').textContent='NO VALID DATE';if(!contextLost)showError('Date outside the available ephemeris (2020–2035 TDB).');return false;}
+  if(!Number.isFinite(time)||!wasm.view_load(seconds)){if(trajectoryWorker){trajectoryWorker.terminate();trajectoryWorker=null;}if(activeOrbit)activeOrbit.perturbed=null;snapshot=null;canvas.style.visibility='hidden';overlay.style.visibility='hidden';$('distance').textContent='—';$('speed').textContent='—';$('prev').disabled=true;$('next').disabled=true;$('render-status').textContent='NO VALID DATE';if(!contextLost)showError('Date outside the available ephemeris (2020–2035 TDB).');return false;}
   const value=i=>wasm.view_value(i), count=value(27), samples=[];
   for(let i=0;i<count;i++)samples.push({time:value(28+4*i),pos:[value(29+4*i),value(30+4*i),value(31+4*i)]});
   snapshot={seconds,moon:[value(0),value(1),value(2)],velocity:[value(3),value(4),value(5)],sun:[value(6),value(7),value(8)],earthOrientation:columns(Array.from({length:9},(_,i)=>value(9+i))),moonOrientation:columns(Array.from({length:9},(_,i)=>value(18+i))),samples};
@@ -46,7 +46,8 @@ window.odderonSetOrbit=setOrbit;
 function startTrajectory(){
   if(trajectoryWorker){trajectoryWorker.terminate();trajectoryWorker=null;}
   if(!snapshot||!activeOrbit||!$('show-orbit').checked)return;
-  const orbit=activeOrbit, worker=new Worker('./trajectory-worker.js',{type:'module'});trajectoryWorker=worker;
+  const orbit=activeOrbit;orbit.perturbed=null;invalidateOverlay();
+  const worker=new Worker('./trajectory-worker.js',{type:'module'});trajectoryWorker=worker;
   worker.onmessage=({data})=>{if(trajectoryWorker!==worker)return;worker.terminate();trajectoryWorker=null;
     if(activeOrbit!==orbit)return;
     if(data.error){$('trajectory-status').textContent=data.error;return;}

@@ -43,21 +43,24 @@ controls select a midnight **TDB**, not local time or UTC. The date range is
   or topography.
   Procedural colors, clouds, polar pigment, atmospheric halo and brushwork are
   artistic stand-ins—not a map of land, weather or lunar surface. The background
-  has paper grain but no fabricated catalog of stars. The optional little
-  rocket and plume are a **screen-space illustration**, not a spacecraft,
-  engine simulation or a real position. The optional velocity arrow uses the
+  has paper grain but no fabricated catalog of stars. The optional spacecraft
+  glyph is placed at the supplied state but is not drawn to scale and does not
+  depict an engine simulation or a real mission. The optional velocity arrow uses the
   actual instantaneous relative velocity, scaled to one day: it is a tangent,
   not a propagated path. When its projected length is under one screen pixel,
   the arrow is suppressed and labeled as almost along the view direction.
-* An optional ideal Earth test orbit is calculated from an explicitly supplied
-  inertial state by `odd-astro` and drawn with 180 eccentric-anomaly samples.
-  PE/AP and node markers are omitted when undefined; open conics are shown as
-  finite segments, not as an impossible drawing of their infinite extent; the
-  segment expands to include the supplied state. The initial view fits the
-  sampled orbit and vehicle at zoom 1 (manual zoom may crop them). The
-  initial example is not a mission. `window.odderonSetOrbit` accepts a caller's
-  SI position/velocity and μ to replace it. This is an instantaneous two-body
-  conic, not a perturbed trajectory, collision check or B-plane solution.
+* The optional Earth test orbit displays an analytical conic as a dashed cyan
+  line and a 24-hour perturbed numerical path as a solid gold line. A one-shot
+  worker computes the latter; see [numerical-propagation.md](numerical-propagation.md)
+  for the force assumptions and limits. PE/AP and node markers are omitted when
+  undefined. For hyperbolas, the segment is limited by the supplied SOI and
+  by 97% of the asymptote angle. Inbound/outbound SOI markers identify the
+  actual SOI intersections; when the angular cap is tighter than the SOI, the
+  markers lie beyond the drawn curve. The default SOI is the Laplace Earth–Sun
+  approximation; `window.odderonSetOrbit(state, mu, soiRadius)` accepts a
+  caller-supplied radius in meters, or `null` to show the older uncapped segment.
+  The view auto-fits the trajectory, state and markers at zoom 1. These are
+  illustrations, not collision checks or mission predictions.
 
 ## Rendering and idle behavior
 
@@ -65,9 +68,10 @@ The WebGL2 world is rendered in one fullscreen pass, with a warm key,
 amber terminator, cool shadow and sun-gated limb rim. Cloud bands and their
 cast shadows are procedural decoration, not measured surface data. A separate
 Canvas2D layer draws labels and vectors. No external textures or 3D models are
-used. The optional screen-space vehicle is a decorative study, not a vessel
-at an orbital position; physically positioned spacecraft bounce light is not
-implemented yet.
+used. The optional vehicle is a screen-space glyph at the supplied orbit
+position; it uses geometrical Sun direction and approximate Lambert-sphere
+Earthshine and Moonshine. Its size, normals and materials are illustrative,
+not a physically resolved vehicle or photometric rendering.
 
 The governor coalesces invalidations. Dragging draws at half resolution; release
 coalesces into one final-resolution frame and then schedules no further frames.
@@ -81,8 +85,8 @@ guaranteed.
 `npm test` checks scheduling, scale, and the absence of recurring timers and CSS
 keyframes. `npm run test:browser` exercises actual WebGL2 and checks that both
 animation callback and worker message counts stay unchanged for two seconds.
-The application currently creates no workers. This is a **no-scheduled-work
-check**, not a measurement of browser, OS, or GPU utilization. The optional
+Trajectory workers are created only for requested calculations and terminate
+when done or superseded. This is a **no-scheduled-work check**, not a measurement of browser, OS, or GPU utilization. The optional
 Linux process-tree CPU diagnostic is `npm run test:idle`. Target laptop
 performance remains unmeasured.
 
