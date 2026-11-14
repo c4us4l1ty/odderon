@@ -21,16 +21,17 @@ astronomical units.
   is 648,000/π astronomical units per parsec; the
   [IAU 2012 astronomical unit](https://www.iau.org/static/resolutions/IAU2012_English.pdf)
   and the Julian year fix the relevant conversion.
-- A `GalacticState` retains an integer milliparsec anchor and an f64 meter
-  residual. A milliparsec is approximately 3.09 × 10¹³ m, so an anchor alone is
+- A `GalacticState` retains an integer milliparsec anchor and two f64 meter
+  terms. A milliparsec is approximately 3.09 × 10¹³ m, so an anchor alone is
   not a precise stellar position. Catalog data must provide its residual,
   epoch, uncertainty, and reference-frame metadata.
 - Local-to-local transforms go through their lowest common ancestor; a galactic
-  round trip retains a split anchor. The docking test shows sub-nanometer error
-  for the specified nearby sample at 8,000 ly. This is **not a universal
-  guarantee**: local f64 precision depends on distances to each frame origin,
-  and cross-system subtraction inevitably loses fine precision as separation
-  grows. Callers must choose suitable origins and accuracy budgets.
+  round trip retains the anchor and a compensated two-term position. This avoids
+  erasing docking-scale offsets when adding stellar residuals and AU-scale body
+  origins. The test includes both at 8,000 ly. This is **not a universal
+  guarantee**: rotations use f64 products, local states are eventually rounded
+  to one f64, and cross-system anchor conversion loses fine precision as
+  separation grows. Callers must choose suitable origins and accuracy budgets.
 - Camera f32 output is deliberately one-way. A general sub-nanometer round
   trip through f32 cannot be guaranteed; tests demonstrate values that become
   indistinguishable when rendered. Camera projections must not be fed back into
@@ -48,7 +49,8 @@ astronomical units.
 - TDB is represented as integer seconds plus a normalized fractional second
   since J2000.0 (JD 2451545.0 TDB), following
   [NAIF SPICE](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/FORTRAN/spicelib/str2et.html).
-  A single f64 Julian date loses fine precision before it reaches the API.
+  A single f64 Julian date loses fine precision before it reaches the API; a
+  two-part Julian date constructor is available for more precise input.
 - UTC input supports Gregorian dates from 1972-01-01 through 2026-12-31,
   including all historical positive leap seconds. Earlier and later dates
   explicitly fail rather than guessing an offset. The snapshot uses NAIF
@@ -62,8 +64,9 @@ astronomical units.
   bytes. **Only explicitly ordered, versioned schemas are canonical**: arbitrary
   `Serialize` implementations, unordered maps, NaNs, and signed zero can yield
   ambiguous or different encodings. Callers must validate and define their own
-  schema and float policy. A hash proves neither authorship nor real-world
-  validity.
+  schema and float policy. `CanonicalValue` provides an ordered-map and finite
+  float building block, but does not normalize Unicode or verify an arbitrary
+  schema. A hash proves neither authorship nor real-world validity.
 
 ## Verification and remaining scope
 

@@ -30,13 +30,13 @@ pub fn fingerprint() -> [u8; 32] {
         GalacticAnchor {
             milliparsecs: [2_452_809, 0, 0],
         },
-        mk([0.0; 3]),
+        mk([10_000_000_000_000.125, -7_000_000_000_000.5, 0.0]),
     )
     .unwrap();
     tree.add_frame(
         FrameId::BodyCentered(1),
         FrameId::StellarSystem(1),
-        mk([100_000.0, -500_000.0, 10.0]),
+        mk([149_597_870_700.123_44, -50_000_000_000.25, 10.0]),
     )
     .unwrap();
     tree.add_frame(
@@ -54,11 +54,19 @@ pub fn fingerprint() -> [u8; 32] {
         },
     };
     let a = tree
-        .from_galactic(tree.to_galactic(point(0.0)).unwrap(), FrameId::Camera(1))
+        .from_galactic(
+            tree.to_galactic(point(0.123_456_789)).unwrap(),
+            FrameId::Camera(1),
+        )
         .unwrap();
     let b = tree
-        .from_galactic(tree.to_galactic(point(0.5)).unwrap(), FrameId::Camera(1))
+        .from_galactic(
+            tree.to_galactic(point(0.623_456_789)).unwrap(),
+            FrameId::Camera(1),
+        )
         .unwrap();
+    assert!((a.state.position_m[0] - 0.123_456_789).abs() < 1e-9);
+    assert!((b.state.position_m[0] - 0.623_456_789).abs() < 1e-9);
     let separation = b.state.position_m[0] - a.state.position_m[0];
     assert!((separation - 0.5).abs() < 1e-9);
     assert_ne!(

@@ -1,7 +1,7 @@
 //! Barycentric Dynamical Time (TDB), relative to J2000.0.
 //!
-//! UTC is deliberately not accepted: its leap seconds and TT–TDB conversion
-//! need an explicitly versioned, independently validated time model.
+//! UTC calendar input is handled separately by the explicitly versioned
+//! [`crate::utc`] leap-second and TT–TDB conversion model.
 
 use crate::consts::J2000_JULIAN_DATE_TDB;
 
@@ -50,6 +50,22 @@ impl Epoch {
     /// precision matters. The supplied date must already be in TDB, not UTC.
     pub fn from_julian_date_tdb(jd: f64) -> Result<Self, EpochRangeError> {
         Self::new(0, (jd - J2000_JULIAN_DATE_TDB) * 86_400.0)
+    }
+
+    /// Construct from two TDB Julian-date parts without first adding them.
+    /// Use a large part near J2000 and a small remainder to avoid losing
+    /// subsecond information in a single large Julian-date float.
+    pub fn from_julian_date_parts_tdb(
+        jd_part: f64,
+        remainder_days: f64,
+    ) -> Result<Self, EpochRangeError> {
+        let base = Self::from_julian_date_tdb(jd_part)?;
+        base.checked_add_seconds(remainder_days * 86_400.0)
+    }
+
+    /// Subtract a duration in SI seconds, rejecting non-finite values and overflow.
+    pub fn checked_sub_seconds(self, duration: f64) -> Result<Self, EpochRangeError> {
+        self.checked_add_seconds(-duration)
     }
 
     pub fn seconds(self) -> i64 {

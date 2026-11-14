@@ -266,6 +266,9 @@ pub struct FramedState {
 pub struct GalacticState {
     pub anchor: GalacticAnchor,
     pub epoch: crate::epoch::Epoch,
+    /// Low-order correction to state.position_m, in meters, in galactic axes.
+    /// Both terms are required when transferring this state back to a local frame.
+    pub position_correction_m: [f64; 3],
     pub state: State,
 }
 
@@ -387,47 +390,36 @@ impl FrameTree {
         let from_path = self.path(source.frame)?;
         let to_path = self.path(to)?;
         let common = from_path.iter().position(|id| to_path.contains(id));
-        let result = if let Some(from_end) = common {
+        if let Some(from_end) = common {
             let ancestor = from_path[from_end];
             let to_end = to_path
                 .iter()
                 .position(|id| *id == ancestor)
                 .ok_or(TreeError::UnknownFrame)?;
-            let mut state = source.state;
-            check_state(state).map_err(|_| TreeError::NonFinite)?;
+            let mut state = PreciseState::from_state(source.state)?;
             for id in &from_path[..from_end] {
-                state = self.nodes[id]
-                    .pose
-                    .to_parent(state)
-                    .map_err(|_| TreeError::NonFinite)?;
+                state = state.to_parent(self.nodes[id].pose)?;
             }
             for id in to_path[..to_end].iter().rev() {
-                state = self.nodes[id]
-                    .pose
-                    .from_parent(state)
-                    .map_err(|_| TreeError::NonFinite)?;
+                state = state.from_parent(self.nodes[id].pose)?;
             }
-            state
+            Ok(FramedState {
+                frame: to,
+                epoch: self.epoch,
+                state: state.rounded()?,
+            })
         } else {
-            return self.from_galactic(self.to_galactic(source)?, to);
-        };
-        Ok(FramedState {
-            frame: to,
-            epoch: self.epoch,
-            state: result,
-        })
+            self.from_galactic(self.to_galactic(source)?, to)
+        }
     }
 
     /// Transform to galactic axes while retaining the stellar anchor separately.
     pub fn to_galactic(&self, source: FramedState) -> Result<GalacticState, TreeError> {
         self.check_epoch(source.epoch)?;
         let path = self.path(source.frame)?;
-        let mut state = source.state;
+        let mut state = PreciseState::from_state(source.state)?;
         for id in &path {
-            state = self.nodes[id]
-                .pose
-                .to_parent(state)
-                .map_err(|_| TreeError::NonFinite)?;
+            state = state.to_parent(self.nodes[id].pose)?;
         }
         let anchor = self.nodes[path.last().ok_or(TreeError::UnknownFrame)?]
             .anchor
@@ -435,7 +427,11 @@ impl FrameTree {
         Ok(GalacticState {
             anchor,
             epoch: self.epoch,
-            state,
+            position_correction_m: state.position.low,
+            state: State {
+                position_m: state.position.high,
+                velocity_m_s: state.velocity,
+            },
         })
     }
 
@@ -451,23 +447,148 @@ impl FrameTree {
         let anchor = self.nodes[path.last().ok_or(TreeError::UnknownFrame)?]
             .anchor
             .ok_or(TreeError::InvalidParent)?;
-        let mut state = source.state;
-        check_state(state).map_err(|_| TreeError::NonFinite)?;
+        let mut state = PreciseState::from_state(source.state)?;
+        if !source.position_correction_m.iter().all(|v| v.is_finite()) {
+            return Err(TreeError::NonFinite);
+        }
         for i in 0..3 {
+            state
+                .position
+                .add_component(i, source.position_correction_m[i])?;
             let delta =
                 i128::from(source.anchor.milliparsecs[i]) - i128::from(anchor.milliparsecs[i]);
-            state.position_m[i] += (delta as f64) * (crate::consts::PARSEC_M / 1000.0);
+            state
+                .position
+                .add_component(i, (delta as f64) * (crate::consts::PARSEC_M / 1000.0))?;
         }
         for id in path.iter().rev() {
-            state = self.nodes[id]
-                .pose
-                .from_parent(state)
-                .map_err(|_| TreeError::NonFinite)?;
+            state = state.from_parent(self.nodes[id].pose)?;
         }
         Ok(FramedState {
             frame: to,
             epoch: self.epoch,
-            state,
+            state: state.rounded()?,
         })
+    }
+}
+
+// Two-term compensated positions preserve small translations through large
+// frame origins. Products in rotations are still rounded f64 operations; this
+// is not arbitrary precision, and public f64 states remain magnitude-limited.
+#[derive(Clone, Copy)]
+struct SplitPosition {
+    high: [f64; 3],
+    low: [f64; 3],
+}
+
+impl SplitPosition {
+    fn from_high(high: [f64; 3]) -> Self {
+        Self {
+            high,
+            low: [0.0; 3],
+        }
+    }
+
+    // Error-free TwoSum for finite, non-overflowing addition, followed by
+    // renormalization of the two-term expansion.
+    fn add_component(&mut self, i: usize, value: f64) -> Result<(), TreeError> {
+        let (sum, error) = two_sum(self.high[i], value);
+        let (high, low) = two_sum(sum, self.low[i] + error);
+        if !high.is_finite() || !low.is_finite() {
+            return Err(TreeError::NonFinite);
+        }
+        self.high[i] = high;
+        self.low[i] = low;
+        Ok(())
+    }
+
+    fn translate(mut self, vector: [f64; 3], sign: f64) -> Result<Self, TreeError> {
+        for (i, component) in vector.iter().enumerate() {
+            self.add_component(i, sign * component)?;
+        }
+        Ok(self)
+    }
+
+    fn rotate(self, rotation: Rotation, transpose: bool) -> Result<Self, TreeError> {
+        let mut result = Self::from_high([0.0; 3]);
+        for i in 0..3 {
+            for j in 0..3 {
+                let coefficient = if transpose {
+                    rotation.matrix[j][i]
+                } else {
+                    rotation.matrix[i][j]
+                };
+                result.add_component(i, coefficient * self.high[j])?;
+                result.add_component(i, coefficient * self.low[j])?;
+            }
+        }
+        Ok(result)
+    }
+
+    fn rounded(self) -> [f64; 3] {
+        std::array::from_fn(|i| self.high[i] + self.low[i])
+    }
+}
+
+fn two_sum(a: f64, b: f64) -> (f64, f64) {
+    let sum = a + b;
+    let b_virtual = sum - a;
+    let error = (a - (sum - b_virtual)) + (b - b_virtual);
+    (sum, error)
+}
+
+#[derive(Clone, Copy)]
+struct PreciseState {
+    position: SplitPosition,
+    velocity: [f64; 3],
+}
+
+impl PreciseState {
+    fn from_state(state: State) -> Result<Self, TreeError> {
+        check_state(state).map_err(|_| TreeError::NonFinite)?;
+        Ok(Self {
+            position: SplitPosition::from_high(state.position_m),
+            velocity: state.velocity_m_s,
+        })
+    }
+
+    fn rounded(self) -> Result<State, TreeError> {
+        let state = State {
+            position_m: self.position.rounded(),
+            velocity_m_s: self.velocity,
+        };
+        check_state(state).map_err(|_| TreeError::NonFinite)?;
+        Ok(state)
+    }
+
+    fn to_parent(self, pose: KinematicTransform) -> Result<Self, TreeError> {
+        let rotated = self.position.rotate(pose.rotation, false)?;
+        let velocity = add(
+            pose.origin_velocity_m_s,
+            add(
+                pose.rotation.apply(self.velocity),
+                cross(pose.angular_velocity_rad_s, rotated.rounded()),
+            ),
+        );
+        let result = Self {
+            position: rotated.translate(pose.origin_m, 1.0)?,
+            velocity,
+        };
+        result.rounded()?;
+        Ok(result)
+    }
+
+    fn from_parent(self, pose: KinematicTransform) -> Result<Self, TreeError> {
+        let relative = self.position.translate(pose.origin_m, -1.0)?;
+        let velocity = pose.rotation.apply_inverse(sub(
+            sub(self.velocity, pose.origin_velocity_m_s),
+            cross(pose.angular_velocity_rad_s, relative.rounded()),
+        ));
+        let result = Self {
+            position: relative.rotate(pose.rotation, true)?,
+            velocity,
+        };
+        result.rounded()?;
+        Ok(result)
     }
 }

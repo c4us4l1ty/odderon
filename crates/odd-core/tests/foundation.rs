@@ -68,3 +68,17 @@ fn rendering_is_lossy_and_invalid_inputs_are_rejected() {
         .to_parent([f64::INFINITY, 0.0, 0.0])
         .is_err());
 }
+
+#[test]
+fn split_julian_date_preserves_small_fractions() {
+    let epoch = Epoch::from_julian_date_parts_tdb(2_451_545.0, 1e-12).unwrap();
+    assert!((epoch.seconds_since(Epoch::J2000) - 8.64e-8).abs() < 1e-20);
+    assert_eq!(
+        Epoch::from_julian_date_tdb(2_451_545.0 + 1e-12).unwrap(),
+        Epoch::J2000
+    );
+    let before = Epoch::J2000.checked_sub_seconds(1.25).unwrap();
+    assert_eq!((before.seconds(), before.fraction()), (-2, 0.75));
+    assert_eq!(before.checked_add_seconds(1.25).unwrap(), Epoch::J2000);
+    assert!(Epoch::J2000.checked_sub_seconds(f64::NAN).is_err());
+}

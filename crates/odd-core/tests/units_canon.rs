@@ -51,3 +51,24 @@ fn encoding_stable_bit_sensitive_and_versioned() {
         ]
     );
 }
+
+#[test]
+fn checked_canonical_values_order_maps_and_normalize_zero() {
+    use odd_core::canon::{CanonicalValue as Value, FiniteF64};
+    use std::collections::BTreeMap;
+    assert!(FiniteF64::new(f64::NAN).is_err());
+    assert!(FiniteF64::new(f64::INFINITY).is_err());
+    let neg_zero = FiniteF64::new(-0.0).unwrap();
+    let pos_zero = FiniteF64::new(0.0).unwrap();
+    assert_eq!(neg_zero.get().to_bits(), pos_zero.get().to_bits());
+    let mut first = BTreeMap::new();
+    first.insert("z".to_owned(), Value::Integer(7));
+    first.insert("a".to_owned(), Value::Float(neg_zero));
+    let mut second = BTreeMap::new();
+    second.insert("a".to_owned(), Value::Float(pos_zero));
+    second.insert("z".to_owned(), Value::Integer(7));
+    assert_eq!(
+        canonical_bytes(&Value::Map(first)).unwrap(),
+        canonical_bytes(&Value::Map(second)).unwrap()
+    );
+}

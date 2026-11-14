@@ -189,3 +189,55 @@ fn galactic_round_trip_preserves_docking_with_realistic_large_offsets() {
     assert!((b_back.state.position_m[0] - b.state.position_m[0]).abs() < 1e-9);
     assert!((b_back.state.position_m[0] - a_back.state.position_m[0] - 0.5).abs() < 1e-9);
 }
+
+#[test]
+fn compensated_round_trip_transforms_velocity_through_rotating_frames() {
+    let mut tree = FrameTree::new(Epoch::J2000);
+    let rotation = Rotation::new([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]).unwrap();
+    let star = KinematicTransform::new(
+        [1e13, -1e13, 0.0],
+        [50.0, 100.0, -30.0],
+        rotation,
+        [0.0, 0.0, 1e-7],
+    )
+    .unwrap();
+    tree.add_stellar_system(
+        2,
+        GalacticAnchor {
+            milliparsecs: [2_452_809, 0, 0],
+        },
+        star,
+    )
+    .unwrap();
+    let body = KinematicTransform::new(
+        [150_000_000_000.125, 0.0, 0.0],
+        [0.0, 30_000.0, 0.0],
+        rotation,
+        [0.0, 0.0, 1e-5],
+    )
+    .unwrap();
+    tree.add_frame(FrameId::BodyFixed(2), FrameId::StellarSystem(2), body)
+        .unwrap();
+    let start = FramedState {
+        frame: FrameId::BodyFixed(2),
+        epoch: Epoch::J2000,
+        state: State {
+            position_m: [0.123_456_789, -0.32, 0.15],
+            velocity_m_s: [12.0, 34.0, -20.0],
+        },
+    };
+    let galactic = tree.to_galactic(start).unwrap();
+    let back = tree.from_galactic(galactic, start.frame).unwrap();
+    for i in 0..3 {
+        assert!((back.state.position_m[i] - start.state.position_m[i]).abs() < 1e-9);
+        assert!((back.state.velocity_m_s[i] - start.state.velocity_m_s[i]).abs() < 1e-8);
+    }
+    let invalid = odd_core::frames::GalacticState {
+        position_correction_m: [f64::NAN, 0.0, 0.0],
+        ..galactic
+    };
+    assert_eq!(
+        tree.from_galactic(invalid, start.frame),
+        Err(TreeError::NonFinite)
+    );
+}

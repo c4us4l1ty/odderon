@@ -25,3 +25,42 @@ pub fn canonical_hash<T: Serialize + ?Sized>(
     hash.update(bytes);
     Ok(hash.finalize().into())
 }
+
+/// A finite IEEE-754 value with negative zero normalized to positive zero.
+/// This type is constructed explicitly so deserialization cannot bypass its
+/// validation. It does not quantize inputs or eliminate rounding differences.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct FiniteF64(f64);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NonFiniteValue;
+
+impl FiniteF64 {
+    pub fn new(value: f64) -> Result<Self, NonFiniteValue> {
+        if !value.is_finite() {
+            return Err(NonFiniteValue);
+        }
+        Ok(Self(if value == 0.0 { 0.0 } else { value }))
+    }
+
+    pub fn get(self) -> f64 {
+        self.0
+    }
+}
+
+/// A deterministic building block for explicitly versioned schemas. Maps are
+/// ordered lexicographically by their string keys; floats must be finite.
+/// Changing variant order, field semantics, or postcard encoding requires a
+/// schema-version change. String normalization is the caller's responsibility.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub enum CanonicalValue {
+    Null,
+    Bool(bool),
+    Integer(i64),
+    Float(FiniteF64),
+    Text(String),
+    Bytes(Vec<u8>),
+    List(Vec<CanonicalValue>),
+    Map(std::collections::BTreeMap<String, CanonicalValue>),
+}

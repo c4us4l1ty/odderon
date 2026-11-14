@@ -63,3 +63,35 @@ fn rejects_unknown_and_invalid_dates() {
         Err(UtcError::InvalidCalendar)
     );
 }
+
+#[test]
+fn fractional_leap_seconds_are_continuous() {
+    let before = UtcDateTime {
+        fraction: 0.75,
+        ..utc(2016, 12, 31, 23, 59, 59)
+    }
+    .to_tdb()
+    .unwrap();
+    let leap = UtcDateTime {
+        fraction: 0.25,
+        ..utc(2016, 12, 31, 23, 59, 60)
+    }
+    .to_tdb()
+    .unwrap();
+    let after = UtcDateTime {
+        fraction: 0.25,
+        ..utc(2017, 1, 1, 0, 0, 0)
+    }
+    .to_tdb()
+    .unwrap();
+    assert!((leap.seconds_since(before) - 0.5).abs() < 1e-8);
+    assert!((after.seconds_since(leap) - 1.0).abs() < 1e-8);
+    assert_eq!(
+        UtcDateTime {
+            fraction: 1.0,
+            ..utc(2016, 12, 31, 23, 59, 60)
+        }
+        .to_tdb(),
+        Err(UtcError::InvalidCalendar)
+    );
+}
