@@ -401,7 +401,7 @@ impl FrameTree {
                 state = state.to_parent(self.nodes[id].pose)?;
             }
             for id in to_path[..to_end].iter().rev() {
-                state = state.from_parent(self.nodes[id].pose)?;
+                state = state.into_child(self.nodes[id].pose)?;
             }
             Ok(FramedState {
                 frame: to,
@@ -462,7 +462,7 @@ impl FrameTree {
                 .add_component(i, (delta as f64) * (crate::consts::PARSEC_M / 1000.0))?;
         }
         for id in path.iter().rev() {
-            state = state.from_parent(self.nodes[id].pose)?;
+            state = state.into_child(self.nodes[id].pose)?;
         }
         Ok(FramedState {
             frame: to,
@@ -578,7 +578,7 @@ impl PreciseState {
         Ok(result)
     }
 
-    fn from_parent(self, pose: KinematicTransform) -> Result<Self, TreeError> {
+    fn into_child(self, pose: KinematicTransform) -> Result<Self, TreeError> {
         let relative = self.position.translate(pose.origin_m, -1.0)?;
         let velocity = pose.rotation.apply_inverse(sub(
             sub(self.velocity, pose.origin_velocity_m_s),
