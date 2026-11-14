@@ -4,6 +4,9 @@
 //! an ideal point-mass, two-body model without burns or perturbations. Neither
 //! model includes operational constraints. All inputs and outputs use SI units.
 
+pub mod anomaly;
+pub mod elements;
+pub mod patched_conics;
 pub mod propagation;
 
 /// Invalid physical inputs, or results outside finite floating-point range.
@@ -15,6 +18,20 @@ pub enum OrbitError {
     RadiusOutsideEllipse,
     /// An intermediate or result is not representable as a finite f64.
     NumericalRange,
+}
+
+// Evaluate 1 + e cos(ν) without cancellation near the far side of a
+// nearly parabolic conic. PI itself is treated as the parabolic asymptote.
+fn conic_denominator(e: f64, anomaly: f64, cosine: f64) -> f64 {
+    if e == 1.0 && (anomaly % std::f64::consts::TAU).abs() == std::f64::consts::PI {
+        return 0.0;
+    }
+    if cosine < 0.0 {
+        let half_cos = (0.5 * anomaly).cos();
+        (1.0 - e) + (e * half_cos) * (2.0 * half_cos)
+    } else {
+        1.0 + e * cosine
+    }
 }
 
 fn positive(value: f64) -> Result<(), OrbitError> {
@@ -56,16 +73,52 @@ pub fn elliptical_speed(
     positive(mu_m3_s2)?;
     positive(radius_m)?;
     positive(semi_major_axis_m)?;
-    // Divide before multiplying by 2 to avoid overflowing 2 * a.
-    if radius_m / semi_major_axis_m >= 2.0 {
-        return Err(OrbitError::RadiusOutsideEllipse);
-    }
-    let factor = 2.0 / radius_m - 1.0 / semi_major_axis_m;
-    let squared_speed = finite(mu_m3_s2 * factor)?;
+    // Avoid subtracting rounded reciprocals near r = 2a. When r >= a,
+    // (a - (r - a)) / a is (2a - r) / a without overflowing 2a or
+    // underflowing r/2. Both differences are exact near the boundary.
+    let fraction = if radius_m >= semi_major_axis_m {
+        let excess = radius_m - semi_major_axis_m;
+        if excess >= semi_major_axis_m {
+            return Err(OrbitError::RadiusOutsideEllipse);
+        }
+        (semi_major_axis_m - excess) / semi_major_axis_m
+    } else {
+        2.0 - radius_m / semi_major_axis_m
+    };
+    let squared_speed = finite((mu_m3_s2 / radius_m) * fraction)?;
     if squared_speed <= 0.0 {
-        return Err(OrbitError::RadiusOutsideEllipse);
+        return Err(OrbitError::NumericalRange);
     }
     finite(squared_speed.sqrt())
+}
+
+/// Vis-viva speed in m/s at radius `radius_m`. A positive semi-major axis
+/// denotes an ellipse, a negative one a hyperbola, and `None` a parabola.
+/// This is a scalar speed, not a complete state or a reachability test for a
+/// specific angular momentum. An ellipse cannot reach r >= 2a.
+pub fn vis_viva_speed(
+    mu_m3_s2: f64,
+    radius_m: f64,
+    semi_major_axis_m: Option<f64>,
+) -> Result<f64, OrbitError> {
+    positive(mu_m3_s2)?;
+    positive(radius_m)?;
+    if let Some(a) = semi_major_axis_m {
+        if !a.is_finite() || a == 0.0 {
+            return Err(OrbitError::InvalidInput);
+        }
+        if a > 0.0 {
+            return elliptical_speed(mu_m3_s2, radius_m, a);
+        }
+    }
+    // Divide μ by |a| directly: 1/|a| can overflow even when μ/|a|
+    // and the resulting speed are representable.
+    let hyperbolic_term = semi_major_axis_m.map_or(0.0, |a| mu_m3_s2 / -a);
+    let square = finite((mu_m3_s2 / radius_m) * 2.0 + hyperbolic_term)?;
+    if square <= 0.0 {
+        return Err(OrbitError::NumericalRange);
+    }
+    finite(square.sqrt())
 }
 
 /// An ideal coplanar circular-to-circular Hohmann maneuver. Signed burn values
@@ -100,11 +153,22 @@ pub fn hohmann_transfer(
             coast_time_s: 0.0,
         });
     }
-    let a = finite(initial_radius_m * 0.5 + final_radius_m * 0.5)?;
+    let min_radius = initial_radius_m.min(final_radius_m);
+    let max_radius = initial_radius_m.max(final_radius_m);
+    let a = finite(min_radius + (max_radius - min_radius) * 0.5)?;
     let initial_speed = circular_speed(mu_m3_s2, initial_radius_m)?;
     let final_speed = circular_speed(mu_m3_s2, final_radius_m)?;
-    let departure = finite(elliptical_speed(mu_m3_s2, initial_radius_m, a)? - initial_speed)?;
-    let arrival = finite(final_speed - elliptical_speed(mu_m3_s2, final_radius_m, a)?)?;
+    // Rationalize sqrt(1±u)-1 to avoid cancellation when the two
+    // radii are close. u = (final-initial)/(final+initial).
+    let u = ((final_radius_m - initial_radius_m) / a) * 0.5;
+    if u == 0.0 {
+        return Err(OrbitError::NumericalRange);
+    }
+    let departure = finite(initial_speed * (u / ((final_radius_m / a).sqrt() + 1.0)))?;
+    let arrival = finite(final_speed * (u / (1.0 + (initial_radius_m / a).sqrt())))?;
+    if departure == 0.0 || arrival == 0.0 {
+        return Err(OrbitError::NumericalRange);
+    }
     let total = finite(departure.abs() + arrival.abs())?;
     // sqrt(a^3 / mu) = a / sqrt(mu / a); avoids forming a^3.
     let coast = finite(std::f64::consts::PI * (a / circular_speed(mu_m3_s2, a)?))?;

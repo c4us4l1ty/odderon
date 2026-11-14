@@ -104,6 +104,54 @@ pub fn fingerprint() -> [u8; 32] {
     let earth_orientation =
         odd_ephem::orientation::earth_approx_orientation(Epoch::new(820_497_600, 0.25).unwrap())
             .unwrap();
+    // Exercise WP 1.1 in both native and browser Wasm with numerical
+    // tolerances; transcendental functions are not promised bit-identical.
+    let orbit_state = State {
+        position_m: [6_524_834.0, 6_862_875.0, 6_448_296.0],
+        velocity_m_s: [4_901.327, 5_533.756, -1_976.341],
+    };
+    let orbit = odd_astro::elements::Elements::from_state(orbit_state, 3.986_004_418e14).unwrap();
+    assert!((orbit.eccentricity - 0.832_853_398_487_521_5).abs() < 1e-12);
+    assert!((orbit.argument_of_periapsis_rad - 0.931_742_810_240_855_7).abs() < 1e-12);
+    let round_trip = orbit.to_state(3.986_004_418e14).unwrap();
+    for i in 0..3 {
+        assert!((round_trip.position_m[i] - orbit_state.position_m[i]).abs() < 1e-5);
+        assert!((round_trip.velocity_m_s[i] - orbit_state.velocity_m_s[i]).abs() < 1e-8);
+    }
+    let near_parabolic = odd_astro::anomaly::true_from_elliptic(1.0 - f64::EPSILON, 1e-8).unwrap();
+    assert!((near_parabolic - 0.886_131_745_558_101_2).abs() < 1e-14);
+    let remote = odd_astro::elements::Elements {
+        semi_latus_rectum_m: 8_000_000.0,
+        eccentricity: 1.0 - f64::EPSILON,
+        inclination_rad: 0.0,
+        ascending_node_rad: 0.0,
+        argument_of_periapsis_rad: 0.0,
+        true_anomaly_rad: std::f64::consts::PI - 1e-8,
+    }
+    .to_state(3.986_004_418e14)
+    .unwrap();
+    let radius = remote.position_m[0].hypot(remote.position_m[1]);
+    assert!((radius / 2.940_694_223_310_72e22 - 1.0).abs() < 1e-12);
+    let a = 1e18_f64;
+    let near_apocenter = f64::from_bits((2.0 * a).to_bits() - 1);
+    let slow = odd_astro::elliptical_speed(3.986_004_418e14, near_apocenter, a).unwrap();
+    assert!((slow / 2.258_779_682_713_655e-10 - 1.0).abs() < 1e-12);
+    let hohmann =
+        odd_astro::hohmann_transfer(3.986_004_418e14, 7_000_000.0, 7_000_000.000_001).unwrap();
+    assert!((hohmann.departure_delta_v_m_s / 2.695_667_036_401_499e-10 - 1.0).abs() < 1e-12);
+    let bi = odd_astro::patched_conics::bi_elliptic_transfer(
+        3.986_004_418e14,
+        7_000_000.0,
+        7_000_000.000_001,
+        7_000_000.000_002,
+    )
+    .unwrap();
+    assert!((bi.intermediate_delta_v_m_s / 2.695_667_036_401_307e-10 - 1.0).abs() < 1e-12);
+    assert!(
+        odd_astro::anomaly::hyperbolic_from_true(1.0 + f64::EPSILON, f64::from_bits(1)).is_err()
+    );
+    let anomaly = odd_astro::anomaly::hyperbolic_from_mean(2.0, 1.350_402_387_287_602_8).unwrap();
+    assert!((anomaly - 1.0).abs() < 1e-12);
     let values = [
         century.seconds() as u64,
         century.fraction().to_bits(),

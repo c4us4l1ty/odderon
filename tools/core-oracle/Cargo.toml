@@ -8,5 +8,6 @@ publish = false
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
+odd-astro = { path = "../../crates/odd-astro" }
 odd-core = { path = "../../crates/odd-core" }
 odd-ephem = { path = "../../crates/odd-ephem" }

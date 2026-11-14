@@ -8,6 +8,11 @@ The project vision and proposed design live in [BRAINSTORM.md](BRAINSTORM.md),
 
 ## Current implementation
 
+Phase 0 is accepted as a foundation with explicit scientific, scope, and
+performance limitations; see [Phase 0 status](docs/phase-0-status.md).
+WP 1.1 adds ideal two-body orbital elements and transfer calculations; see
+[orbital-elements notes](docs/orbital-elements.md) for validation and limits.
+
 Work Package 0.1 provides SI quantities, epochs, UTC conversion, hierarchical
 reference-frame snapshots, and versioned hashing in `crates/odd-core`.
 [Foundation notes](docs/foundation.md) describe the scientific assumptions,

@@ -61,3 +61,42 @@ fn invalid_values_and_equal_orbits() {
     assert_eq!(same.total_delta_v_m_s, 0.0);
     assert_eq!(same.coast_time_s, 0.0);
 }
+
+#[test]
+fn vis_viva_near_degenerate_ellipse_apocenter() {
+    // 80-digit mpmath result from the exact binary64 inputs. At r just below
+    // 2a, subtracting two rounded reciprocals previously produced zero.
+    let tiny = f64::from_bits(1);
+    assert_eq!(elliptical_speed(tiny, tiny, tiny).unwrap(), 1.0);
+    let a = 1e18_f64;
+    let r = f64::from_bits((2.0 * a).to_bits() - 1);
+    let expected = 2.258_779_682_713_655e-10;
+    let result = elliptical_speed(EARTH_MU, r, a).unwrap();
+    assert!(
+        (result / expected - 1.0).abs() < 1e-14,
+        "{result} != {expected}"
+    );
+    assert_eq!(
+        elliptical_speed(EARTH_MU, 2.0 * a, a),
+        Err(OrbitError::RadiusOutsideEllipse)
+    );
+}
+
+#[test]
+fn nearly_equal_hohmann_radii_retain_small_burns() {
+    // mpmath 80-digit calculation with exact f64 radius inputs.
+    let up = hohmann_transfer(EARTH_MU, 7_000_000.0, 7_000_000.000_001).unwrap();
+    let expected_departure = 2.695_667_036_401_499e-10;
+    let expected_arrival = 2.695_667_036_401_403e-10;
+    assert!(
+        (up.departure_delta_v_m_s / expected_departure - 1.0).abs() < 1e-13,
+        "{up:?}"
+    );
+    assert!(
+        (up.arrival_delta_v_m_s / expected_arrival - 1.0).abs() < 1e-13,
+        "{up:?}"
+    );
+    let down = hohmann_transfer(EARTH_MU, 7_000_000.000_001, 7_000_000.0).unwrap();
+    near(down.departure_delta_v_m_s, -up.arrival_delta_v_m_s, 1e-24);
+    near(down.arrival_delta_v_m_s, -up.departure_delta_v_m_s, 1e-24);
+}
