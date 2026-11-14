@@ -1,6 +1,7 @@
 // Linux-only end-to-end WP 0.3 CPU gate. One busy calibration, then a camera
 // drag/release, a settled-frame warmup, and a quiet browser-process-tree sample.
 import { chromium } from 'playwright-core';
+import bundledChromium from '@sparticuz/chromium';
 import { createServer } from 'node:http';
 import { readFile as readFileAsync } from 'node:fs/promises';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -44,8 +45,15 @@ function delta(before,after){
 }
 let browser;
 try{
-  browser=await chromium.launch({executablePath:process.env.CHROME_BIN||execFileSync('which',['google-chrome'],{encoding:'utf8'}).trim(),headless:true,args:['--no-sandbox','--enable-webgl','--use-angle=swiftshader','--enable-unsafe-swiftshader','--disable-dev-shm-usage','--no-proxy-server']});
+  const executablePath=process.env.ODDERON_PINNED_CHROMIUM==='1' ? await bundledChromium.executablePath() : process.env.CHROME_BIN||execFileSync('which',['google-chrome'],{encoding:'utf8'}).trim();
+  browser=await chromium.launch({executablePath,headless:true,args:['--no-sandbox','--enable-webgl','--use-angle=swiftshader','--enable-unsafe-swiftshader','--disable-dev-shm-usage','--no-proxy-server']});
   const page=await browser.newPage({viewport:{width:1280,height:900},deviceScaleFactor:1});
+  if(process.env.ODDERON_BASELINE==='1'){
+    // Control for ambient browser activity, not subtracted from the gate.
+    await page.goto('data:text/html,<title>Idle control</title>');await page.waitForTimeout(1500);
+    const a=accounting(),t=process.hrtime.bigint();await new Promise(r=>setTimeout(r,10000));const elapsed=Number(process.hrtime.bigint()-t)/1e9;const b=accounting();
+    try{console.log(`Blank-tab control: ${(100*delta(a,b)/elapsed).toFixed(4)}% of one core over ${elapsed.toFixed(3)} s.`);}catch(e){console.log(`Blank-tab control inconclusive: ${e.message}`);}
+  }
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
   await page.waitForFunction(()=>window.odderonDiagnostics?.draws>0,null,{timeout:30000});
   await page.waitForTimeout(1000);
@@ -75,7 +83,8 @@ try{
     const top=[...end.threads].map(([id,v])=>({id,ns:Number(v-start.threads.get(id))})).sort((a,b)=>b.ns-a.ns).slice(0,10);
     for(const t of top){const [pid,,tid]=t.id.split(':');let name='unknown',cmd='unknown';try{name=readFileSync(`/proc/${pid}/task/${tid}/comm`,'utf8').trim();cmd=readFileSync(`/proc/${pid}/cmdline`,'utf8').replaceAll('\0',' ').slice(0,160);}catch{}console.log(`  ${(t.ns/1e6).toFixed(3)} ms ${name} (${cmd})`);}
   }
-  assert.ok(percent<0.2,`Browser process-tree CPU ${percent.toFixed(4)}% exceeds the <0.2% one-core gate`);
+  if(process.env.ODDERON_CPU_REPORT_ONLY==='1')console.log(`CPU report only: ${percent<0.2?'PASS':'FAIL'} against <0.2%; not a gating run.`);
+  else assert.ok(percent<0.2,`Browser process-tree CPU ${percent.toFixed(4)}% exceeds the <0.2% one-core gate`);
   await page.mouse.move(box.x+box.width*.5,box.y+box.height*.5);await page.mouse.down();await page.mouse.move(box.x+box.width*.55,box.y+box.height*.52);
   await page.waitForFunction(n=>odderonDiagnostics.draws>n,draws,{timeout:30000});await page.mouse.up();
   console.log('Renderer woke successfully on renewed camera interaction.');
