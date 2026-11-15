@@ -127,6 +127,37 @@ const STORABLE_PLACEHOLDER: Engine = Engine {
 };
 
 impl Contract {
+    /// The insulation and active-cooling card this contract is designed
+    /// around, derived from the heat its own reference flight integrates.
+    ///
+    /// Storables have nothing to insulate and return the neutral design. For
+    /// the cislunar tug the numbers are sized, not guessed: the baseline
+    /// blanket (10 MLI layers, 0.4 W/K of strut) integrated over the
+    /// reference 6.94-day flight loses ~120 kg of LH2 — about 0.9 % of the
+    /// load, but it arrives hot and costs the player the margin the card
+    /// promises. 40 layers, a 0.15 W/K mounting and a 2 kW cold-tip cooler
+    /// with 40 m² of radiator cut the loss below 0.1 % and are affordable:
+    /// the fit-out is charged as real dry mass, so the card is a purchase,
+    /// never a free upgrade. `thermal_fitout_kg` is the price.
+    pub fn thermal_card(&self) -> ThermalDesign {
+        if !odd_systems::needs_thermal_model(self.engine_spec.propellant) {
+            return ThermalDesign::baseline();
+        }
+        ThermalDesign {
+            mli_layers: 40,
+            epsilon_eff: 6.0 * odd_systems::thermal::ideal_epsilon_for_layers(40),
+            cryocooler_lift_w: 2_000.0,
+            radiator_area_m2: 40.0,
+            strut_conductance_w_k: 0.15,
+            bus: odd_systems::BusSpec {
+                array_w_at_1au: 12_000.0,
+                avionics_w: 300.0,
+                electric_propulsion_w: 0.0,
+            },
+            ..ThermalDesign::baseline()
+        }
+    }
+
     pub fn get(id: u32) -> Option<Self> {
         match id {
             101 => Some(Self::rescue()),

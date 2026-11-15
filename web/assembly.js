@@ -150,7 +150,11 @@ export function createAssembly({ wasm, isLocked, annotate, onChange }) {
       choices.push(`Propulsion chief flies the qualified reference engine: ${fmt(wasm.mission_engine_effective(0), 1)} N at ${fmt(wasm.mission_engine_effective(1), 2)} s specific impulse.`);
     }
     if (mask & (1 << 1)) {
-      choices.push(`Thermal chief buys ${fmt(wasm.mission_thermal_effective(0), 0)} blanket layers on a stainless shell with ${fmt(wasm.mission_thermal_effective(4), 2)} W/K mounts and no cooler.`);
+      const lift = wasm.mission_thermal_effective(2);
+      const cooling = lift > 0
+        ? `a ${fmt(lift, 0)} W cooler rejecting through ${fmt(wasm.mission_thermal_effective(3), 0)} m² of radiator`
+        : 'no cooler';
+      choices.push(`Thermal chief buys ${fmt(wasm.mission_thermal_effective(0), 0)} blanket layers on a stainless shell with ${fmt(wasm.mission_thermal_effective(4), 2)} W/K mounts and ${cooling}.`);
     }
     if (mask & (1 << 2)) {
       choices.push(`Power chief sizes the array at ${fmt(wasm.mission_thermal_effective(8), 0)} W.`);

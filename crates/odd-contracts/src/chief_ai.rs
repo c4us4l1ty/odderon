@@ -453,6 +453,16 @@ pub fn thermal_choice(contract: &crate::Contract) -> ThermalDesign {
     design.shell = ShellMaterial::Stainless304 as u8;
     // Oversized struts: a rule of thumb picks for strength, not heat leak.
     design.strut_conductance_w_k = 1.2;
+    // A week-long LH2 coast is zero-boil-off territory, so the chief does
+    // specify active cooling — but conservatively. It over-sizes the cold
+    // tip and the rejection panel rather than tuning them to the integrated
+    // load, the same buy-margin instinct as the blanket and the struts. The
+    // player beats this by right-sizing: thinner mounts, a smaller cooler,
+    // less radiator mass, more delta-v.
+    if odd_systems::needs_thermal_model(contract.engine_spec.propellant) {
+        design.cryocooler_lift_w = 600.0;
+        design.radiator_area_m2 = 30.0;
+    }
     design
 }
 
@@ -577,13 +587,18 @@ mod tests {
         assert_eq!(a, b);
         assert!(a.mli_layers > ThermalDesign::baseline().mli_layers);
         assert!(a.strut_conductance_w_k > ThermalDesign::baseline().strut_conductance_w_k);
-        // The array covers the worst case with margin and never shrinks
-        // below the qualified baseline.
+        // The chief specifies active cooling for the cryogenic coast, so the
+        // array is sized for that cooler's worst-case draw with margin, and
+        // never shrinks below the qualified baseline floor.
+        assert!(a.cryocooler_lift_w > 0.0);
         let array = power_choice(&contract, &a);
-        assert!((array - 3_000.0 * 1.35).abs() < 1e-9);
-        let mut cooled = a;
-        cooled.cryocooler_lift_w = 400.0;
-        assert!(power_choice(&contract, &cooled) > array);
+        assert!(array >= 3_000.0 * 1.35);
+        let mut hotter = a;
+        hotter.cryocooler_lift_w = a.cryocooler_lift_w * 2.0;
+        assert!(power_choice(&contract, &hotter) > array);
+        let mut passive = a;
+        passive.cryocooler_lift_w = 0.0;
+        assert!(power_choice(&contract, &passive) < array);
     }
 
     #[test]

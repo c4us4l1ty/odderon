@@ -57,14 +57,25 @@ that *starts* at relief is venting at t = 0, and that opening is recorded too.
 ## Active cooling and the electrical bus
 
 `P = Q_lift / COP`, `COP = f·T_c/(T_h − T_c)`, and `T_h` follows from rejecting
-`Q_lift + P` through the radiator. The three are implicit and solved by a
-fixed 40-pass iteration — deterministic, no convergence history to replay.
+`Q_lift + P + Q_absorbed` through the radiator. The three are implicit and
+solved by a fixed 40-pass iteration — deterministic, no convergence history to
+replay.
+
+`Q_absorbed` is the environment the radiator itself sees: a panel mounted
+edge-on to the Sun takes a quarter of the direct beam and half of the planet's
+IR disc, weighted by its absorptivity and area. Without this load the hot-side
+iteration could relax onto the cold tip when the radiator was oversized for
+the lift, driving `T_h − T_c → 0` and `COP → ∞` — an oversized panel appeared
+to refrigerate for free. A finite internal approach temperature
+(`MIN_COOLER_APPROACH_K = 5 K`) floors the span as a second guard, so the
+machine is always a real heat pump. The regression
+`an_oversized_radiator_does_not_produce_free_cooling` pins both.
 
 The draw comes out of the **existing bus balance** in priority order
-avionics → cryocooler → electric propulsion, so cooling genuinely steals thrust
-capability from EP. The cooler is thermostatically modulated: it lifts only
-what it must to hold the setpoint, never enough to refrigerate the liquid
-below its own cold tip.
+avionics → oxidizer cooler → fuel cooler → electric propulsion, so cooling
+genuinely steals thrust capability from EP. The cooler is thermostatically
+modulated: it lifts only what it must to hold the setpoint, never enough to
+refrigerate the liquid below its own cold tip.
 
 ## Three numbers in the work-package card are physically impossible
 
@@ -120,10 +131,43 @@ adaptive quadrature. It writes `data/oracles/boiloff-eclipse.csv`.
 Rust and SciPy agree to **0.00000 %** on all four orbits — far inside the 5 %
 the card allows; the gate demands 0.5 % so real drift cannot hide.
 
-## Known approximation
+## Instantaneous bus allocation
 
-`StageThermal::integrate` sizes the fuel tank's bus allowance from the
-oxidizer's **end-state** temperature rather than solving both tanks
-simultaneously. The oxidizer is served first and the fuel gets the remainder,
-so total draw never exceeds generation, but the split is not instantaneous-
-optimal. Both tanks share one flight clock.
+`StageThermal::integrate` advances both tanks in **one eight-component state
+vector** (`odd_systems::coupled::integrate_pair`), so the bus split is resolved
+inside the right-hand side at every Dormand–Prince substep rather than from
+the oxidizer's end-of-flight peak. At time `t` the generation is
+`P_gen(t)·ν_shadow(t)` from the trajectory's own sun/planet vectors; base
+avionics comes off the top; the oxidizer cooler is served first; the fuel is
+offered **exactly** `max(0, P_bus(t) − P_ox(t))`; and electric propulsion sees
+only the surplus `max(0, P_fuel_available(t) − P_fuel(t))`. In eclipse the bus
+collapses to zero and every cooler and thruster stops together. The accepted
+steps are logged as `BusAllocation` records on `StageThermalHistory.bus_trend`,
+so the priority rule is checkable from the record, not merely asserted.
+
+The earlier end-state-peak approximation handed the fuel a constant
+`capacity − ox_peak` for the whole mission: fictional in eclipse (the bus was
+zero) and needlessly small in full sun. The gate
+`oracle_instantaneous_cryo_bus_priority` flies a real sun→eclipse→sun orbit and
+checks the remainder bit-exactly at every accepted step, and that the
+allowance actually varies with the instantaneous sunlight.
+
+## Recommended card and the delegated chief
+
+`Contract::thermal_card()` is the insulation and cooling card a contract is
+designed around, sized from the heat its own reference flight integrates.
+Storables (101, 102) return the neutral design — there is nothing to insulate.
+The cislunar tug (103) recommends 40 MLI layers, a 0.15 W/K mounting, a 2 kW
+cold-tip cooler and 40 m² of radiator on a 12 kW array: integrated over the
+6.94-day reference coast this loses ~1.4 kg (0.011 % of the 12.8 t load) and is
+charged as ~264 kg of real fit-out dry mass, so it is a purchase, never a free
+upgrade. `oracle_multiday_contracts_are_solvable_in_both_modes` re-derives the
+loss, the cooler joules and the delta-v margin every run, in both hand-sized
+and fully-delegated modes.
+
+The thermal chief also specifies active cooling for a cryogenic coast — a
+week-long LH2 storage is zero-boil-off territory — but conservatively: a 600 W
+cold tip and 30 m² of radiator on oversized 1.2 W/K mounts, with the power
+chief then sizing the array for that cooler's worst-case draw plus margin. It
+keeps the propellant (~14 kg lost) at a higher dry mass than the right-sized
+card; the player beats it by tuning the mounts, cooler and panel down.

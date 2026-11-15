@@ -212,8 +212,8 @@ const chiefStrut = await page.inputValue('#thermal-strut');
 check('the locked slider shows the chief value, not the player value',
   Number(chiefStrut) !== Number(playerStrut) && Number(chiefStrut) === 1.2,
   `player ${playerStrut} -> chief ${chiefStrut} W/K`);
-check('the chief removes the player cooler',
-  (await page.evaluate(() => window.missionDiagnostics.assembly.coolerLift)) === 0);
+check('the chief substitutes its own textbook cooler',
+  (await page.evaluate(() => window.missionDiagnostics.assembly.coolerLift)) === 600);
 check('the array slider stays manual', !(await page.locator('#thermal-array').isDisabled()));
 await page.click('#delegate-1');
 await page.waitForFunction(() => !window.missionDiagnostics.pending);
@@ -259,7 +259,7 @@ console.log('cooled tug flight', JSON.stringify(cryoFlight.boilOff));
 check('the cryogenic flight reports a thermal balance', cryoFlight.boilOff !== null && !cryoFlight.boilOff.inert);
 // The baseline 3 kW array is saturated by the oxidizer, so hydrogen still
 // boils. Size the array up and the same hardware must lose less.
-check('active cooling reduces boil-off', cryoFlight.boilOff.lost < 521.0, `${cryoFlight.boilOff.lost.toFixed(3)} kg`);
+check('active cooling reduces boil-off', cryoFlight.boilOff.lost < 200.0, `${cryoFlight.boilOff.lost.toFixed(3)} kg`);
 check('the debrief shows the cooler electricity', /Cryocooler electricity/i.test(cryoFlight.debrief));
 
 await page.click('#unlock');
@@ -302,8 +302,8 @@ check('the cooled cryogenic flight verifies', cryoVerified.code === 1, cryoVerif
 check('the dossier reports the fitted cooler', /Commanded cooler lift/.test(cryoVerified.dossier)
   && /400\.000/.test(cryoVerified.dossier));
 check('the dossier reports the array the player paid for', /16000\.0/.test(cryoVerified.dossier));
-check('the dossier reports the suppressed loss', /Total propellant lost<\/th><td>0\.000000 kg/.test(cryoVerified.dossier));
-check('the dossier reports the cooler electricity', /3460\.221041 MJ/.test(cryoVerified.dossier));
+check('the dossier reports the suppressed loss', /Total propellant lost<\/th><td>3\.843961 kg/.test(cryoVerified.dossier));
+check('the dossier reports the cooler electricity', /4209\.826545 MJ/.test(cryoVerified.dossier));
 const cryoRecord = await page.evaluate(() => JSON.parse(window.missionDiagnostics.recorder().json));
 check('the signed record carries the array sizing', cryoRecord.array_w_at_1au === 16000
   || cryoRecord.thermal_specs?.[0]?.array_w_at_1au === 16000, JSON.stringify(cryoRecord.thermal_specs?.[0] ?? {}).slice(0, 200));
