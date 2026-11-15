@@ -39,11 +39,25 @@ The SRP shadow is a planar apparent-disk approximation for spherical occultors.
 Earth and Moon's overlapping silhouettes are combined with a two-disk
 union clipped by the solar disk, including their triple intersection. The
 disk-plane geometry is still an approximation: it ignores spherical sky
-curvature, oblateness, atmospheric absorption and solar limb darkening. Burns have fixed inertial direction and fixed Isp; there is no
-dry-mass cutoff, throttle/guidance, state-triggered event detection, impact
-handling, backwards integration or operational constraint model. An attempted
-trajectory that reaches below the atmospheric reference surface fails, rather
-than representing a landing. No model here should be used for flight operations.
+curvature, oblateness, atmospheric absorption and solar limb darkening.
+
+Burns have fixed inertial direction and fixed Isp. There is no throttle, no
+closed-loop steering law and no dry-mass cutoff *inside* the propagator: the
+planner refuses a command sequence whose commanded mass would fall below the
+declared dry mass instead (`odd-sim::planner`). A guided node freezes its
+command in inertial axes from a supplied reference state; that is a targeting
+convenience, not autopilot dynamics.
+
+State-crossing events **are** implemented. `force_model::propagate_with_limits`
+adds a terminal impact event at the reference ellipsoid and a non-terminal
+atmospheric-entry event at 120 km, bracketed on accepted steps and localized by
+bisection; the mission model uses them, and propagation stops at impact rather
+than continuing underground. The bare observatory comparison on this page runs
+without those limits, so an unsupported low pass simply fails. Detection is
+step-bounded: a crossing that leaves and re-enters within one accepted step is
+not seen, so callers must bound `max_step` (the mission model uses 120 s).
+Backwards integration and an operational constraint model are still absent. No
+model here should be used for flight operations.
 
 Tests compare ten-period two-body conserved quantities, ten-day J2 nodal
 precession against the first-order formula for the requested mean elements,

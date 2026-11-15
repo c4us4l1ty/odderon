@@ -2,9 +2,12 @@
 
 This document records the implemented experimental mission loop and the
 numeric conventions behind its acceptance gates. It is not an operational
-flight-dynamics product. The three contracts are playable local scenarios;
-challenge ratings are catalog labels and the Astro-Elo update is local
-practice, not a persisted or cryptographically verified player rating.
+flight-dynamics product. The three contracts are playable local scenarios and
+challenge ratings are fixed catalog labels. The player rating and flight
+license now persist in the browser, and a ranked flight carries an Ed25519
+signed recorder that a reader re-flies bit for bit; what does not exist is a
+server that adjudicates the rating. See
+[Flight identity and signed records](#flight-identity-and-signed-records).
 
 ## Work-package status
 
@@ -25,8 +28,11 @@ practice, not a persisted or cryptographically verified player rating.
   efficiency residual for Contracts 102 and 103.
 
 These are prototype work-package gates, not flight-operations certification.
-Later work packages still own cryogenic boil-off, the full PDR/QR report
-crate, persisted identity and ranked Astro-Elo.
+Since they were written, `crates/odd-identity` (persisted flight license) and
+`crates/odd-report` (signed recorder, deterministic dossier, verification QR)
+have shipped, and the browser keeps one ranked certificate per contract.
+Cryogenic boil-off (WP 1.6) and a server-authoritative rating (WP 1.9) remain
+deferred; the propulsion and engine-design model is WP 1.5.
 
 ## Apsides, directions and time quantization
 
@@ -303,17 +309,20 @@ closeness, 25% delta-v efficiency against the contract's reference geometry.
 Hard impact, fuel or deadline failures score zero. Attribution shares never
 enter the score. The debrief updates a local practice Astro-Elo with the
 standard expected-score formula (Kp = 40 for the first 20 local missions, then
-20; Km = 8). It is unranked and has no server identity.
+20; Km = 8). The rating is persisted locally and every ranked update is backed
+by a signed, replay-verified recorder, but no server adjudicates it: it is a
+local ladder, not a global one.
 
 The mission page includes a ranked selector, canvas node and handle
 interaction, keyboard-accessible numerical controls, the Rust-backed Physics
 Lens and causal checks, a perigee-kick splitter, locked predictions,
 worker-based flight, impact-aware debriefs, a patched lunar preview legend,
 prediction-vs-reality table, exact Shapley list, finite-burn loss line, practice
-Elo update and a print-styled PDR export button. The export opens the browser
-print dialog (Save as PDF); the later `odd-report` work package still owns the
-full IEEE/NASA dossier, verification hash and QR proof. Boil-off is explicitly
-marked not modeled.
+Elo update and a print-styled PDR export button. That button is the quick
+print-to-PDF summary. The full dossier is a separate export owned by
+`crates/odd-report`: it is issued only after a successful verify-and-replay and
+carries the canonical digest, the metric tables and the vector verification
+QR. Boil-off is explicitly marked not modeled.
 
 Heavy propagation, targeting and counterfactuals run in one-shot workers; the
 idle gate remains zero animation callbacks and zero worker messages over two
