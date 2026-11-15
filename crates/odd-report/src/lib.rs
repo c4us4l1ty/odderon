@@ -20,7 +20,8 @@ pub mod metrics;
 pub mod qr;
 
 pub use fdr::{
-    AttemptMode, Command, Fdr, FdrError, LEGACY_SCHEMA_VERSION, METRIC_COUNT, SCHEMA_VERSION,
+    AttemptMode, Command, Fdr, FdrError, StageThermalSpec, VentEvent, ENGINE_SCHEMA_VERSION,
+    LEGACY_SCHEMA_VERSION, MAX_VENT_EVENTS, METRIC_COUNT, SCHEMA_VERSION, TANKS_PER_STAGE,
 };
 pub use odd_propulsion::{EngineSolution, EngineSpec, Propellant};
 

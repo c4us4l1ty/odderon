@@ -160,6 +160,19 @@ fn table(caption: &str, headers: &[&str], rows: &[Vec<String>], id: &str) -> Str
     out
 }
 
+/// What the QR actually points at, for the header's "Scan at:" line.
+///
+/// The payload is either an absolute deployment URL carrying a `#verify=`
+/// fragment, or a bare `#verify=` fragment when the dossier was built without
+/// a known origin. In the latter case the line says so rather than printing a
+/// fake host: the fragment resolves against whatever origin serves the file.
+fn scan_target(payload: &str) -> &str {
+    match payload.find("#verify=") {
+        Some(0) => "this deployment, #verify= fragment (relative to the serving origin)",
+        Some(_) | None => payload,
+    }
+}
+
 /// The complete dossier. `payload` is the QR text; pass
 /// `fdr.verify_payload()` unless an absolute URL is wanted.
 pub fn html(fdr: &Fdr, geometry: &Geometry, payload: &str) -> Result<String, &'static str> {
@@ -173,11 +186,12 @@ pub fn html(fdr: &Fdr, geometry: &Geometry, payload: &str) -> Result<String, &'s
 
     let mut body = String::new();
     body.push_str(&format!(
-        "<header><p class=\"memorandum\">ODDERON TECHNICAL MEMORANDUM &#183; FLIGHT DATA RECORDER &#183; SCHEMA {}</p><h1>Contract {} &#8212; post-flight verification dossier</h1><p class=\"subtitle\">{} attempt &#183; {}</p></header>",
+        "<header><p class=\"memorandum\">ODDERON TECHNICAL MEMORANDUM &#183; FLIGHT DATA RECORDER &#183; SCHEMA {}</p><h1>Contract {} &#8212; post-flight verification dossier</h1><p class=\"subtitle\">{} attempt &#183; {}</p><p class=\"scan-at\">Scan at: <code>{}</code></p></header>",
         fdr.schema_version,
         fdr.contract_id,
         fdr.attempt_mode.label(),
-        escape_html(&fdr.callsign)
+        escape_html(&fdr.callsign),
+        escape_html(scan_target(payload))
     ));
 
     // Section 1.
@@ -444,6 +458,7 @@ pub fn html(fdr: &Fdr, geometry: &Geometry, payload: &str) -> Result<String, &'s
     body.push_str("</section>");
 
     body.push_str(&engine_annex(fdr));
+    body.push_str(&thermal_annex(fdr));
 
     let mode_class = if fdr.attempt_mode == AttemptMode::Ranked {
         "ranked"
@@ -594,6 +609,138 @@ fn engine_annex(fdr: &Fdr) -> String {
     out
 }
 
+/// Annex C: the cryogenic fit-out, the boil-off it produced and who sized it.
+///
+/// Every number here is inside the signed bytes and was recomputed by the
+/// verifier, so the annex distinguishes a measured zero (storables) from a
+/// record that predates the thermal block entirely.
+fn thermal_annex(fdr: &Fdr) -> String {
+    let mut out = String::from(
+        "<section id=\"annex-c\"><h2>Annex C. Cryogenic balance, vent history and delegation</h2>",
+    );
+    if fdr.schema_version < 3 {
+        out.push_str("<p id=\"thermal-legacy\">This record predates schema 3, so it carries no thermal specification, vent history or delegation provenance. No boil-off claim is made for it; the replay reproduces the trajectory only.</p>");
+        out.push_str("</section>");
+        return out;
+    }
+
+    let departments = [
+        (0b0001, "Propulsion"),
+        (0b0010, "Thermal / cryogenic"),
+        (0b0100, "Power"),
+        (0b1000, "Guidance, navigation and control"),
+    ];
+    let delegated: Vec<&str> = departments
+        .iter()
+        .filter(|(bit, _)| fdr.delegation_mask & bit != 0)
+        .map(|(_, name)| *name)
+        .collect();
+    let provisioning = if delegated.is_empty() {
+        "Every discipline was sized by hand; the efficiency component is uncapped.".to_string()
+    } else {
+        format!(
+            "Delegated to rule-of-thumb chiefs: {}. Each delegated discipline carried +35 % mass and +30 % cost, and the efficiency component of the score is capped at 0.65.",
+            escape_html(&delegated.join(", "))
+        )
+    };
+    out.push_str(&format!(
+        "<p id=\"delegation-provenance\">Delegation bitmask <code>0b{:04b}</code>. {}</p>",
+        fdr.delegation_mask, provisioning
+    ));
+
+    let total_loss = fdr.boil_off_kg[0] + fdr.boil_off_kg[1];
+    let mut rows = vec![
+        vec![
+            "Oxidizer boiled off".into(),
+            format!("{} kg", number(fdr.boil_off_kg[0], 6)),
+        ],
+        vec![
+            "Fuel boiled off".into(),
+            format!("{} kg", number(fdr.boil_off_kg[1], 6)),
+        ],
+        vec![
+            "Total propellant lost".into(),
+            format!("{} kg", number(total_loss, 6)),
+        ],
+        vec![
+            "Cryocooler electricity".into(),
+            format!("{} MJ", number(fdr.cryocooler_energy_j / 1e6, 6)),
+        ],
+        vec![
+            "Relief-valve openings".into(),
+            fdr.vent_events.len().to_string(),
+        ],
+    ];
+    if let Some(spec) = fdr.thermal_specs.first() {
+        rows.extend([
+            vec!["Insulation layers".into(), spec.mli_layers.to_string()],
+            vec![
+                "Effective blanket emittance".into(),
+                number(spec.epsilon_eff, 8),
+            ],
+            vec![
+                "Support heat leak".into(),
+                format!("{} W/K", number(spec.strut_conductance_w_k, 4)),
+            ],
+            vec![
+                "Relief pressure".into(),
+                format!("{} kPa", number(spec.relief_pressure_pa / 1e3, 3)),
+            ],
+            vec![
+                "Radiator area".into(),
+                format!("{} m&#178;", number(spec.radiator_area_m2, 3)),
+            ],
+            vec![
+                "Commanded cooler lift".into(),
+                format!("{} W", number(spec.cryocooler_w, 3)),
+            ],
+            vec![
+                "Cooler Carnot fraction".into(),
+                number(spec.cryocooler_carnot_fraction, 4),
+            ],
+            vec![
+                "Array output at 1 AU".into(),
+                format!("{} W", number(spec.array_w_at_1au, 1)),
+            ],
+        ]);
+    } else {
+        out.push_str("<p id=\"thermal-storable\">This stage carries no cryogenic tank block: its propellants are storable, so boil-off is identically zero rather than unmeasured.</p>");
+    }
+    out.push_str(&table(
+        "Table C1. The signed cryogenic fit-out and the loss the verifier recomputed by integrating the heat balance along the flown trajectory. Tank pressure, temperature and every vent opening below are outputs of that integration, never client claims.",
+        &["Field", "Value"],
+        &rows,
+        "thermal-table",
+    ));
+
+    if !fdr.vent_events.is_empty() {
+        let vents: Vec<Vec<String>> = fdr
+            .vent_events
+            .iter()
+            .map(|event| {
+                vec![
+                    number(event.time_us as f64 / 1e6, 3),
+                    if event.tank == 0 {
+                        "Oxidizer".into()
+                    } else {
+                        "Fuel".into()
+                    },
+                    number(event.pressure_pa / 1e3, 3),
+                    number(event.temperature_k, 4),
+                ]
+            })
+            .collect();
+        out.push_str(&table(
+            "Table C2. Every relief-valve opening, in flight order. The verifier reproduces this list event for event; a fabricated opening or a shifted timestamp fails the replay.",
+            &["Flight time (s)", "Tank", "Pressure (kPa)", "Temperature (K)"],
+            &vents,
+            "vent-table",
+        ));
+    }
+    out.push_str("</section>");
+    out
+}
+
 /// Vector cross-section of the signed engine: chamber, convergent, bell and
 /// the Mach profile. No raster assets, so it prints at any scale.
 pub fn engine_svg(
@@ -727,6 +874,11 @@ mod tests {
     pub(crate) fn sample() -> Fdr {
         let mut fdr = Fdr {
             schema_version: SCHEMA_VERSION,
+            thermal_specs: Vec::new(),
+            delegation_mask: 0,
+            vent_events: Vec::new(),
+            boil_off_kg: [0.0; 2],
+            cryocooler_energy_j: 0.0,
             contract_id: 101,
             attempt_mode: AttemptMode::Ranked,
             callsign: "TEST PILOT".into(),
@@ -818,6 +970,7 @@ mod tests {
             "section-2",
             "section-3",
             "section-4",
+            "annex-c",
             "annex-a",
             "annex-b",
             "engine-table",
@@ -856,6 +1009,24 @@ mod tests {
         assert!(document.matches("<tr><th scope=\"row\">").count() >= 16);
     }
 
+    /// The header must say where the QR points, and must not invent a host
+    /// when the dossier was built with a bare fragment.
+    #[test]
+    fn the_header_names_the_scan_target() {
+        let fdr = sample();
+        let relative = html(&fdr, &geometry(), &fdr.verify_payload()).unwrap();
+        assert!(relative.contains("Scan at:"));
+        assert!(relative.contains("relative to the serving origin"));
+        let absolute = html(
+            &fdr,
+            &geometry(),
+            &format!("https://flights.example.org/verify{}", fdr.verify_payload()),
+        )
+        .unwrap();
+        assert!(absolute.contains("Scan at:"));
+        assert!(absolute.contains("https://flights.example.org/verify#verify="));
+    }
+
     #[test]
     fn a_callsign_cannot_inject_markup() {
         let mut fdr = sample();
@@ -865,5 +1036,53 @@ mod tests {
         let document = html(&fdr, &geometry(), "#verify=abc").unwrap();
         assert!(!document.contains("<script>"));
         assert!(document.contains("&lt;script&gt;"));
+    }
+
+    /// The dossier must print the cryogenic balance and who sized the stage,
+    /// and must distinguish a storable zero from a pre-v3 record.
+    #[test]
+    fn the_thermal_annex_reports_loss_vents_and_delegation() {
+        let mut fdr = sample();
+        fdr.schema_version = 3;
+        fdr.delegation_mask = 0b0101;
+        fdr.boil_off_kg = [12.5, 582.125];
+        fdr.cryocooler_energy_j = 6_991_965_600.0;
+        fdr.vent_events = vec![crate::VentEvent {
+            time_us: 1_500_000,
+            tank: 1,
+            pressure_pa: 200_000.0,
+            temperature_k: 23.234_177_419_9,
+        }];
+        let document = html(&fdr, &geometry(), &fdr.verify_payload()).unwrap();
+        assert!(document.contains("id=\"annex-c\""));
+        assert!(document.contains("id=\"thermal-table\""));
+        assert!(document.contains("id=\"vent-table\""));
+        assert!(
+            document.contains("594.625000"),
+            "the total loss must be printed"
+        );
+        assert!(
+            document.contains("6991.965600"),
+            "the cooler draw must be printed"
+        );
+        assert!(
+            document.contains("23.2342"),
+            "the vent temperature must be printed"
+        );
+        let provenance = document.contains("id=\"delegation-provenance\"");
+        assert!(provenance);
+        assert!(document.contains("Propulsion, Power"));
+        assert!(document.contains("capped at 0.65"));
+
+        // A fully manual stage says so instead of implying a chief sized it.
+        fdr.delegation_mask = 0;
+        let manual = html(&fdr, &geometry(), &fdr.verify_payload()).unwrap();
+        assert!(manual.contains("sized by hand"));
+
+        // A legacy record makes no thermal claim at all.
+        fdr.schema_version = 2;
+        let legacy = html(&fdr, &geometry(), &fdr.verify_payload()).unwrap();
+        assert!(legacy.contains("id=\"thermal-legacy\""));
+        assert!(!legacy.contains("id=\"vent-table\""));
     }
 }

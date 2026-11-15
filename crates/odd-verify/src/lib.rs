@@ -54,6 +54,20 @@ pub struct FlightSettings {
     pub dry_mass: f64,
     pub engine: Engine,
     pub node_metric: bool,
+    /// Physical engine design and cryogenic fit-out. `None` means the stage
+    /// carries no tank model (storables, or a legacy schema-1/2 record), so
+    /// boil-off is identically zero and older certificates still replay.
+    pub thermal: Option<ThermalInputs>,
+    /// Which disciplines the Chief-AI sized. Caps Seff at 0.65 when non-zero.
+    pub delegation: odd_contracts::DelegationMask,
+}
+
+/// The physical inputs the tank model needs, all of them design choices.
+#[derive(Clone, Copy, Debug)]
+pub struct ThermalInputs {
+    pub engine_spec: odd_propulsion::EngineSpec,
+    pub design: odd_contracts::ThermalDesign,
+    pub load_kg: f64,
 }
 
 /// Everything a flight produced: the flown path, the 58-field report, the
@@ -65,6 +79,8 @@ pub struct FlightOutcome {
     pub burns: Vec<odd_astro::perturb::burn::Burn>,
     /// Exact swept angle per burn, in command order. Their sum is report[57].
     pub burn_sweeps: Vec<f64>,
+    /// Boil-off evaluated along the flown spline. Inert for storable stages.
+    pub thermal: odd_contracts::ThermalOutcome,
 }
 
 /// Earth-relative Moon state at a mission time. Shared with the browser's
@@ -188,6 +204,31 @@ pub fn compute(
                 - std::f64::consts::PI,
         )
     };
+    // Boil-off is integrated along the *flown* spline with the same adaptive
+    // stepper and the same ephemeris, so replay reproduces the vent history.
+    let thermal = match s.thermal {
+        Some(inputs) => odd_contracts::thermal::evaluate(
+            odd_contracts::thermal::ThermalStage {
+                contract: &contract,
+                spec: &inputs.engine_spec,
+                load_kg: inputs.load_kg,
+                design: &inputs.design,
+            },
+            &integrated.trajectory,
+            odd_systems::ThermalClock {
+                start_s: 0.0,
+                // Boil-off accrues for the whole flight, not just up to the
+                // scoring instant: a tug that reaches its apoapsis on day 3
+                // keeps losing propellant until the contract window closes.
+                end_s: if impacted { evaluation_s } else { end },
+                options,
+            },
+            eph,
+            s.epoch,
+        )
+        .unwrap_or_else(|_| odd_contracts::ThermalOutcome::inert()),
+        None => odd_contracts::ThermalOutcome::inert(),
+    };
     let mut report = [f64::NAN; REPORT_LEN];
     report[0] = final_state.mass;
     if let Some(ap) = ap {
@@ -214,13 +255,14 @@ pub fn compute(
         report[33] = enc.soi_radius_m;
     }
     let mission_score = locked.and_then(|lock| {
-        odd_contracts::score(
+        odd_contracts::score_delegated(
             &contract,
             final_state,
             evaluation_s,
             lock.prediction(),
             plan.requested_delta_v_m_s,
             impacted,
+            s.delegation,
         )
         .ok()
     });
@@ -306,6 +348,7 @@ pub fn compute(
         }
     }
     Some(FlightOutcome {
+        thermal,
         trajectory: integrated.trajectory,
         report,
         final_state,
@@ -329,12 +372,22 @@ pub struct FlightSpec {
     pub prediction: [f64; 6],
     /// (epoch in microseconds, TNW delta-v, optional guidance state)
     pub commands: Vec<(i64, [f64; 3], Option<[f64; 6]>)>,
+    /// The signed cryogenic fit-out, rebuilt from the record. `None` for a
+    /// pre-v3 record or a storable stage.
+    pub thermal: Option<ThermalInputs>,
+    /// Signed delegation provenance, so a replay applies the same Seff cap.
+    pub delegation: odd_contracts::DelegationMask,
 }
 
 pub struct ReplayOutcome {
     pub report: [f64; REPORT_LEN],
     pub final_state_hash: [u8; 32],
     pub geometry: Geometry,
+    /// Recomputed relief-valve openings, for comparison with the signed list.
+    pub vent_events: Vec<odd_report::VentEvent>,
+    /// Recomputed loss per tank and cooler draw, compared bit-exactly.
+    pub boil_off_kg: [f64; 2],
+    pub cryocooler_energy_j: f64,
 }
 
 fn settings_from_spec(
@@ -371,6 +424,10 @@ fn settings_from_spec(
     }
     Some((
         FlightSettings {
+            // Schema 1/2 records predate the tank model; they replay with no
+            // boil-off so their certificates remain valid.
+            thermal: spec.thermal,
+            delegation: spec.delegation,
             contract_id: spec.contract_id,
             epoch: spec.epoch_s,
             initial: Keyframe {
@@ -543,6 +600,19 @@ pub fn replay_flight(spec: &FlightSpec) -> Option<ReplayOutcome> {
         report: outcome.report,
         final_state_hash: hash,
         geometry,
+        boil_off_kg: outcome.thermal.tank_lost_kg,
+        cryocooler_energy_j: outcome.thermal.cooler_energy_j,
+        vent_events: outcome
+            .thermal
+            .vents
+            .iter()
+            .map(|event| odd_report::VentEvent {
+                time_us: event.time_us,
+                tank: event.tank,
+                pressure_pa: event.pressure_pa,
+                temperature_k: event.temperature_k,
+            })
+            .collect(),
     })
 }
 
@@ -562,6 +632,11 @@ pub fn verify_record(fdr: &Fdr) -> Result<ReplayOutcome, FdrError> {
         .ok_or(FdrError::Malformed("the command timeline does not compile"))?;
     fdr.compare_metrics(&outcome.report)?;
     fdr.compare_final_state(&outcome.final_state_hash)?;
+    // Gate three (v3): the signed vent history must be what the signed
+    // thermal spec actually produces. A client cannot claim less boil-off
+    // than its own hardware causes.
+    fdr.compare_vent_events(&outcome.vent_events)?;
+    fdr.compare_boil_off(outcome.boil_off_kg, outcome.cryocooler_energy_j)?;
     Ok(outcome)
 }
 
@@ -640,8 +715,18 @@ pub fn certify_engine(fdr: &Fdr) -> Result<Option<EngineSolution>, FdrError> {
     }
     if let Some(contract) = Contract::get(fdr.contract_id) {
         certify_contract(fdr, &contract)?;
+        // Recompute from the signed cryogenic fit-out and delegation mask:
+        // a heavier blanket, a radiator or a chief's margin all cost dry
+        // mass, so a record cannot claim hardware without carrying it.
+        let design = thermal_inputs_from_record(fdr)
+            .map(|inputs| inputs.design)
+            .unwrap_or_else(odd_contracts::ThermalDesign::baseline);
         let vehicle = contract
-            .vehicle(*spec)
+            .vehicle_delegated(
+                *spec,
+                odd_contracts::DelegationMask(fdr.delegation_mask),
+                &design,
+            )
             .map_err(|_| FdrError::EngineUnusable)?;
         if fdr.dry_mass_kg.to_bits() != vehicle.dry_mass_kg.to_bits() {
             return Err(FdrError::EngineMismatch("dry mass"));
@@ -673,6 +758,8 @@ pub fn replay_engine(fdr: &Fdr) -> (f64, f64) {
 pub fn spec_from_record(fdr: &Fdr) -> FlightSpec {
     let (thrust_n, specific_impulse_s) = replay_engine(fdr);
     FlightSpec {
+        thermal: thermal_inputs_from_record(fdr),
+        delegation: odd_contracts::DelegationMask(fdr.delegation_mask),
         contract_id: fdr.contract_id,
         epoch_s: fdr.epoch_s,
         duration_us: fdr.duration_us,
@@ -705,4 +792,43 @@ pub fn hash_final_state(report: &[f64; REPORT_LEN], state: &Keyframe) -> [u8; 32
         ],
         state.mass,
     )
+}
+
+/// Rebuild the tank model's inputs from the **signed** thermal spec.
+///
+/// Nothing here is taken on trust: the spec is physical hardware, and the
+/// boil-off it implies is recomputed by the same integrator the flight used.
+/// A record with no thermal block (schema 1/2, or a storable stage) has no
+/// tank model, so its replay produces no vent events.
+pub fn thermal_inputs_from_record(fdr: &Fdr) -> Option<ThermalInputs> {
+    if fdr.schema_version < odd_report::SCHEMA_VERSION {
+        return None;
+    }
+    let spec = fdr.thermal_specs.first()?;
+    let engine = fdr.engine?;
+    let design = odd_contracts::ThermalDesign {
+        mli_layers: spec.mli_layers,
+        epsilon_eff: spec.epsilon_eff,
+        shell: spec.tank_shell_material,
+        absorptivity: spec.absorptivity,
+        outer_epsilon: spec.outer_epsilon,
+        strut_conductance_w_k: spec.strut_conductance_w_k,
+        relief_pressure_pa: spec.relief_pressure_pa,
+        radiator_area_m2: spec.radiator_area_m2,
+        radiator_epsilon: spec.radiator_epsilon,
+        cryocooler_lift_w: spec.cryocooler_w,
+        cryocooler_carnot_fraction: spec.cryocooler_carnot_fraction,
+        bus: odd_systems::BusSpec {
+            array_w_at_1au: spec.array_w_at_1au,
+            avionics_w: spec.avionics_w,
+            electric_propulsion_w: spec.electric_propulsion_w,
+        },
+        structure_temperature_k: spec.structure_temperature_k,
+        sink_temperature_k: spec.sink_temperature_k,
+    };
+    Some(ThermalInputs {
+        engine_spec: engine,
+        design,
+        load_kg: fdr.initial_mass_kg - fdr.dry_mass_kg,
+    })
 }

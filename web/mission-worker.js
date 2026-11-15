@@ -1,5 +1,6 @@
 // One-shot flight/targeting worker. Heavy propagation, perigee targeting and
 // counterfactuals stay off the UI thread. The main page terminates stale workers.
+import { applyAssembly } from './assembly.js';
 self.onmessage=async ({data})=>{
   try{
     const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error('Flight physics module unavailable.');
@@ -16,6 +17,14 @@ self.onmessage=async ({data})=>{
       const verdict=read(2);
       let dossier=null,dossierError=null;
       if(code===1){
+        // Tell the module where this page is served so the printed QR is an
+        // absolute, scannable URL rather than a bare fragment.
+        if(typeof data.origin==='string'&&data.origin){
+          w.mission_fdr_origin_reset();
+          let accepted=true;
+          for(const byte of new TextEncoder().encode(data.origin))if(w.mission_fdr_origin_byte(byte)!==1){accepted=false;break;}
+          if(!accepted||w.mission_fdr_origin_commit()!==1)w.mission_fdr_origin_reset();
+        }
         if(w.mission_fdr_dossier_from_record()===1)dossier=read(1);
         else dossierError='The flight verified, but the dossier could not be rendered: the verification payload is too large for a QR code.';
       }
@@ -24,6 +33,7 @@ self.onmessage=async ({data})=>{
     }
     if(data.action==='split'){
       if(!w.mission_contract(103))throw Error('Unknown contract.');
+      if(!applyAssembly(w,data.assembly))throw Error('The stage assembly could not be rebuilt.');
       // Targeting propagates the real stage, so it must use the committed
       // engine too or the kicks would be sized for the baseline.
       if(data.engine){
@@ -41,6 +51,10 @@ self.onmessage=async ({data})=>{
     }
     if(data.contract){if(!w.mission_contract(data.contract))throw Error('Unknown contract.');}
     else if(!w.mission_setup(...data.setup))throw Error('Invalid spacecraft or mission parameters.');
+    // The assembly (delegation margins and cryogenic fit-out) changes the dry
+    // mass and the thermal model, so the worker must fly the very same stage
+    // the page displayed and the recorder will sign.
+    if(data.contract&&!applyAssembly(w,data.assembly))throw Error('The stage assembly could not be rebuilt.');
     // The page may have redesigned the engine. Rebuild the stage from the
     // physical design, never from a thrust/Isp pair: this is the same call the
     // verifier makes, so the flight and its certificate cannot diverge.
@@ -82,6 +96,12 @@ self.onmessage=async ({data})=>{
       const count=w.mission_fdr_fields_from_record();
       capture=Array.from({length:count},(_,i)=>w.mission_fdr_field_at(i));
     }
-    self.postMessage({points,lunar,report,lunarInfo,computeMs,capture});
+    // The executed thermal balance lives in this module's instance, so ship
+    // it with the report instead of asking the idle main-thread module.
+    const boilOff=Number.isFinite(w.mission_boil_off(0))?{
+      lost:w.mission_boil_off(0),oxidizer:w.mission_boil_off(1),fuel:w.mission_boil_off(2),
+      coolerJoules:w.mission_boil_off(3),vents:w.mission_boil_off(4),inert:w.mission_boil_off(5)===1
+    }:null;
+    self.postMessage({points,lunar,report,lunarInfo,computeMs,capture,boilOff,delegationMask:w.mission_delegation_mask()});
   }catch(e){self.postMessage({error:String(e.message||e)});}
 };

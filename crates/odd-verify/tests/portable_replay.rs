@@ -19,6 +19,8 @@ fn rescue_spec() -> FlightSpec {
     let dv1 = libm::sqrt(mu / r0) * (libm::sqrt(r1 / a) - 1.0);
     let dv2 = libm::sqrt(mu / r1) * (1.0 - libm::sqrt(r0 / a));
     FlightSpec {
+        thermal: None,
+        delegation: odd_contracts::DelegationMask::MANUAL,
         contract_id: 101,
         epoch_s: odd_contracts::START_EPOCH,
         duration_us: contract.duration_us,
@@ -51,6 +53,11 @@ fn recorder(spec: &FlightSpec) -> Fdr {
     let outcome = odd_verify::replay_flight(spec).expect("the reference rescue must replay");
     let mut fdr = Fdr {
         schema_version: SCHEMA_VERSION,
+        thermal_specs: Vec::new(),
+        delegation_mask: 0,
+        vent_events: Vec::new(),
+        boil_off_kg: [0.0; 2],
+        cryocooler_energy_j: 0.0,
         contract_id: spec.contract_id,
         attempt_mode: AttemptMode::Ranked,
         callsign: "HEADLESS".into(),

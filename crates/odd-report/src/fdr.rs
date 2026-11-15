@@ -18,17 +18,28 @@ use odd_identity::{License, LicenseError};
 use odd_propulsion::{EngineSpec, Propellant};
 use sha2::{Digest, Sha256};
 
-/// Schema 2 carries the physical engine design and is the only schema this
-/// build issues. Schema 1 records (thrust and Isp as bare claims) still parse
-/// and verify so certificates issued before WP 1.5 do not become unreadable;
-/// they are labelled legacy because their engine was never certified.
-pub const SCHEMA_VERSION: u16 = 2;
+/// Schema 3 is the only schema this build issues. It adds the physical
+/// cryogenic fit-out, the Chief-AI delegation bitmask and the exact vent
+/// history to the signed bytes.
+///
+/// **This schema is frozen.** `odd-worker` and every later work package build
+/// against it; no field may be added, removed or reordered without a new
+/// schema and a migration note in `docs/fdr-schema-changelog.md`.
+///
+/// Older records still parse and verify: schema 2 carries a certified engine
+/// but no tanks, schema 1 carries neither and is labelled legacy.
+pub const SCHEMA_VERSION: u16 = 3;
+/// First schema whose engine block is a physical design rather than a claim.
+pub const ENGINE_SCHEMA_VERSION: u16 = 2;
 /// Last schema whose engine was an unverified claim.
 pub const LEGACY_SCHEMA_VERSION: u16 = 1;
 pub const METRIC_COUNT: usize = 58;
 /// Domain separator for the signed bytes. Distinct from the key-derivation
 /// domain so a license signature can never be replayed as a flight signature.
-pub const SIGN_DOMAIN: &[u8] = b"odderon-flight-data-recorder-v2\0";
+pub const SIGN_DOMAIN: &[u8] = b"odderon-flight-data-recorder-v3\0";
+/// Domain of schema-2 records (engine, no tanks). Kept distinct so a v2
+/// signature can never be replayed as a v3 signature.
+pub const ENGINE_SIGN_DOMAIN: &[u8] = b"odderon-flight-data-recorder-v2\0";
 /// Domain of pre-engine records. Kept distinct so a legacy signature can
 /// never be replayed as a schema-2 signature.
 pub const LEGACY_SIGN_DOMAIN: &[u8] = b"odderon-flight-data-recorder-v1\0";
@@ -45,6 +56,61 @@ const UNSIGNABLE_ENGINE: EngineSpec = EngineSpec {
 };
 pub const MAX_CALLSIGN: usize = 24;
 pub const MAX_COMMANDS: usize = 64;
+/// Vent openings are rare — a relief valve opens once and stays open while
+/// the net heat is positive — but the signed record must stay bounded so a
+/// dossier cannot be inflated past the QR transport's capacity.
+pub const MAX_VENT_EVENTS: usize = 256;
+/// A stage has an oxidizer tank and a fuel tank.
+pub const TANKS_PER_STAGE: usize = 2;
+
+/// The physical cryogenic fit-out of one stage. Every field is a design
+/// choice or a material property; **none is a performance claim**. The
+/// verifier recomputes boil-off from these, exactly as it recomputes thrust
+/// and Isp from the engine design.
+///
+/// The work-package card listed `cryocooler_cop` here. A raw COP is a
+/// derived performance number, and trusting one from the client is precisely
+/// what the no-magic-lookup law forbids — a claimed COP of 0.1 at 20 K/300 K
+/// would exceed Carnot by 40%. The signed field is therefore the machine's
+/// **Carnot fraction**, and the COP is recomputed from it and the radiator
+/// geometry. The dossier prints the resulting COP for readability.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StageThermalSpec {
+    pub stage: u8,
+    /// Oxidizer then fuel tank volume, m³.
+    pub tank_volumes_m3: [f64; TANKS_PER_STAGE],
+    /// Propellant pair wire id, matching `EngineSpec::propellant`.
+    pub propellant_id: u8,
+    pub mli_layers: u32,
+    pub epsilon_eff: f64,
+    pub tank_shell_material: u8,
+    pub absorptivity: f64,
+    pub outer_epsilon: f64,
+    pub strut_conductance_w_k: f64,
+    pub relief_pressure_pa: f64,
+    pub radiator_area_m2: f64,
+    pub radiator_epsilon: f64,
+    /// Commanded heat lift at the cold tip, W.
+    pub cryocooler_w: f64,
+    /// Fraction of Carnot the machine achieves, in (0, 1].
+    pub cryocooler_carnot_fraction: f64,
+    pub array_w_at_1au: f64,
+    pub avionics_w: f64,
+    pub electric_propulsion_w: f64,
+    pub structure_temperature_k: f64,
+    pub sink_temperature_k: f64,
+}
+
+/// One relief-valve opening, at an exact microsecond. The verifier replays
+/// the tank ODE and requires this list to match event for event.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VentEvent {
+    pub time_us: i64,
+    /// 0 = oxidizer, 1 = fuel.
+    pub tank: u8,
+    pub pressure_pa: f64,
+    pub temperature_k: f64,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AttemptMode {
@@ -111,6 +177,23 @@ pub struct Fdr {
     pub final_state_hash: [u8; 32],
     pub elo_before: f64,
     pub elo_after: f64,
+    /// Per-stage cryogenic fit-out. Empty for a storable stage, and absent
+    /// (schema < 3) for records issued before WP 1.6.
+    pub thermal_specs: Vec<StageThermalSpec>,
+    /// Which disciplines the Chief-AI sized. Bit 0 Propulsion, 1 Thermal,
+    /// 2 Power, 3 GNC. Only the low four bits may be set.
+    pub delegation_mask: u8,
+    /// Every relief-valve opening, recomputed and compared on replay.
+    pub vent_events: Vec<VentEvent>,
+    /// Total mass vented per tank, kg (oxidizer then fuel).
+    ///
+    /// The event *list* alone is not enough: a tank that starts at its relief
+    /// setting opens at t = 0 and stays open, so a worse blanket produces the
+    /// same two openings while losing far more propellant. The integrated
+    /// loss is therefore signed and compared too.
+    pub boil_off_kg: [f64; TANKS_PER_STAGE],
+    /// Electricity the cryocoolers drew over the flight, J.
+    pub cryocooler_energy_j: f64,
     pub public_key: [u8; 32],
     pub signature: [u8; 64],
 }
@@ -251,7 +334,7 @@ impl Fdr {
         put_f64(&mut out, self.dry_mass_kg);
         put_f64(&mut out, self.thrust_n);
         put_f64(&mut out, self.specific_impulse_s);
-        if self.schema_version >= SCHEMA_VERSION {
+        if self.schema_version >= ENGINE_SCHEMA_VERSION {
             // The design, not the claim. Six fields, fixed order.
             let engine = self.engine.unwrap_or(UNSIGNABLE_ENGINE);
             out.push(engine.propellant as u8);
@@ -290,15 +373,54 @@ impl Fdr {
         out.extend_from_slice(&self.final_state_hash);
         put_f64(&mut out, self.elo_before);
         put_f64(&mut out, self.elo_after);
+        if self.schema_version >= SCHEMA_VERSION {
+            // --- FROZEN v3 BLOCK. Order and width are part of the schema. ---
+            out.push(self.delegation_mask);
+            put_u16(&mut out, self.thermal_specs.len() as u16);
+            for spec in &self.thermal_specs {
+                out.push(spec.stage);
+                for volume in &spec.tank_volumes_m3 {
+                    put_f64(&mut out, *volume);
+                }
+                out.push(spec.propellant_id);
+                put_u32(&mut out, spec.mli_layers);
+                put_f64(&mut out, spec.epsilon_eff);
+                out.push(spec.tank_shell_material);
+                put_f64(&mut out, spec.absorptivity);
+                put_f64(&mut out, spec.outer_epsilon);
+                put_f64(&mut out, spec.strut_conductance_w_k);
+                put_f64(&mut out, spec.relief_pressure_pa);
+                put_f64(&mut out, spec.radiator_area_m2);
+                put_f64(&mut out, spec.radiator_epsilon);
+                put_f64(&mut out, spec.cryocooler_w);
+                put_f64(&mut out, spec.cryocooler_carnot_fraction);
+                put_f64(&mut out, spec.array_w_at_1au);
+                put_f64(&mut out, spec.avionics_w);
+                put_f64(&mut out, spec.electric_propulsion_w);
+                put_f64(&mut out, spec.structure_temperature_k);
+                put_f64(&mut out, spec.sink_temperature_k);
+            }
+            for value in &self.boil_off_kg {
+                put_f64(&mut out, *value);
+            }
+            put_f64(&mut out, self.cryocooler_energy_j);
+            put_u16(&mut out, self.vent_events.len() as u16);
+            for event in &self.vent_events {
+                put_i64(&mut out, event.time_us);
+                out.push(event.tank);
+                put_f64(&mut out, event.pressure_pa);
+                put_f64(&mut out, event.temperature_k);
+            }
+        }
         out
     }
 
     /// Domain separator for this record's schema.
     pub fn sign_domain(&self) -> &'static [u8] {
-        if self.schema_version <= LEGACY_SCHEMA_VERSION {
-            LEGACY_SIGN_DOMAIN
-        } else {
-            SIGN_DOMAIN
+        match self.schema_version {
+            0..=LEGACY_SCHEMA_VERSION => LEGACY_SIGN_DOMAIN,
+            ENGINE_SCHEMA_VERSION => ENGINE_SIGN_DOMAIN,
+            _ => SIGN_DOMAIN,
         }
     }
 
@@ -313,10 +435,13 @@ impl Fdr {
     }
 
     pub fn validate_shape(&self) -> Result<(), FdrError> {
-        if self.schema_version != SCHEMA_VERSION && self.schema_version != LEGACY_SCHEMA_VERSION {
+        if !matches!(
+            self.schema_version,
+            LEGACY_SCHEMA_VERSION | ENGINE_SCHEMA_VERSION | SCHEMA_VERSION
+        ) {
             return Err(FdrError::UnsupportedSchema(self.schema_version));
         }
-        if self.schema_version >= SCHEMA_VERSION {
+        if self.schema_version >= ENGINE_SCHEMA_VERSION {
             let Some(engine) = &self.engine else {
                 return Err(FdrError::Malformed("engine design missing"));
             };
@@ -325,6 +450,81 @@ impl Fdr {
             }
         } else if self.engine.is_some() {
             return Err(FdrError::Malformed("legacy record carries an engine"));
+        }
+        if self.schema_version >= SCHEMA_VERSION {
+            if self.delegation_mask & !0b1111 != 0 {
+                return Err(FdrError::Malformed("delegation mask bits"));
+            }
+            if self.vent_events.len() > MAX_VENT_EVENTS {
+                return Err(FdrError::Malformed("too many vent events"));
+            }
+            if !self.cryocooler_energy_j.is_finite() || self.cryocooler_energy_j < 0.0 {
+                return Err(FdrError::Malformed("cryocooler energy"));
+            }
+            for value in &self.boil_off_kg {
+                if !value.is_finite() || *value < 0.0 {
+                    return Err(FdrError::Malformed("boil-off mass"));
+                }
+            }
+            for spec in &self.thermal_specs {
+                if spec.tank_shell_material > 2 {
+                    return Err(FdrError::Malformed("tank shell material"));
+                }
+                if spec.propellant_id > 3 {
+                    return Err(FdrError::Malformed("tank propellant id"));
+                }
+                if !(0.0..1.0).contains(&spec.epsilon_eff)
+                    || !(0.0..=1.0).contains(&spec.absorptivity)
+                    || !(0.0..=1.0).contains(&spec.outer_epsilon)
+                    || !(0.0..=1.0).contains(&spec.radiator_epsilon)
+                    || spec.cryocooler_carnot_fraction <= 0.0
+                    || spec.cryocooler_carnot_fraction > 1.0
+                {
+                    return Err(FdrError::Malformed("thermal spec range"));
+                }
+                for value in [
+                    spec.tank_volumes_m3[0],
+                    spec.tank_volumes_m3[1],
+                    spec.strut_conductance_w_k,
+                    spec.relief_pressure_pa,
+                    spec.radiator_area_m2,
+                    spec.cryocooler_w,
+                    spec.array_w_at_1au,
+                    spec.avionics_w,
+                    spec.electric_propulsion_w,
+                    spec.structure_temperature_k,
+                    spec.sink_temperature_k,
+                ] {
+                    if !value.is_finite() || value < 0.0 {
+                        return Err(FdrError::Malformed("thermal spec value"));
+                    }
+                }
+                if spec.relief_pressure_pa <= 0.0
+                    || spec.structure_temperature_k <= 0.0
+                    || spec.sink_temperature_k <= 0.0
+                {
+                    return Err(FdrError::Malformed("thermal spec non-positive"));
+                }
+            }
+            let mut previous = 0i64;
+            for event in &self.vent_events {
+                if event.time_us < previous || event.time_us > self.duration_us {
+                    return Err(FdrError::Malformed("vent event order or epoch"));
+                }
+                if event.tank as usize >= TANKS_PER_STAGE {
+                    return Err(FdrError::Malformed("vent event tank id"));
+                }
+                if !event.pressure_pa.is_finite()
+                    || event.pressure_pa <= 0.0
+                    || !event.temperature_k.is_finite()
+                    || event.temperature_k <= 0.0
+                {
+                    return Err(FdrError::Malformed("vent event value"));
+                }
+                previous = event.time_us;
+            }
+        } else if !self.thermal_specs.is_empty() || !self.vent_events.is_empty() {
+            return Err(FdrError::Malformed("pre-v3 record carries tanks"));
         }
         if self.commands.len() > MAX_COMMANDS {
             return Err(FdrError::Malformed("too many commands"));
@@ -413,6 +613,69 @@ impl Fdr {
         Ok(())
     }
 
+    /// Compare a replayed vent history against the recorded one.
+    ///
+    /// The thermal spec is signed, but so is the * consequence * of that
+    /// spec: a client cannot claim a smaller loss than its own hardware
+    /// produces. Timestamps must match to the microsecond and the pressures
+    /// and temperatures to the bit, because both sides ran the same
+    /// deterministic ODE.
+    /// Compare the integrated boil-off and cooler draw against a replay.
+    /// Bit-exact: both sides ran the same deterministic ODE.
+    pub fn compare_boil_off(
+        &self,
+        replayed_kg: [f64; TANKS_PER_STAGE],
+        replayed_energy_j: f64,
+    ) -> Result<(), FdrError> {
+        if self.schema_version < SCHEMA_VERSION {
+            return Ok(());
+        }
+        for (index, (recorded, actual)) in self.boil_off_kg.iter().zip(replayed_kg).enumerate() {
+            if recorded.to_bits() != actual.to_bits() {
+                return Err(FdrError::PhysicsReplayMismatch {
+                    field: "boil_off_kg",
+                    index,
+                });
+            }
+        }
+        if self.cryocooler_energy_j.to_bits() != replayed_energy_j.to_bits() {
+            return Err(FdrError::PhysicsReplayMismatch {
+                field: "cryocooler_energy_j",
+                index: 0,
+            });
+        }
+        Ok(())
+    }
+
+    pub fn compare_vent_events(&self, replayed: &[VentEvent]) -> Result<(), FdrError> {
+        if self.schema_version < SCHEMA_VERSION {
+            return Ok(());
+        }
+        if self.vent_events.len() != replayed.len() {
+            return Err(FdrError::PhysicsReplayMismatch {
+                field: "vent_events.len",
+                index: 0,
+            });
+        }
+        for (index, (recorded, actual)) in self.vent_events.iter().zip(replayed).enumerate() {
+            if recorded.time_us != actual.time_us || recorded.tank != actual.tank {
+                return Err(FdrError::PhysicsReplayMismatch {
+                    field: "vent_events.time_us",
+                    index,
+                });
+            }
+            if recorded.pressure_pa.to_bits() != actual.pressure_pa.to_bits()
+                || recorded.temperature_k.to_bits() != actual.temperature_k.to_bits()
+            {
+                return Err(FdrError::PhysicsReplayMismatch {
+                    field: "vent_events.state",
+                    index,
+                });
+            }
+        }
+        Ok(())
+    }
+
     pub fn compare_final_state(&self, hash: &[u8; 32]) -> Result<(), FdrError> {
         if &self.final_state_hash == hash {
             Ok(())
@@ -451,18 +714,28 @@ impl Fdr {
         let mut reader = Reader::new(bytes);
         // The domain is read first so a legacy document is parsed with the
         // legacy layout instead of misreading its engine block.
-        let legacy = if bytes.starts_with(LEGACY_SIGN_DOMAIN) {
-            reader.expect(LEGACY_SIGN_DOMAIN)?;
-            true
+        let domain: &[u8] = if bytes.starts_with(LEGACY_SIGN_DOMAIN) {
+            LEGACY_SIGN_DOMAIN
+        } else if bytes.starts_with(ENGINE_SIGN_DOMAIN) {
+            ENGINE_SIGN_DOMAIN
         } else {
-            reader.expect(SIGN_DOMAIN)?;
-            false
+            SIGN_DOMAIN
         };
+        reader.expect(domain)?;
         let schema_version = reader.u16()?;
-        if schema_version != SCHEMA_VERSION && schema_version != LEGACY_SCHEMA_VERSION {
+        if !matches!(
+            schema_version,
+            LEGACY_SCHEMA_VERSION | ENGINE_SCHEMA_VERSION | SCHEMA_VERSION
+        ) {
             return Err(FdrError::UnsupportedSchema(schema_version));
         }
-        if legacy != (schema_version == LEGACY_SCHEMA_VERSION) {
+        let legacy = schema_version == LEGACY_SCHEMA_VERSION;
+        let expected_domain = match schema_version {
+            LEGACY_SCHEMA_VERSION => LEGACY_SIGN_DOMAIN,
+            ENGINE_SCHEMA_VERSION => ENGINE_SIGN_DOMAIN,
+            _ => SIGN_DOMAIN,
+        };
+        if domain != expected_domain {
             return Err(FdrError::Malformed("schema and signing domain disagree"));
         }
         let contract_id = reader.u32()?;
@@ -524,6 +797,80 @@ impl Fdr {
         let final_state_hash = reader.bytes::<32>()?;
         let elo_before = reader.f64()?;
         let elo_after = reader.f64()?;
+        // --- FROZEN v3 BLOCK ---
+        let (thermal_specs, delegation_mask, vent_events, boil_off_kg, cryocooler_energy_j) =
+            if schema_version >= SCHEMA_VERSION {
+                let mask = reader.u8()?;
+                let spec_count = reader.u16()? as usize;
+                if spec_count > 16 {
+                    return Err(FdrError::Malformed("too many thermal specs"));
+                }
+                let mut specs = Vec::with_capacity(spec_count);
+                for _ in 0..spec_count {
+                    let stage = reader.u8()?;
+                    let tank_volumes_m3 = reader.array::<TANKS_PER_STAGE>()?;
+                    let propellant_id = reader.u8()?;
+                    let mli_layers = reader.u32()?;
+                    let epsilon_eff = reader.f64()?;
+                    let tank_shell_material = reader.u8()?;
+                    let absorptivity = reader.f64()?;
+                    let outer_epsilon = reader.f64()?;
+                    let strut_conductance_w_k = reader.f64()?;
+                    let relief_pressure_pa = reader.f64()?;
+                    let radiator_area_m2 = reader.f64()?;
+                    let radiator_epsilon = reader.f64()?;
+                    let cryocooler_w = reader.f64()?;
+                    let cryocooler_carnot_fraction = reader.f64()?;
+                    let array_w_at_1au = reader.f64()?;
+                    let avionics_w = reader.f64()?;
+                    let electric_propulsion_w = reader.f64()?;
+                    let structure_temperature_k = reader.f64()?;
+                    let sink_temperature_k = reader.f64()?;
+                    specs.push(StageThermalSpec {
+                        stage,
+                        tank_volumes_m3,
+                        propellant_id,
+                        mli_layers,
+                        epsilon_eff,
+                        tank_shell_material,
+                        absorptivity,
+                        outer_epsilon,
+                        strut_conductance_w_k,
+                        relief_pressure_pa,
+                        radiator_area_m2,
+                        radiator_epsilon,
+                        cryocooler_w,
+                        cryocooler_carnot_fraction,
+                        array_w_at_1au,
+                        avionics_w,
+                        electric_propulsion_w,
+                        structure_temperature_k,
+                        sink_temperature_k,
+                    });
+                }
+                let boil_off_kg = reader.array::<TANKS_PER_STAGE>()?;
+                let cryocooler_energy_j = reader.f64()?;
+                let event_count = reader.u16()? as usize;
+                if event_count > MAX_VENT_EVENTS {
+                    return Err(FdrError::Malformed("too many vent events"));
+                }
+                let mut events = Vec::with_capacity(event_count);
+                for _ in 0..event_count {
+                    let time_us = reader.i64()?;
+                    let tank = reader.u8()?;
+                    let pressure_pa = reader.f64()?;
+                    let temperature_k = reader.f64()?;
+                    events.push(VentEvent {
+                        time_us,
+                        tank,
+                        pressure_pa,
+                        temperature_k,
+                    });
+                }
+                (specs, mask, events, boil_off_kg, cryocooler_energy_j)
+            } else {
+                (Vec::new(), 0, Vec::new(), [0.0; TANKS_PER_STAGE], 0.0)
+            };
         let public_key = reader.bytes::<32>()?;
         let signature = reader.bytes::<64>()?;
         if !reader.at_end() {
@@ -549,6 +896,11 @@ impl Fdr {
             final_state_hash,
             elo_before,
             elo_after,
+            thermal_specs,
+            delegation_mask,
+            vent_events,
+            boil_off_kg,
+            cryocooler_energy_j,
             public_key,
             signature,
         };
@@ -596,6 +948,11 @@ impl Fdr {
             );
             o.number("elo_before", self.elo_before);
             o.number("elo_after", self.elo_after);
+            o.number("delegation_mask", self.delegation_mask as f64);
+            o.thermal_specs("thermal_specs", &self.thermal_specs);
+            o.vent_events("vent_events", &self.vent_events);
+            o.array("boil_off_kg", &self.boil_off_kg);
+            o.number("cryocooler_energy_j", self.cryocooler_energy_j);
             o.string("public_key", &crate::hex::encode(&self.public_key));
             o.string("ed25519_signature", &crate::hex::encode(&self.signature));
             o.string("canonical_digest", &crate::hex::encode(&self.digest()));

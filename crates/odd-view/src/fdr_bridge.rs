@@ -32,12 +32,27 @@ const COMMAND_OFFSET: usize = HEADER;
 /// time_us, dvT, dvN, dvW, guided flag, six guidance components.
 const COMMAND_STRIDE: usize = 11;
 const MAX_COMMANDS: usize = 12;
-const MAX_FIELDS: usize = HEADER + MAX_COMMANDS * COMMAND_STRIDE + REPORT_LEN + 32 + 32 + 64;
+/// v3 trailer, appended after the signature so every historical index stays
+/// put: mask, spec count, the specs, vent count, the vents.
+const THERMAL_SPEC_STRIDE: usize = 20;
+const VENT_STRIDE: usize = 4;
+const MAX_THERMAL_SPECS: usize = 1;
+const MAX_VENT_EVENTS: usize = odd_report::MAX_VENT_EVENTS;
+const V3_TRAILER_MAX: usize =
+    5 + MAX_THERMAL_SPECS * THERMAL_SPEC_STRIDE + MAX_VENT_EVENTS * VENT_STRIDE;
+const MAX_FIELDS: usize =
+    HEADER + MAX_COMMANDS * COMMAND_STRIDE + REPORT_LEN + 32 + 32 + 64 + V3_TRAILER_MAX;
 
 static FIELDS: Mutex<Vec<f64>> = Mutex::new(Vec::new());
 static RECORDER: Mutex<Option<Fdr>> = Mutex::new(None);
 static JSON: Mutex<String> = Mutex::new(String::new());
 static DOSSIER: Mutex<String> = Mutex::new(String::new());
+/// The deployment page URL, supplied by the browser. A QR code has to carry
+/// an absolute URL to be scannable by a phone; the module cannot know the
+/// origin it is served from, so the page states it.
+static ORIGIN: Mutex<String> = Mutex::new(String::new());
+/// Bound the origin so a hostile page cannot inflate the QR payload.
+const MAX_ORIGIN: usize = 512;
 static VERDICT: Mutex<Option<Result<(), FdrError>>> = Mutex::new(None);
 static REPLAYED: Mutex<Option<[f64; REPORT_LEN]>> = Mutex::new(None);
 static GEOMETRY: Mutex<Option<odd_report::dossier::Geometry>> = Mutex::new(None);
@@ -115,7 +130,14 @@ fn parse_fields(fields: &[f64], callsign: &str) -> Option<Fdr> {
     }
     let command_count = command_count as usize;
     let metrics_at = COMMAND_OFFSET + command_count * COMMAND_STRIDE;
-    if fields.len() != metrics_at + REPORT_LEN + 32 + 32 + 64 {
+    let base_len = metrics_at + REPORT_LEN + 32 + 32 + 64;
+    // Pre-v3 records end at the signature; v3 appends a variable-length
+    // trailer whose own counts are checked below.
+    if schema >= i64::from(SCHEMA_VERSION) {
+        if fields.len() < base_len + 3 || fields.len() > base_len + V3_TRAILER_MAX {
+            return None;
+        }
+    } else if fields.len() != base_len {
         return None;
     }
     let mut commands = Vec::with_capacity(command_count);
@@ -151,6 +173,68 @@ fn parse_fields(fields: &[f64], callsign: &str) -> Option<Fdr> {
     let final_state_hash: [u8; 32] = bytes(hash_at, 32)?.try_into().ok()?;
     let public_key: [u8; 32] = bytes(hash_at + 32, 32)?.try_into().ok()?;
     let signature: [u8; 64] = bytes(hash_at + 64, 64)?.try_into().ok()?;
+    // --- v3 trailer ---
+    let mut thermal_specs = Vec::new();
+    let mut vent_events = Vec::new();
+    let mut delegation_mask = 0u8;
+    let mut parsed_loss = ([0.0; 2], 0.0);
+    if schema >= i64::from(SCHEMA_VERSION) {
+        let mut at = hash_at + 128;
+        delegation_mask = u8::try_from(integer(*fields.get(at)?)?).ok()?;
+        let spec_count = integer(*fields.get(at + 1)?)?;
+        if !(0..=MAX_THERMAL_SPECS as i64).contains(&spec_count) {
+            return None;
+        }
+        at += 2;
+        for _ in 0..spec_count {
+            let f = fields.get(at..at + THERMAL_SPEC_STRIDE)?;
+            thermal_specs.push(odd_report::StageThermalSpec {
+                stage: u8::try_from(integer(f[0])?).ok()?,
+                tank_volumes_m3: [f[1], f[2]],
+                propellant_id: u8::try_from(integer(f[3])?).ok()?,
+                mli_layers: u32::try_from(integer(f[4])?).ok()?,
+                epsilon_eff: f[5],
+                tank_shell_material: u8::try_from(integer(f[6])?).ok()?,
+                absorptivity: f[7],
+                outer_epsilon: f[8],
+                strut_conductance_w_k: f[9],
+                relief_pressure_pa: f[10],
+                radiator_area_m2: f[11],
+                radiator_epsilon: f[12],
+                cryocooler_w: f[13],
+                cryocooler_carnot_fraction: f[14],
+                array_w_at_1au: f[15],
+                avionics_w: f[16],
+                electric_propulsion_w: f[17],
+                structure_temperature_k: f[18],
+                sink_temperature_k: f[19],
+            });
+            at += THERMAL_SPEC_STRIDE;
+        }
+        parsed_loss = (
+            [*fields.get(at)?, *fields.get(at + 1)?],
+            *fields.get(at + 2)?,
+        );
+        at += 3;
+        let vent_count = integer(*fields.get(at)?)?;
+        if !(0..=MAX_VENT_EVENTS as i64).contains(&vent_count) {
+            return None;
+        }
+        at += 1;
+        for _ in 0..vent_count {
+            let f = fields.get(at..at + VENT_STRIDE)?;
+            vent_events.push(odd_report::VentEvent {
+                time_us: integer(f[0])?,
+                tank: u8::try_from(integer(f[1])?).ok()?,
+                pressure_pa: f[2],
+                temperature_k: f[3],
+            });
+            at += VENT_STRIDE;
+        }
+        if at != fields.len() {
+            return None;
+        }
+    }
     Some(Fdr {
         schema_version: u16::try_from(schema).ok()?,
         contract_id: u32::try_from(contract).ok()?,
@@ -171,6 +255,11 @@ fn parse_fields(fields: &[f64], callsign: &str) -> Option<Fdr> {
         final_state_hash,
         elo_before: fields[23],
         elo_after: fields[24],
+        thermal_specs,
+        delegation_mask,
+        vent_events,
+        boil_off_kg: parsed_loss.0,
+        cryocooler_energy_j: parsed_loss.1,
         public_key,
         signature,
     })
@@ -243,6 +332,45 @@ pub extern "C" fn mission_fdr_capture(mode: u32, elo_before: f64, elo_after: f64
         ),
         elo_before,
         elo_after,
+        thermal_specs: if captured.thermal.inert {
+            Vec::new()
+        } else {
+            vec![odd_report::StageThermalSpec {
+                stage: 0,
+                tank_volumes_m3: captured.tank_volumes_m3,
+                propellant_id: captured.engine_spec.propellant as u8,
+                mli_layers: captured.thermal_design.mli_layers,
+                epsilon_eff: captured.thermal_design.epsilon_eff,
+                tank_shell_material: captured.thermal_design.shell,
+                absorptivity: captured.thermal_design.absorptivity,
+                outer_epsilon: captured.thermal_design.outer_epsilon,
+                strut_conductance_w_k: captured.thermal_design.strut_conductance_w_k,
+                relief_pressure_pa: captured.thermal_design.relief_pressure_pa,
+                radiator_area_m2: captured.thermal_design.radiator_area_m2,
+                radiator_epsilon: captured.thermal_design.radiator_epsilon,
+                cryocooler_w: captured.thermal_design.cryocooler_lift_w,
+                cryocooler_carnot_fraction: captured.thermal_design.cryocooler_carnot_fraction,
+                array_w_at_1au: captured.thermal_design.bus.array_w_at_1au,
+                avionics_w: captured.thermal_design.bus.avionics_w,
+                electric_propulsion_w: captured.thermal_design.bus.electric_propulsion_w,
+                structure_temperature_k: captured.thermal_design.structure_temperature_k,
+                sink_temperature_k: captured.thermal_design.sink_temperature_k,
+            }]
+        },
+        delegation_mask: captured.delegation.0,
+        boil_off_kg: captured.thermal.tank_lost_kg,
+        cryocooler_energy_j: captured.thermal.cooler_energy_j,
+        vent_events: captured
+            .thermal
+            .vents
+            .iter()
+            .map(|event| odd_report::VentEvent {
+                time_us: event.time_us,
+                tank: event.tank,
+                pressure_pa: event.pressure_pa,
+                temperature_k: event.temperature_k,
+            })
+            .collect(),
         public_key: [0; 32],
         signature: [0; 64],
     };
@@ -345,7 +473,7 @@ pub extern "C" fn mission_fdr_dossier() -> i32 {
     let Some(geometry) = bridge::dossier_geometry() else {
         return 0;
     };
-    let payload = fdr.verify_payload();
+    let payload = dossier_payload(&fdr);
     let Ok(document) = odd_report::dossier::html(&fdr, &geometry, &payload) else {
         return 0;
     };
@@ -366,7 +494,7 @@ pub extern "C" fn mission_fdr_dossier_from_record() -> i32 {
     let Some(geometry) = GEOMETRY.lock().unwrap().clone() else {
         return 0;
     };
-    let payload = fdr.verify_payload();
+    let payload = dossier_payload(&fdr);
     let Ok(document) = odd_report::dossier::html(&fdr, &geometry, &payload) else {
         return 0;
     };
@@ -468,6 +596,45 @@ pub extern "C" fn mission_fdr_fields_from_record() -> u32 {
     fields.extend(fdr.final_state_hash.iter().map(|byte| *byte as f64));
     fields.extend(fdr.public_key.iter().map(|byte| *byte as f64));
     fields.extend(fdr.signature.iter().map(|byte| *byte as f64));
+    if fdr.schema_version >= SCHEMA_VERSION {
+        fields.push(f64::from(fdr.delegation_mask));
+        fields.push(fdr.thermal_specs.len() as f64);
+        for spec in &fdr.thermal_specs {
+            fields.extend_from_slice(&[
+                f64::from(spec.stage),
+                spec.tank_volumes_m3[0],
+                spec.tank_volumes_m3[1],
+                f64::from(spec.propellant_id),
+                f64::from(spec.mli_layers),
+                spec.epsilon_eff,
+                f64::from(spec.tank_shell_material),
+                spec.absorptivity,
+                spec.outer_epsilon,
+                spec.strut_conductance_w_k,
+                spec.relief_pressure_pa,
+                spec.radiator_area_m2,
+                spec.radiator_epsilon,
+                spec.cryocooler_w,
+                spec.cryocooler_carnot_fraction,
+                spec.array_w_at_1au,
+                spec.avionics_w,
+                spec.electric_propulsion_w,
+                spec.structure_temperature_k,
+                spec.sink_temperature_k,
+            ]);
+        }
+        fields.extend_from_slice(&fdr.boil_off_kg);
+        fields.push(fdr.cryocooler_energy_j);
+        fields.push(fdr.vent_events.len() as f64);
+        for event in &fdr.vent_events {
+            fields.extend_from_slice(&[
+                event.time_us as f64,
+                f64::from(event.tank),
+                event.pressure_pa,
+                event.temperature_k,
+            ]);
+        }
+    }
     let count = fields.len() as u32;
     *FIELDS.lock().unwrap() = fields;
     count
@@ -483,8 +650,113 @@ pub extern "C" fn mission_fdr_field_at(index: u32) -> f64 {
         .unwrap_or(f64::NAN)
 }
 
+/// The QR text: an absolute URL when the page told us where it is served,
+/// otherwise the bare fragment (which the dossier labels as relative rather
+/// than inventing a host).
+fn dossier_payload(fdr: &Fdr) -> String {
+    let fragment = fdr.verify_payload();
+    let origin = ORIGIN.lock().unwrap().clone();
+    if origin.is_empty() {
+        return fragment;
+    }
+    format!("{origin}{fragment}")
+}
+
+/// Clear the deployment URL.
+#[no_mangle]
+pub extern "C" fn mission_fdr_origin_reset() {
+    ORIGIN.lock().unwrap().clear();
+}
+
+/// Absorb one UTF-8 byte of the deployment page URL (no fragment). Only
+/// `http://` and `https://` are accepted, so a `javascript:` or `data:` URL
+/// can never be printed as a scan target. Returns 0 when rejected.
+#[no_mangle]
+pub extern "C" fn mission_fdr_origin_byte(byte: f64) -> i32 {
+    if !byte.is_finite() || !(0.0..=255.0).contains(&byte) || byte.fract() != 0.0 {
+        return 0;
+    }
+    let mut origin = ORIGIN.lock().unwrap();
+    if origin.len() >= MAX_ORIGIN {
+        return 0;
+    }
+    origin.push(byte as u8 as char);
+    if !origin.starts_with("http://") && !origin.starts_with("https://") {
+        // Still building the scheme: allow the prefix, reject anything else.
+        if !"http://".starts_with(origin.as_str()) && !"https://".starts_with(origin.as_str()) {
+            origin.clear();
+            return 0;
+        }
+    }
+    1
+}
+
+/// Validate the accumulated URL. Returns 1 when it is usable as a QR base.
+#[no_mangle]
+pub extern "C" fn mission_fdr_origin_commit() -> i32 {
+    let mut origin = ORIGIN.lock().unwrap();
+    let usable = (origin.starts_with("http://") || origin.starts_with("https://"))
+        && origin.len() > "https://".len()
+        && !origin.contains('#')
+        && !origin.contains('?')
+        && origin.bytes().all(|b| b.is_ascii_graphic());
+    if !usable {
+        origin.clear();
+        return 0;
+    }
+    1
+}
+
 #[cfg(test)]
 mod tests {
+    /// A phone camera cannot resolve a bare fragment, so the printed scan
+    /// target must be the absolute deployment URL when the page supplies it.
+    #[test]
+    fn the_scan_target_is_absolute_when_the_page_states_its_origin() {
+        let _guard = bridge::test_lock();
+        let fdr = flown_recorder();
+        mission_fdr_origin_reset();
+        let url = "https://flights.example.org/mission.html";
+        for byte in url.bytes() {
+            assert_eq!(mission_fdr_origin_byte(f64::from(byte)), 1);
+        }
+        assert_eq!(mission_fdr_origin_commit(), 1);
+        let payload = dossier_payload(&fdr);
+        assert!(payload.starts_with(url));
+        assert!(payload.ends_with(&fdr.verify_payload()));
+        assert_eq!(payload, format!("{url}{}", fdr.verify_payload()));
+        mission_fdr_origin_reset();
+        assert_eq!(dossier_payload(&fdr), fdr.verify_payload());
+    }
+
+    /// A hostile or malformed origin must never reach the printed page.
+    #[test]
+    fn a_non_http_origin_is_refused() {
+        let _guard = bridge::test_lock();
+        for bad in [
+            "javascript:alert(1)",
+            "data:text/html,x",
+            "file:///etc/passwd",
+            "https://x.test/p#frag",
+            "https://x.test/p?q=1",
+            "https://",
+        ] {
+            mission_fdr_origin_reset();
+            for byte in bad.bytes() {
+                if mission_fdr_origin_byte(f64::from(byte)) != 1 {
+                    break;
+                }
+            }
+            assert_eq!(mission_fdr_origin_commit(), 0, "{bad} must be refused");
+            assert!(ORIGIN.lock().unwrap().is_empty());
+        }
+        // Non-finite and out-of-range bytes are refused too.
+        mission_fdr_origin_reset();
+        assert_eq!(mission_fdr_origin_byte(f64::NAN), 0);
+        assert_eq!(mission_fdr_origin_byte(300.0), 0);
+        assert_eq!(mission_fdr_origin_byte(104.5), 0);
+    }
+
     use super::*;
 
     fn roundtrip_fields(fdr: &Fdr) -> Fdr {
@@ -500,6 +772,11 @@ mod tests {
         let license = odd_identity::License::from_entropy([3u8; 16]);
         let mut fdr = Fdr {
             schema_version: SCHEMA_VERSION,
+            thermal_specs: Vec::new(),
+            delegation_mask: 0,
+            vent_events: Vec::new(),
+            boil_off_kg: [0.0; 2],
+            cryocooler_energy_j: 0.0,
             contract_id: 101,
             attempt_mode: AttemptMode::Ranked,
             callsign: "BRIDGE TEST".into(),

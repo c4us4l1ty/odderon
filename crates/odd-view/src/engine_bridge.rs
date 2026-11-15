@@ -508,6 +508,55 @@ pub extern "C" fn mission_engine_causal_valid() -> i32 {
     ))
 }
 
+/// Number of propellant pairs the solver knows. The browser builds its
+/// selector from this instead of restating the Rust enum order.
+#[no_mangle]
+pub extern "C" fn mission_propellant_count() -> u32 {
+    odd_propulsion::Propellant::all().len() as u32
+}
+
+fn propellant_at(id: u32) -> Option<odd_propulsion::Propellant> {
+    odd_propulsion::Propellant::from_u8(u8::try_from(id).ok()?)
+}
+
+/// UTF-8 length of a pair's display label; 0 for an unknown id.
+#[no_mangle]
+pub extern "C" fn mission_propellant_label_len(id: u32) -> u32 {
+    propellant_at(id).map_or(0, |p| p.label().len() as u32)
+}
+
+/// One UTF-8 byte of that label; NaN when out of range.
+#[no_mangle]
+pub extern "C" fn mission_propellant_label_byte(id: u32, index: u32) -> f64 {
+    propellant_at(id).map_or(f64::NAN, |p| {
+        p.label()
+            .as_bytes()
+            .get(index as usize)
+            .map_or(f64::NAN, |b| f64::from(*b))
+    })
+}
+
+/// The calibrated mixture-ratio band: 0 lower, 1 upper. NaN for a bad id.
+#[no_mangle]
+pub extern "C" fn mission_propellant_band(id: u32, end: u32) -> f64 {
+    let Some(propellant) = propellant_at(id) else {
+        return f64::NAN;
+    };
+    let (lo, hi) = propellant.of_band();
+    match end {
+        0 => lo,
+        1 => hi,
+        _ => f64::NAN,
+    }
+}
+
+/// Wire id of a pair, so the browser can assert its selector values against
+/// the discriminant a signed recorder actually stores.
+#[no_mangle]
+pub extern "C" fn mission_propellant_wire_id(id: u32) -> u32 {
+    propellant_at(id).map_or(u32::MAX, |p| u32::from(p as u8))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -325,6 +325,32 @@ pub fn chamber(
 mod tests {
     use super::*;
 
+    /// The wire id, the `all()` order, the HTML `<option value>` order and the
+    /// lab's `BANDS`/`LABELS` maps are four copies of one ordering. A signed
+    /// FDR stores the bare discriminant, so reordering this enum silently
+    /// re-labels every historical certificate. Pin it.
+    #[test]
+    fn propellant_wire_ids_are_frozen() {
+        for (id, expected) in [
+            Propellant::LoxLh2,
+            Propellant::LoxRp1,
+            Propellant::LoxLch4,
+            Propellant::NtoMmh,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(expected as u8, id as u8, "wire id moved");
+            assert_eq!(Propellant::from_u8(id as u8), Some(expected));
+            assert_eq!(Propellant::all()[id], expected, "all() order moved");
+        }
+        assert_eq!(Propellant::from_u8(4), None);
+        assert_eq!(Propellant::LoxLh2.label(), "LOX / LH2");
+        assert_eq!(Propellant::LoxRp1.label(), "LOX / RP-1");
+        assert_eq!(Propellant::LoxLch4.label(), "LOX / LCH4");
+        assert_eq!(Propellant::NtoMmh.label(), "NTO / MMH");
+    }
+
     #[test]
     fn hydrolox_anchor_matches_the_published_cea_point() {
         let c = chamber(Propellant::LoxLh2, 6.0, 20.64e6).unwrap();

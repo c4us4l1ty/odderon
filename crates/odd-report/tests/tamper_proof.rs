@@ -22,6 +22,11 @@ fn flight() -> Fdr {
     }
     Fdr {
         schema_version: SCHEMA_VERSION,
+        thermal_specs: Vec::new(),
+        delegation_mask: 0,
+        vent_events: Vec::new(),
+        boil_off_kg: [0.0; 2],
+        cryocooler_energy_j: 0.0,
         contract_id: 101,
         attempt_mode: AttemptMode::Ranked,
         callsign: "GATE PILOT".into(),
@@ -322,7 +327,7 @@ fn malformed_and_future_documents_are_rejected_by_name() {
 fn canonical_form_is_independent_of_json_formatting() {
     let (fdr, _) = signed();
     let json = fdr.to_json();
-    assert!(json.contains("\"schema_version\":2"));
+    assert!(json.contains("\"schema_version\":3"));
     assert!(json.contains("\"engine_propellant\":\"NTO / MMH\""));
     assert!(json.contains("\"attempt_mode\":\"Ranked\""));
     assert!(json.contains("\"command_timeline\":["));

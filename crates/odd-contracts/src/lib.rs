@@ -7,6 +7,11 @@
 //! engine is a physical `EngineSpec`, and thrust, specific impulse and engine
 //! dry mass are derived from it by `odd-propulsion`. A player may redesign
 //! the engine before locking a prediction; the recorder signs the design.
+pub mod chief_ai;
+pub mod thermal;
+pub use chief_ai::{DelegationMask, Department};
+pub use thermal::{ThermalDesign, ThermalOutcome};
+
 use odd_astro::{
     elements::Elements,
     force_model::{FlightLimits, ForceModel, Radiation, Zonal},
@@ -77,6 +82,14 @@ pub struct Vehicle {
     pub initial_mass_kg: f64,
     /// True when the tank volume, not the structure, limited the load.
     pub volume_limited: bool,
+    /// Kilograms the Chief-AI added as conservative margin. Zero when manual.
+    pub delegation_margin_kg: f64,
+    /// Stack cost multiplier from delegation. 1.0 when manual.
+    pub delegation_cost_multiplier: f64,
+    /// Kilograms of cryogenic fit-out beyond the contract baseline:
+    /// blanket, radiator panels and the solar array that runs the cooler.
+    /// Negative when the player chose lighter hardware than the baseline.
+    pub thermal_fitout_kg: f64,
 }
 
 /// Baseline orbital-maneuvering engine: a storable pressure-fed-class tug
@@ -226,6 +239,19 @@ impl Contract {
     /// engine mass and the propellant load all follow from physics; the
     /// airframe, tank volume and structural budget do not change.
     pub fn vehicle(&self, spec: EngineSpec) -> Result<Vehicle, PropulsionError> {
+        self.vehicle_delegated(spec, DelegationMask::MANUAL, &ThermalDesign::baseline())
+    }
+
+    /// Design the stage with a chosen split of manual and AI-sized
+    /// disciplines. A delegated discipline carries +35% mass and +30% cost,
+    /// and the margin is **added to the dry mass that actually flies** — it
+    /// is not a display-only annotation.
+    pub fn vehicle_delegated(
+        &self,
+        spec: EngineSpec,
+        delegation: DelegationMask,
+        design: &ThermalDesign,
+    ) -> Result<Vehicle, PropulsionError> {
         // Orbital contracts fly in vacuum. Ambient performance belongs to the
         // test stand, not to the flight.
         let solution = solve_engine(&spec, 0.0)?;
@@ -237,7 +263,69 @@ impl Contract {
         }
         let capacity = self.tank_volume_m3 * solution.bulk_density_kg_m3;
         let propellant_kg = libm::fmin(capacity, self.propellant_budget_kg);
-        let dry_mass_kg = self.airframe_mass_kg + solution.dry_mass_kg;
+        // The chief's margin is real hardware: it enters the dry mass, so a
+        // delegated stack genuinely carries less propellant for the same
+        // tank volume and must be flown differently.
+        let sphere_radius = libm::cbrt(3.0 * self.tank_volume_m3 / (4.0 * std::f64::consts::PI));
+        let tank_area_m2 = 4.0 * std::f64::consts::PI * sphere_radius * sphere_radius;
+        // A storable stage has no cryogenic fit-out: no blanket, no radiator,
+        // and nothing for a thermal chief to size.
+        let cryogenic = design.stage(self, &spec, propellant_kg).is_some();
+        let (volume, area) = if cryogenic {
+            (self.tank_volume_m3, tank_area_m2)
+        } else {
+            (0.0, 0.0)
+        };
+        // A storable stage carries no radiator or cooler either, so the
+        // chief has no thermal hardware to add margin to. Sanitising here
+        // keeps the verifier's recomputation identical for a stage whose
+        // thermal block is legitimately absent from the record.
+        let sizing_design = if cryogenic {
+            *design
+        } else {
+            let mut sanitized = *design;
+            sanitized.radiator_area_m2 = 0.0;
+            sanitized.cryocooler_lift_w = 0.0;
+            sanitized
+        };
+        let hardware = chief_ai::hardware_mass(
+            solution.dry_mass_kg,
+            volume,
+            area,
+            design.relief_pressure_pa,
+            &sizing_design,
+        );
+        // The airframe allowance already includes the baseline blanket.
+        // Anything beyond it — more layers, a heavier shell, a higher relief
+        // pressure, radiator panels — is real hardware and must be paid for
+        // in dry mass, or active cooling would be free and the cryogenic
+        // trade-off would not exist.
+        let baseline = ThermalDesign::baseline();
+        let baseline_hardware = chief_ai::hardware_mass(
+            solution.dry_mass_kg,
+            volume,
+            area,
+            baseline.relief_pressure_pa,
+            &baseline,
+        );
+        let thermal_index = chief_ai::Department::Thermal as usize;
+        let power_index = chief_ai::Department::Power as usize;
+        // Both halves of active cooling are hardware: the blanket/radiator
+        // and the array that powers the compressor. A storable stage signs
+        // no thermal block, so its fit-out stays at the contract baseline.
+        let thermal_fitout_kg = if cryogenic {
+            (hardware[thermal_index].base_kg - baseline_hardware[thermal_index].base_kg)
+                + (hardware[power_index].base_kg - baseline_hardware[power_index].base_kg)
+        } else {
+            0.0
+        };
+        // Equal cost weight per discipline: the assembly has no currency
+        // model yet, so cost is a relative multiplier, not an invented price.
+        let outcome = chief_ai::apply(delegation, &hardware, &[1.0; 4]);
+        let dry_mass_kg = self.airframe_mass_kg
+            + solution.dry_mass_kg
+            + thermal_fitout_kg
+            + outcome.mass_penalty_kg;
         Ok(Vehicle {
             spec,
             solution,
@@ -251,6 +339,9 @@ impl Contract {
             propellant_kg,
             initial_mass_kg: dry_mass_kg + propellant_kg,
             volume_limited: capacity < self.propellant_budget_kg,
+            delegation_margin_kg: outcome.mass_penalty_kg,
+            delegation_cost_multiplier: outcome.cost_multiplier,
+            thermal_fitout_kg,
         })
     }
 
@@ -368,6 +459,29 @@ pub fn score(
     commanded_delta_v_m_s: f64,
     impacted: bool,
 ) -> Result<MissionScore, IntegrationError> {
+    score_delegated(
+        contract,
+        state,
+        evaluation_s,
+        prediction,
+        commanded_delta_v_m_s,
+        impacted,
+        DelegationMask::MANUAL,
+    )
+}
+
+/// As `score`, but applying the Chief-AI efficiency cap. Any delegated
+/// discipline caps Seff at 0.65, so an auto-sized stack can complete a
+/// contract but cannot out-score a hand-worked one on efficiency.
+pub fn score_delegated(
+    contract: &Contract,
+    state: Keyframe,
+    evaluation_s: f64,
+    prediction: PredictionBaseline,
+    commanded_delta_v_m_s: f64,
+    impacted: bool,
+    delegation: DelegationMask,
+) -> Result<MissionScore, IntegrationError> {
     let fuel_ok = state.mass >= contract.dry_mass_kg && state.mass.is_finite();
     let deadline_ok = evaluation_s <= contract.duration_us as f64 / 1e6;
     if impacted || !fuel_ok || !deadline_ok || !evaluation_s.is_finite() {
@@ -433,12 +547,14 @@ pub fn score(
     } else {
         0.0
     };
-    Ok(MissionScore {
+    let mut score = MissionScore {
         objectives,
         prediction: prediction_score,
         efficiency,
         s: 0.5 * objectives + 0.25 * prediction_score + 0.25 * efficiency,
-    })
+    };
+    chief_ai::cap_score(&mut score, delegation);
+    Ok(score)
 }
 
 /// A numerically targeted perigee-kick plan for Contract 103.

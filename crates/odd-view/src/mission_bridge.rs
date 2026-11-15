@@ -34,12 +34,32 @@ struct Settings {
     nodes: Vec<ManeuverNode>,
     guidance: Vec<Option<State>>,
     node_metric: bool,
+    /// Cryogenic fit-out. Editable by the player; signed into FDR v3.
+    thermal_design: odd_contracts::ThermalDesign,
+    /// Which disciplines the Chief-AI sized. Signed into FDR v3.
+    delegation: odd_contracts::DelegationMask,
 }
 impl Settings {
+    /// The tank model applies only to cryogenic pairs, and only when a load
+    /// is actually aboard.
+    fn thermal_inputs(&self) -> Option<odd_verify::ThermalInputs> {
+        let load = self.initial.mass - self.dry_mass;
+        if load <= 0.0 {
+            return None;
+        }
+        Some(odd_verify::ThermalInputs {
+            engine_spec: self.engine_spec,
+            design: self.thermal_design,
+            load_kg: load,
+        })
+    }
+
     /// The physical inputs the portable evaluator needs. Node schedule and
     /// guidance travel in the compiled `Plan`, not in the settings.
     fn flight(&self) -> FlightSettings {
         FlightSettings {
+            delegation: self.delegation,
+            thermal: self.thermal_inputs(),
             contract_id: self.contract_id,
             epoch: self.epoch,
             initial: self.initial,
@@ -57,6 +77,7 @@ struct Execution {
     final_state: Keyframe,
     burn_epochs: Vec<(f64, f64)>,
     burn_sweeps: Vec<f64>,
+    thermal: odd_contracts::ThermalOutcome,
 }
 static SETTINGS: Mutex<Option<Settings>> = Mutex::new(None);
 static PLAN: Mutex<Option<Plan>> = Mutex::new(None);
@@ -89,6 +110,8 @@ pub extern "C" fn mission_contract(id: u32) -> i32 {
     *SETTINGS.lock().unwrap() = Some(Settings {
         contract_id: id,
         engine_spec: c.engine_spec,
+        thermal_design: odd_contracts::ThermalDesign::baseline(),
+        delegation: odd_contracts::DelegationMask::MANUAL,
         epoch: odd_contracts::START_EPOCH,
         initial: c.initial,
         duration_us: c.duration_us,
@@ -177,6 +200,8 @@ pub extern "C" fn mission_setup(
         // The free sandbox has no catalog stage, so it carries a placeholder
         // design and cannot produce a certified recorder.
         engine_spec: odd_contracts::STORABLE_BASELINE,
+        thermal_design: odd_contracts::ThermalDesign::baseline(),
+        delegation: odd_contracts::DelegationMask::MANUAL,
         epoch: epoch as i64,
         initial: Keyframe {
             time: 0.0,
@@ -437,6 +462,7 @@ pub extern "C" fn mission_execute() -> i32 {
         final_state: outcome.final_state,
         burn_epochs: outcome.burns.iter().map(|b| (b.start, b.end)).collect(),
         burn_sweeps: outcome.burn_sweeps,
+        thermal: outcome.thermal,
     });
     1
 }
@@ -865,6 +891,11 @@ pub(crate) struct CapturedFlight {
     pub commands: Vec<CapturedCommand>,
     pub report: [f64; REPORT_LEN],
     pub final_state: Keyframe,
+    /// The cryogenic fit-out that actually flew, and what it produced.
+    pub thermal_design: odd_contracts::ThermalDesign,
+    pub thermal: odd_contracts::ThermalOutcome,
+    pub tank_volumes_m3: [f64; 2],
+    pub delegation: odd_contracts::DelegationMask,
 }
 
 /// Snapshot the executed flight for signing. Requires a completed execution.
@@ -896,6 +927,20 @@ pub(crate) fn capture_flight() -> Option<CapturedFlight> {
         thrust_n: settings.engine.thrust_newtons,
         specific_impulse_s: settings.engine.specific_impulse_seconds,
         node_metric: settings.node_metric,
+        thermal_design: settings.thermal_design,
+        tank_volumes_m3: {
+            let load = settings.initial.mass - settings.dry_mass;
+            let contract = odd_contracts::Contract::get(settings.contract_id)?;
+            match settings
+                .thermal_design
+                .stage(&contract, &settings.engine_spec, load)
+            {
+                Some(stage) => [stage.oxidizer.volume_m3, stage.fuel.volume_m3],
+                None => [0.0, 0.0],
+            }
+        },
+        thermal: execution.thermal.clone(),
+        delegation: settings.delegation,
         prediction,
         commands: settings
             .nodes
@@ -948,11 +993,12 @@ pub(crate) fn apply_engine_design(spec: odd_propulsion::EngineSpec) -> i32 {
     let Some(contract) = Contract::get(settings.contract_id) else {
         return 0;
     };
-    let vehicle = match contract.vehicle(spec) {
-        Ok(vehicle) => vehicle,
-        Err(odd_propulsion::PropulsionError::ThermalLimitExceeded) => return -2,
-        Err(_) => return -1,
-    };
+    let vehicle =
+        match contract.vehicle_delegated(spec, settings.delegation, &settings.thermal_design) {
+            Ok(vehicle) => vehicle,
+            Err(odd_propulsion::PropulsionError::ThermalLimitExceeded) => return -2,
+            Err(_) => return -1,
+        };
     settings.engine_spec = spec;
     settings.engine = vehicle.engine;
     settings.dry_mass = vehicle.dry_mass_kg;
@@ -988,6 +1034,7 @@ pub(crate) fn dossier_geometry() -> Option<odd_report::dossier::Geometry> {
             })
             .collect(),
         burn_sweeps: execution.burn_sweeps,
+        thermal: execution.thermal,
     };
     let commands: Vec<(i64, [f64; 3])> = settings
         .nodes
@@ -1007,6 +1054,302 @@ pub(crate) fn dossier_geometry() -> Option<odd_report::dossier::Geometry> {
 #[cfg(test)]
 pub(crate) fn test_lock() -> std::sync::MutexGuard<'static, ()> {
     tests::TEST_LOCK.lock().unwrap()
+}
+
+// ---------------------------------------------------------------------------
+// Vehicle assembly: Chief-AI delegation and the cryogenic design lever.
+//
+// These are the controls that make WP 1.6 and WP 1.7 reachable from the
+// browser. Both rebuild the stage, because a chief's margin is real dry mass
+// and a thicker blanket changes the hardware the chief would size.
+// ---------------------------------------------------------------------------
+
+/// Re-solve the current stage with the session's engine, delegation and
+/// cryogenic design. Returns the same codes as `apply_engine_design`.
+fn rebuild_stage() -> i32 {
+    let mut guard = SETTINGS.lock().unwrap();
+    let Some(settings) = guard.as_mut() else {
+        return 0;
+    };
+    let Some(contract) = Contract::get(settings.contract_id) else {
+        return 0;
+    };
+    let vehicle = match contract.vehicle_delegated(
+        settings.engine_spec,
+        settings.delegation,
+        &settings.thermal_design,
+    ) {
+        Ok(vehicle) => vehicle,
+        Err(odd_propulsion::PropulsionError::ThermalLimitExceeded) => return -2,
+        Err(_) => return -1,
+    };
+    settings.engine = vehicle.engine;
+    settings.dry_mass = vehicle.dry_mass_kg;
+    settings.initial.mass = vehicle.initial_mass_kg;
+    settings.nodes.clear();
+    settings.guidance.clear();
+    drop(guard);
+    clear_results();
+    1
+}
+
+/// The four discipline hardware masses and the margin each chief would add.
+fn delegation_outcome() -> Option<odd_contracts::chief_ai::DelegationOutcome> {
+    let settings = SETTINGS.lock().unwrap().clone()?;
+    let contract = Contract::get(settings.contract_id)?;
+    let vehicle = contract
+        .vehicle_delegated(
+            settings.engine_spec,
+            settings.delegation,
+            &settings.thermal_design,
+        )
+        .ok()?;
+    let radius = libm::cbrt(3.0 * contract.tank_volume_m3 / (4.0 * std::f64::consts::PI));
+    let area = 4.0 * std::f64::consts::PI * radius * radius;
+    let hardware = odd_contracts::chief_ai::hardware_mass(
+        vehicle.solution.dry_mass_kg,
+        contract.tank_volume_m3,
+        area,
+        settings.thermal_design.relief_pressure_pa,
+        &settings.thermal_design,
+    );
+    Some(odd_contracts::chief_ai::apply(
+        settings.delegation,
+        &hardware,
+        &[1.0; 4],
+    ))
+}
+
+/// Set the delegation bitmask (bit 0 Propulsion, 1 Thermal, 2 Power, 3 GNC).
+/// Rejects any bit outside the four departments. Rebuilds the stage, so the
+/// margin immediately changes the mass that flies.
+#[no_mangle]
+pub extern "C" fn mission_delegation_set(mask: u32) -> i32 {
+    let Ok(byte) = u8::try_from(mask) else {
+        return 0;
+    };
+    let mask = odd_contracts::DelegationMask(byte);
+    if !mask.is_valid() {
+        return 0;
+    }
+    {
+        let mut guard = SETTINGS.lock().unwrap();
+        let Some(settings) = guard.as_mut() else {
+            return 0;
+        };
+        settings.delegation = mask;
+    }
+    rebuild_stage()
+}
+
+/// The current delegation bitmask.
+#[no_mangle]
+pub extern "C" fn mission_delegation_mask() -> u32 {
+    SETTINGS
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map_or(0, |s| u32::from(s.delegation.0))
+}
+
+/// Assembly readout: 0 margin kg, 1 cost multiplier, 2 dry mass, 3 wet mass,
+/// 4 efficiency cap. NaN when no stage is selected.
+#[no_mangle]
+pub extern "C" fn mission_delegation_readout(field: u32) -> f64 {
+    let Some(settings) = SETTINGS.lock().unwrap().clone() else {
+        return f64::NAN;
+    };
+    let Some(outcome) = delegation_outcome() else {
+        return f64::NAN;
+    };
+    match field {
+        0 => outcome.mass_penalty_kg,
+        1 => outcome.cost_multiplier,
+        2 => settings.dry_mass,
+        3 => settings.initial.mass,
+        4 => outcome.efficiency_cap,
+        5 => Contract::get(settings.contract_id)
+            .and_then(|c| {
+                c.vehicle_delegated(
+                    settings.engine_spec,
+                    settings.delegation,
+                    &settings.thermal_design,
+                )
+                .ok()
+            })
+            .map_or(f64::NAN, |v| v.thermal_fitout_kg),
+        _ => f64::NAN,
+    }
+}
+
+fn delegation_badge(department: u32) -> Option<String> {
+    let department = odd_contracts::Department::from_u8(u8::try_from(department).ok()?)?;
+    let outcome = delegation_outcome()?;
+    outcome
+        .decisions
+        .iter()
+        .find(|d| d.department == department)
+        .map(|d| d.badge.clone())
+}
+
+/// UTF-8 length of a department's badge; 0 when out of range.
+#[no_mangle]
+pub extern "C" fn mission_delegation_badge_len(department: u32) -> u32 {
+    delegation_badge(department).map_or(0, |s| s.len() as u32)
+}
+
+/// One UTF-8 byte of that badge; NaN when out of range.
+#[no_mangle]
+pub extern "C" fn mission_delegation_badge_byte(department: u32, index: u32) -> f64 {
+    delegation_badge(department).map_or(f64::NAN, |s| {
+        s.as_bytes()
+            .get(index as usize)
+            .map_or(f64::NAN, |b| *b as f64)
+    })
+}
+
+/// Read a cryogenic design field. 0 MLI layers, 1 effective emittance,
+/// 2 commanded cooler lift W, 3 radiator area m², 4 strut conductance W/K,
+/// 5 relief pressure Pa, 6 shell id.
+#[no_mangle]
+pub extern "C" fn mission_thermal_get(field: u32) -> f64 {
+    let Some(settings) = SETTINGS.lock().unwrap().clone() else {
+        return f64::NAN;
+    };
+    let d = &settings.thermal_design;
+    match field {
+        0 => f64::from(d.mli_layers),
+        1 => d.epsilon_eff,
+        2 => d.cryocooler_lift_w,
+        3 => d.radiator_area_m2,
+        4 => d.strut_conductance_w_k,
+        5 => d.relief_pressure_pa,
+        6 => f64::from(d.shell),
+        8 => d.bus.array_w_at_1au,
+        // 7: does this stage actually carry cryogenic tanks? The assembly
+        // disables the cryo knobs when it does not, instead of offering a
+        // control that silently does nothing.
+        7 => {
+            let Some(contract) = Contract::get(settings.contract_id) else {
+                return f64::NAN;
+            };
+            let load = settings.initial.mass - settings.dry_mass;
+            if d.stage(&contract, &settings.engine_spec, load).is_some() {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        _ => f64::NAN,
+    }
+}
+
+/// Set a cryogenic design field, then rebuild the stage. Returns 1 on
+/// success, 0 for an unknown field or an unphysical value.
+///
+/// Changing the layer count re-derives the emittance floor (`4 × ideal`),
+/// because a blanket's emittance is a consequence of its construction, not
+/// an independent number the player may claim.
+#[no_mangle]
+pub extern "C" fn mission_thermal_set(field: u32, value: f64) -> i32 {
+    if !value.is_finite() || value < 0.0 {
+        return 0;
+    }
+    // Refuse cryogenic edits on a storable stage: there is no fit-out to
+    // size, and accepting one would put hardware in the flown mass that the
+    // record has no thermal block to prove.
+    if mission_thermal_get(7) != 1.0 {
+        return 0;
+    }
+    {
+        let mut guard = SETTINGS.lock().unwrap();
+        let Some(settings) = guard.as_mut() else {
+            return 0;
+        };
+        let d = &mut settings.thermal_design;
+        match field {
+            0 => {
+                let layers = value.round();
+                if !(1.0..=100.0).contains(&layers) {
+                    return 0;
+                }
+                d.mli_layers = layers as u32;
+                d.epsilon_eff = odd_systems::ideal_epsilon_for_layers(d.mli_layers) * 4.0;
+            }
+            1 => {
+                if !(0.0..1.0).contains(&value)
+                    || value < odd_systems::ideal_epsilon_for_layers(d.mli_layers)
+                {
+                    return 0;
+                }
+                d.epsilon_eff = value;
+            }
+            2 => {
+                // A cooler needs somewhere to reject its heat.
+                if value > 0.0 && d.radiator_area_m2 <= 0.0 {
+                    return 0;
+                }
+                d.cryocooler_lift_w = value;
+            }
+            3 => {
+                if value == 0.0 && d.cryocooler_lift_w > 0.0 {
+                    return 0;
+                }
+                d.radiator_area_m2 = value;
+            }
+            4 => d.strut_conductance_w_k = value,
+            5 => {
+                if value <= 0.0 {
+                    return 0;
+                }
+                d.relief_pressure_pa = value;
+            }
+            8 => {
+                // The array must at least cover the fixed avionics load, and
+                // its mass is charged to the stage like any other hardware.
+                if value < d.bus.avionics_w {
+                    return 0;
+                }
+                d.bus.array_w_at_1au = value;
+            }
+            6 => {
+                let Ok(id) = u8::try_from(value.round() as i64) else {
+                    return 0;
+                };
+                if odd_contracts::thermal::shell_from_u8(id).is_none() {
+                    return 0;
+                }
+                d.shell = id;
+            }
+            _ => return 0,
+        }
+    }
+    rebuild_stage()
+}
+
+/// Boil-off readout from the last execution. 0 total kg lost, 1 oxidizer kg,
+/// 2 fuel kg, 3 cooler joules, 4 vent count, 5 inert flag. NaN before a flight.
+#[no_mangle]
+pub extern "C" fn mission_boil_off(field: u32) -> f64 {
+    let Some(execution) = EXECUTION.lock().unwrap().clone() else {
+        return f64::NAN;
+    };
+    let t = &execution.thermal;
+    match field {
+        0 => t.lost_kg,
+        1 => t.tank_lost_kg[0],
+        2 => t.tank_lost_kg[1],
+        3 => t.cooler_energy_j,
+        4 => t.vents.len() as f64,
+        5 => {
+            if t.inert {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        _ => f64::NAN,
+    }
 }
 
 #[cfg(test)]

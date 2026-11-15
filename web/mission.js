@@ -2,6 +2,7 @@
 // Rust/WASM planner and one-shot flight workers, not fabricated by canvas.
 import { Governor } from './governor.js';
 import { createLab } from './engine-lab.js';
+import { createAssembly, assemblyPayload, applyAssembly } from './assembly.js';
 import * as identity from './identity.js';
 import { initProfile, openProfile } from './profile.js';
 import * as recorder from './recorder.js';
@@ -36,7 +37,7 @@ const SHAPLEY_WHY=[
 ];
 // The hover registry is loaded from odd-app::lens through the scalar bridge.
 // Keeping one registry prevents a new Rust warning term from rendering naked.
-let GLOSSARY={},TERM_RE=null;
+let GLOSSARY={},TERM_RE=null,assembly=null,assemblyDesign=null,lastBoilOff=null,lastDelegationMask=0;
 // Art keys come from odd_app::lens::Projection::key through the bridge; the
 // browser must not restate the Rust declaration order.
 function wasmString(len,byte){const bytes=new Uint8Array(len);for(let i=0;i<len;i++)bytes[i]=byte(i);return new TextDecoder().decode(bytes);}
@@ -57,6 +58,10 @@ const lens={
   leo:'A close Earth parking orbit, here a few hundred kilometers up. The projection compares the parking circle with Earth’s surface.',
   dag:'A cause-and-effect chain with no loops. Each warning points from symptom to mechanism to cause to a one-click demonstration.',
   pdr:'An engineering dossier comparing your locked prediction with modeled flight, signed error contributions and practice rating.',
+  mli:'Each film layer re-radiates heat to the next, so the leak falls as layers are added. The projection shows the outer skin running hot while only a small fraction reaches the liquid. Past about twenty layers the support struts, not the blanket, set the floor.',
+  cop:'A cryocooler lifts heat from the cold tank and rejects it, plus the electricity it consumed, through a warm radiator. The projection compares heat lifted with power drawn: at 20 K against a 300 K sink the electricity is one to two orders of magnitude larger, and the Carnot ceiling caps the ratio.',
+  gnc:'Guidance decides where to point, navigation decides where you are, and control moves the actuators. The projection shows the attitude hardware drawing from the same electrical bus that feeds the cooler and the propulsion.',
+  'boil-off':'Heat leaking into a cryogenic tank vaporizes liquid. Below the relief setting the tank self-pressurizes; at relief it vents and that propellant is lost to the mission. The projection shows the liquid level falling as heat arrives.',
   t:'A push along the direction of travel changes orbital energy. Near the closest point, a forward push raises the farthest point of the orbit; a backward push lowers it. The projection shows kinetic-energy gain or loss and the opposite side breathing outward or inward.',
   n:'This sideways push stays in the orbital plane and is perpendicular to the direction of travel. Near an apsis it points roughly inward or outward; away from one it is not exactly radial. The projection rotates the eccentricity vector.',
   w:'This push is perpendicular to the orbital plane. It changes the direction of the orbit’s angular momentum and tilts the plane about the line of nodes. The projection shows torque as radius crossed with force.',
@@ -92,7 +97,7 @@ function reapplyEngine(w){
   return w.mission_engine_apply()===1;
 }
 function configure(w,items){
-  if(contractId){if(!w.mission_contract(contractId))return false;if(!reapplyEngine(w))return false;}
+  if(contractId){if(!w.mission_contract(contractId))return false;if(!applyAssembly(w,assemblyDesign))return false;if(!reapplyEngine(w))return false;}
   else if(!w.mission_setup(...setup))return false;
   if(!w.mission_metric(scenario==='102'?1:0))return false;
   const ordered=items.map((n,i)=>({n,i})).filter(x=>Math.hypot(...x.n.dv)>=1e-12).sort((a,b)=>a.n.time-b.n.time);
@@ -170,6 +175,7 @@ function workerPayload(isLocked){
   // Send the committed physical design, not the performance it produces and
   // not whatever the lab is currently previewing.
   if(appliedEngine)payload.engine={...appliedEngine};
+  if(assemblyDesign)payload.assembly={...assemblyDesign};
   if(isLocked){const p=locked.prediction;payload.locked=[p.dv,p.apo*1000,p.peri*1000,p.fuel,p.time,Number.isFinite(p.miss)?p.miss:NaN];}
   return payload;
 }
@@ -177,7 +183,7 @@ function startFlight(isLocked,version=++sequence){
   cancelFlight();worker=new Worker('./mission-worker.js',{type:'module'});const current=worker;
   current.onmessage=({data})=>{messages++;if(worker!==current||version!==sequence)return;current.terminate();worker=null;
     if(data.error){$('plan-status').textContent=data.error;$('plan-status').classList.add('failure');if(isLocked)$('execute-status').textContent=data.error;return;}
-    actual=data.points;lastReport=data.report;lastCapture=data.capture??null;lastRecorder=null;lastComputeMs=Number.isFinite(data.computeMs)?data.computeMs:null;lastLunarInfo=data.lunarInfo?.[0]?data.lunarInfo:null;if(data.lunar?.length)lunarPreview=data.lunar;updateCausal();draw();$('plan-status').textContent='Flight model ready. No simulation runs while idle.';annotateAcronyms($('plan-status'));
+    actual=data.points;lastReport=data.report;lastCapture=data.capture??null;lastBoilOff=data.boilOff??null;lastDelegationMask=data.delegationMask??0;lastRecorder=null;lastComputeMs=Number.isFinite(data.computeMs)?data.computeMs:null;lastLunarInfo=data.lunarInfo?.[0]?data.lunarInfo:null;if(data.lunar?.length)lunarPreview=data.lunar;updateCausal();draw();$('plan-status').textContent='Flight model ready. No simulation runs while idle.';annotateAcronyms($('plan-status'));
     if(isLocked)showDebrief(data.report);
   };
   current.onerror=()=>{if(worker!==current)return;worker.terminate();worker=null;$('plan-status').textContent='Flight worker failed.';if(isLocked)$('execute-status').textContent='Flight worker failed.';};
@@ -212,12 +218,25 @@ function showDebrief(report){
     tr.innerHTML=`<th scope="row">${label}</th><td>${Number.isFinite(pred)?fmt(pred,dec):'—'} ${unit}</td><td>${Number.isFinite(act)?fmt(act,dec):'—'} ${unit}</td><td>${Number.isFinite(err)?(err>=0?'+':'')+fmt(err,dec):'—'} ${unit}</td>`;
     tbody.append(tr);
   }
-  const boil=document.createElement('tr');boil.innerHTML='<th scope="row">Boil-off loss</th><td>—</td><td>Not modeled</td><td>—</td>';tbody.append(boil);table.append(tbody);
+  // Boil-off is integrated along the flown trajectory and signed; report it
+  // from the executed thermal balance rather than claiming it is unmodeled.
+  const cryo=lastBoilOff;
+  const boil=document.createElement('tr');
+  if(!cryo)boil.innerHTML='<th scope="row">Boil-off loss</th><td>—</td><td>Not available</td><td>—</td>';
+  else if(cryo.inert)boil.innerHTML='<th scope="row">Boil-off loss</th><td>—</td><td>0.000 kg (storable propellants)</td><td>—</td>';
+  else boil.innerHTML=`<th scope="row">Boil-off loss</th><td>—</td><td>${fmt(cryo.lost,3)} kg vented</td><td>—</td>`;
+  tbody.append(boil);table.append(tbody);
   const cards=document.createElement('div');cards.className='debrief-grid';
   const entries=[['Mission score',`${fmt(score*100,1)}%`],['Orbit eccentricity',fmt(e,5)],['Orbital-plane tilt',`${fmt(inclination,2)}°`]];
   if(scenario==='102')entries.push(['Five-day node rotation',`${fmt(drift,3)}°`]);
   if(scenario==='103')entries.push(['Apoapsis radius',`${fmt((apo+R)/1000)} km`],['Target radius error',`${fmt(report[40]/1000)} km`]);
   if(Number.isFinite(report[32]))entries.push(['Lunar sphere-of-influence entry',`${fmt(report[32]/86400,3)} days`]);
+  if(cryo&&!cryo.inert){
+    entries.push(['Propellant boiled off',`${fmt(cryo.lost,3)} kg`],['Relief-valve openings',`${fmt(cryo.vents,0)}`]);
+    if(cryo.coolerJoules>0)entries.push(['Cryocooler electricity',`${fmt(cryo.coolerJoules/1e6,2)} MJ`]);
+  }
+  const mask=lastDelegationMask;
+  if(mask)entries.push(['Disciplines delegated',`${[0,1,2,3].filter(b=>mask&(1<<b)).length} of 4 · efficiency capped`]);
   if(impacted)entries.unshift(['Terminal event',`Impact at ${fmt(evaluation,1)} s`]);
   for(const [label,value] of entries){const item=document.createElement('div'),strong=document.createElement('strong'),span=document.createElement('span');strong.textContent=value;span.textContent=label;item.append(strong,span);cards.append(item);}
   const loss=document.createElement('p');loss.className='finite-loss';
@@ -352,7 +371,7 @@ $('split-kick').addEventListener('click',()=>{
       nodes=data.nodes;selected=nodes.length-1;updatePreview();$('plan-status').textContent='Three equal kicks placed at numerically propagated periapses. Check the gold path and the apoapsis radius.';annotateAcronyms($('plan-status'));
     };
     current.onerror=()=>{if(worker!==current)return;worker.terminate();worker=null;$('plan-status').textContent='Targeting worker failed.';$('split-kick').disabled=!!locked;};
-    messages++;current.postMessage({action:'split',kicks:3,total,first,engine:appliedEngine?{...appliedEngine}:null});return;
+    messages++;current.postMessage({action:'split',kicks:3,total,first,engine:appliedEngine?{...appliedEngine}:null,assembly:assemblyDesign?{...assemblyDesign}:null});return;
   }
   const original=nodes[selected];if(!original||original.dv[0]<=0)return;
   const old=nodes.map(n=>({time:n.time,dv:[...n.dv]}));
@@ -437,6 +456,33 @@ function drawLens(){
     arrow(cx,cy,cx+60,cy,'#80d9cb');arrow(cx,cy,cx,cy-45,'#e1bc76');arrow(cx,cy,cx-35,cy+35,'#bdade0');lensCtx.fillText('Along / sideways / out of plane',10,14);
   }else if(key==='leo'){
     lensCtx.fillStyle='#607f71';lensCtx.beginPath();lensCtx.arc(cx,cy,30,0,Math.PI*2);lensCtx.fill();lensCtx.strokeStyle='#70d7dc';lensCtx.beginPath();lensCtx.arc(cx,cy,42+2*phase,0,Math.PI*2);lensCtx.stroke();lensCtx.fillText('Low Earth parking orbit',10,14);
+  }else if(key==='mli'){
+    const layers=6;for(let i=0;i<layers;i++){const x=cx-50+i*14;lensCtx.strokeStyle=i===0?'#edbc98':'#3d5a4e';lensCtx.beginPath();lensCtx.moveTo(x,cy-40);lensCtx.lineTo(x,cy+40);lensCtx.stroke();}
+    arrow(cx-80,cy,cx-54,cy,'#e1bc76');arrow(cx+34,cy,cx+44,cy,'#80d9cb');
+    lensCtx.fillStyle='#607f71';lensCtx.fillRect(cx+48,cy-30,26,60);
+    lensCtx.fillText('Outer skin runs hot; only a fraction reaches the liquid',10,14);
+    lensCtx.fillText('More layers help less once the struts dominate',10,h-8);
+  }else if(key==='cop'){
+    const lift=26,draw=70;
+    lensCtx.fillStyle='#80d9cb';lensCtx.fillRect(cx-60,cy-lift/2,24,lift);
+    lensCtx.fillStyle='#edbc98';lensCtx.fillRect(cx+36,cy-draw/2,24,draw);
+    arrow(cx-30,cy,cx+30,cy,'#e1bc76');
+    lensCtx.fillText('Heat lifted at the cold tank',cx-96,cy+lift/2+16);
+    lensCtx.fillText('Electricity drawn',cx+22,cy+draw/2+16);
+    lensCtx.fillText('Carnot caps the ratio: cold / (hot − cold)',10,14);
+  }else if(key==='gnc'){
+    lensCtx.strokeStyle='#3d5a4e';lensCtx.strokeRect(cx-24,cy-18,48,36);
+    arrow(cx,cy,cx+52*Math.cos(phase),cy+34*Math.sin(phase),'#bdade0');
+    lensCtx.fillText('Sensors, computer and actuators hold attitude',10,14);
+    lensCtx.fillText('They draw from the same bus as the cooler',10,h-8);
+  }else if(key==='boil-off'){
+    const level=34+10*Math.sin(phase);
+    lensCtx.strokeStyle='#3d5a4e';lensCtx.strokeRect(cx-30,cy-34,60,68);
+    lensCtx.fillStyle='#70d7dc';lensCtx.fillRect(cx-29,cy+34-level,58,level);
+    arrow(cx-70,cy-20,cx-34,cy-20,'#e1bc76');
+    for(let i=0;i<3;i++){const y=cy-40-((lensPhase*18+i*12)%30);lensCtx.fillStyle='#edbc98';lensCtx.beginPath();lensCtx.arc(cx,y,2.5,0,Math.PI*2);lensCtx.fill();}
+    lensCtx.fillText('Heat in vaporizes liquid; the relief valve vents it',10,14);
+    lensCtx.fillText('Vented propellant is gone from the mission',10,h-8);
   }else if(key==='dag'){
     const labels=['Symptom','Mechanism','Cause','Demo'];for(let i=0;i<4;i++){const x=15+i*65;lensCtx.strokeStyle='#8ea98d';lensCtx.strokeRect(x,cy-12,52,24);lensCtx.fillStyle='#c7d3c4';lensCtx.fillText(labels[i],x+4,cy+4);if(i<3)arrow(x+52,cy,x+65,cy,'#e2bc79');}lensCtx.fillText('Deterministic cause chain',10,14);
   }else if(key==='pdr'){
@@ -511,7 +557,7 @@ $('mission-select').addEventListener('change',()=>{
     INITIAL=R+260000;TARGET=R+550000;DURATION=10800;DRY=1020;plane=[1,0];setup=[820497600,DURATION,1200,DRY,2400,310,INITIAL,0,0,0,Math.sqrt(MU/INITIAL),0];
     $('mission-rank').textContent='CONTRACT 101 / CADET · 800';$('mission-title').textContent='Orbit rescue';$('mission-description').textContent='Raise a 260 km circular orbit to 550 km, then make it circular within three hours. The dotted cyan path is your instantaneous-push preview; the gold path includes finite burns and modeled forces.';$('example').textContent='Show two-push example';
   }
-  if(engineLab){appliedEngine=null;wasm.mission_contract(contractId);engineLab.loadBaseline();engineLab.setLocked();DRY=wasm.mission_parameter(3);setup=Array.from({length:12},(_,i)=>wasm.mission_parameter(i));}
+  if(engineLab){appliedEngine=null;assemblyDesign=null;lastBoilOff=null;lastDelegationMask=0;wasm.mission_contract(contractId);engineLab.loadBaseline();engineLab.setLocked();if(assembly){assembly.sync();assembly.setLocked();}DRY=wasm.mission_parameter(3);setup=Array.from({length:12},(_,i)=>wasm.mission_parameter(i));}
   fields.time.min=String(nodeTimeRange()[0]);fields.time.max=String(nodeTimeRange()[1]);$('debrief').hidden=true;for(const id of ['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time','predict-miss'])$(id).value='';annotateAcronyms($('mission-description'));annotateAcronyms($('mission-rank'));updatePreview();
 });
 $('prefill').addEventListener('click',prefill);
@@ -523,9 +569,9 @@ $('execute').addEventListener('click',()=>{
   if($('predict-miss').value.trim()!==''&&(!Number.isFinite(miss)||miss<0)){$('execute-status').textContent='Target miss distance must be non-negative.';return;}
   locked=Object.freeze({prediction:Object.freeze({dv:vals[0],apo:vals[1],peri:vals[2],fuel:vals[3],time:vals[4],miss})});
   for(const id of ['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time','predict-miss','prefill','execute'])$(id).disabled=true;
-  $('unlock').hidden=false;$('debrief').hidden=true;$('execute-status').textContent='Prediction locked. Simulating the flight and its comparisons…';engineLab?.setLocked();syncFields();startFlight(true);
+  $('unlock').hidden=false;$('debrief').hidden=true;$('execute-status').textContent='Prediction locked. Simulating the flight and its comparisons…';engineLab?.setLocked();assembly?.setLocked();syncFields();startFlight(true);
 });
-$('unlock').addEventListener('click',()=>{locked=null;cancelFlight();sequence++;engineLab?.setLocked();$('unlock').hidden=true;$('debrief').hidden=true;$('execute-status').textContent='';for(const id of ['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time','predict-miss'])$(id).disabled=false;updatePreview();});
+$('unlock').addEventListener('click',()=>{locked=null;cancelFlight();sequence++;engineLab?.setLocked();assembly?.setLocked();$('unlock').hidden=true;$('debrief').hidden=true;$('execute-status').textContent='';for(const id of ['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time','predict-miss'])$(id).disabled=false;updatePreview();});
 canvas.addEventListener('pointerdown',e=>{
   if(locked||!preview.length||e.button!==0)return;const p=mousePoint(e),node=nodes[selected];
   if(node){const state=readState(wasm,node.time),center=toCanvas(state);for(const h of handles(center,state))if(distance(p,h.end)<12){drag={pointer:e.pointerId,key:h.key,start:p,initial:node.dv[{t:0,n:1,w:2}[h.key]],dir:h.dir};startLens(h.key);canvas.setPointerCapture(e.pointerId);return;}if(distance(p,center)<12){drag={pointer:e.pointerId,key:'time'};startLens('time');canvas.setPointerCapture(e.pointerId);return;}}
@@ -541,7 +587,7 @@ canvas.addEventListener('pointermove',e=>{
 function endDrag(e){if(drag&&drag.pointer===e.pointerId){drag=null;stopLens();scheduleFlight();}}
 canvas.addEventListener('pointerup',endDrag);canvas.addEventListener('pointercancel',endDrag);canvas.addEventListener('lostpointercapture',endDrag);canvas.addEventListener('pointerleave',e=>{if(!drag&&!intoLens(e))stopLens();});
 new ResizeObserver(draw).observe(canvas.parentElement);
-window.missionDiagnostics=Object.freeze({wasm:()=>wasm,recorder:()=>lastRecorder,verification:()=>verificationResult(),openVerify,profile:()=>identity.profile(),isRanked:id=>identity.isRanked(id),openProfile,get nodeTimeRange(){return nodeTimeRange();},clampNodeTime,get nodeMarker(){const n=nodes[selected];if(!n||!wasm)return null;const s=readState(wasm,n.time);return s.some(x=>!Number.isFinite(x))?null:toCanvas(s);},get pathEnds(){return preview.length?[toCanvas(preview[0].state),toCanvas(preview[preview.length-1].state)]:null;},get nodes(){return nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));},get pending(){return !!worker||timer!==null;},get draws(){return draws;},get messages(){return messages;},get locked(){return !!locked;},get report(){return lastReport?[...lastReport]:null;},get computeMs(){return lastComputeMs;},get lunarInfo(){return lastLunarInfo?[...lastLunarInfo]:null;},get lens(){return activeLens;},get lensDraws(){return lensDraws;},get lensPending(){return lensGovernor.frame!==null;},get engine(){return engineLab?engineLab.diagnostics():null;},get appliedEngine(){return appliedEngine?{...appliedEngine}:null;},get causalValid(){return wasm?wasm.mission_causal_valid()===1&&wasm.mission_engine_causal_valid()===1:false;},get acronymViolations(){return acronymViolations();},get handles(){if(selected<0||!wasm)return [];const state=readState(wasm,nodes[selected].time);return handles(toCanvas(state),state).map(h=>({key:h.key,end:h.end}));}});
+window.missionDiagnostics=Object.freeze({wasm:()=>wasm,recorder:()=>lastRecorder,verification:()=>verificationResult(),openVerify,profile:()=>identity.profile(),isRanked:id=>identity.isRanked(id),openProfile,get nodeTimeRange(){return nodeTimeRange();},clampNodeTime,get nodeMarker(){const n=nodes[selected];if(!n||!wasm)return null;const s=readState(wasm,n.time);return s.some(x=>!Number.isFinite(x))?null:toCanvas(s);},get pathEnds(){return preview.length?[toCanvas(preview[0].state),toCanvas(preview[preview.length-1].state)]:null;},get nodes(){return nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));},get pending(){return !!worker||timer!==null;},get draws(){return draws;},get messages(){return messages;},get locked(){return !!locked;},get report(){return lastReport?[...lastReport]:null;},get computeMs(){return lastComputeMs;},get lunarInfo(){return lastLunarInfo?[...lastLunarInfo]:null;},get lens(){return activeLens;},get lensDraws(){return lensDraws;},get lensPending(){return lensGovernor.frame!==null;},get engine(){return engineLab?engineLab.diagnostics():null;},get appliedEngine(){return appliedEngine?{...appliedEngine}:null;},get assembly(){return assembly?assembly.diagnostics():null;},get boilOff(){return lastBoilOff;},get flownDelegationMask(){return lastDelegationMask;},get causalValid(){return wasm?wasm.mission_causal_valid()===1&&wasm.mission_engine_causal_valid()===1:false;},get acronymViolations(){return acronymViolations();},get handles(){if(selected<0||!wasm)return [];const state=readState(wasm,nodes[selected].time);return handles(toCanvas(state),state).map(h=>({key:h.key,end:h.end}));}});
 try{const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error('The physics module is not available. Build it first.');({instance:{exports:wasm}}=await WebAssembly.instantiate(await response.arrayBuffer(),{}));identity.init(wasm);initProfile();initVerify(wasm);loadGlossary(wasm);
 // The lab reads canonical stage numbers back after a redesign so the planner,
 // the worker payload and the signed recorder cannot disagree about the engine.
@@ -549,12 +595,23 @@ engineLab=createLab({wasm,isLocked:()=>!!locked,annotate:annotateAcronyms,onDiag
   // The bridge already rebuilt the stage; record the committed design so every
   // later reconfigure and every worker payload uses exactly this one.
   appliedEngine=baselineOnly?null:{...engineLab.diagnostics().spec};
+  if(assemblyDesign&&!applyAssembly(wasm,assemblyDesign))assemblyDesign=null;
   if(!baselineOnly){nodes=[];selected=-1;}
   if(!reapplyEngine(wasm))appliedEngine=null;
   DURATION=wasm.mission_parameter(1);DRY=wasm.mission_parameter(3);
   setup=Array.from({length:12},(_,i)=>wasm.mission_parameter(i));
   INITIAL=Math.hypot(setup[6],setup[7],setup[8]);
+  $('debrief').hidden=true;assembly?.sync();updatePreview();
+}});
+assembly=createAssembly({wasm,isLocked:()=>!!locked,annotate:annotateAcronyms,onChange:()=>{
+  assemblyDesign=assemblyPayload(wasm);
+  // A chief's margin is dry mass and a thicker blanket changes the hardware,
+  // so any plan sized for the previous stage is stale.
+  nodes=[];selected=-1;
+  DURATION=wasm.mission_parameter(1);DRY=wasm.mission_parameter(3);
+  setup=Array.from({length:12},(_,i)=>wasm.mission_parameter(i));
+  INITIAL=Math.hypot(setup[6],setup[7],setup[8]);
   $('debrief').hidden=true;updatePreview();
 }});
-if(wasm.mission_contract(contractId)){engineLab.loadBaseline();engineLab.setLocked();}
+if(wasm.mission_contract(contractId)){engineLab.loadBaseline();engineLab.setLocked();assembly.sync();assembly.setLocked();}
 annotateAcronyms(document.querySelector('.mission-main'));syncFields();updatePreview();}catch(e){$('plan-status').classList.add('failure');$('plan-status').textContent=String(e.message||e);annotateAcronyms($('plan-status'));}

@@ -39,7 +39,7 @@
       <div class="engine-grid">
         <div class="engine-view"><canvas id="engine-canvas" aria-label="Engine cross-section and Schlieren field. Drag the throat, exit or length handle, or use the numeric controls."></canvas><span id="engine-view-label">CHAMBER · THROAT · BELL · FREE JET</span></div>
         <div class="engine-controls">
-          <label for="engine-propellant">Propellant pair</label><select id="engine-propellant"><option value="0">LOX / LH2</option><option value="1">LOX / RP-1</option><option value="2">LOX / LCH4</option><option value="3">NTO / MMH</option></select>
+          <label for="engine-propellant">Propellant pair</label><select id="engine-propellant"><!-- Options are built from odd_propulsion through the bridge. --></select>
           <label for="engine-of">Mixture ratio O/F <small id="engine-of-band">—</small></label><input id="engine-of" type="range" min="2.5" max="10" step="0.01" value="6">
           <label for="engine-pc">Chamber pressure <small>MPa</small></label><input id="engine-pc" type="number" min="0.2" max="40" step="0.01" value="3.5">
           <label for="engine-throat">Throat radius <small>mm</small></label><input id="engine-throat" type="number" min="5" max="1000" step="0.1" value="28.8">
@@ -54,12 +54,35 @@
       <div class="causal" aria-live="polite"><div class="section-label">ENGINE CAUSE &amp; EFFECT</div><div id="engine-causal">The engine checks update as you drag.</div></div>
       <p class="disclaimer">Reduced-order model: shifting-equilibrium-calibrated chamber properties, quasi-one-dimensional nozzle flow with a contour-corrected Summerfield separation line, Bartz throat heat transfer and a Prandtl–Pack cell train. The Schlieren image reconstructs those features; it is not a computational fluid dynamics solution.</p>
     </section>
+    <section class="engine-card" id="assembly" aria-labelledby="assembly-title">
+      <div class="planner-head"><div><div class="section-label">02b / ASSEMBLE THE STAGE</div><h2 id="assembly-title">Size it yourself, or <em>delegate.</em></h2></div><span class="mission-chip">CHIEF ENGINEER</span></div>
+      <p class="mission-sub">Each discipline can be sized by hand or handed to a rule-of-thumb chief. A delegated chief adds 35% mass and 30% cost to its own hardware, and caps the efficiency component of your score at 0.65. The margin is real dry mass, so it changes the flight. Your choice is signed into the recorder.</p>
+      <div class="engine-grid">
+        <div class="engine-controls" id="delegation-controls">
+          <label><input type="checkbox" id="delegate-0" data-department="0"> Propulsion chief</label>
+          <label><input type="checkbox" id="delegate-1" data-department="1"> Thermal / cryo chief</label>
+          <label><input type="checkbox" id="delegate-2" data-department="2"> Power chief</label>
+          <label><input type="checkbox" id="delegate-3" data-department="3"> GNC chief</label>
+          <p id="delegation-status" role="status">All disciplines are hand-sized.</p>
+        </div>
+        <div class="engine-controls">
+          <label for="thermal-mli">MLI layers <small id="thermal-epsilon">—</small></label><input id="thermal-mli" type="range" min="1" max="60" step="1" value="20">
+          <label for="thermal-strut">Support heat leak <small>W/K</small></label><input id="thermal-strut" type="number" min="0" max="20" step="0.01" value="0.5">
+          <label for="thermal-radiator">Radiator area <small>m²</small></label><input id="thermal-radiator" type="number" min="0" max="400" step="0.5" value="0">
+          <label for="thermal-cooler">Cryocooler lift <small>W at the tank</small></label><input id="thermal-cooler" type="number" min="0" max="4000" step="10" value="0">
+          <label for="thermal-array">Solar array output <small>W at 1 AU</small></label><input id="thermal-array" type="number" min="300" max="40000" step="100" value="3000">
+          <p id="thermal-status" role="status">Passive tanks.</p>
+        </div>
+      </div>
+      <div class="engine-readout" id="assembly-readout" aria-live="polite"></div>
+      <div id="delegation-badges" aria-live="polite"></div>
+    </section>
     <section class="contract-card" aria-labelledby="prediction-title"><div><div class="section-label">03 / MAKE A PREDICTION</div><h2 id="prediction-title">What do you expect?</h2><p>Start with the ideal prediction, or edit it to account for real effects. Locking freezes your plan and estimates before flight.</p></div>
       <div class="prediction-grid"><label>Velocity change <small>m/s</small><input id="predict-dv" type="number" min="0" step="any"></label><label>Farthest altitude <small>km</small><input id="predict-apo" type="number" step="any"></label><label>Closest altitude <small>km</small><input id="predict-peri" type="number" step="any"></label><label>Remaining propellant <small>kg</small><input id="predict-fuel" type="number" min="0" step="any"></label><label>Flight duration <small>seconds</small><input id="predict-time" type="number" min="0" step="any"></label><label>Target miss distance <small>km, optional</small><input id="predict-miss" type="number" min="0" step="any"></label></div>
       <div class="attempt-row"><label class="field-label" for="attempt-mode">Attempt mode</label><select id="attempt-mode"><option value="ranked">Ranked — certifies this contract</option><option value="practice">Practice — no rating change</option></select><p id="attempt-mode-note" class="profile-note"></p></div>
       <div class="button-row"><button id="prefill" disabled>Use ideal prediction</button><button id="execute" class="primary" disabled>Lock &amp; execute mission</button><button id="unlock" class="quiet" hidden>Change plan</button></div><p id="execute-status" role="status"></p>
     </section>
-    <section class="debrief" id="debrief" hidden aria-live="polite"><div class="section-label">04 / MISSION DEBRIEF</div><h2>The prediction meets <em>reality.</em></h2><div id="debrief-content"></div><p class="disclaimer">“Reality” here is a simplified model, not a flight-operations prediction. Exact Shapley shares use absolute contributions; signed contributions reconstruct the full-minus-ideal metric error. Boil-off and cryogenic thermal balance are not modeled in this work package.</p></section>
+    <section class="debrief" id="debrief" hidden aria-live="polite"><div class="section-label">04 / MISSION DEBRIEF</div><h2>The prediction meets <em>reality.</em></h2><div id="debrief-content"></div><p class="disclaimer">“Reality” here is a simplified model, not a flight-operations prediction. Exact Shapley shares use absolute contributions; signed contributions reconstruct the full-minus-ideal metric error. Cryogenic boil-off is integrated along the flown trajectory with real sun, planet and eclipse geometry; the vented mass and cooler draw are signed into the recorder and recomputed on verification.</p></section>
     <footer><span>ODDERON / MISSION PLANNING PROTOTYPE</span><span>THREE EXPERIMENTAL CONTRACTS · NOT FLIGHT OPERATIONS</span></footer>
   </main>
 </div><script type="module" src="./mission.js"></script></body></html>

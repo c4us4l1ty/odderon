@@ -83,7 +83,10 @@ function run(inputs) {
     cancel();
     show({ code: 0, verdict: 'The verification worker failed.', mismatchIndex: -1, mismatchName: '', dossier: null, json: '' });
   };
-  current.postMessage({ action: 'verify', ...inputs });
+  // A scannable QR needs an absolute URL. Strip any fragment or query so the
+  // recorder's own #verify= fragment is the only one appended.
+  const origin = `${location.origin}${location.pathname}`;
+  current.postMessage({ action: 'verify', origin, ...inputs });
 }
 
 /// Verify a recorder JSON document or a #verify= payload.

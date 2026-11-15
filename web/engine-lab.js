@@ -34,9 +34,38 @@ export const PROPULSION_ERRORS = {
   '-5': 'Solved, but the regeneratively cooled throat exceeds its 1350 K wall limit.',
 };
 const REGIMES = ['Adapted', 'Underexpanded', 'Overexpanded', 'Separated inside the bell'];
-const BANDS = { 0: [2.5, 10], 1: [1.4, 3.6], 2: [2.0, 4.6], 3: [1.0, 3.0] };
+// The calibration band, the display label and the wire id all come from
+// odd_propulsion through the bridge. A signed recorder stores the bare
+// discriminant, so a second copy of this ordering in JavaScript could
+// silently re-label every historical certificate. Only the peak-efficiency
+// hint stays here: it is UI guidance, not a solver input.
+let BANDS = {}, LABELS = {};
 const OPTIMAL = { 0: [4.5, 6.5], 1: [2.2, 2.7], 2: [3.2, 3.8], 3: [1.6, 2.2] };
-const LABELS = { 0: 'LOX / LH2', 1: 'LOX / RP-1', 2: 'LOX / LCH4', 3: 'NTO / MMH' };
+
+/// Read the propellant table from Rust and rebuild the selector from it.
+/// Returns the table so the browser gate can assert the wire ids.
+export function loadPropellants(wasm) {
+  const decode = (len, byte) => new TextDecoder().decode(Uint8Array.from({ length: len }, (_, i) => byte(i)));
+  const count = wasm.mission_propellant_count();
+  const table = [];
+  BANDS = {}; LABELS = {};
+  const select = document.getElementById('engine-propellant');
+  const previous = select.value;
+  select.replaceChildren();
+  for (let i = 0; i < count; i++) {
+    const id = wasm.mission_propellant_wire_id(i);
+    const label = decode(wasm.mission_propellant_label_len(i), j => wasm.mission_propellant_label_byte(i, j));
+    const band = [wasm.mission_propellant_band(i, 0), wasm.mission_propellant_band(i, 1)];
+    BANDS[id] = band; LABELS[id] = label;
+    const option = document.createElement('option');
+    option.value = String(id);
+    option.textContent = label;
+    select.append(option);
+    table.push({ id, label, band });
+  }
+  if ([...select.options].some(o => o.value === previous)) select.value = previous;
+  return table;
+}
 // Raster resolution. The gradient is sampled in Rust; a coarse grid keeps a
 // drag interactive without asking the browser to differentiate anything.
 const RASTER_W = 220, RASTER_H = 110;
@@ -44,6 +73,7 @@ const RASTER_W = 220, RASTER_H = 110;
 const $ = id => document.getElementById(id);
 
 export function createLab({ wasm, onApply, onDiagnose, isLocked, annotate }) {
+  const propellants = loadPropellants(wasm);
   const canvas = $('engine-canvas');
   const ctx = canvas.getContext('2d');
   const controls = {
@@ -500,7 +530,7 @@ export function createLab({ wasm, onApply, onDiagnose, isLocked, annotate }) {
   return {
     refresh, loadBaseline, setLocked, solve,
     diagnostics: () => ({
-      draws, solves, code: lastCode,
+      draws, solves, code: lastCode, propellants,
       spec: spec ? { ...spec } : null,
       solution: solution ? { ...solution } : null,
       plume: plume ? { ...plume } : null,

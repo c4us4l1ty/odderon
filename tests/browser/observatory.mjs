@@ -512,7 +512,17 @@ try{
   const rankedDownload=page.waitForEvent('download');
   await page.locator('#export-fdr').click();
   const rankedFdr=JSON.parse(await readFile(await (await rankedDownload).path(),'utf8'));
-  assert.equal(rankedFdr.schema_version,2);
+  assert.equal(rankedFdr.schema_version,3);
+  // FDR v3 is frozen: the delegation bitmask and the tank block travel in
+  // the signed bytes. Contract 101 flies storables, so it has no tank model
+  // and no vent events — but the fields must still be present and typed.
+  assert.equal(rankedFdr.delegation_mask,0,'a hand-flown stack is fully manual');
+  assert.ok(Array.isArray(rankedFdr.thermal_specs),'thermal_specs must be an array');
+  assert.ok(Array.isArray(rankedFdr.vent_events),'vent_events must be an array');
+  assert.equal(rankedFdr.thermal_specs.length,0,'storables have no cryogenic tanks');
+  assert.equal(rankedFdr.vent_events.length,0,'storables do not vent');
+  assert.deepEqual(rankedFdr.boil_off_kg,[0,0]);
+  assert.equal(rankedFdr.cryocooler_energy_j,0);
   // oracle_fdr_engine_recomputation_anti_cheat (browser half): the signed
   // record carries the physical design, never a client thrust/Isp claim.
   assert.equal(typeof rankedFdr.engine_propellant,'string');
@@ -725,10 +735,15 @@ try{
   await page.waitForFunction(()=>document.getElementById('dossier-print-frame')?.srcdoc?.includes('id="section-4"'),null,{timeout:30000});
   assert.equal(await page.evaluate(()=>document.getElementById('dossier-print-frame').srcdoc),verified.dossier);
 
-  // The printed QR must decode to a payload that itself verifies.
+  // The printed QR must decode to a payload that itself verifies. A phone
+  // camera cannot resolve a bare fragment, so the QR carries the absolute
+  // deployment URL with this flight's fragment appended.
   const qrPayload=decodeQrFromSvg(dossierText);
-  assert.ok(qrPayload.startsWith('#verify='));
-  assert.equal(qrPayload,practice.payload,'the QR must carry this flight’s payload');
+  const pageUrl=new URL(page.url());
+  assert.ok(qrPayload.startsWith(`${pageUrl.origin}${pageUrl.pathname}#verify=`),
+    `the QR must be an absolute URL on this deployment, got ${qrPayload.slice(0,80)}`);
+  assert.equal(qrPayload.slice(qrPayload.indexOf('#verify=')),practice.payload,'the QR must carry this flight’s payload');
+  assert.ok(dossierText.includes('Scan at: <code>'+qrPayload.split('#')[0]),'the header must name the same absolute target');
   await page.locator('#verify-input').fill(qrPayload);
   await page.locator('#verify-run').click();
   await page.waitForFunction(()=>missionDiagnostics.verification()?.code===1&&missionDiagnostics.verification()?.dossier,null,{timeout:180000});

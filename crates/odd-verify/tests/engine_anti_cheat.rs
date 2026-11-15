@@ -31,6 +31,8 @@ fn custom() -> (EngineSpec, FlightSpec) {
     (
         spec,
         FlightSpec {
+            thermal: None,
+            delegation: odd_contracts::DelegationMask::MANUAL,
             contract_id: 101,
             epoch_s: odd_contracts::START_EPOCH,
             duration_us: contract.duration_us,
@@ -64,6 +66,11 @@ fn record(spec: EngineSpec, flight: &FlightSpec) -> Fdr {
     let outcome = odd_verify::replay_flight(flight).expect("custom-engine flight replays");
     let mut fdr = Fdr {
         schema_version: SCHEMA_VERSION,
+        thermal_specs: Vec::new(),
+        delegation_mask: 0,
+        vent_events: Vec::new(),
+        boil_off_kg: [0.0; 2],
+        cryocooler_energy_j: 0.0,
         contract_id: flight.contract_id,
         attempt_mode: AttemptMode::Ranked,
         callsign: "ENGINE GATE".into(),

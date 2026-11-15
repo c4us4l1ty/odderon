@@ -117,11 +117,13 @@ name = "odd-contracts"
 version = "0.1.0"
 dependencies = [
  "libm",
+ "odd-app",
  "odd-astro",
  "odd-core",
  "odd-ephem",
  "odd-propulsion",
  "odd-sim",
+ "odd-systems",
 ]
 
 [[package]]
@@ -191,6 +193,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "odd-systems"
+version = "0.1.0"
+dependencies = [
+ "libm",
+ "odd-astro",
+ "odd-core",
+ "odd-propulsion",
+]
+
+[[package]]
 name = "odd-verify"
 version = "0.1.0"
 dependencies = [
@@ -203,6 +215,7 @@ dependencies = [
  "odd-propulsion",
  "odd-report",
  "odd-sim",
+ "odd-systems",
 ]
 
 [[package]]
@@ -220,6 +233,7 @@ dependencies = [
  "odd-propulsion",
  "odd-report",
  "odd-sim",
+ "odd-systems",
  "odd-verify",
 ]
 

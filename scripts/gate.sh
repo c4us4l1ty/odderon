@@ -34,4 +34,7 @@ npm test
 step "browser E2E + idle gate"
 npm run test:browser
 
+step "assembly E2E (delegation + cryogenic levers, flown and signed)"
+npm run test:assembly
+
 printf '\nAll local gates passed.\n'
