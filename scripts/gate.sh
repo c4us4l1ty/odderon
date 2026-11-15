@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Full local acceptance sweep. Mirrors .github/workflows/rust.yml as closely as
+# the sandbox allows: the bundled toolchain has no rustdoc, so doctests run in
+# CI rather than here.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+source scripts/env.sh
+
+step() { printf '\n=== %s ===\n' "$*"; }
+
+step "cargo fmt"
+cargo fmt --all -- --check
+
+step "clippy -D warnings"
+cargo clippy --locked --offline --workspace --all-targets -- -D warnings
+
+step "workspace tests (lib + integration)"
+cargo test --locked --offline --workspace --lib --tests --no-fail-fast
+
+step "release wasm"
+cargo build --locked --offline --release -p odd-view --target wasm32-unknown-unknown
+cp target/wasm32-unknown-unknown/release/odd_view.wasm web/odd_view.wasm
+
+step "core oracle (native + wasm)"
+cargo build --locked --offline -p odd-core-oracle
+cargo build --locked --offline -p odd-core-oracle --lib --target wasm32-unknown-unknown
+
+step "native / node / chrome parity"
+node tools/core-oracle/check-parity.mjs
+
+step "node unit tests"
+npm test
+
+step "browser E2E + idle gate"
+npm run test:browser
+
+printf '\nAll local gates passed.\n'
