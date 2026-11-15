@@ -25,6 +25,7 @@
 //! assert!((vacuum.specific_impulse_s - 452.0).abs() < 8.0);
 //! ```
 pub mod nozzle;
+pub mod plume;
 pub mod thermal_mass;
 pub mod thermochem;
 

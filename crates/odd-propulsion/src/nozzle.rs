@@ -241,6 +241,15 @@ pub struct FlowSeparation {
     pub side_load_kn: f64,
 }
 
+/// Contour-corrected Summerfield wall pressure at which the boundary layer
+/// detaches at `x_norm`. Shared by the separation solver and the plume model
+/// so the drawn detachment line and the computed one cannot disagree.
+pub fn separation_pressure(geometry: NozzleGeometry, x_norm: f64, ambient_pa: f64) -> f64 {
+    let angle = geometry.wall_angle_rad(x_norm);
+    let relief = libm::fmin(1.0, libm::tan(angle) / libm::tan(REFERENCE_CONE_RAD));
+    SUMMERFIELD_RATIO * ambient_pa * relief
+}
+
 /// Summerfield separation with the contour correction described above.
 /// Returns the detachment line, or `None` when the bell flows full.
 pub fn separation(
@@ -253,12 +262,7 @@ pub fn separation(
     if ambient_pa <= 0.0 {
         return None;
     }
-    let threshold_at = |x_norm: f64| {
-        let angle = geometry.wall_angle_rad(x_norm);
-        let relief = libm::fmin(1.0, libm::tan(angle) / libm::tan(REFERENCE_CONE_RAD));
-        SUMMERFIELD_RATIO * ambient_pa * relief
-    };
-    if exit_pressure_pa >= threshold_at(1.0) {
+    if exit_pressure_pa >= separation_pressure(geometry, 1.0, ambient_pa) {
         return None;
     }
     // Wall pressure falls monotonically along the divergent section while
@@ -277,7 +281,7 @@ pub fn separation(
         if mid <= lo || mid >= hi {
             break;
         }
-        if pressure_at(mid) > threshold_at(mid) {
+        if pressure_at(mid) > separation_pressure(geometry, mid, ambient_pa) {
             lo = mid;
         } else {
             hi = mid;

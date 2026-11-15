@@ -7,6 +7,7 @@
 //! specific impulse used by the propagator are the same ones the recorder
 //! will sign and a verifier will recompute.
 use super::mission_bridge;
+use odd_propulsion::plume as nozzle_plume;
 use odd_propulsion::{
     nozzle, solve_engine, EngineSolution, EngineSpec, Propellant, PropulsionError, Station,
 };
@@ -31,9 +32,18 @@ struct Lab {
     solution: EngineSolution,
     stations: Vec<Station>,
     ambient: f64,
+    plume: nozzle_plume::Plume,
+}
+
+/// Schlieren raster, regenerated only when the design or the view changes.
+struct Raster {
+    width: usize,
+    height: usize,
+    values: Vec<f64>,
 }
 
 static LAB: Mutex<Option<Lab>> = Mutex::new(None);
+static RASTER: Mutex<Option<Raster>> = Mutex::new(None);
 
 fn spec_from(
     propellant: u32,
@@ -69,6 +79,7 @@ pub extern "C" fn mission_engine_solve(
     ambient_pa: f64,
 ) -> i32 {
     *LAB.lock().unwrap() = None;
+    *RASTER.lock().unwrap() = None;
     let Some(spec) = spec_from(
         propellant,
         of_ratio,
@@ -97,13 +108,18 @@ pub extern "C" fn mission_engine_solve(
         STATIONS,
     )
     .unwrap_or_default();
+    let thermo =
+        odd_propulsion::thermochem::chamber(spec.propellant, spec.of_ratio, spec.p_c_pa).unwrap();
+    let plume = nozzle_plume::analyze(&spec, &solution, &thermo, ambient);
     let over = solution.thermal_limit_exceeded;
     *LAB.lock().unwrap() = Some(Lab {
         spec,
         solution,
         stations,
         ambient,
+        plume,
     });
+    *RASTER.lock().unwrap() = None;
     if over {
         -5
     } else {
@@ -251,6 +267,128 @@ pub extern "C" fn mission_engine_baseline() -> i32 {
     )
 }
 
+/// Plume summary, read with `mission_engine_plume`.
+/// 0 regime (0 adapted, 1 underexpanded, 2 overexpanded, 3 separated),
+/// 1 pressure ratio Pe/Pamb, 2 Prandtl-Meyer lip half-angle rad,
+/// 3 lip oblique-shock wave angle rad (NaN without one), 4 inward deflection
+/// rad, 5 fully expanded jet Mach, 6 first shock-cell length m,
+/// 7 Mach-disk standoff m (NaN unless strongly underexpanded),
+/// 8 free-jet origin x from the throat m, 9 origin radius m,
+/// 10 origin pressure Pa, 11 jet density at the origin, 12 ambient density.
+#[no_mangle]
+pub extern "C" fn mission_engine_plume(index: u32) -> f64 {
+    let lab = LAB.lock().unwrap();
+    let Some(lab) = lab.as_ref() else {
+        return f64::NAN;
+    };
+    let p = &lab.plume;
+    match index {
+        0 => match p.regime {
+            nozzle_plume::PlumeRegime::Adapted => 0.0,
+            nozzle_plume::PlumeRegime::Underexpanded => 1.0,
+            nozzle_plume::PlumeRegime::Overexpanded => 2.0,
+            nozzle_plume::PlumeRegime::Separated => 3.0,
+        },
+        1 => p.pressure_ratio,
+        2 => p.lip_turn_rad,
+        3 => p.lip_shock_rad,
+        4 => p.lip_deflection_rad,
+        5 => p.jet_mach,
+        6 => p.cell_length_m,
+        7 => p.mach_disk_m,
+        8 => p.origin_x_m,
+        9 => p.origin_radius_m,
+        10 => p.origin_pressure_pa,
+        11 => p.origin_density_kg_m3,
+        12 => p.ambient_density_kg_m3,
+        _ => f64::NAN,
+    }
+}
+
+/// Free-jet shear-layer radius at `s` metres past the detachment/exit plane.
+#[no_mangle]
+pub extern "C" fn mission_engine_plume_boundary(s_m: f64) -> f64 {
+    LAB.lock()
+        .unwrap()
+        .as_ref()
+        .map_or(f64::NAN, |lab| lab.plume.boundary_radius(s_m))
+}
+
+/// Density on the axis plane, for the continuous Mach/density readout.
+#[no_mangle]
+pub extern "C" fn mission_engine_density(x_m: f64, r_m: f64) -> f64 {
+    LAB.lock()
+        .unwrap()
+        .as_ref()
+        .map_or(f64::NAN, |lab| lab.plume.density_at(x_m, r_m))
+}
+
+/// Render the Schlieren field into a scalar raster. Returns the pixel count,
+/// or 0 when nothing is solved. The browser paints these values directly; it
+/// never differentiates a fabricated field of its own.
+#[no_mangle]
+pub extern "C" fn mission_engine_schlieren(
+    width: u32,
+    height: u32,
+    x_min_m: f64,
+    x_max_m: f64,
+    r_max_m: f64,
+) -> u32 {
+    let lab = LAB.lock().unwrap();
+    let Some(lab) = lab.as_ref() else {
+        return 0;
+    };
+    if !x_min_m.is_finite()
+        || !x_max_m.is_finite()
+        || !r_max_m.is_finite()
+        || x_max_m <= x_min_m
+        || r_max_m <= 0.0
+    {
+        return 0;
+    }
+    let width = (width as usize).clamp(2, 512);
+    let height = (height as usize).clamp(2, 512);
+    let values = lab
+        .plume
+        .schlieren(width, height, x_min_m, x_max_m, r_max_m);
+    let len = values.len() as u32;
+    *RASTER.lock().unwrap() = Some(Raster {
+        width,
+        height,
+        values,
+    });
+    len
+}
+
+#[no_mangle]
+pub extern "C" fn mission_engine_schlieren_width() -> u32 {
+    RASTER
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map_or(0, |r| r.width as u32)
+}
+
+#[no_mangle]
+pub extern "C" fn mission_engine_schlieren_height() -> u32 {
+    RASTER
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map_or(0, |r| r.height as u32)
+}
+
+#[no_mangle]
+pub extern "C" fn mission_engine_schlieren_at(index: u32) -> f64 {
+    RASTER
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|r| r.values.get(index as usize))
+        .copied()
+        .unwrap_or(f64::NAN)
+}
+
 /// Diagnose the solved design through the same odd-app causal DAG the flight
 /// warnings use, appending to that registry. Returns the combined count, so
 /// the browser reads every chain back with the existing causal accessors.
@@ -317,5 +455,45 @@ mod tests {
         assert_eq!(mission_engine_solve(0, 30.0, 20e6, 0.1, 0.5, 0.8, 0.0), -1);
         assert!(mission_engine_field(0).is_nan());
         assert_eq!(mission_engine_station_count(), 0);
+        assert!(mission_engine_plume(0).is_nan());
+    }
+
+    #[test]
+    fn the_schlieren_raster_shows_the_detachment_and_the_cell_train() {
+        let _guard = mission_bridge::test_lock();
+        // Small bell at sea level: strongly underexpanded, so cells and a
+        // Mach disk. The raster must be bounded and carry real structure.
+        assert_eq!(
+            mission_engine_solve(1, 2.36, 5.0e6, 0.05, 0.10, 0.8, 101_325.0),
+            1
+        );
+        assert_eq!(mission_engine_plume(0), 1.0, "underexpanded");
+        assert!(mission_engine_plume(6) > 0.0, "shock-cell spacing");
+        assert!(mission_engine_plume(7) > 0.0, "Mach disk");
+        let count = mission_engine_schlieren(64, 32, -0.05, 0.9, 0.35);
+        assert_eq!(count, 64 * 32);
+        assert_eq!(mission_engine_schlieren_width(), 64);
+        assert_eq!(mission_engine_schlieren_height(), 32);
+        let mut peak = 0.0f64;
+        for i in 0..count {
+            let v = mission_engine_schlieren_at(i);
+            assert!(v.is_finite() && (0.0..=1.0).contains(&v));
+            peak = peak.max(v);
+        }
+        assert!(peak > 0.5, "the field must reach full scale somewhere");
+        assert!(mission_engine_schlieren_at(count).is_nan());
+
+        // A big bell at the same altitude detaches inside the nozzle, and the
+        // free jet starts exactly at the computed separation line.
+        assert_eq!(
+            mission_engine_solve(1, 2.36, 5.0e6, 0.05, 0.05 * 8.944_271_91, 0.8, 101_325.0),
+            1
+        );
+        assert_eq!(mission_engine_plume(0), 3.0, "separated");
+        let length = mission_engine_field(13);
+        assert!((mission_engine_plume(8) - mission_engine_field(21) * length).abs() < 1e-12);
+        assert!(mission_engine_plume(3) > 0.0, "lip shock, not a fan");
+        // Changing the design invalidates the previous raster.
+        assert_eq!(mission_engine_schlieren_width(), 0);
     }
 }
