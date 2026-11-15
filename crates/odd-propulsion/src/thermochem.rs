@@ -95,6 +95,7 @@ impl Propellant {
                 tc_max: 3760.0,
                 tc_peak_of: 8.0,
                 tc_curvature: 43.0,
+                tc_curvature_rich: 43.0,
                 tc_pc_exponent: 0.02,
                 molar_ref: 0.0135,
                 molar_exponent: 0.33,
@@ -123,6 +124,7 @@ impl Propellant {
                 tc_max: 3690.0,
                 tc_peak_of: 2.75,
                 tc_curvature: 170.0,
+                tc_curvature_rich: 800.0,
                 tc_pc_exponent: 0.02,
                 molar_ref: 0.0229,
                 molar_exponent: 0.30,
@@ -151,6 +153,7 @@ impl Propellant {
                 tc_max: 3620.0,
                 tc_peak_of: 3.9,
                 tc_curvature: 90.0,
+                tc_curvature_rich: 440.0,
                 tc_pc_exponent: 0.02,
                 molar_ref: 0.0212,
                 molar_exponent: 0.30,
@@ -179,6 +182,7 @@ impl Propellant {
                 tc_max: 3320.0,
                 tc_peak_of: 2.4,
                 tc_curvature: 260.0,
+                tc_curvature_rich: 515.0,
                 tc_pc_exponent: 0.015,
                 molar_ref: 0.0225,
                 molar_exponent: 0.28,
@@ -222,7 +226,14 @@ struct Constants {
     pc_ref: f64,
     tc_max: f64,
     tc_peak_of: f64,
+    /// Lean-side temperature curvature, K per (O/F)^2.
     tc_curvature: f64,
+    /// Fuel-rich-side curvature. Real shifting-equilibrium combustion loses
+    /// temperature faster on the rich side than a symmetric parabola allows,
+    /// because excess fuel adds mass without releasing more heat. Getting
+    /// this slope right is what puts peak specific impulse inside the
+    /// observed fuel-rich band instead of at the edge of the model's range.
+    tc_curvature_rich: f64,
     tc_pc_exponent: f64,
     molar_ref: f64,
     molar_exponent: f64,
@@ -280,7 +291,12 @@ pub fn chamber(
     let c = propellant.constants();
     let offset = of_ratio - c.tc_peak_of;
     let pressure_scale = libm::pow(p_c_pa / c.pc_ref, c.tc_pc_exponent);
-    let temperature_k = (c.tc_max - c.tc_curvature * offset * offset) * pressure_scale;
+    let curvature = if offset < 0.0 {
+        c.tc_curvature_rich
+    } else {
+        c.tc_curvature
+    };
+    let temperature_k = (c.tc_max - curvature * offset * offset) * pressure_scale;
     let molar_mass_kg_mol = c.molar_ref * libm::pow(of_ratio / c.of_ref, c.molar_exponent);
     let gamma = c.gamma_ref + c.gamma_slope * (of_ratio - c.of_ref);
     if !(temperature_k > 0.0 && molar_mass_kg_mol > 0.0 && gamma > 1.0) {

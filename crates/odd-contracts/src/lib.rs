@@ -80,7 +80,7 @@ pub struct Vehicle {
 }
 
 /// Baseline orbital-maneuvering engine: a storable pressure-fed-class tug
-/// engine sized to the card's 2.4 kN. Solving it gives 2,396.8 N and 312.6 s.
+/// engine sized to the card's 2.4 kN. Solving it gives 2,396.8 N and 310.6 s.
 pub const STORABLE_BASELINE: EngineSpec = EngineSpec {
     propellant: Propellant::NtoMmh,
     of_ratio: 2.0,

@@ -270,3 +270,52 @@ fn impossible_designs_are_named_not_guessed() {
         Some(PropulsionError::NumericalRange)
     );
 }
+
+/// Every propellant must peak in specific impulse inside the band real
+/// engines run, not at the edge of the calibrated range. A symmetric
+/// temperature curve puts three of the four at the band floor, which is
+/// physically wrong: excess fuel cools the chamber faster than it lightens
+/// the exhaust, so there is a genuine interior optimum.
+#[test]
+fn every_propellant_peaks_isp_inside_its_optimal_band() {
+    for (propellant, band) in [
+        (Propellant::LoxLh2, (4.5, 6.5)),
+        (Propellant::LoxRp1, (2.2, 2.7)),
+        (Propellant::LoxLch4, (3.2, 3.8)),
+        (Propellant::NtoMmh, (1.6, 2.2)),
+    ] {
+        let (lo, hi) = propellant.of_band();
+        let mut best = (0.0f64, 0.0f64);
+        for step in 0..=1000 {
+            let of = lo + (hi - lo) * f64::from(step) / 1000.0;
+            let spec = EngineSpec {
+                propellant,
+                of_ratio: of,
+                p_c_pa: 10.0e6,
+                r_throat_m: 0.05,
+                r_exit_m: 0.05 * 6.0,
+                length_fraction: 0.8,
+            };
+            if let Ok(s) = solve_engine(&spec, 0.0) {
+                if s.specific_impulse_s > best.1 {
+                    best = (of, s.specific_impulse_s);
+                }
+            }
+        }
+        println!(
+            "{}: peak Isp {:.2} s at O/F {:.3}",
+            propellant.label(),
+            best.1,
+            best.0
+        );
+        assert!(
+            best.0 >= band.0 && best.0 <= band.1,
+            "{} peaks at O/F {:.3}, outside the optimal band {:?}",
+            propellant.label(),
+            best.0,
+            band
+        );
+        // The optimum must be interior, not pinned to a calibration edge.
+        assert!(best.0 > lo + 1e-9 && best.0 < hi - 1e-9);
+    }
+}

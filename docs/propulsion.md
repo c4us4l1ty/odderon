@@ -50,6 +50,24 @@ principles, and are labelled as such in the source: `c_star_efficiency`
 momentum thrust. `c*` efficiency changes thrust but **not** specific impulse,
 because it divides out of `F/(ṁ g0)`.
 
+### Why the temperature curve is asymmetric
+
+A single symmetric parabola in O/F cannot reproduce both the temperature
+peak and the efficiency peak. Excess fuel beyond stoichiometric adds mass
+to the exhaust without releasing more heat, so real shifting-equilibrium
+combustion loses temperature **faster on the rich side** than on the lean
+side. With one curvature the model was too flat fuel-rich, and peak
+specific impulse ran to the edge of the calibrated band for RP-1, LCH4 and
+MMH instead of sitting where engines actually run. `tc_curvature_rich`
+carries the steeper rich-side slope; `tc_curvature` keeps the lean side.
+
+Fitted rich-side curvatures (K per (O/F)²): LH2 43 (symmetric, hydrolox is
+already well behaved), RP-1 800, LCH4 440, NTO/MMH 515. These place peak
+vacuum `Isp` at O/F **5.01 / 2.44 / 3.51 / 1.89**, inside the specified
+optimal bands 4.5–6.5 / 2.2–2.7 / 3.2–3.8 / 1.6–2.2. The regression test
+`every_propellant_peaks_isp_inside_its_optimal_band` sweeps all four bands
+so this cannot silently drift again.
+
 ## Nozzle solution
 
 - Choked mass flow `ṁ = P_c A_t / c*`, with
@@ -134,7 +152,7 @@ static structure.
 - **`oracle_rs25_and_merlin_benchmarks`** — RS-25 (LOX/LH2, O/F 6.0,
   20.64 MPa, ε 69, `R_t` 0.1307 m): measured **446.84 s vacuum** (gate
   452 ± 8) and **368.73 s sea level** (gate 366 ± 10). Merlin 1D (LOX/RP-1,
-  O/F 2.36, 9.7 MPa, ε 16): **313.19 s vacuum** (311 ± 8) and **283.83 s sea
+  O/F 2.36, 9.7 MPa, ε 16): **309.07 s vacuum** (311 ± 8) and **280.09 s sea
   level** (282 ± 8).
 - **`oracle_summerfield_separation_and_fuel_rich_optimum`** — an ε 80,
   5 MPa bell separates at sea level at `x/L = 0.218` with `ε_sep = 13.79`
