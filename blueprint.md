@@ -221,7 +221,7 @@ pub struct SpacecraftDesign {
     pub thermal: ThermalSubsystem,   // radiator area/ε, MLI layers, cryocooler W
     pub attitude: AttitudeSubsystem, // wheel H_max, RCS thrusters, cp–cm offset
     pub avionics: Avionics,          // mass, power draw, rad-hard tier
-    pub delegated: DelegationFlags,  // which subsystems the AI Chief sized (affects score, not physics)
+    pub delegated: DelegationFlags,  // which subsystems the AI Chief sized (+35% dry mass, +30% cost, Seff cap 0.65)
 }
 
 /// All fields are integers → bit-identical replay guaranteed.
@@ -362,7 +362,7 @@ WP	Crate(s)	Oracle Gate
 1.4	odd-astro/attribution, odd-app/debrief	Finite-burn loss isolated within 1%
 1.5	odd-propulsion	RS-25: Isp_vac 452 ± 8 s, Isp_sl 366 ± 10 s — SHIPPED, see docs/propulsion.md
 1.6	odd-systems	Known LH₂ tank: boil-off rate vs. published MLI heat-leak data within 15% — SHIPPED, see docs/thermal.md (card's 1.5%/day, 60-min orbit and COP 0.1 corrected; all 3 oracles pass)
-1.7	odd-contracts/chief_ai	Delegated sizing reproduces textbook margins deterministically — SHIPPED, +35%/+30%, Seff cap 0.65, hand-checked Elo gate
+1.7	odd-contracts/chief_ai	Delegated sizing reproduces textbook margins deterministically — SHIPPED and WIRED: per-discipline toggle in the assembly, margin charged to the flown dry mass, +30% cost, chief badges, Seff cap 0.65 on real scores, mask signed and recomputed on replay (docs/audit-2026-11-14.md)
 1.8	odd-contracts, odd-report	Elo update matches hand calculation; PDF opens & QR decodes
 1.9 (new)	odd-sim/verify, odd-worker	Tampered FDR (one throttle bit flipped) rejected; clean FDR accepted; same verdict native/wasm/worker
 Part 8: Paste-Ready Task Card — Work Package 0.1
