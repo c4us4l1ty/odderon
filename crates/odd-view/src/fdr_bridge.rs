@@ -673,7 +673,7 @@ pub extern "C" fn mission_fdr_origin_reset() {
 /// can never be printed as a scan target. Returns 0 when rejected.
 #[no_mangle]
 pub extern "C" fn mission_fdr_origin_byte(byte: f64) -> i32 {
-    if !byte.is_finite() || byte < 0.0 || byte > 255.0 || byte.fract() != 0.0 {
+    if !byte.is_finite() || !(0.0..=255.0).contains(&byte) || byte.fract() != 0.0 {
         return 0;
     }
     let mut origin = ORIGIN.lock().unwrap();
