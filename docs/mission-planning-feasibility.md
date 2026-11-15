@@ -56,6 +56,16 @@ the perigee splitter targets an actual numerically propagated periapsis rather
 than the periapsis of an earlier ideal conic. Empty guidance preserves the
 original ideal-frame behavior.
 
+`next_radial_turn` searches the half-open window `(after_s, end_s)`. The spline
+segment containing `after_s` is part of that window: its left endpoint is
+clamped to `after_s` and sampled there, because a turn can fall between the
+window start and the next cached keyframe. Discarding the whole straddling
+segment would silently return the *following* revolution's apsis — a full
+period late — whenever a burn ends just before a periapsis, which is exactly
+how `split_tug` calls it (`after = burns.last().end`). A turn lying exactly on
+`after_s` is not returned; the search is strictly for the next one.
+`crates/odd-sim/tests/targeting.rs` pins both behaviors.
+
 ## Impact and entry events
 
 The Dormand–Prince integrator supports scalar state-crossing events in
@@ -141,6 +151,12 @@ quantities. The scalar bridge exposes the registry as UTF-8 bytes
 - orbit-normal handle: torque r × F and plane tilt;
 - in-plane handle: eccentricity-vector before/after and rotation, with the
   circular zero-eccentricity direction rejected rather than invented.
+
+Each projection also owns a stable browser art key via `Projection::key`,
+exported as `mission_acronym_key_len`/`_byte`. The match is exhaustive, so a new
+variant must declare its demonstration; the browser no longer restates the
+enum's declaration order in a JavaScript array, where an added variant would
+have silently fallen back to the tangential drawing.
 
 `web/mission.js` builds its hover glossary from that Rust registry, wraps
 rendered terms in focusable `abbr.term` elements, and drives a demand-scheduled

@@ -20,7 +20,8 @@ const SHAPLEY_WHY=[
 // The hover registry is loaded from odd-app::lens through the scalar bridge.
 // Keeping one registry prevents a new Rust warning term from rendering naked.
 let GLOSSARY={},TERM_RE=null;
-const PROJECTION_KEYS=['t','w','n','twr','isp','raan','aop','soi','n','gravity-loss','tnw','srp','leo','dag','pdr'];
+// Art keys come from odd_app::lens::Projection::key through the bridge; the
+// browser must not restate the Rust declaration order.
 function wasmString(len,byte){const bytes=new Uint8Array(len);for(let i=0;i<len;i++)bytes[i]=byte(i);return new TextDecoder().decode(bytes);}
 function loadGlossary(w){
   GLOSSARY={};const count=w.mission_acronym_count();
@@ -28,7 +29,8 @@ function loadGlossary(w){
     const term=wasmString(w.mission_acronym_len(i,0),j=>w.mission_acronym_byte(i,0,j));
     const expansion=wasmString(w.mission_acronym_len(i,1),j=>w.mission_acronym_byte(i,1,j));
     const plain=wasmString(w.mission_acronym_len(i,2),j=>w.mission_acronym_byte(i,2,j));
-    GLOSSARY[term]={expansion,plain,key:PROJECTION_KEYS[w.mission_acronym_projection(i)]||'t'};
+    const key=wasmString(w.mission_acronym_key_len(i),j=>w.mission_acronym_key_byte(i,j));
+    GLOSSARY[term]={expansion,plain,key:key||'t'};
   }
   TERM_RE=new RegExp(`\\b(${Object.keys(GLOSSARY).sort((a,b)=>b.length-a.length).join('|')})\\b`,'g');
 }
@@ -374,7 +376,10 @@ document.addEventListener('focusout',e=>{const t=e.target.closest?.('.term,butto
 document.addEventListener('click',e=>{const b=e.target.closest?.('button.demo');if(b)startLens(b.dataset.demo);});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')stopLens();});
 $('lens-canvas').addEventListener('pointerleave',()=>{if(!drag)stopLens();});
-$('node-select').addEventListener('change',e=>{selected=Number(e.target.value);syncFields();draw();});
+// Selection changes which node the sweep estimate and the split-kick offer
+// describe, so the causal panel must be rebuilt even though the physics is
+// unchanged. No re-propagation and no animation frame is scheduled here.
+$('node-select').addEventListener('change',e=>{selected=Number(e.target.value);syncFields();updateCausal();draw();});
 $('add-node').addEventListener('click',()=>{nodes.push({time:200,dv:[10,0,0]});selected=nodes.length-1;updatePreview();});
 $('remove-node').addEventListener('click',()=>{if(selected<0)return;nodes.splice(selected,1);selected=Math.min(selected,nodes.length-1);updatePreview();});
 $('example').addEventListener('click',()=>{

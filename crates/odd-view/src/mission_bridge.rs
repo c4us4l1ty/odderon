@@ -652,6 +652,21 @@ pub extern "C" fn mission_acronym_byte(term: u32, field: u32, index: u32) -> f64
             .map_or(f64::NAN, |b| *b as f64)
     })
 }
+/// UTF-8 length of the browser art key for a registry term's projection.
+#[no_mangle]
+pub extern "C" fn mission_acronym_key_len(term: u32) -> u32 {
+    odd_app::lens::ACRONYMS
+        .get(term as usize)
+        .map_or(0, |a| a.projection.key().len() as u32)
+}
+/// One UTF-8 byte of that art key; NaN when out of range.
+#[no_mangle]
+pub extern "C" fn mission_acronym_key_byte(term: u32, index: u32) -> f64 {
+    odd_app::lens::ACRONYMS
+        .get(term as usize)
+        .and_then(|a| a.projection.key().as_bytes().get(index as usize))
+        .map_or(f64::NAN, |b| *b as f64)
+}
 /// odd_app::lens::Projection discriminant for a registry term.
 #[no_mangle]
 pub extern "C" fn mission_acronym_projection(term: u32) -> u32 {
@@ -1081,13 +1096,31 @@ mod tests {
             let term: String = (0..len)
                 .map(|j| mission_acronym_byte(i, 0, j) as u8 as char)
                 .collect();
+            // The browser art key must round-trip for every term, so a new
+            // Projection variant cannot render the wrong demonstration.
+            let key_len = mission_acronym_key_len(i);
+            assert!(key_len > 0, "{term} has no art key");
+            let key: String = (0..key_len)
+                .map(|j| mission_acronym_key_byte(i, j) as u8 as char)
+                .collect();
+            assert_eq!(
+                key,
+                odd_app::lens::find(&term).unwrap().projection.key(),
+                "{term} art key did not round-trip"
+            );
+            assert!(mission_acronym_key_byte(i, key_len).is_nan());
             if term == "TWR" {
                 found_twr = true;
                 assert!(mission_acronym_len(i, 1) > 0);
                 assert!(mission_acronym_len(i, 2) > 0);
+                assert_eq!(key, "twr");
             }
         }
         assert!(found_twr);
+        // Out-of-range terms stay inert rather than reading adjacent memory.
+        let past = mission_acronym_count();
+        assert_eq!(mission_acronym_key_len(past), 0);
+        assert!(mission_acronym_key_byte(past, 0).is_nan());
         let count = mission_diagnose(0.5, 50_000.0, 120_000.0, 0.30, 1.0, 0.10, 1.0, 40.0);
         assert_eq!(count, 7);
         assert_eq!(mission_causal_valid(), 1);

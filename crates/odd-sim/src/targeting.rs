@@ -63,10 +63,19 @@ where
     for i in 1..path.len() {
         let a = path.keyframe(i - 1).ok_or(TargetError::NotFound)?;
         let b = path.keyframe(i).ok_or(TargetError::NotFound)?;
-        if a.time < after_s {
+        if b.time <= after_s {
             continue;
         }
-        let ra = radial(a);
+        // The segment holding `after_s` must still be searched: a turn can fall
+        // between `after_s` and the next cached keyframe. Clamp its left
+        // endpoint into the window instead of discarding the whole segment,
+        // which would silently skip to the following revolution.
+        let left = if a.time < after_s {
+            path.sample(after_s).map_err(|_| TargetError::NotFound)?
+        } else {
+            a
+        };
+        let ra = radial(left);
         let rb = radial(b);
         let crossed = if periapsis {
             ra < 0.0 && rb >= 0.0
@@ -74,7 +83,7 @@ where
             ra > 0.0 && rb <= 0.0
         };
         if crossed {
-            bracket = Some((a.time, b.time));
+            bracket = Some((left.time, b.time));
             break;
         }
     }

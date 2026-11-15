@@ -25,6 +25,34 @@ pub enum Projection {
     DesignReview,
 }
 
+impl Projection {
+    /// Stable browser art key for this projection. The match is exhaustive so
+    /// a new variant must declare its demonstration; the browser reads this
+    /// through the bridge instead of duplicating the declaration order in a
+    /// JavaScript array, where an added variant would silently fall back to
+    /// the tangential demo.
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::Tangential => "t",
+            Self::Normal => "w",
+            // The in-plane handle and the eccentricity vector deliberately
+            // share one demonstration: a sideways push rotates that vector.
+            Self::Radial | Self::Eccentricity => "n",
+            Self::ThrustToWeight => "twr",
+            Self::SpecificImpulse => "isp",
+            Self::AscendingNode => "raan",
+            Self::ArgumentOfPeriapsis => "aop",
+            Self::SphereOfInfluence => "soi",
+            Self::GravityLoss => "gravity-loss",
+            Self::ManeuverFrame => "tnw",
+            Self::SolarPressure => "srp",
+            Self::LowEarthOrbit => "leo",
+            Self::CausalGraph => "dag",
+            Self::DesignReview => "pdr",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Acronym {
     pub term: &'static str,
@@ -240,6 +268,63 @@ mod tests {
     fn forbidden_acronyms_have_projections() {
         for term in ["RAAN", "AOP", "TWR", "ISP", "Isp", "TNW", "SOI"] {
             assert!(find(term).is_some(), "{term} missing hover projection");
+        }
+    }
+
+    #[test]
+    fn every_acronym_declares_a_browser_art_key() {
+        // Keys the lens renderer actually implements. A key outside this set
+        // would fall through to the generic finite-burn drawing.
+        const ART: &[&str] = &[
+            "t",
+            "w",
+            "n",
+            "twr",
+            "isp",
+            "raan",
+            "aop",
+            "soi",
+            "gravity-loss",
+            "tnw",
+            "srp",
+            "leo",
+            "dag",
+            "pdr",
+        ];
+        for a in ACRONYMS {
+            let key = a.projection.key();
+            assert!(
+                ART.contains(&key),
+                "{} maps to unrendered key {key}",
+                a.term
+            );
+        }
+        // The reverse direction is not required: some art is reached only from
+        // a canvas handle ("w", "time") or a causal demo ("impact", "propellant",
+        // "periapsis", "apoapsis", "split-kick"), never from an acronym.
+    }
+
+    #[test]
+    fn projection_keys_are_stable_and_match_the_renderer() {
+        use Projection::*;
+        for (projection, key) in [
+            (Tangential, "t"),
+            (Normal, "w"),
+            (Radial, "n"),
+            (ThrustToWeight, "twr"),
+            (SpecificImpulse, "isp"),
+            (AscendingNode, "raan"),
+            (ArgumentOfPeriapsis, "aop"),
+            (SphereOfInfluence, "soi"),
+            (Eccentricity, "n"),
+            (GravityLoss, "gravity-loss"),
+            (ManeuverFrame, "tnw"),
+            (SolarPressure, "srp"),
+            (LowEarthOrbit, "leo"),
+            (CausalGraph, "dag"),
+            (DesignReview, "pdr"),
+        ] {
+            assert_eq!(projection.key(), key, "{projection:?} art key drifted");
         }
     }
 

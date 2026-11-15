@@ -145,6 +145,25 @@ try{
   assert.equal(await page.evaluate(()=>missionDiagnostics.causalValid),true);
   const acronymSnapshot=await page.evaluate(()=>[...document.querySelectorAll('abbr.term')].map(a=>a.dataset.term).sort());
   for(const term of ['RAAN','AOP','TWR','ISP'])assert.ok(acronymSnapshot.includes(term),`missing rendered acronym ${term}`);
+  // Art keys must arrive from odd_app::lens::Projection::key over the bridge.
+  // If that export broke, every term would silently fall back to the
+  // tangential demo, so assert the distinct keys the registry should produce.
+  const artKeys=await page.evaluate(async()=>{
+    const {instance}=await WebAssembly.instantiate(await (await fetch('./odd_view.wasm')).arrayBuffer(),{});
+    const w=instance.exports,dec=new TextDecoder(),keys={};
+    for(let i=0;i<w.mission_acronym_count();i++){
+      const read=(len,byte)=>dec.decode(Uint8Array.from({length:len},(_,j)=>byte(j)));
+      const term=read(w.mission_acronym_len(i,0),j=>w.mission_acronym_byte(i,0,j));
+      keys[term]=read(w.mission_acronym_key_len(i),j=>w.mission_acronym_key_byte(i,j));
+    }
+    return keys;
+  });
+  assert.equal(artKeys.TWR,'twr');
+  assert.equal(artKeys.TNW,'tnw');
+  assert.equal(artKeys.LEO,'leo');
+  assert.equal(artKeys.DAG,'dag');
+  assert.equal(artKeys.PDR,'pdr');
+  assert.ok(Object.values(artKeys).every(k=>k.length>0),'every acronym needs an art key');
   await page.locator('abbr.term[data-term="TWR"]').first().hover();
   await page.waitForFunction(()=>missionDiagnostics.lens==='twr'&&!document.getElementById('lens-projection').hidden);
   assert.match(await page.locator('#lens-projection').textContent(),/Thrust-to-weight ratio/);
