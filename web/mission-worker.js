@@ -34,6 +34,15 @@ self.onmessage=async ({data})=>{
     }
     if(data.contract){if(!w.mission_contract(data.contract))throw Error('Unknown contract.');}
     else if(!w.mission_setup(...data.setup))throw Error('Invalid spacecraft or mission parameters.');
+    // The page may have redesigned the engine. Rebuild the stage from the
+    // physical design, never from a thrust/Isp pair: this is the same call the
+    // verifier makes, so the flight and its certificate cannot diverge.
+    if(data.engine&&data.contract){
+      const e=data.engine;
+      const code=w.mission_engine_solve(e.propellant,e.of,e.pc,e.throat,e.exit,e.length,0);
+      if(code!==1)throw Error('The engine design is not flight-ready.');
+      if(w.mission_engine_apply()!==1)throw Error('The engine cannot fly this contract.');
+    }
     if(!w.mission_metric(data.metric))throw Error('Invalid attribution metric.');
     const nodes=[...data.nodes].sort((a,b)=>a.time-b.time);
     let index=0;

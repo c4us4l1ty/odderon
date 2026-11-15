@@ -23,8 +23,12 @@ use std::sync::Mutex;
 /// 24 thermal limit flag, 25 exhaust velocity, 26 ambient pressure,
 /// 27 flight ready, 28 O/F, 29 chamber pressure, 30 throat radius,
 /// 31 exit radius, 32 length fraction, 33 propellant id, 34 stage dry mass,
-/// 35 stage propellant, 36 stage wet mass, 37 volume limited.
-pub const SOLUTION_FIELDS: usize = 38;
+/// 35 stage propellant, 36 stage wet mass, 37 volume limited,
+/// 38 vacuum thrust, 39 vacuum Isp, 40 ideal stage delta-v.
+///
+/// Fields 0 and 1 are the test-stand values at the chosen ambient pressure;
+/// 38 and 39 are the vacuum values the propagator and the recorder use.
+pub const SOLUTION_FIELDS: usize = 41;
 const STATIONS: usize = 96;
 
 struct Lab {
@@ -199,6 +203,13 @@ fn stage_field(lab: &Lab, index: u32) -> f64 {
         35 => vehicle.propellant_kg,
         36 => vehicle.initial_mass_kg,
         37 => f64::from(u8::from(vehicle.volume_limited)),
+        38 => vehicle.solution.thrust_n,
+        39 => vehicle.solution.specific_impulse_s,
+        40 => {
+            vehicle.solution.specific_impulse_s
+                * odd_propulsion::G0
+                * libm::log(vehicle.initial_mass_kg / vehicle.dry_mass_kg)
+        }
         _ => f64::NAN,
     }
 }
