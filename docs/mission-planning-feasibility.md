@@ -162,7 +162,13 @@ have silently fallen back to the tangential drawing.
 rendered terms in focusable `abbr.term` elements, and drives a demand-scheduled
 canvas projection through `governor.js`. Hovering/focusing a term or handle
 starts the projection; leaving, blurring, Escape or the close button suspends
-it. The idle gate still observes zero animation callbacks, worker messages and
+it. Re-entering the projection that is already showing is a no-op: the lens
+renders the hovered term inside its own `#lens-projection`, so rewriting that
+text on every `mouseover` would destroy the node under the pointer and
+re-fire the event forever (and steal focus from a keyboard user). The same
+guard keeps `pointermove` from resetting the animation phase on every mouse
+sample, which otherwise froze the handle demo while the cursor moved. The
+idle gate still observes zero animation callbacks, worker messages and
 mission redraws after completion.
 
 `odd_app::causal` maps warning inputs to deterministic symptom → mechanism →

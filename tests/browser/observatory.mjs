@@ -164,11 +164,27 @@ try{
   assert.equal(artKeys.DAG,'dag');
   assert.equal(artKeys.PDR,'pdr');
   assert.ok(Object.values(artKeys).every(k=>k.length>0),'every acronym needs an art key');
+  // Let the one-shot flight worker finish first: it rebuilds the causal panel,
+  // so hovering while it is still running would race a DOM replacement.
+  await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:60000});
   await page.locator('abbr.term[data-term="TWR"]').first().hover();
   await page.waitForFunction(()=>missionDiagnostics.lens==='twr'&&!document.getElementById('lens-projection').hidden);
   assert.match(await page.locator('#lens-projection').textContent(),/Thrust-to-weight ratio/);
   const lensBefore=await page.evaluate(()=>missionDiagnostics.lensDraws);
   await page.waitForFunction(n=>missionDiagnostics.lensDraws>n,lensBefore);
+  // The projection renders the hovered term inside itself. Re-entering the
+  // active projection must not rewrite those nodes, or the element under the
+  // pointer is destroyed and mouseover re-fires forever.
+  const stable=await page.evaluate(async()=>{
+    const proj=document.getElementById('lens-projection');
+    const node=proj.querySelector('abbr.term[data-term="TWR"]');
+    if(!node)return 'no-self-term';
+    node.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));
+    node.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));
+    await new Promise(r=>setTimeout(r,120));
+    return node.isConnected&&proj.querySelector('abbr.term[data-term="TWR"]')===node?'stable':'detached';
+  });
+  assert.equal(stable,'stable','hovering a term inside the projection must not detach it');
   await page.locator('#lens-close').click();
   await page.waitForFunction(()=>missionDiagnostics.lens===null&&!missionDiagnostics.lensPending);
   const missionBox=await page.locator('#plan-canvas').boundingBox();

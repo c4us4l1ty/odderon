@@ -8,7 +8,7 @@ let setup=[820497600,DURATION,1200,DRY,2400,310,INITIAL,0,0,0,Math.sqrt(MU/INITI
 const canvas=$('plan-canvas'),ctx=canvas.getContext('2d');
 const lensCanvas=$('lens-canvas'),lensCtx=lensCanvas.getContext('2d');
 let wasm,nodes=[],compiledOrder=[],selected=-1,preview=[],lunarPreview=[],actual=null,lastReport=null,lastLunarInfo=null,worker=null,timer=null,locked=null,drag=null,draws=0,messages=0,sequence=0;
-let activeLens=null,lensPhase=0,lensDraws=0,playerRating=1200,rankedMissions=0,missionRatings={101:800,102:1250,103:1650},lastComputeMs=null;
+let activeLens=null,activeTerm=null,lensPhase=0,lensDraws=0,playerRating=1200,rankedMissions=0,missionRatings={101:800,102:1250,103:1650},lastComputeMs=null;
 const lensGovernor=new Governor(()=>drawLens());
 const SHAPLEY_NAMES=['Finite-burn arc','Earth equatorial bulge','Moon and Sun gravity','Atmospheric drag and sunlight pressure'];
 const SHAPLEY_WHY=[
@@ -299,12 +299,20 @@ function mousePoint(e){const r=canvas.getBoundingClientRect();return [e.clientX-
 function nearestPath(p){let best=null;for(const item of preview){const d=distance(p,toCanvas(item.state));if(!best||d<best.d)best={d,time:item.time};}return best;}
 function setLens(key){$('lens-text').textContent=lens[key]||lens.time;annotateAcronyms($('lens-text'));}
 function startLens(key,term){
-  activeLens=key;lensPhase=0;setLens(key);$('lens-close').hidden=false;
+  const wanted=term&&GLOSSARY[term]?term:null;
+  // Re-entering the projection that is already showing must be a no-op.
+  // The lens writes its own text and projection nodes, so without this guard
+  // hovering a term rendered inside #lens-projection destroys the very node
+  // under the pointer, which re-fires mouseover forever and steals focus.
+  // It also stops pointermove from resetting lensPhase on every mouse sample,
+  // which froze the handle animation while the cursor was moving.
+  if(activeLens===key&&activeTerm===wanted)return;
+  activeLens=key;activeTerm=wanted;lensPhase=0;setLens(key);$('lens-close').hidden=false;
   const proj=$('lens-projection');
-  if(term&&GLOSSARY[term]){proj.hidden=false;proj.textContent=`${term} — ${GLOSSARY[term].expansion}. ${GLOSSARY[term].plain}`;annotateAcronyms(proj);}else proj.hidden=true;
+  if(wanted){proj.hidden=false;proj.textContent=`${wanted} — ${GLOSSARY[wanted].expansion}. ${GLOSSARY[wanted].plain}`;annotateAcronyms(proj);}else proj.hidden=true;
   lensGovernor.resume();lensGovernor.invalidate(false);
 }
-function stopLens(){activeLens=null;$('lens-projection').hidden=true;$('lens-close').hidden=true;lensGovernor.suspend();}
+function stopLens(){activeLens=null;activeTerm=null;$('lens-projection').hidden=true;$('lens-close').hidden=true;lensGovernor.suspend();}
 $('lens-close').addEventListener('click',stopLens);
 function drawLens(){
   const w=lensCanvas.width,h=lensCanvas.height;lensCtx.clearRect(0,0,w,h);lensPhase+=0.05;lensDraws++;
