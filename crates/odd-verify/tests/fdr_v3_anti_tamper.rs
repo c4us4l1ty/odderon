@@ -70,6 +70,7 @@ fn signed_tug(design: &ThermalDesign) -> (Fdr, odd_verify::FlightOutcome) {
         dry_mass: tug.dry_mass_kg,
         engine: tug.engine,
         node_metric: false,
+        delegation: odd_contracts::DelegationMask::MANUAL,
         thermal: Some(inputs),
     };
     let plan = Plan::compile(

@@ -82,6 +82,10 @@ pub struct Vehicle {
     pub initial_mass_kg: f64,
     /// True when the tank volume, not the structure, limited the load.
     pub volume_limited: bool,
+    /// Kilograms the Chief-AI added as conservative margin. Zero when manual.
+    pub delegation_margin_kg: f64,
+    /// Stack cost multiplier from delegation. 1.0 when manual.
+    pub delegation_cost_multiplier: f64,
 }
 
 /// Baseline orbital-maneuvering engine: a storable pressure-fed-class tug
@@ -231,6 +235,19 @@ impl Contract {
     /// engine mass and the propellant load all follow from physics; the
     /// airframe, tank volume and structural budget do not change.
     pub fn vehicle(&self, spec: EngineSpec) -> Result<Vehicle, PropulsionError> {
+        self.vehicle_delegated(spec, DelegationMask::MANUAL, &ThermalDesign::baseline())
+    }
+
+    /// Design the stage with a chosen split of manual and AI-sized
+    /// disciplines. A delegated discipline carries +35% mass and +30% cost,
+    /// and the margin is **added to the dry mass that actually flies** — it
+    /// is not a display-only annotation.
+    pub fn vehicle_delegated(
+        &self,
+        spec: EngineSpec,
+        delegation: DelegationMask,
+        design: &ThermalDesign,
+    ) -> Result<Vehicle, PropulsionError> {
         // Orbital contracts fly in vacuum. Ambient performance belongs to the
         // test stand, not to the flight.
         let solution = solve_engine(&spec, 0.0)?;
@@ -242,7 +259,22 @@ impl Contract {
         }
         let capacity = self.tank_volume_m3 * solution.bulk_density_kg_m3;
         let propellant_kg = libm::fmin(capacity, self.propellant_budget_kg);
-        let dry_mass_kg = self.airframe_mass_kg + solution.dry_mass_kg;
+        // The chief's margin is real hardware: it enters the dry mass, so a
+        // delegated stack genuinely carries less propellant for the same
+        // tank volume and must be flown differently.
+        let sphere_radius = libm::cbrt(3.0 * self.tank_volume_m3 / (4.0 * std::f64::consts::PI));
+        let tank_area_m2 = 4.0 * std::f64::consts::PI * sphere_radius * sphere_radius;
+        let hardware = chief_ai::hardware_mass(
+            solution.dry_mass_kg,
+            self.tank_volume_m3,
+            tank_area_m2,
+            design.relief_pressure_pa,
+            design,
+        );
+        // Equal cost weight per discipline: the assembly has no currency
+        // model yet, so cost is a relative multiplier, not an invented price.
+        let outcome = chief_ai::apply(delegation, &hardware, &[1.0; 4]);
+        let dry_mass_kg = self.airframe_mass_kg + solution.dry_mass_kg + outcome.mass_penalty_kg;
         Ok(Vehicle {
             spec,
             solution,
@@ -256,6 +288,8 @@ impl Contract {
             propellant_kg,
             initial_mass_kg: dry_mass_kg + propellant_kg,
             volume_limited: capacity < self.propellant_budget_kg,
+            delegation_margin_kg: outcome.mass_penalty_kg,
+            delegation_cost_multiplier: outcome.cost_multiplier,
         })
     }
 
@@ -373,6 +407,29 @@ pub fn score(
     commanded_delta_v_m_s: f64,
     impacted: bool,
 ) -> Result<MissionScore, IntegrationError> {
+    score_delegated(
+        contract,
+        state,
+        evaluation_s,
+        prediction,
+        commanded_delta_v_m_s,
+        impacted,
+        DelegationMask::MANUAL,
+    )
+}
+
+/// As `score`, but applying the Chief-AI efficiency cap. Any delegated
+/// discipline caps Seff at 0.65, so an auto-sized stack can complete a
+/// contract but cannot out-score a hand-worked one on efficiency.
+pub fn score_delegated(
+    contract: &Contract,
+    state: Keyframe,
+    evaluation_s: f64,
+    prediction: PredictionBaseline,
+    commanded_delta_v_m_s: f64,
+    impacted: bool,
+    delegation: DelegationMask,
+) -> Result<MissionScore, IntegrationError> {
     let fuel_ok = state.mass >= contract.dry_mass_kg && state.mass.is_finite();
     let deadline_ok = evaluation_s <= contract.duration_us as f64 / 1e6;
     if impacted || !fuel_ok || !deadline_ok || !evaluation_s.is_finite() {
@@ -438,12 +495,14 @@ pub fn score(
     } else {
         0.0
     };
-    Ok(MissionScore {
+    let mut score = MissionScore {
         objectives,
         prediction: prediction_score,
         efficiency,
         s: 0.5 * objectives + 0.25 * prediction_score + 0.25 * efficiency,
-    })
+    };
+    chief_ai::cap_score(&mut score, delegation);
+    Ok(score)
 }
 
 /// A numerically targeted perigee-kick plan for Contract 103.

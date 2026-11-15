@@ -58,6 +58,8 @@ pub struct FlightSettings {
     /// carries no tank model (storables, or a legacy schema-1/2 record), so
     /// boil-off is identically zero and older certificates still replay.
     pub thermal: Option<ThermalInputs>,
+    /// Which disciplines the Chief-AI sized. Caps Seff at 0.65 when non-zero.
+    pub delegation: odd_contracts::DelegationMask,
 }
 
 /// The physical inputs the tank model needs, all of them design choices.
@@ -253,13 +255,14 @@ pub fn compute(
         report[33] = enc.soi_radius_m;
     }
     let mission_score = locked.and_then(|lock| {
-        odd_contracts::score(
+        odd_contracts::score_delegated(
             &contract,
             final_state,
             evaluation_s,
             lock.prediction(),
             plan.requested_delta_v_m_s,
             impacted,
+            s.delegation,
         )
         .ok()
     });
@@ -372,6 +375,8 @@ pub struct FlightSpec {
     /// The signed cryogenic fit-out, rebuilt from the record. `None` for a
     /// pre-v3 record or a storable stage.
     pub thermal: Option<ThermalInputs>,
+    /// Signed delegation provenance, so a replay applies the same Seff cap.
+    pub delegation: odd_contracts::DelegationMask,
 }
 
 pub struct ReplayOutcome {
@@ -422,6 +427,7 @@ fn settings_from_spec(
             // Schema 1/2 records predate the tank model; they replay with no
             // boil-off so their certificates remain valid.
             thermal: spec.thermal,
+            delegation: spec.delegation,
             contract_id: spec.contract_id,
             epoch: spec.epoch_s,
             initial: Keyframe {
@@ -743,6 +749,7 @@ pub fn spec_from_record(fdr: &Fdr) -> FlightSpec {
     let (thrust_n, specific_impulse_s) = replay_engine(fdr);
     FlightSpec {
         thermal: thermal_inputs_from_record(fdr),
+        delegation: odd_contracts::DelegationMask(fdr.delegation_mask),
         contract_id: fdr.contract_id,
         epoch_s: fdr.epoch_s,
         duration_us: fdr.duration_us,

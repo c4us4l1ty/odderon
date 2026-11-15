@@ -58,6 +58,7 @@ impl Settings {
     /// guidance travel in the compiled `Plan`, not in the settings.
     fn flight(&self) -> FlightSettings {
         FlightSettings {
+            delegation: self.delegation,
             thermal: self.thermal_inputs(),
             contract_id: self.contract_id,
             epoch: self.epoch,

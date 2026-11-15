@@ -32,6 +32,7 @@ fn custom() -> (EngineSpec, FlightSpec) {
         spec,
         FlightSpec {
             thermal: None,
+            delegation: odd_contracts::DelegationMask::MANUAL,
             contract_id: 101,
             epoch_s: odd_contracts::START_EPOCH,
             duration_us: contract.duration_us,

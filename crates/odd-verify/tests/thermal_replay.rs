@@ -19,6 +19,7 @@ fn settings(contract: &Contract, thermal: Option<ThermalInputs>) -> FlightSettin
         dry_mass: contract.dry_mass_kg,
         engine: contract.engine,
         node_metric: contract.id == 102,
+        delegation: odd_contracts::DelegationMask::MANUAL,
         thermal,
     }
 }

@@ -20,6 +20,7 @@ fn rescue_spec() -> FlightSpec {
     let dv2 = libm::sqrt(mu / r1) * (1.0 - libm::sqrt(r0 / a));
     FlightSpec {
         thermal: None,
+        delegation: odd_contracts::DelegationMask::MANUAL,
         contract_id: 101,
         epoch_s: odd_contracts::START_EPOCH,
         duration_us: contract.duration_us,
