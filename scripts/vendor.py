@@ -69,6 +69,10 @@ UPSTREAM: dict[str, tuple[str, str]] = {
     "rand_core": ("rust-random/rand", "rand_core-{v}"),
     "rustc_version": ("dhuseby/rustc_version", "v{v}"),
     "semver": ("dtolnay/semver", "{v}"),
+    # Identity + dossier stack: both are dependency-free, which keeps the
+    # offline closure small and the wasm build free of getrandom.
+    "ed25519-compact": ("jedisct1/rust-ed25519-compact", "{v}"),
+    "qrcodegen": ("nayuki/QR-Code-generator", "v{v}"),
 }
 
 # Monorepo subdirectory for crates published from a workspace.
@@ -90,10 +94,51 @@ SUBDIR: dict[str, str] = {
     "serde_derive": "serde_derive",
     "thiserror-impl": "thiserror-impl",
     "cobs": "cobs",
+    "qrcodegen": "rust",
 }
 
 
-def locked_packages() -> dict[str, str]:
+def index_checksum(name: str, version: str) -> str | None:
+    """Authoritative crates.io checksum from the official git index on GitHub.
+
+    Cargo.lock must carry real registry checksums because CI resolves against
+    crates.io, not this vendor tree. GitHub tarballs are not byte-identical to
+    the published .crate, so the checksum cannot be recomputed locally.
+    """
+    n = len(name)
+    path = (
+        f"1/{name}" if n == 1 else
+        f"2/{name}" if n == 2 else
+        f"3/{name[0]}/{name}" if n == 3 else
+        f"{name[:2]}/{name[2:4]}/{name}"
+    )
+    url = f"https://api.github.com/repos/rust-lang/crates.io-index/contents/{path}"
+    request = urllib.request.Request(url, headers={"User-Agent": "odderon-provision"})
+    try:
+        import base64
+        payload = json.load(urllib.request.urlopen(request, timeout=120))
+        for line in base64.b64decode(payload["content"]).decode().splitlines():
+            if not line.strip():
+                continue
+            entry = json.loads(line)
+            if entry.get("vers") == version:
+                return entry.get("cksum")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[vendor]   index lookup failed for {name} {version}: {exc}", flush=True)
+    return None
+
+
+INDEX_LOOKUP = "@lookup"
+
+# Crates that are not in Cargo.lock yet. `--seed` vendors these first so cargo
+# can resolve them offline; their checksums come from the crates.io index.
+SEEDS: list[tuple[str, str]] = [
+    ("ed25519-compact", "2.6.1"),
+    ("qrcodegen", "1.8.0"),
+]
+
+
+def locked_packages(seed: bool = False) -> dict[str, str]:
     """name-version -> registry checksum, for every crates.io package."""
     out: dict[str, str] = {}
     for block in (ROOT / "Cargo.lock").read_text().split("[[package]]")[1:]:
@@ -102,6 +147,9 @@ def locked_packages() -> dict[str, str]:
         checksum = re.search(r'checksum = "([^"]+)"', block)
         if name and version and checksum:
             out[f"{name.group(1)}-{version.group(1)}"] = checksum.group(1)
+    if seed:
+        for name, version in SEEDS:
+            out.setdefault(f"{name}-{version}", INDEX_LOOKUP)
     return out
 
 
@@ -157,12 +205,12 @@ def fetch_upstream(name: str, version: str, dest: Path) -> bool:
 
 
 def main() -> int:
-    packages = locked_packages()
+    packages = locked_packages(seed="--seed" in sys.argv)
     VENDOR.mkdir(parents=True, exist_ok=True)
     pending = {}
     for key, checksum in packages.items():
         marker = VENDOR / key / ".cargo-checksum.json"
-        if marker.is_file():
+        if marker.is_file() and checksum != INDEX_LOOKUP:
             try:
                 if json.loads(marker.read_text()).get("package") == checksum:
                     continue
@@ -201,6 +249,13 @@ def main() -> int:
                 prior = json.loads(marker.read_text())
             except ValueError:
                 prior = {}
+        if checksum == INDEX_LOOKUP:
+            resolved = index_checksum(name, version)
+            if not resolved:
+                failed.append(key)
+                continue
+            checksum = resolved
+            packages[key] = resolved
         if prior.get("package") != checksum:
             # Trust the lockfile checksum; skip per-file hashes because GitHub
             # tarballs are not byte-identical to published .crate archives.
