@@ -86,6 +86,22 @@ check('margin is real dry mass', delegated.margin > 0 && delegated.dryMass > man
 check('cost multiplier is 1.30', Math.abs(delegated.cost - 1.30) < 1e-12);
 check('efficiency cap is 0.65', Math.abs(delegated.cap - 0.65) < 1e-12);
 
+// --- 2b. Delegated disciplines lock their controls and show the chief's numbers.
+check('the engine lab is locked while Propulsion is delegated',
+  await page.locator('#engine-throat').isDisabled());
+check('the lab explains who owns the engine',
+  /AUTO-DELEGATED/.test(await page.locator('#engine-chief-note').innerText()));
+const choiceText = await page.locator('#delegation-badges').innerText();
+check('the assembly prints the chief chosen specification', /qualified reference engine/.test(choiceText));
+check('the assembly prints the chief array sizing', /Power chief sizes the array/.test(choiceText));
+// Handing Propulsion back unlocks the lab immediately.
+await page.click('#delegate-0');
+await page.waitForFunction(() => !window.missionDiagnostics.pending);
+check('switching Propulsion to MANUAL unlocks the lab',
+  !(await page.locator('#engine-throat').isDisabled()));
+await page.click('#delegate-0');
+await page.waitForFunction(() => !window.missionDiagnostics.pending);
+
 // --- 3. Badges name the chief and the kilograms. ---
 const badges = await page.locator('#delegation-badges').innerText();
 console.log('badges:\n' + badges);
@@ -186,6 +202,25 @@ await page.waitForFunction(() => !window.missionDiagnostics.pending);
 const tugCooled = await page.evaluate(() => window.missionDiagnostics.assembly);
 console.log('cooled tug', JSON.stringify(tugCooled));
 check('the cooler is fitted', Math.abs(tugCooled.coolerLift - 400) < 1e-9);
+// Thermal delegation must REPLACE the player's 40-layer/400 W design with the
+// chief's textbook hardware, lock the sliders, and be reversible.
+const playerStrut = await page.inputValue('#thermal-strut');
+await page.click('#delegate-1');
+await page.waitForFunction(() => !window.missionDiagnostics.pending);
+check('a delegated thermal slider is locked', await page.locator('#thermal-mli').isDisabled());
+const chiefStrut = await page.inputValue('#thermal-strut');
+check('the locked slider shows the chief value, not the player value',
+  Number(chiefStrut) !== Number(playerStrut) && Number(chiefStrut) === 1.2,
+  `player ${playerStrut} -> chief ${chiefStrut} W/K`);
+check('the chief removes the player cooler',
+  (await page.evaluate(() => window.missionDiagnostics.assembly.coolerLift)) === 0);
+check('the array slider stays manual', !(await page.locator('#thermal-array').isDisabled()));
+await page.click('#delegate-1');
+await page.waitForFunction(() => !window.missionDiagnostics.pending);
+check('switching back to MANUAL restores the player design',
+  (await page.inputValue('#thermal-strut')) === playerStrut
+  && (await page.evaluate(() => window.missionDiagnostics.assembly.coolerLift)) === 400);
+check('the restored sliders are editable', !(await page.locator('#thermal-mli').isDisabled()));
 check('the fit-out costs real dry mass', tugCooled.fitoutMass > 100 && tugCooled.dryMass > tugManual.dryMass,
   `+${tugCooled.fitoutMass.toFixed(3)} kg`);
 

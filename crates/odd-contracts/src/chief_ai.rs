@@ -371,11 +371,17 @@ pub fn substitute(
 /// handed a discipline to a chief and then carry hand-optimised hardware for
 /// that discipline. Field ownership mirrors `substitute` exactly, so the two
 /// cannot drift apart.
+/// `thermal_signed` is false for a storable stage, whose record legitimately
+/// carries no thermal block. Those disciplines have no signed fields to
+/// compare, and nothing to forge either: their substituted hardware is a pure
+/// function of the contract, so the verifier's mass recomputation already
+/// pins it.
 pub fn delegation_deviation(
     contract: &crate::Contract,
     engine: odd_propulsion::EngineSpec,
     thermal: &ThermalDesign,
     mask: DelegationMask,
+    thermal_signed: bool,
 ) -> Option<&'static str> {
     let expected = substitute(contract, engine, thermal, mask);
     let same = |a: f64, b: f64| a.to_bits() == b.to_bits();
@@ -391,12 +397,13 @@ pub fn delegation_deviation(
             return Some("propulsion");
         }
     }
-    if mask.contains(Department::Gnc)
+    if thermal_signed
+        && mask.contains(Department::Gnc)
         && !same(thermal.bus.avionics_w, expected.thermal.bus.avionics_w)
     {
         return Some("gnc");
     }
-    if mask.contains(Department::Thermal) {
+    if thermal_signed && mask.contains(Department::Thermal) {
         let (a, b) = (thermal, &expected.thermal);
         if a.mli_layers != b.mli_layers
             || a.shell != b.shell
@@ -415,7 +422,8 @@ pub fn delegation_deviation(
             return Some("thermal");
         }
     }
-    if mask.contains(Department::Power)
+    if thermal_signed
+        && mask.contains(Department::Power)
         && !same(
             thermal.bus.array_w_at_1au,
             expected.thermal.bus.array_w_at_1au,

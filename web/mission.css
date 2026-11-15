@@ -79,3 +79,7 @@
 @media(max-width:850px){.engine-grid{grid-template-columns:1fr}.engine-view{height:300px}}
 @media(max-width:450px){.engine-card{padding:16px}}
 @media print{.engine-card{border:1px solid #999;background:#fff;color:#000}.engine-controls,.engine-view{display:none!important}.engine-readout div{background:#f4f4f4}.engine-readout strong{color:#000}}
+
+/* A delegated control shows the chief's own number and cannot be edited. */
+.engine-controls input.chief-owned,.engine-controls input:disabled{opacity:.72;border-style:dashed;border-color:#7d6a45}
+.chief-choice{color:#e1bc76}

@@ -596,12 +596,13 @@ engineLab=createLab({wasm,isLocked:()=>!!locked,annotate:annotateAcronyms,onDiag
   // later reconfigure and every worker payload uses exactly this one.
   appliedEngine=baselineOnly?null:{...engineLab.diagnostics().spec};
   if(assemblyDesign&&!applyAssembly(wasm,assemblyDesign))assemblyDesign=null;
+  assembly?.sync();engineLab?.setLocked();
   if(!baselineOnly){nodes=[];selected=-1;}
   if(!reapplyEngine(wasm))appliedEngine=null;
   DURATION=wasm.mission_parameter(1);DRY=wasm.mission_parameter(3);
   setup=Array.from({length:12},(_,i)=>wasm.mission_parameter(i));
   INITIAL=Math.hypot(setup[6],setup[7],setup[8]);
-  $('debrief').hidden=true;assembly?.sync();updatePreview();
+  $('debrief').hidden=true;assembly?.sync();engineLab?.setLocked();updatePreview();
 }});
 assembly=createAssembly({wasm,isLocked:()=>!!locked,annotate:annotateAcronyms,onChange:()=>{
   assemblyDesign=assemblyPayload(wasm);
@@ -611,7 +612,9 @@ assembly=createAssembly({wasm,isLocked:()=>!!locked,annotate:annotateAcronyms,on
   DURATION=wasm.mission_parameter(1);DRY=wasm.mission_parameter(3);
   setup=Array.from({length:12},(_,i)=>wasm.mission_parameter(i));
   INITIAL=Math.hypot(setup[6],setup[7],setup[8]);
-  $('debrief').hidden=true;updatePreview();
+  // Delegating Propulsion freezes the engine lab; handing it back unfreezes
+  // it. The lab must be told whenever the assembly changes.
+  $('debrief').hidden=true;engineLab?.setLocked();updatePreview();
 }});
 if(wasm.mission_contract(contractId)){engineLab.loadBaseline();engineLab.setLocked();assembly.sync();assembly.setLocked();}
 annotateAcronyms(document.querySelector('.mission-main'));syncFields();updatePreview();}catch(e){$('plan-status').classList.add('failure');$('plan-status').textContent=String(e.message||e);annotateAcronyms($('plan-status'));}

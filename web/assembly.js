@@ -84,16 +84,31 @@ export function createAssembly({ wasm, isLocked, annotate, onChange }) {
       : '—';
   }
 
-  // Pull the canonical design back out of Rust; the inputs display what the
-  // stage actually carries, never what the user last typed.
+  // Which department owns each control, read from Rust so the browser never
+  // restates the field-ownership map.
+  const OWNER = Object.fromEntries(Object.entries({ mli: 0, strut: 4, radiator: 3, cooler: 2, array: 8 })
+    .map(([key, field]) => [key, wasm.mission_thermal_owner(field)]));
+  const FIELD = { mli: 0, strut: 4, radiator: 3, cooler: 2, array: 8 };
+
+  function ownerDelegated(key) {
+    const owner = OWNER[key];
+    return owner !== 0xFFFFFFFF && (wasm.mission_delegation_mask() & (1 << owner)) !== 0;
+  }
+
+  // A delegated control displays the CHIEF's chosen value and is read-only;
+  // a manual control displays the player's own value. The player's value is
+  // kept in Rust, so toggling back to MANUAL restores what they had typed.
   function syncInputs() {
     const get = field => wasm.mission_thermal_get(field);
-    thermalControls.mli.value = String(Math.round(get(0)));
-    thermalControls.strut.value = String(get(4));
-    thermalControls.radiator.value = String(get(3));
-    thermalControls.cooler.value = String(get(2));
-    thermalControls.array.value = String(get(8));
-    el('thermal-epsilon').textContent = `effective emittance ${fmt(get(1), 5)}`;
+    const flown = field => wasm.mission_thermal_effective(field);
+    for (const [key, control] of Object.entries(thermalControls)) {
+      const value = ownerDelegated(key) ? flown(FIELD[key]) : get(FIELD[key]);
+      control.value = key === 'mli' ? String(Math.round(value)) : String(value);
+      control.readOnly = ownerDelegated(key);
+      control.classList.toggle('chief-owned', ownerDelegated(key));
+    }
+    const epsilon = ownerDelegated('mli') ? flown(1) : get(1);
+    el('thermal-epsilon').textContent = `effective emittance ${fmt(epsilon, 5)}`;
     const mask = wasm.mission_delegation_mask();
     toggles.forEach((toggle, i) => { toggle.checked = (mask & (1 << DEPARTMENTS[i].bit)) !== 0; });
     // Storable stages have no cryogenic fit-out; say so rather than offering
@@ -130,6 +145,25 @@ export function createAssembly({ wasm, isLocked, annotate, onChange }) {
     }
 
     badges.replaceChildren();
+    const choices = [];
+    if (mask & (1 << 0)) {
+      choices.push(`Propulsion chief flies the qualified reference engine: ${fmt(wasm.mission_engine_effective(0), 1)} N at ${fmt(wasm.mission_engine_effective(1), 2)} s specific impulse.`);
+    }
+    if (mask & (1 << 1)) {
+      choices.push(`Thermal chief buys ${fmt(wasm.mission_thermal_effective(0), 0)} blanket layers on a stainless shell with ${fmt(wasm.mission_thermal_effective(4), 2)} W/K mounts and no cooler.`);
+    }
+    if (mask & (1 << 2)) {
+      choices.push(`Power chief sizes the array at ${fmt(wasm.mission_thermal_effective(8), 0)} W.`);
+    }
+    if (mask & (1 << 3)) {
+      choices.push(`Guidance and control chief buys ${fmt(wasm.mission_thermal_effective(9), 0)} W of avionics.`);
+    }
+    for (const line of choices) {
+      const row = document.createElement('p');
+      row.className = 'mission-sub chief-choice';
+      row.textContent = line;
+      badges.append(row);
+    }
     for (const d of DEPARTMENTS) {
       const text = readString(
         wasm,
@@ -166,7 +200,14 @@ export function createAssembly({ wasm, isLocked, annotate, onChange }) {
     const locked = isLocked();
     const cryogenic = wasm.mission_thermal_get(7) === 1;
     for (const control of toggles) control.disabled = locked;
-    for (const control of Object.values(thermalControls)) control.disabled = locked || !cryogenic;
+    for (const [key, control] of Object.entries(thermalControls)) {
+      // A delegated slider is locked because the chief owns it, not because
+      // the mission is locked; the tooltip says which.
+      control.disabled = locked || !cryogenic || ownerDelegated(key);
+      control.title = ownerDelegated(key)
+        ? 'AUTO-DELEGATED: the chief sized this. Switch to MANUAL to size it yourself.'
+        : '';
+    }
   }
 
   function rebuild(ok, message) {
@@ -224,12 +265,22 @@ export function createAssembly({ wasm, isLocked, annotate, onChange }) {
       dryMass: wasm.mission_delegation_readout(2),
       wetMass: wasm.mission_delegation_readout(3),
       cap: wasm.mission_delegation_readout(4),
-      mliLayers: wasm.mission_thermal_get(0),
-      epsilon: wasm.mission_thermal_get(1),
-      coolerLift: wasm.mission_thermal_get(2),
-      radiatorArea: wasm.mission_thermal_get(3),
-      strutConductance: wasm.mission_thermal_get(4),
-      arrayWatts: wasm.mission_thermal_get(8),
+      // What the stage actually carries, after any chief substitution.
+      mliLayers: wasm.mission_thermal_effective(0),
+      epsilon: wasm.mission_thermal_effective(1),
+      coolerLift: wasm.mission_thermal_effective(2),
+      radiatorArea: wasm.mission_thermal_effective(3),
+      strutConductance: wasm.mission_thermal_effective(4),
+      arrayWatts: wasm.mission_thermal_effective(8),
+      avionicsWatts: wasm.mission_thermal_effective(9),
+      // What the player typed, restored when a discipline goes back to MANUAL.
+      player: {
+        mliLayers: wasm.mission_thermal_get(0),
+        coolerLift: wasm.mission_thermal_get(2),
+        radiatorArea: wasm.mission_thermal_get(3),
+        strutConductance: wasm.mission_thermal_get(4),
+        arrayWatts: wasm.mission_thermal_get(8),
+      },
       cryogenic: wasm.mission_thermal_get(7) === 1,
       fitoutMass: wasm.mission_delegation_readout(5),
     }),

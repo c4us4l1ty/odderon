@@ -729,6 +729,7 @@ pub fn certify_engine(fdr: &Fdr) -> Result<Option<EngineSolution>, FdrError> {
             *spec,
             &design,
             odd_contracts::DelegationMask(fdr.delegation_mask),
+            !fdr.thermal_specs.is_empty(),
         ) {
             return Err(FdrError::DelegationSpecMismatch(department));
         }
