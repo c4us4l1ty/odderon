@@ -175,6 +175,7 @@ name = "odd-report"
 version = "0.1.0"
 dependencies = [
  "odd-identity",
+ "odd-propulsion",
  "qrcodegen",
  "sha2",
 ]
@@ -199,6 +200,7 @@ dependencies = [
  "odd-core",
  "odd-ephem",
  "odd-identity",
+ "odd-propulsion",
  "odd-report",
  "odd-sim",
 ]

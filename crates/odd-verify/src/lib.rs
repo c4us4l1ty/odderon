@@ -18,6 +18,7 @@ use odd_astro::{
 use odd_contracts::{environment, Contract, Objective};
 use odd_core::{epoch::Epoch, frames::State};
 use odd_ephem::{Body, Ephemeris};
+use odd_propulsion::{solve_engine, EngineSolution};
 use odd_report::{dossier::Geometry, Fdr, FdrError};
 use odd_sim::{
     encounter::find_entry,
@@ -552,6 +553,10 @@ pub fn replay_flight(spec: &FlightSpec) -> Option<ReplayOutcome> {
 /// must reproduce bit for bit.
 pub fn verify_record(fdr: &Fdr) -> Result<ReplayOutcome, FdrError> {
     fdr.verify_signature()?;
+    // Gate zero: the signed engine design must actually produce the recorded
+    // performance. Only then does the replay run, and it runs on the derived
+    // numbers rather than on anything the client typed.
+    certify_engine(fdr)?;
     let outcome = replay_flight(&spec_from_record(fdr))
         .ok_or(FdrError::Malformed("the command timeline does not compile"))?;
     fdr.compare_metrics(&outcome.report)?;
@@ -559,16 +564,65 @@ pub fn verify_record(fdr: &Fdr) -> Result<ReplayOutcome, FdrError> {
     Ok(outcome)
 }
 
+/// Recompute the engine a record signs and compare it with the record's
+/// derived claims. A legacy schema-1 record has no design to check, so it
+/// verifies against its recorded thrust and Isp and is labelled legacy by
+/// the dossier.
+pub fn certify_engine(fdr: &Fdr) -> Result<Option<EngineSolution>, FdrError> {
+    let Some(spec) = &fdr.engine else {
+        return Ok(None);
+    };
+    let solved = solve_engine(spec, 0.0).map_err(|_| FdrError::EngineUnusable)?;
+    if !solved.flight_ready() {
+        return Err(FdrError::EngineUnusable);
+    }
+    if fdr.thrust_n.to_bits() != solved.thrust_n.to_bits() {
+        return Err(FdrError::EngineMismatch("thrust"));
+    }
+    if fdr.specific_impulse_s.to_bits() != solved.specific_impulse_s.to_bits() {
+        return Err(FdrError::EngineMismatch("specific impulse"));
+    }
+    if let Some(contract) = Contract::get(fdr.contract_id) {
+        let vehicle = contract
+            .vehicle(*spec)
+            .map_err(|_| FdrError::EngineUnusable)?;
+        if fdr.dry_mass_kg.to_bits() != vehicle.dry_mass_kg.to_bits() {
+            return Err(FdrError::EngineMismatch("dry mass"));
+        }
+        // The stage may be launched part-loaded, never over-loaded.
+        if fdr.initial_mass_kg < vehicle.dry_mass_kg
+            || fdr.initial_mass_kg > vehicle.dry_mass_kg + vehicle.propellant_kg
+        {
+            return Err(FdrError::EngineMismatch("propellant load"));
+        }
+    }
+    Ok(Some(solved))
+}
+
+/// The engine a replay must fly: derived from the signed design when there
+/// is one, otherwise the legacy record's own claim.
+pub fn replay_engine(fdr: &Fdr) -> (f64, f64) {
+    match fdr
+        .engine
+        .as_ref()
+        .and_then(|spec| solve_engine(spec, 0.0).ok())
+    {
+        Some(solved) => (solved.thrust_n, solved.specific_impulse_s),
+        None => (fdr.thrust_n, fdr.specific_impulse_s),
+    }
+}
+
 /// Translate a recorder into the simulator's replay request.
 pub fn spec_from_record(fdr: &Fdr) -> FlightSpec {
+    let (thrust_n, specific_impulse_s) = replay_engine(fdr);
     FlightSpec {
         contract_id: fdr.contract_id,
         epoch_s: fdr.epoch_s,
         duration_us: fdr.duration_us,
         initial_mass_kg: fdr.initial_mass_kg,
         dry_mass_kg: fdr.dry_mass_kg,
-        thrust_n: fdr.thrust_n,
-        specific_impulse_s: fdr.specific_impulse_s,
+        thrust_n,
+        specific_impulse_s,
         initial_state: fdr.initial_state,
         node_metric: fdr.node_metric,
         prediction: fdr.prediction_baseline,

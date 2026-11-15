@@ -9,6 +9,7 @@ odd-contracts = { path = "../odd-contracts" }
 odd-core = { path = "../odd-core" }
 odd-ephem = { path = "../odd-ephem" }
 odd-report = { path = "../odd-report" }
+odd-propulsion = { path = "../odd-propulsion" }
 odd-sim = { path = "../odd-sim" }
 libm = "0.2"
 

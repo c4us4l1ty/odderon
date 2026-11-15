@@ -443,6 +443,8 @@ pub fn html(fdr: &Fdr, geometry: &Geometry, payload: &str) -> Result<String, &'s
     ));
     body.push_str("</section>");
 
+    body.push_str(&engine_annex(fdr));
+
     let mode_class = if fdr.attempt_mode == AttemptMode::Ranked {
         "ranked"
     } else {
@@ -454,6 +456,265 @@ pub fn html(fdr: &Fdr, geometry: &Geometry, payload: &str) -> Result<String, &'s
         escape_html(&fdr.callsign),
         fdr.schema_version
     ))
+}
+
+/// Annex B: the signed engine design and the performance recomputed from it.
+/// A legacy record has no design, and says so rather than printing a claim as
+/// if it had been checked.
+fn engine_annex(fdr: &Fdr) -> String {
+    let mut out = String::from(
+        "<section id=\"annex-b\"><h2>Annex B. Engine design and recomputed performance</h2>",
+    );
+    let Some(spec) = &fdr.engine else {
+        out.push_str("<p id=\"engine-legacy\">This record predates engine certification (schema 1). Its thrust and specific impulse are recorded claims that no design backs; the replay reproduces the flight with those numbers, but the engine itself was never verified.</p></section>");
+        return out;
+    };
+    let Ok(solution) = odd_propulsion::solve_engine(spec, 0.0) else {
+        out.push_str("<p id=\"engine-legacy\">The signed engine design does not solve inside the model envelope.</p></section>");
+        return out;
+    };
+    let geometry = spec.geometry();
+    let rows = vec![
+        vec![
+            "Propellant pair".into(),
+            escape_html(spec.propellant.label()),
+        ],
+        vec!["Mixture ratio O/F".into(), number(spec.of_ratio, 4)],
+        vec![
+            "Chamber pressure".into(),
+            format!("{} MPa", number(spec.p_c_pa / 1e6, 4)),
+        ],
+        vec![
+            "Throat radius / diameter".into(),
+            format!(
+                "{} / {} mm",
+                number(spec.r_throat_m * 1000.0, 3),
+                number(spec.r_throat_m * 2000.0, 3)
+            ),
+        ],
+        vec![
+            "Exit radius".into(),
+            format!("{} mm", number(spec.r_exit_m * 1000.0, 3)),
+        ],
+        vec![
+            "Expansion ratio &#949;".into(),
+            number(geometry.expansion_ratio(), 4),
+        ],
+        vec![
+            "Bell length fraction / length".into(),
+            format!(
+                "{} / {} m",
+                number(spec.length_fraction, 3),
+                number(geometry.length_m(), 4)
+            ),
+        ],
+        vec![
+            "Chamber temperature".into(),
+            format!("{} K", number(solution.chamber_temperature_k, 2)),
+        ],
+        vec![
+            "Effective molar mass".into(),
+            format!("{} g/mol", number(solution.molar_mass_kg_mol * 1000.0, 4)),
+        ],
+        vec![
+            "Specific heat ratio &#947;".into(),
+            number(solution.gamma, 5),
+        ],
+        vec![
+            "Bulk propellant density".into(),
+            format!("{} kg/m&#179;", number(solution.bulk_density_kg_m3, 3)),
+        ],
+        vec![
+            "Characteristic velocity c*".into(),
+            format!("{} m/s", number(solution.c_star_m_s, 3)),
+        ],
+        vec![
+            "Mass flow".into(),
+            format!("{} kg/s", number(solution.mass_flow_kg_s, 6)),
+        ],
+        vec![
+            "Exit Mach / pressure / temperature".into(),
+            format!(
+                "{} / {} kPa / {} K",
+                number(solution.exit_mach, 4),
+                number(solution.exit_pressure_pa / 1000.0, 4),
+                number(solution.exit_temperature_k, 2)
+            ),
+        ],
+        vec![
+            "Bell divergence factor &#955;".into(),
+            number(solution.divergence_factor, 6),
+        ],
+        vec![
+            "Vacuum thrust".into(),
+            format!("{} kN", number(solution.thrust_n / 1000.0, 4)),
+        ],
+        vec![
+            "Vacuum specific impulse".into(),
+            format!("{} s", number(solution.specific_impulse_s, 4)),
+        ],
+        vec![
+            "Engine dry mass".into(),
+            format!("{} kg", number(solution.dry_mass_kg, 4)),
+        ],
+        vec![
+            "Turbopump shaft power".into(),
+            format!("{} kW", number(solution.pump_power_w / 1000.0, 3)),
+        ],
+        vec![
+            "Throat heat flux".into(),
+            format!(
+                "{} MW/m&#178;",
+                number(solution.throat_heat_flux_w_m2 / 1e6, 4)
+            ),
+        ],
+        vec![
+            "Throat wall temperature".into(),
+            format!(
+                "{} K {}",
+                number(solution.throat_wall_temperature_k, 2),
+                if solution.thermal_limit_exceeded {
+                    "&#8212; <strong>over the 1350 K liner limit</strong>"
+                } else {
+                    "(within the 1350 K liner limit)"
+                }
+            ),
+        ],
+    ];
+    out.push_str(&table(
+        "Table B1. The engine design carried in the signed bytes, and the performance the verifier recomputed from it. Thrust, specific impulse and engine mass are outputs of the design, never client inputs.",
+        &["Field", "Value"],
+        &rows,
+        "engine-table",
+    ));
+    out.push_str("<figure>");
+    out.push_str(&engine_svg(spec, &solution));
+    out.push_str("<figcaption>Figure B1. Axisymmetric chamber and bell contour at true relative scale, with the quasi-1D Mach profile along the axis. The wall is the parabolic Rao contour the solver used; the dashed line is the centreline.</figcaption></figure>");
+    out.push_str("</section>");
+    out
+}
+
+/// Vector cross-section of the signed engine: chamber, convergent, bell and
+/// the Mach profile. No raster assets, so it prints at any scale.
+pub fn engine_svg(
+    spec: &odd_propulsion::EngineSpec,
+    solution: &odd_propulsion::EngineSolution,
+) -> String {
+    const W: f64 = 640.0;
+    const H: f64 = 300.0;
+    let geometry = spec.geometry();
+    let chamber_radius = solution.chamber_radius_m;
+    let chamber_length = solution.chamber_length_m;
+    let convergent = (chamber_radius - spec.r_throat_m) / 0.577_350_269_189_625_7;
+    let total_length = chamber_length + convergent + geometry.length_m();
+    let scale = ((W - 80.0) / total_length.max(1e-6))
+        .min((H - 90.0) / (2.0 * chamber_radius.max(spec.r_exit_m)).max(1e-6));
+    let axis = H * 0.5;
+    let x0 = 40.0;
+    let x = |metres: f64| x0 + metres * scale;
+    let y = |radius: f64| axis - radius * scale;
+    let throat_x = x(chamber_length + convergent);
+    let mut out = format!(
+        "<svg id=\"engine-figure\" class=\"figure\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {W} {H}\" width=\"{W}\" height=\"{H}\" role=\"img\" aria-label=\"Axisymmetric engine cross-section and axial Mach profile\">"
+    );
+    out.push_str(&format!(
+        "<line x1=\"{x0}\" y1=\"{axis}\" x2=\"{}\" y2=\"{axis}\" stroke=\"#888\" stroke-width=\"0.7\" stroke-dasharray=\"5 4\"/>",
+        x(total_length)
+    ));
+    // Upper wall: chamber barrel, convergent, then the sampled bell.
+    let mut upper = format!(
+        "M {} {} L {} {} L {} {}",
+        x(0.0),
+        y(chamber_radius),
+        x(chamber_length),
+        y(chamber_radius),
+        throat_x,
+        y(spec.r_throat_m)
+    );
+    let stations = odd_propulsion::flow_profile(spec, 0.0, 96).unwrap_or_default();
+    for station in &stations {
+        upper.push_str(&format!(
+            " L {} {}",
+            throat_x + station.x_norm * geometry.length_m() * scale,
+            y(station.radius_m)
+        ));
+    }
+    out.push_str(&format!(
+        "<path d=\"{upper}\" fill=\"none\" stroke=\"#111\" stroke-width=\"1.6\"/>"
+    ));
+    // Mirror below the centreline.
+    let mut lower = format!(
+        "M {} {} L {} {} L {} {}",
+        x(0.0),
+        2.0 * axis - y(chamber_radius),
+        x(chamber_length),
+        2.0 * axis - y(chamber_radius),
+        throat_x,
+        2.0 * axis - y(spec.r_throat_m)
+    );
+    for station in &stations {
+        lower.push_str(&format!(
+            " L {} {}",
+            throat_x + station.x_norm * geometry.length_m() * scale,
+            2.0 * axis - y(station.radius_m)
+        ));
+    }
+    out.push_str(&format!(
+        "<path d=\"{lower}\" fill=\"none\" stroke=\"#111\" stroke-width=\"1.6\"/>"
+    ));
+    out.push_str(&format!(
+        "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"#111\" stroke-width=\"1.6\"/>",
+        x(0.0),
+        y(chamber_radius),
+        x(0.0),
+        2.0 * axis - y(chamber_radius)
+    ));
+    // Mach profile, scaled into the lower margin.
+    if let Some(max_mach) = stations.last().map(|s| s.mach) {
+        let mut profile = String::new();
+        for (index, station) in stations.iter().enumerate() {
+            let px = throat_x + station.x_norm * geometry.length_m() * scale;
+            let py = H - 18.0 - 46.0 * station.mach / max_mach.max(1e-9);
+            profile.push_str(&format!(
+                "{}{} {}",
+                if index == 0 { "M " } else { " L " },
+                px,
+                py
+            ));
+        }
+        out.push_str(&format!(
+            "<path d=\"{profile}\" fill=\"none\" stroke=\"#b3541e\" stroke-width=\"1.2\"/>"
+        ));
+        out.push_str(&format!(
+            "<text x=\"{}\" y=\"{}\" font-size=\"10\" fill=\"#b3541e\">M(x), exit {}</text>",
+            throat_x,
+            H - 70.0,
+            number(max_mach, 3)
+        ));
+    }
+    out.push_str(&format!(
+        "<text x=\"{}\" y=\"{}\" font-size=\"10\" fill=\"#111\">throat {} mm</text>",
+        throat_x - 20.0,
+        y(spec.r_throat_m) - 8.0,
+        number(spec.r_throat_m * 2000.0, 2)
+    ));
+    out.push_str(&format!(
+        "<text x=\"{}\" y=\"{}\" font-size=\"10\" fill=\"#111\">exit {} mm &#183; &#949; = {}</text>",
+        x(total_length) - 150.0,
+        y(spec.r_exit_m) - 8.0,
+        number(spec.r_exit_m * 2000.0, 2),
+        number(geometry.expansion_ratio(), 2)
+    ));
+    out.push_str(&format!(
+        "<text x=\"{}\" y=\"{}\" font-size=\"10\" fill=\"#111\">{} &#183; O/F {} &#183; {} MPa</text>",
+        x0,
+        20.0,
+        escape_html(spec.propellant.label()),
+        number(spec.of_ratio, 3),
+        number(spec.p_c_pa / 1e6, 3)
+    ));
+    out.push_str("</svg>");
+    out
 }
 
 const CSS: &str = "@page{size:A4;margin:18mm 16mm}body{font-family:Georgia,'Times New Roman',serif;color:#111;background:#fff;margin:0 auto;padding:24px;max-width:52rem;line-height:1.5}h1{font-size:1.6rem;font-weight:400;margin:.2rem 0}h2{font-size:1.1rem;margin:1.8rem 0 .6rem;border-bottom:1px solid #ccc;padding-bottom:.25rem}.memorandum{font-size:.66rem;letter-spacing:.16em;text-transform:uppercase;color:#555;margin:0}.subtitle{font-size:.9rem;color:#444;margin:.2rem 0 1rem}table{border-collapse:collapse;width:100%;font-size:.76rem;margin:.8rem 0 1.2rem}caption{caption-side:top;text-align:left;font-size:.72rem;color:#444;padding-bottom:.35rem}th,td{border:1px solid #bbb;padding:4px 6px;text-align:right}th[scope=row],thead th:first-child{text-align:left}thead th{background:#f0f0ee}code{font-family:ui-monospace,'Courier New',monospace;font-size:.72rem}code.wrap{word-break:break-all}figure{margin:1rem 0;text-align:center}figcaption{font-size:.72rem;color:#444;text-align:left;margin-top:.4rem}.figure{max-width:100%;height:auto;border:1px solid #ddd}.qr-figure{display:flex;gap:1rem;align-items:flex-start;text-align:left}.qr{flex:0 0 auto;border:1px solid #ddd}pre{font-family:ui-monospace,'Courier New',monospace;font-size:.68rem;background:#f7f7f5;border:1px solid #ddd;padding:.7rem;overflow-x:auto;white-space:pre-wrap;word-break:break-all}footer{margin-top:2rem;border-top:1px solid #ccc;padding-top:.5rem;font-size:.66rem;color:#555}section{break-inside:auto}table,figure{break-inside:avoid}@media print{body{padding:0}a{color:inherit}}";
@@ -475,6 +736,14 @@ mod tests {
             dry_mass_kg: 1020.0,
             thrust_n: 2400.0,
             specific_impulse_s: 310.0,
+            engine: Some(odd_propulsion::EngineSpec {
+                propellant: odd_propulsion::Propellant::NtoMmh,
+                of_ratio: 2.0,
+                p_c_pa: 1.5e6,
+                r_throat_m: 0.0164,
+                r_exit_m: 0.1216,
+                length_fraction: 0.8,
+            }),
             initial_state: [6_638_137.0, 0.0, 0.0, 0.0, 7748.0, 0.0],
             node_metric: false,
             prediction_baseline: [180.0, 550_000.0, 260_000.0, 120.0, 10_800.0, f64::NAN],
@@ -550,6 +819,9 @@ mod tests {
             "section-3",
             "section-4",
             "annex-a",
+            "annex-b",
+            "engine-table",
+            "engine-figure",
         ] {
             assert!(document.contains(&format!("id=\"{id}\"")), "missing {id}");
         }
@@ -569,8 +841,8 @@ mod tests {
         }
         assert_eq!(
             document.matches("<svg").count(),
-            2,
-            "both figures must be vector"
+            3,
+            "trajectory, QR and engine schematic must all be vector"
         );
         assert!(
             !document.contains("<img"),

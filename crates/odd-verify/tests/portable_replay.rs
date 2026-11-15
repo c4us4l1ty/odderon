@@ -60,6 +60,7 @@ fn recorder(spec: &FlightSpec) -> Fdr {
         dry_mass_kg: spec.dry_mass_kg,
         thrust_n: spec.thrust_n,
         specific_impulse_s: spec.specific_impulse_s,
+        engine: Some(Contract::get(101).unwrap().engine_spec),
         initial_state: spec.initial_state,
         node_metric: spec.node_metric,
         prediction_baseline: spec.prediction,

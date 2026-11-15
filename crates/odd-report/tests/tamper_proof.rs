@@ -31,6 +31,14 @@ fn flight() -> Fdr {
         dry_mass_kg: 1020.0,
         thrust_n: 2400.0,
         specific_impulse_s: 310.0,
+        engine: Some(odd_propulsion::EngineSpec {
+            propellant: odd_propulsion::Propellant::NtoMmh,
+            of_ratio: 2.0,
+            p_c_pa: 1.5e6,
+            r_throat_m: 0.0164,
+            r_exit_m: 0.1216,
+            length_fraction: 0.8,
+        }),
         initial_state: [6_638_137.0, 0.0, 0.0, 0.0, 7_748.541_233_1, 0.0],
         node_metric: false,
         prediction_baseline: [180.0, 550_000.0, 260_000.0, 120.0, 10_800.0, f64::NAN],
@@ -134,6 +142,56 @@ fn every_other_signed_field_is_also_covered() {
         ("dry mass", Box::new(|f| f.dry_mass_kg += 1e-9)),
         ("thrust", Box::new(|f| f.thrust_n += 1e-9)),
         ("isp", Box::new(|f| f.specific_impulse_s += 1e-9)),
+        // The engine design is signed field by field: a player cannot
+        // retro-fit a better nozzle to a flown record.
+        (
+            "engine propellant",
+            Box::new(|f| {
+                if let Some(engine) = f.engine.as_mut() {
+                    engine.propellant = odd_propulsion::Propellant::LoxLh2;
+                }
+            }),
+        ),
+        (
+            "engine mixture ratio",
+            Box::new(|f| {
+                if let Some(engine) = f.engine.as_mut() {
+                    engine.of_ratio += 1e-9;
+                }
+            }),
+        ),
+        (
+            "engine chamber pressure",
+            Box::new(|f| {
+                if let Some(engine) = f.engine.as_mut() {
+                    engine.p_c_pa += 1e-6;
+                }
+            }),
+        ),
+        (
+            "engine throat",
+            Box::new(|f| {
+                if let Some(engine) = f.engine.as_mut() {
+                    engine.r_throat_m += 1e-12;
+                }
+            }),
+        ),
+        (
+            "engine exit",
+            Box::new(|f| {
+                if let Some(engine) = f.engine.as_mut() {
+                    engine.r_exit_m += 1e-12;
+                }
+            }),
+        ),
+        (
+            "engine bell length",
+            Box::new(|f| {
+                if let Some(engine) = f.engine.as_mut() {
+                    engine.length_fraction += 1e-12;
+                }
+            }),
+        ),
         (
             "initial state",
             Box::new(|f| f.initial_state[4] = f64::from_bits(f.initial_state[4].to_bits() + 1)),
@@ -262,7 +320,8 @@ fn malformed_and_future_documents_are_rejected_by_name() {
 fn canonical_form_is_independent_of_json_formatting() {
     let (fdr, _) = signed();
     let json = fdr.to_json();
-    assert!(json.contains("\"schema_version\":1"));
+    assert!(json.contains("\"schema_version\":2"));
+    assert!(json.contains("\"engine_propellant\":\"NTO / MMH\""));
     assert!(json.contains("\"attempt_mode\":\"Ranked\""));
     assert!(json.contains("\"command_timeline\":["));
     // Undefined metrics travel as null, and the reader maps null back to NaN.
