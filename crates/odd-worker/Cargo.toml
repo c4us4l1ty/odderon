@@ -13,9 +13,6 @@ default = []
 # The local durable adapter links the system libsqlite3 and serves HTTP from
 # std::net. It is what ./scripts/gate.sh exercises, with no cloud credentials.
 local = []
-# The Cloudflare Workers D1/R2 adapter. Needs workers-rs and a wasm target;
-# compiled in CI with network, never in the offline gate.
-cloudflare = []
 
 [dependencies]
 odd-core = { path = "../odd-core" }

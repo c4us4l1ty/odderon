@@ -140,6 +140,13 @@ impl MemoryStore {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Pre-load an attempt counter from a durable backend so the engine's
+    /// next `increment_attempt` returns `n + 1`. The Cloudflare adapter uses
+    /// this to run the pure engine over a D1 snapshot before flushing.
+    pub fn seed_attempt(&mut self, pubkey: &PubKey, contract_id: u32, n: u32) {
+        self.attempts.insert((*pubkey, contract_id), n);
+    }
 }
 
 /// The seeded difficulty of each canonical contract, used until a pilot

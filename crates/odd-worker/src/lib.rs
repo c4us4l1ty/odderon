@@ -5,8 +5,9 @@
 //!
 //! * a **local HTTP/SQLite** adapter (`local` feature) that `./scripts/gate.sh`
 //!   exercises with no cloud credentials, and
-//! * a **Cloudflare Workers D1/R2** adapter (`cloudflare` feature) for the
-//!   deployed $0/month service.
+//! * a **Cloudflare Workers D1/R2** adapter in the sibling
+//!   `odd-worker-cloudflare` crate (wasm-only, compiled in CI with network)
+//!   for the deployed $0/month service.
 //!
 //! The same `odd_verify::verify_record` physics runs in the browser and here,
 //! so a receipt certifies a replay anyone can re-run. A result reads as
@@ -37,6 +38,3 @@ pub use store::{Commitment, LeaderRow, MemoryStore, PlayerRow, Store, StoredFdr}
 pub mod http;
 #[cfg(feature = "local")]
 pub mod sqlite;
-
-#[cfg(feature = "cloudflare")]
-pub mod worker;

@@ -1,0 +1,33 @@
+[package]
+name = "odd-worker-cloudflare"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Cloudflare Workers D1/R2 deployment adapter for the odd-worker authority (WP 1.9)."
+
+# This crate is excluded from the main workspace: workers-rs and its wasm
+# dependency tree are not vendored for the offline gate. Build it in CI with
+# network access:
+#   cargo build -p odd-worker-cloudflare --target wasm32-unknown-unknown --release
+# or deploy with `wrangler deploy` (worker-build runs cargo for you).
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+odd-worker = { path = "../odd-worker", default-features = false }
+odd-report = { path = "../odd-report" }
+odd-contracts = { path = "../odd-contracts" }
+worker = { version = "0.5", features = ["d1"] }
+worker-macros = { version = "0.5", features = ["d1"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+hex = "0.4"
+
+[profile.release]
+lto = true
+opt-level = "s"
+codegen-units = 1

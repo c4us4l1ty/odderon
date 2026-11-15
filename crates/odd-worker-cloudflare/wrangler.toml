@@ -1,0 +1,22 @@
+name = "odderon-authority"
+main = "build/worker/shim.mjs"
+compatibility_date = "2026-01-01"
+
+[build]
+command = "cargo install -q worker-build && worker-build --release"
+
+# D1: Elo, callsigns, commitments, the FDR index.
+[[d1_databases]]
+binding = "DB"
+database_name = "odderon"
+database_id = "REPLACE_WITH_YOUR_D1_ID"
+migrations_dir = "migrations"
+
+# R2: the signed FDR payloads, keyed by content hash (the public QR target).
+[[r2_buckets]]
+binding = "FDRS"
+bucket_name = "odderon-fdrs"
+
+# The server signing seed is a secret, never committed:
+#   wrangler secret put SERVER_SEED   (64 hex chars = 32 bytes)
+# Clients embed the matching public key as `server_pk`.
