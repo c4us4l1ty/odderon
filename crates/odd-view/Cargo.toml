@@ -14,3 +14,5 @@ odd-ephem = { path = "../odd-ephem" }
 odd-sim = { path = "../odd-sim" }
 odd-contracts = { path = "../odd-contracts" }
 odd-app = { path = "../odd-app" }
+odd-identity = { path = "../odd-identity" }
+ed25519-compact = { version = "2.6.1", default-features = false }

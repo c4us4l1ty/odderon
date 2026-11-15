@@ -164,6 +164,65 @@ try{
   assert.equal(artKeys.DAG,'dag');
   assert.equal(artKeys.PDR,'pdr');
   assert.ok(Object.values(artKeys).every(k=>k.length>0),'every acronym needs an art key');
+
+  // oracle_identity_roundtrip_and_rfc8032 (wasm32 half): the compiled module
+  // must sign identically to the native build, not merely compile.
+  const identity=await page.evaluate(async()=>{
+    const {instance}=await WebAssembly.instantiate(await (await fetch('./odd_view.wasm')).arrayBuffer(),{});
+    const w=instance.exports,dec=new TextDecoder(),enc=new TextEncoder();
+    const read=(len,byte)=>dec.decode(Uint8Array.from({length:len},(_,j)=>byte(j)));
+    const absorb=bytes=>{w.mission_input_reset();for(const b of bytes)if(!w.mission_input_absorb(b))throw Error('absorb failed');};
+    const str=field=>read(w.mission_identity_string_len(field),i=>w.mission_identity_string_byte(field,i));
+    const out={vectors:w.mission_ed25519_selftest(),words:w.mission_word_count()};
+    out.loaded=w.mission_identity_from_entropy(0x00112233,0x44556677,0x8899aabb,0xccddeeff);
+    out.key=str(2);out.mnemonic=str(1);out.publicId=str(0);
+    out.pubkey=Array.from({length:32},(_,i)=>w.mission_identity_pubkey(i));
+    // Restore through each encoding and confirm the same public key returns.
+    absorb(enc.encode(out.mnemonic));
+    out.mnemonicValid=w.mission_identity_mnemonic_valid();
+    out.mnemonicRestore=w.mission_identity_from_mnemonic();
+    out.fromMnemonic=Array.from({length:32},(_,i)=>w.mission_identity_pubkey(i));
+    absorb(enc.encode(out.key));
+    out.keyValid=w.mission_identity_key_valid();
+    out.keyRestore=w.mission_identity_from_key();
+    out.fromKey=Array.from({length:32},(_,i)=>w.mission_identity_pubkey(i));
+    // A one-word substitution must be rejected by the checksum.
+    const words=out.mnemonic.split(' ');
+    const replacement=read(w.mission_word_len(0),i=>w.mission_word_byte(0,i));
+    words[3]=words[3]===replacement?read(w.mission_word_len(1),i=>w.mission_word_byte(1,i)):replacement;
+    absorb(enc.encode(words.join(' ')));
+    out.corruptRejected=w.mission_identity_mnemonic_valid()===0;
+    // Sign, verify, then flip one message bit.
+    const message=enc.encode('odderon canonical flight data recorder');
+    absorb(message);
+    out.signed=w.mission_identity_sign();
+    const signature=Array.from({length:w.mission_signature_len()},(_,i)=>w.mission_signature_byte(i));
+    w.mission_verify_reset();
+    for(const b of out.pubkey)w.mission_verify_absorb(0,b);
+    for(const b of signature)w.mission_verify_absorb(1,b);
+    out.verifies=w.mission_verify();
+    absorb(enc.encode('odderon canonical flight data Recorder'));
+    out.tamperRejected=w.mission_verify()===0;
+    out.signatureLength=signature.length;
+    return out;
+  });
+  assert.equal(identity.vectors,3,'RFC 8032 vectors must reproduce inside wasm32');
+  assert.equal(identity.words,2048);
+  assert.equal(identity.loaded,1);
+  assert.equal(identity.key,'ODD-0011-2233-4455-6677-8899-AABB-CCDD-EEFF');
+  assert.equal(identity.mnemonic.split(' ').length,12);
+  assert.match(identity.publicId,/^ODD-ID-[A-Z2-7]{16}$/);
+  assert.equal(identity.mnemonicValid,1);
+  assert.equal(identity.mnemonicRestore,1);
+  assert.equal(identity.keyValid,1);
+  assert.equal(identity.keyRestore,1);
+  assert.deepEqual(identity.fromMnemonic,identity.pubkey,'mnemonic must restore the same identity');
+  assert.deepEqual(identity.fromKey,identity.pubkey,'flight key must restore the same identity');
+  assert.equal(identity.corruptRejected,true,'a substituted word must fail the checksum');
+  assert.equal(identity.signed,1);
+  assert.equal(identity.signatureLength,64);
+  assert.equal(identity.verifies,1);
+  assert.equal(identity.tamperRejected,true,'a flipped message bit must not verify');
   // Let the one-shot flight worker finish first: it rebuilds the causal panel,
   // so hovering while it is still running would race a DOM replacement.
   await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:60000});
