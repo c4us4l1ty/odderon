@@ -14,9 +14,12 @@ self.onmessage=async ({data})=>{
       const code=w.mission_fdr_verify();
       const read=field=>{const n=w.mission_fdr_string_len(field);return new TextDecoder().decode(Uint8Array.from({length:n},(_,i)=>w.mission_fdr_string_byte(field,i)));};
       const verdict=read(2);
-      let dossier=null;
-      if(code===1&&w.mission_fdr_dossier_from_record()===1)dossier=read(1);
-      self.postMessage({verification:{code,verdict,mismatchIndex:w.mission_fdr_mismatch_index(),mismatchName:read(4),dossier,json:read(0),computeMs:performance.now()-started}});
+      let dossier=null,dossierError=null;
+      if(code===1){
+        if(w.mission_fdr_dossier_from_record()===1)dossier=read(1);
+        else dossierError='The flight verified, but the dossier could not be rendered: the verification payload is too large for a QR code.';
+      }
+      self.postMessage({verification:{code,verdict,mismatchIndex:w.mission_fdr_mismatch_index(),mismatchName:read(4),dossier,dossierError,json:read(0),computeMs:performance.now()-started}});
       return;
     }
     if(data.action==='split'){

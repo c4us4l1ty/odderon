@@ -19,6 +19,9 @@ pub struct BurnRow {
     pub start_s: f64,
     pub duration_s: f64,
     pub delta_v_tnw: [f64; 3],
+    /// Exact swept central angle for this burn alone, rad. NaN when the
+    /// isolated measurement is unavailable.
+    pub sweep_rad: f64,
 }
 
 /// Flight geometry the recorder does not carry: the two trajectories the
@@ -240,6 +243,7 @@ pub fn html(fdr: &Fdr, geometry: &Geometry, payload: &str) -> Result<String, &'s
             number(burn.delta_v_tnw[0], 6),
             number(burn.delta_v_tnw[1], 6),
             number(burn.delta_v_tnw[2], 6),
+            number(burn.sweep_rad, 9),
         ]);
     }
     if burn_rows.is_empty() {
@@ -250,10 +254,11 @@ pub fn html(fdr: &Fdr, geometry: &Geometry, payload: &str) -> Result<String, &'s
             "&#8212;".into(),
             "&#8212;".into(),
             "&#8212;".into(),
+            "&#8212;".into(),
         ]);
     }
     body.push_str(&table(
-        "Table 2. Commanded maneuvers in the tangential-normal-radial frame.",
+        "Table 2. Commanded maneuvers in the tangential-normal-radial frame. Each swept angle is the exact substep integral for that burn; the parts sum to the total in Table 3.",
         &[
             "Burn",
             "Start (s)",
@@ -261,6 +266,7 @@ pub fn html(fdr: &Fdr, geometry: &Geometry, payload: &str) -> Result<String, &'s
             "&#916;v<sub>T</sub> (m/s)",
             "&#916;v<sub>N</sub> (m/s)",
             "&#916;v<sub>W</sub> (m/s)",
+            "&#916;&#952; (rad)",
         ],
         &burn_rows,
         "maneuver-table",
@@ -402,7 +408,7 @@ pub fn html(fdr: &Fdr, geometry: &Geometry, payload: &str) -> Result<String, &'s
     body.push_str(&qr.svg("verification-qr"));
     body.push_str("<figcaption>Figure 2. Verification payload. Append this fragment to the mission page address, or use Verify / Replay Dossier and paste the recorder file. The fragment is origin-independent so the same code works on any deployment.</figcaption></figure>");
     body.push_str(&format!(
-        "<pre id=\"verification-block\">schema_version   {}\ncontract_id      {}\nattempt_mode     {}\npublic_id        {}\npublic_key       {}\ncanonical_digest {}\ned25519_signature\n{}\nfinal_state_hash {}\nmetric_count     {}\ncommand_count    {}\nqr_ecc           M\nverify_payload   {}</pre>",
+        "<pre id=\"verification-block\">schema_version   {}\ncontract_id      {}\nattempt_mode     {}\npublic_id        {}\npublic_key       {}\ncanonical_digest {}\ned25519_signature\n{}\nfinal_state_hash {}\nmetric_count     {}\ncommand_count    {}\nqr_ecc           {}\nverify_payload   {}</pre>",
         fdr.schema_version,
         fdr.contract_id,
         fdr.attempt_mode.label(),
@@ -413,6 +419,7 @@ pub fn html(fdr: &Fdr, geometry: &Geometry, payload: &str) -> Result<String, &'s
         crate::hex::encode(&fdr.final_state_hash),
         crate::fdr::METRIC_COUNT,
         fdr.commands.len(),
+        qr.ecc_label(),
         escape_html(payload)
     ));
     body.push_str("<p>Verification performs two independent checks. First the Ed25519 signature must cover the canonical bytes rebuilt from the typed fields; any edit, including one unit in the last place of a metric or one microsecond of command timing, fails with <code>SignatureMismatch</code>. Second the Level-3 integrator is re-run from the command timeline and every one of the recorded fields and the terminal-state hash must reproduce bit for bit, or the document fails with <code>PhysicsReplayMismatch</code>.</p>");
@@ -516,6 +523,7 @@ mod tests {
                 start_s: 200.0,
                 duration_s: 41.0,
                 delta_v_tnw: [81.5, 0.0, 0.0],
+                sweep_rad: 0.02,
             }],
             earth_radius_m: 6_378_137.0,
         }

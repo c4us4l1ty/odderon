@@ -342,7 +342,10 @@ Shapley attribution, acronym snapshot/hover gate and post-mission idle gate.
   radius error m.
 - 41–56 the 16 coalition metrics; 57 isolated finite-burn swept angle rad.
 
-Undefined values are NaN, not zero. The worker also returns `computeMs`
+Undefined values are NaN, not zero. Infinities are refused by name at signing
+time: the JSON transport prints every non-finite value as null and reads null
+back as NaN, so an infinity could not survive its own round trip. The worker also
+returns `computeMs`
 (measured around `mission_execute`) outside the deterministic physics report.
 
 ## Acceptance gate map
@@ -458,6 +461,9 @@ verify-and-replay, either as a self-contained HTML download or printed to PDF
 from a sandboxed frame at the document's own `@page` geometry. No server-side PDF
 renderer is involved. The dossier QR carries an origin-independent `#verify=`
 fragment, so a reader must prepend the deployment address; it is not a scannable
-absolute URL. Exact
+absolute URL. It is encoded at error correction M, falling back deterministically
+to L for a maximal twelve-command guided flight whose payload exceeds M's byte
+capacity; the level actually used is stated in both the SVG and the printed
+verification block. Exact
 Shapley is computationally heavier than the original four-run/<5 ms card; the
 implementation chooses mathematical exactness and reports measured cost.

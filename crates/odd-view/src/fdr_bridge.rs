@@ -651,6 +651,24 @@ mod tests {
         );
         assert_eq!(mission_fdr_dossier_from_record(), 1);
         assert!(DOSSIER.lock().unwrap().contains("id=\"trajectory-figure\""));
+        // The schedule's per-burn swept angles must be the exact parts of the
+        // reported total, not a second estimate.
+        let geometry = GEOMETRY.lock().unwrap().clone().unwrap();
+        assert_eq!(
+            geometry.burns.len(),
+            2,
+            "the rescue example commands two burns"
+        );
+        let parts: f64 = geometry.burns.iter().map(|burn| burn.sweep_rad).sum();
+        assert!(geometry
+            .burns
+            .iter()
+            .all(|burn| burn.sweep_rad.is_finite() && burn.sweep_rad > 0.0));
+        assert!(
+            (parts - fdr.metrics[57]).abs() < 1e-12,
+            "per-burn sweeps {parts} must sum to report[57] {}",
+            fdr.metrics[57]
+        );
     }
 
     #[test]

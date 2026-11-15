@@ -37,7 +37,7 @@ function show(result) {
   banner.className = `verify-verdict ${result.code === 1 ? 'is-verified' : 'is-rejected'}`;
   const detail = $('verify-detail');
   if (result.code === 1) {
-    detail.textContent = `Signature valid and Level-3 replay reproduced every recorded field and the terminal-state hash${Number.isFinite(result.computeMs) ? ` in ${result.computeMs.toFixed(0)} ms` : ''}.`;
+    detail.textContent = `Signature valid and Level-3 replay reproduced every recorded field and the terminal-state hash${Number.isFinite(result.computeMs) ? ` in ${result.computeMs.toFixed(0)} ms` : ''}.${result.dossierError ? ` ${result.dossierError}` : ''}`;
   } else if (result.code === -1) {
     detail.textContent = 'The signature does not cover these fields. The document was edited after signing.';
   } else if (result.code === -2) {

@@ -150,3 +150,60 @@ fn signature_verification_rejects_a_flipped_bit() {
         Err(LicenseError::Signature)
     );
 }
+
+#[test]
+fn every_word_is_reachable_by_index_and_by_prefix() {
+    // Bijectivity is the property the 11-bit codec depends on: if any index
+    // were unreachable or any prefix ambiguous, two licenses could collide.
+    for (index, word) in odd_identity::wordlist::WORDS.iter().enumerate() {
+        assert_eq!(
+            odd_identity::wordlist::index_of(word),
+            Some(index),
+            "{word}"
+        );
+        assert_eq!(
+            odd_identity::wordlist::from_prefix(&word[..4]),
+            Some(*word),
+            "{word}"
+        );
+        assert_eq!(
+            odd_identity::wordlist::from_prefix(word),
+            Some(*word),
+            "{word}"
+        );
+    }
+    assert_eq!(
+        odd_identity::wordlist::from_prefix("abc"),
+        None,
+        "too short to be unique"
+    );
+    assert_eq!(odd_identity::wordlist::index_of("notaword"), None);
+}
+
+#[test]
+fn mnemonic_input_tolerates_case_and_whitespace_but_not_word_count() {
+    let entropy: [u8; ENTROPY_BYTES] = core::array::from_fn(|i| (i as u8).wrapping_mul(17));
+    let words = mnemonic(&entropy);
+    assert_eq!(
+        entropy_from_mnemonic(&words.join(" ").to_uppercase()).unwrap(),
+        entropy
+    );
+    let messy = format!(
+        "\t{}\n\r  {}  ",
+        words[..6].join("\t"),
+        words[6..].join("\n")
+    );
+    assert_eq!(entropy_from_mnemonic(&messy).unwrap(), entropy);
+    assert!(matches!(
+        entropy_from_mnemonic(&format!("{} {}", words.join(" "), words[0])),
+        Err(LicenseError::WordCount)
+    ));
+    assert!(matches!(
+        entropy_from_mnemonic(&words[..11].join(" ")),
+        Err(LicenseError::WordCount)
+    ));
+    assert!(matches!(
+        entropy_from_mnemonic(""),
+        Err(LicenseError::WordCount)
+    ));
+}

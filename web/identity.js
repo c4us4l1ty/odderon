@@ -21,6 +21,18 @@ function defaults() {
   return { schema: SCHEMA, entropyHex: null, callsign: '', elo: START_ELO, missionElo: {}, ranked: {}, flights: [] };
 }
 
+const finiteOr = (value, fallback) =>
+  (typeof value === 'number' && Number.isFinite(value) ? value : fallback);
+
+/// Read and repair the stored record field by field.
+///
+/// Spreading a parsed object over the defaults is not enough: a truncated
+/// write, a hand-edited record or a future migration can leave `elo: null` or
+/// `flights: null`, and the first `.toFixed()` or `.length` then throws and
+/// takes the whole page down. Every field is validated here so a damaged
+/// record degrades to defaults instead of bricking the app. The secret is the
+/// one field that cannot be repaired; if it is unusable the record is ignored
+/// and a fresh license is minted.
 function read() {
   try {
     const raw = localStorage.getItem(KEY);
@@ -28,7 +40,33 @@ function read() {
     const parsed = JSON.parse(raw);
     if (parsed?.schema !== SCHEMA || typeof parsed.entropyHex !== 'string') return null;
     if (!/^[0-9a-f]{32}$/i.test(parsed.entropyHex)) return null;
-    return { ...defaults(), ...parsed };
+    const missionElo = {};
+    for (const [id, rating] of Object.entries(parsed.missionElo ?? {})) {
+      if (typeof rating === 'number' && Number.isFinite(rating)) missionElo[id] = rating;
+    }
+    const ranked = {};
+    for (const [id, record] of Object.entries(parsed.ranked ?? {})) {
+      if (!record || typeof record !== 'object') continue;
+      if (!Number.isFinite(record.score) || !Number.isFinite(record.elo)) continue;
+      ranked[id] = {
+        score: record.score,
+        elo: record.elo,
+        delta: finiteOr(record.delta, 0),
+        at: finiteOr(record.at, 0),
+        ...(typeof record.recorder === 'string' ? { recorder: record.recorder } : {}),
+      };
+    }
+    return {
+      schema: SCHEMA,
+      entropyHex: parsed.entropyHex.toLowerCase(),
+      callsign: typeof parsed.callsign === 'string' && /^[\w \-]{1,24}$/.test(parsed.callsign) ? parsed.callsign : '',
+      elo: finiteOr(parsed.elo, START_ELO),
+      missionElo,
+      ranked,
+      flights: Array.isArray(parsed.flights)
+        ? parsed.flights.filter(flight => flight && typeof flight === 'object').slice(-200)
+        : [],
+    };
   } catch {
     return null;
   }
@@ -290,7 +328,11 @@ export function sign(bytes) {
 }
 
 export function reset() {
-  localStorage.removeItem(KEY);
+  try {
+    localStorage.removeItem(KEY);
+  } catch {
+    // Storage may be unavailable; clearing the in-memory state is enough.
+  }
   state = null;
   wasm.mission_identity_clear();
 }

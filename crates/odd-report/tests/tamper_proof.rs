@@ -300,6 +300,7 @@ fn oracle_odd_report_deterministic_dossier() {
             start_s: 200.0,
             duration_s: 41.5,
             delta_v_tnw: [81.509_425_05, 0.0, 0.0],
+            sweep_rad: 0.021,
         }],
         earth_radius_m: 6_378_137.0,
     };
@@ -337,4 +338,95 @@ fn oracle_odd_report_deterministic_dossier() {
     let decoded = Fdr::from_verify_payload(extracted).unwrap();
     assert_eq!(decoded.verify_signature(), Ok(()));
     assert_eq!(decoded, fdr);
+}
+
+#[test]
+fn non_finite_values_are_refused_by_name_not_lost_in_transport() {
+    // JSON prints every non-finite number as null and the reader maps null
+    // back to NaN. An infinity would therefore verify locally and then fail
+    // with SignatureMismatch after its own round trip, so it must be refused
+    // at signing time instead.
+    let license = odd_identity::License::from_entropy([5u8; 16]);
+    type Case = (&'static str, fn(&mut Fdr));
+    let cases: Vec<Case> = vec![
+        ("infinite metric", |f| f.metrics[1] = f64::INFINITY),
+        ("negative infinite metric", |f| {
+            f.metrics[2] = f64::NEG_INFINITY
+        }),
+        ("infinite prediction", |f| {
+            f.prediction_baseline[1] = f64::INFINITY
+        }),
+        ("infinite mass", |f| f.initial_mass_kg = f64::INFINITY),
+        ("NaN mass", |f| f.dry_mass_kg = f64::NAN),
+        ("NaN thrust", |f| f.thrust_n = f64::NAN),
+        ("infinite elo", |f| f.elo_after = f64::INFINITY),
+        ("NaN initial state", |f| f.initial_state[4] = f64::NAN),
+        ("NaN delta-v", |f| f.commands[0].delta_v_tnw[0] = f64::NAN),
+        ("infinite guidance", |f| {
+            f.commands[1].guidance = Some([f64::INFINITY; 6])
+        }),
+    ];
+    for (label, mutate) in cases {
+        let mut fdr = flight();
+        mutate(&mut fdr);
+        assert!(
+            matches!(fdr.sign(&license), Err(FdrError::Malformed(_))),
+            "{label} must be refused with a named Malformed error"
+        );
+    }
+    // NaN remains legal exactly where the format documents an undefined value.
+    let mut fdr = flight();
+    fdr.metrics[3] = f64::NAN;
+    fdr.prediction_baseline[5] = f64::NAN;
+    fdr.sign(&license).unwrap();
+    assert_eq!(fdr.verify_signature(), Ok(()));
+    let json = fdr.to_json();
+    assert!(json.contains("null"), "undefined values travel as null");
+    let restored = Fdr::from_verify_payload(&fdr.verify_payload()).unwrap();
+    assert_eq!(restored.verify_signature(), Ok(()));
+    assert_eq!(restored.to_json(), json);
+}
+
+#[test]
+fn a_maximal_guided_timeline_still_prints_a_dossier() {
+    // Twelve guided commands is the planner's ceiling and produces a payload
+    // larger than QR Medium capacity. The dossier must still print, and must
+    // state the error correction level it actually used.
+    let mut fdr = flight();
+    fdr.commands = (0..12)
+        .map(|i| Command {
+            time_us: 1_600_000_000 + i * 600_000_000,
+            delta_v_tnw: [270.123_456_789, 0.0, 0.0],
+            guidance: Some([6_578_137.123, -123.456, 78.9, 12.34, 7_784.567_89, -0.001]),
+        })
+        .collect();
+    fdr.duration_us = 600_000_000_000;
+    let license = odd_identity::License::from_entropy([6u8; 16]);
+    fdr.sign(&license).unwrap();
+    let payload = fdr.verify_payload();
+    assert!(
+        payload.len() > 2331,
+        "this case must exceed Medium capacity, got {}",
+        payload.len()
+    );
+    let qr = odd_report::qr::Qr::new(&payload).expect("a maximal flight must still print");
+    assert_eq!(qr.ecc_label(), "L");
+    let geometry = Geometry {
+        level1: vec![[6_578_137.0, 0.0], [0.0, 6_578_137.0]],
+        level3: vec![[6_578_137.0, 0.0], [10.0, 6_578_200.0]],
+        burns: vec![],
+        earth_radius_m: 6_378_137.0,
+    };
+    let document = dossier::html(&fdr, &geometry, &payload).unwrap();
+    assert!(
+        document.contains("data-qr-ecc=\"L\""),
+        "the SVG must state the level it used"
+    );
+    assert!(
+        document.contains("qr_ecc           L"),
+        "the printed block must agree"
+    );
+    assert_eq!(document, dossier::html(&fdr, &geometry, &payload).unwrap());
+    // And the payload still decodes back to the same signed flight.
+    assert_eq!(Fdr::from_verify_payload(&payload).unwrap(), fdr);
 }

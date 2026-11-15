@@ -615,5 +615,28 @@ try{
   await page.waitForFunction(()=>missionDiagnostics.verification()?.code===1,null,{timeout:180000});
   assert.equal(await page.locator('#verify-dialog').isVisible(),true);
   assert.equal(await page.locator('#verify-verdict').textContent(),'\u2713 CRYPTOGRAPHICALLY & PHYSICALLY VERIFIED');
-  assert.deepEqual(errors,[]);console.log('Browser viewport, interactions, bounds, WebGL, responsive layout, three mission prototypes, license persistence and signed-dossier verification passed.');
+  // A damaged storage record must degrade to defaults, not brick the page.
+  // These are the shapes a truncated write or a hand-edited record produces.
+  const damaged=[
+    ['null rating',{elo:null}],
+    ['null flights',{flights:null}],
+    ['null certificate',{ranked:{101:null}}],
+    ['object callsign',{callsign:{unexpected:true}}],
+  ];
+  for(const [label,patch] of damaged){
+    const probe=await browser.newPage({viewport:{width:1280,height:900}});
+    const probeErrors=[];probe.on('pageerror',e=>probeErrors.push(String(e).split('\n')[0]));
+    await probe.addInitScript(value=>{localStorage.setItem('odderon.flightLicense.v1',JSON.stringify(value));},{schema:1,entropyHex:'00112233445566778899aabbccddeeff',callsign:'KEEP ME',elo:1234.5,...patch});
+    await probe.goto(`http://127.0.0.1:${server.address().port}/mission.html`);
+    await probe.waitForFunction(()=>window.missionDiagnostics?.profile?.()!==null,null,{timeout:30000});
+    const repaired=await probe.evaluate(()=>missionDiagnostics.profile());
+    // Repair must never discard a usable secret: the identity is the account.
+    assert.equal(repaired.flightKey,'ODD-0011-2233-4455-6677-8899-AABB-CCDD-EEFF',`${label}: identity must survive repair`);
+    assert.equal(repaired.elo,label==='null rating'?1200:1234.5,`${label}: rating`);
+    await probe.locator('#open-profile').click();
+    assert.ok((await probe.locator('#profile-elo').textContent()).length>0,label);
+    assert.deepEqual(probeErrors,[],`${label} must not raise a page error`);
+    await probe.close();
+  }
+  assert.deepEqual(errors,[]);console.log('Browser viewport, interactions, bounds, WebGL, responsive layout, three mission prototypes, license persistence, signed-dossier verification and damaged-storage repair passed.');
 } finally{if(browser)await browser.close();await new Promise(r=>server.close(r));}

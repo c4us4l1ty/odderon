@@ -262,9 +262,43 @@ impl Fdr {
         if self.duration_us <= 0 {
             return Err(FdrError::Malformed("duration"));
         }
+        // The JSON transport prints every non-finite value as null and the
+        // reader maps null back to NaN. An infinity therefore cannot survive
+        // its own transport: the document would verify locally and then fail
+        // with SignatureMismatch after a round trip. Reject it here instead,
+        // by name. NaN stays legal only where the format documents a field as
+        // possibly undefined (the report and the prediction baseline).
+        for (label, value) in [
+            ("initial mass", self.initial_mass_kg),
+            ("dry mass", self.dry_mass_kg),
+            ("thrust", self.thrust_n),
+            ("specific impulse", self.specific_impulse_s),
+            ("elo before", self.elo_before),
+            ("elo after", self.elo_after),
+        ] {
+            if !value.is_finite() {
+                return Err(FdrError::Malformed(label));
+            }
+        }
+        if !self.initial_state.iter().all(|value| value.is_finite()) {
+            return Err(FdrError::Malformed("initial state"));
+        }
+        for value in self.metrics.iter().chain(self.prediction_baseline.iter()) {
+            if value.is_infinite() {
+                return Err(FdrError::Malformed("infinite metric or prediction"));
+            }
+        }
         for command in &self.commands {
             if command.time_us <= 0 || command.time_us > self.duration_us {
                 return Err(FdrError::Malformed("command epoch outside the flight"));
+            }
+            if !command.delta_v_tnw.iter().all(|value| value.is_finite()) {
+                return Err(FdrError::Malformed("command delta-v"));
+            }
+            if let Some(target) = &command.guidance {
+                if !target.iter().all(|value| value.is_finite()) {
+                    return Err(FdrError::Malformed("command guidance"));
+                }
             }
         }
         Ok(())

@@ -43,12 +43,15 @@ struct Execution {
     report: [f64; REPORT_LEN],
     final_state: Keyframe,
     burn_epochs: Vec<(f64, f64)>,
+    burn_sweeps: Vec<f64>,
 }
 struct Outcome {
     trajectory: TrajectorySpline,
     report: [f64; REPORT_LEN],
     final_state: Keyframe,
     burns: Vec<odd_astro::perturb::burn::Burn>,
+    /// Exact swept angle per burn, in command order. Their sum is report[57].
+    burn_sweeps: Vec<f64>,
 }
 static SETTINGS: Mutex<Option<Settings>> = Mutex::new(None);
 static PLAN: Mutex<Option<Plan>> = Mutex::new(None);
@@ -459,6 +462,7 @@ pub extern "C" fn mission_execute() -> i32 {
         report: outcome.report,
         final_state: outcome.final_state,
         burn_epochs: outcome.burns.iter().map(|b| (b.start, b.end)).collect(),
+        burn_sweeps: outcome.burn_sweeps,
     });
     1
 }
@@ -589,9 +593,18 @@ fn compute(
     }
     // Exact finite-burn loss is isolated in the plain two-body model so J2,
     // third bodies, drag and SRP cannot contaminate the steering/gravity integrals.
+    let mut burn_sweeps = vec![f64::NAN; burns.len()];
     if !burns.is_empty() {
         let loss_end = burns.last().map_or(evaluation_s, |b| b.end);
-        if let Ok((_, loss)) = isolate_finite_burn(s.initial, loss_end, options, MU, &burns) {
+        if let Ok((isolated, loss)) = isolate_finite_burn(s.initial, loss_end, options, MU, &burns)
+        {
+            // Per-burn parts are measured on the same isolated trajectory, so
+            // the printed schedule and the reported total cannot disagree.
+            if let Ok(parts) = odd_astro::finite_burn::measure_burns_each(&isolated, &burns, MU) {
+                for (slot, part) in burn_sweeps.iter_mut().zip(parts.iter()) {
+                    *slot = part.sweep_rad;
+                }
+            }
             report[20] = loss.ideal_delta_v_m_s;
             report[21] = loss.steering_loss_m_s;
             report[22] = loss.gravity_loss_m_s;
@@ -653,6 +666,7 @@ fn compute(
         report,
         final_state,
         burns,
+        burn_sweeps,
     })
 }
 
@@ -1299,6 +1313,7 @@ fn geometry_from(
             delta_v_tnw: commands
                 .get(index)
                 .map_or([f64::NAN; 3], |command| command.1),
+            sweep_rad: outcome.burn_sweeps.get(index).copied().unwrap_or(f64::NAN),
         })
         .collect();
     odd_report::dossier::Geometry {
@@ -1395,6 +1410,7 @@ pub(crate) fn dossier_geometry() -> Option<odd_report::dossier::Geometry> {
                 specific_impulse_seconds: settings.engine.specific_impulse_seconds,
             })
             .collect(),
+        burn_sweeps: execution.burn_sweeps,
     };
     let commands: Vec<(i64, [f64; 3])> = settings
         .nodes

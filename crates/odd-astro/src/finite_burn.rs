@@ -199,8 +199,7 @@ pub fn measure_burns(
     mu: f64,
 ) -> Result<BurnLoss, IntegrationError> {
     let mut total = BurnLoss::default();
-    for burn in burns {
-        let part = measure_burn(trajectory, burn, mu)?;
+    for part in measure_burns_each(trajectory, burns, mu)? {
         total.ideal_delta_v_m_s += part.ideal_delta_v_m_s;
         total.steering_loss_m_s += part.steering_loss_m_s;
         total.gravity_loss_m_s += part.gravity_loss_m_s;
@@ -210,6 +209,22 @@ pub fn measure_burns(
         total.sweep_rad += part.sweep_rad;
     }
     Ok(total)
+}
+
+/// Per-burn measurements, in command order.
+///
+/// `measure_burns` sums exactly these, so a schedule printed from them cannot
+/// disagree with the reported total. Each swept angle is the same exact
+/// substep integral, restricted to one burn.
+pub fn measure_burns_each(
+    trajectory: &TrajectorySpline,
+    burns: &[Burn],
+    mu: f64,
+) -> Result<Vec<BurnLoss>, IntegrationError> {
+    burns
+        .iter()
+        .map(|burn| measure_burn(trajectory, burn, mu))
+        .collect()
 }
 
 /// Run the plain two-body + finite-burn model and measure its exact losses.
