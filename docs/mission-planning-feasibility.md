@@ -374,14 +374,85 @@ Undefined values are NaN, not zero. The worker also returns `computeMs`
   `tests/browser/observatory.mjs` (typed and dragged node times share one
   boundary, and the input's min/max are generated from it).
 
+- `oracle_identity_roundtrip_and_rfc8032`:
+  `crates/odd-identity/src/lib.rs` unit tests (2048 words, sorted, lowercase
+  ASCII, 4–10 characters, unique four-letter prefixes; entropy ↔ 12 words ↔
+  `ODD-` key lossless; a substituted word fails the 4-bit checksum),
+  `crates/odd-identity/tests/rfc8032.rs` (the three published RFC 8032 §7.1
+  vectors reproduce byte for byte, and the derived seed signs identically to a
+  plain Ed25519 key), and the identity block in
+  `tests/browser/observatory.mjs`, which calls `mission_ed25519_selftest()`
+  inside the compiled wasm32 module and requires all three vectors to pass
+  there too, then round-trips both encodings and rejects a flipped message bit.
+- `oracle_tamper_proof_fdr_verification`:
+  `crates/odd-report/tests/tamper_proof.rs` (one ULP in every finite metric,
+  one microsecond on every command, and nineteen other field mutations each
+  rejected with `SignatureMismatch`; transport round trips; malformed and
+  future schemas named) and `crates/odd-view/src/fdr_bridge.rs` tests, which
+  fly Contract 101, replay it bit for bit, and then **re-sign** a false metric
+  and a shifted command so the signature check passes and
+  `PhysicsReplayMismatch` / `FinalStateMismatch` must catch them. The browser
+  gate repeats all of it in wasm32, including the re-signed forgery.
+- `oracle_odd_report_deterministic_dossier`:
+  `crates/odd-report/tests/tamper_proof.rs` and the odd-view export test (two
+  runs byte-identical including the QR matrix, all four sections plus the
+  annex present, both figures vector, no raster assets), and
+  `tests/browser/observatory.mjs`, which rebuilds the QR matrix from the
+  emitted SVG rectangles, decodes it with `jsqr`, and verifies the decoded
+  payload again.
+- `oracle_browser_persistence_and_idle_gate`:
+  `tests/browser/observatory.mjs` (the first execution of a contract certifies
+  it and moves Astro-Elo; license, public key, mnemonic, rating and all three
+  certificates survive a full document reload; the profile dialog exports a
+  backup that re-imports to the same identity and rating; a corrupted
+  mnemonic is rejected while the real one validates; replaying a certified
+  contract stays practice with the rating and certificate unchanged; the
+  profile dialog and the verification dialog each settle to 0 animation
+  callbacks and 0 worker messages over 2 s; a shared `#verify=` link verifies
+  in a fresh document).
+
+## Flight identity and signed records
+
+`crates/odd-identity` owns one 128-bit secret with three derived faces: a
+12-word mnemonic (128 bits plus a 4-bit SHA-256 checksum, packed as 12 × 11-bit
+indices into the compile-time 2048-word table), an `ODD-` hex flight key carrying
+the bare entropy, and an Ed25519 keypair whose seed is
+`SHA-512("odderon-flight-license-ed25519-v1" || entropy)[..32]`. The domain
+separator keeps a license key from ever being confused with another purpose.
+Randomness is supplied by the caller (`crypto.getRandomValues` in the browser),
+which is why the crate needs no `getrandom` and builds for wasm32 without a shim.
+The public identifier is `ODD-ID-` plus base32 of the first ten public-key bytes.
+
+The license, callsign, player rating, per-contract ratings and certified
+certificates persist in one versioned `localStorage` record. **This is a local
+practice identity, not key custody**: `localStorage` is readable by any script on
+the origin, and the profile dialog and the exported backup both say so. A ranked
+certificate is issued once per contract; later attempts are practice and cannot
+move the rating.
+
+`crates/odd-report` signs a canonical fixed-layout byte string, not JSON. Every
+field a reader acts on is inside it, including the callsign and the Elo change.
+Floats are raw IEEE-754 bits so a decimal round trip cannot round a metric; all
+NaNs collapse to one canonical quiet NaN because undefined fields are common and
+NaN payloads are not platform-stable, while signed zero is preserved because the
+replay compares bits. Verification is two independent checks: the signature over
+bytes rebuilt from the typed fields, then a Level-3 replay through the *same*
+`compute` function the live flight used, requiring all 58 fields and the
+terminal-state hash to reproduce bit for bit.
+
 ## Remaining limitations
 
 This is an experimental prototype. There is no launch-window optimizer,
 B-plane targeting, lunar orbit insertion, terrain/landing model, space-weather
-atmosphere, thrust steering law, cryogenic boil-off model, or persisted
-multiplayer rating. The perigee splitter is a bounded forward search for two or
+atmosphere, thrust steering law, cryogenic boil-off model, or server-backed
+multiplayer rating. Astro-Elo and the flight license are local to one browser;
+there is no account recovery beyond the exported backup, no revocation, and no
+defence against someone who reads the origin's storage. The perigee splitter is a bounded forward search for two or
 three equal kicks, not a global optimizer. The lunar patch is a display/preview
-aid; continuous third-body gravity remains the execution model. The PDR button
-is a print-to-PDF export, not the later signed/QR `odd-report` dossier. Exact
+aid; continuous third-body gravity remains the execution model. The debrief print button is a plain print-to-PDF export; the signed,
+QR-bearing dossier is a separate export that is only issued after a successful
+verify-and-replay. The dossier QR carries an origin-independent `#verify=`
+fragment, so a reader must prepend the deployment address; it is not a scannable
+absolute URL. Exact
 Shapley is computationally heavier than the original four-run/<5 ms card; the
 implementation chooses mathematical exactness and reports measured cost.
