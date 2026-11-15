@@ -136,6 +136,11 @@ pub enum FdrError {
     EngineMismatch(&'static str),
     /// The engine design itself is outside the model's validated envelope.
     EngineUnusable,
+    /// The record signs a framing condition the contract fixes. A contract
+    /// defines where the flight starts, when, and for how long; a player who
+    /// could choose those could start on the target orbit and score a perfect
+    /// rescue without doing anything.
+    ContractMismatch(&'static str),
     /// A ranked document was submitted for a contract already certified.
     AlreadyCertified(u32),
     License(LicenseError),
@@ -163,6 +168,10 @@ impl core::fmt::Display for FdrError {
             Self::EngineUnusable => {
                 write!(f, "EngineUnusable: the signed engine design does not solve")
             }
+            Self::ContractMismatch(field) => write!(
+                f,
+                "ContractMismatch: recorded {field} is not what the contract specifies"
+            ),
             Self::AlreadyCertified(id) => {
                 write!(f, "contract {id} already has a certified ranked certificate")
             }

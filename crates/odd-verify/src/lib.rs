@@ -315,6 +315,7 @@ pub fn compute(
 }
 
 /// Everything needed to re-run a flight, taken from a signed recorder.
+#[derive(Clone)]
 pub struct FlightSpec {
     pub contract_id: u32,
     pub epoch_s: i64,
@@ -568,8 +569,63 @@ pub fn verify_record(fdr: &Fdr) -> Result<ReplayOutcome, FdrError> {
 /// derived claims. A legacy schema-1 record has no design to check, so it
 /// verifies against its recorded thrust and Isp and is labelled legacy by
 /// the dossier.
+/// The contract fixes the framing conditions of a flight: where it starts,
+/// when, how long it runs and which metric it scores. Without this check a
+/// player could sign a record that begins already on the target orbit, coast,
+/// and collect a perfect score — the signature would be valid and the replay
+/// would reproduce it exactly, because the replay honours the recorded start.
+///
+/// Compared bit-exactly: these are canonical constants, not measurements.
+pub fn certify_contract(fdr: &Fdr, contract: &Contract) -> Result<(), FdrError> {
+    let initial = &contract.initial;
+    let expected = [
+        initial.position[0],
+        initial.position[1],
+        initial.position[2],
+        initial.velocity[0],
+        initial.velocity[1],
+        initial.velocity[2],
+    ];
+    for (index, (recorded, canonical)) in fdr.initial_state.iter().zip(expected).enumerate() {
+        if recorded.to_bits() != canonical.to_bits() {
+            let _ = index;
+            return Err(FdrError::ContractMismatch("initial state"));
+        }
+    }
+    if fdr.epoch_s != odd_contracts::START_EPOCH {
+        return Err(FdrError::ContractMismatch("epoch"));
+    }
+    if fdr.duration_us != contract.duration_us {
+        return Err(FdrError::ContractMismatch("duration"));
+    }
+    let node_metric = contract.objective == Objective::SunSynchronous;
+    if fdr.node_metric != node_metric {
+        return Err(FdrError::ContractMismatch("objective metric"));
+    }
+    if fdr.initial_mass_kg.to_bits() != initial.mass.to_bits() && fdr.engine.is_none() {
+        return Err(FdrError::ContractMismatch("initial mass"));
+    }
+    Ok(())
+}
+
 pub fn certify_engine(fdr: &Fdr) -> Result<Option<EngineSolution>, FdrError> {
     let Some(spec) = &fdr.engine else {
+        // A legacy record carries no design, but the contract still fixes its
+        // framing conditions and its baseline engine.
+        if let Some(contract) = Contract::get(fdr.contract_id) {
+            certify_contract(fdr, &contract)?;
+            if fdr.thrust_n.to_bits() != contract.engine.thrust_newtons.to_bits() {
+                return Err(FdrError::EngineMismatch("thrust"));
+            }
+            if fdr.specific_impulse_s.to_bits()
+                != contract.engine.specific_impulse_seconds.to_bits()
+            {
+                return Err(FdrError::EngineMismatch("specific impulse"));
+            }
+            if fdr.dry_mass_kg.to_bits() != contract.dry_mass_kg.to_bits() {
+                return Err(FdrError::EngineMismatch("dry mass"));
+            }
+        }
         return Ok(None);
     };
     let solved = solve_engine(spec, 0.0).map_err(|_| FdrError::EngineUnusable)?;
@@ -583,6 +639,7 @@ pub fn certify_engine(fdr: &Fdr) -> Result<Option<EngineSolution>, FdrError> {
         return Err(FdrError::EngineMismatch("specific impulse"));
     }
     if let Some(contract) = Contract::get(fdr.contract_id) {
+        certify_contract(fdr, &contract)?;
         let vehicle = contract
             .vehicle(*spec)
             .map_err(|_| FdrError::EngineUnusable)?;

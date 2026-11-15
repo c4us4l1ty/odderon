@@ -210,3 +210,60 @@ fn legacy_records_still_verify_but_are_labelled() {
         .sign(&odd_identity::License::from_entropy([31u8; 16]))
         .is_err());
 }
+
+/// A ranked record must start where the contract says it starts. Otherwise a
+/// player can sign a flight that begins already on the target orbit, do
+/// nothing, and collect a perfect rescue score with a valid signature and a
+/// perfectly honest replay.
+#[test]
+fn a_ranked_record_cannot_start_somewhere_easier() {
+    let (spec, mut flight) = custom();
+    let mu = odd_contracts::EARTH_MU;
+    let target = odd_contracts::EARTH_EQUATORIAL_RADIUS + 550_000.0;
+    // Start on the target orbit, coast, and claim the rescue was achieved.
+    flight.initial_state = [target, 0.0, 0.0, 0.0, libm::sqrt(mu / target), 0.0];
+    flight.commands = vec![(200_000_000, [0.001, 0.0, 0.0], None)];
+    flight.prediction = [0.001, 550_000.0, 550_000.0, 180.0, 10_800.0, f64::NAN];
+    let fdr = record(spec, &flight);
+    fdr.verify_signature()
+        .expect("the cheater signed it themselves");
+    let err = odd_verify::verify_record(&fdr).err();
+    println!("forged-start verdict: {err:?}");
+    assert!(
+        matches!(err, Some(FdrError::ContractMismatch("initial state"))),
+        "starting off-contract must be refused, got {err:?}"
+    );
+}
+
+/// Every framing condition the contract fixes must be enforced, not just the
+/// starting orbit: a longer flight, a different epoch or the easier scoring
+/// metric are all ways to make a contract cheaper than it is.
+#[test]
+fn every_contract_framing_condition_is_enforced() {
+    let (spec, flight) = custom();
+    for (field, mutate) in [("epoch", 0usize), ("duration", 1), ("objective metric", 2)] {
+        let mut forged = flight.clone();
+        match mutate {
+            0 => forged.epoch_s += 86_400,
+            1 => forged.duration_us *= 2,
+            _ => forged.node_metric = !forged.node_metric,
+        }
+        // Rebuild metrics honestly so only the framing condition is wrong.
+        let Some(outcome) = odd_verify::replay_flight(&forged) else {
+            continue; // An illegal frame is refused at compile time, also fine.
+        };
+        let mut fdr = record(spec, &flight);
+        fdr.epoch_s = forged.epoch_s;
+        fdr.duration_us = forged.duration_us;
+        fdr.node_metric = forged.node_metric;
+        fdr.metrics = outcome.report;
+        fdr.final_state_hash = outcome.final_state_hash;
+        sign(&mut fdr);
+        fdr.verify_signature().expect("self-signed");
+        assert!(
+            matches!(odd_verify::verify_record(&fdr).err(), Some(FdrError::ContractMismatch(f)) if f == field),
+            "{field} must be refused, got {:?}",
+            odd_verify::verify_record(&fdr).err()
+        );
+    }
+}
