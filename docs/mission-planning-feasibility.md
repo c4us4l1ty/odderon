@@ -428,7 +428,10 @@ certificates persist in one versioned `localStorage` record. **This is a local
 practice identity, not key custody**: `localStorage` is readable by any script on
 the origin, and the profile dialog and the exported backup both say so. A ranked
 certificate is issued once per contract; later attempts are practice and cannot
-move the rating.
+move the rating. The signed recorder is stored with the certificate, because a
+locked rating would otherwise leave the official record unrecoverable except by
+flying again, which would be practice; the profile dialog can export and
+re-verify it after a reload.
 
 `crates/odd-report` signs a canonical fixed-layout byte string, not JSON. Every
 field a reader acts on is inside it, including the callsign and the Elo change.
@@ -451,7 +454,9 @@ defence against someone who reads the origin's storage. The perigee splitter is 
 three equal kicks, not a global optimizer. The lunar patch is a display/preview
 aid; continuous third-body gravity remains the execution model. The debrief print button is a plain print-to-PDF export; the signed,
 QR-bearing dossier is a separate export that is only issued after a successful
-verify-and-replay. The dossier QR carries an origin-independent `#verify=`
+verify-and-replay, either as a self-contained HTML download or printed to PDF
+from a sandboxed frame at the document's own `@page` geometry. No server-side PDF
+renderer is involved. The dossier QR carries an origin-independent `#verify=`
 fragment, so a reader must prepend the deployment address; it is not a scannable
 absolute URL. Exact
 Shapley is computationally heavier than the original four-run/<5 ms card; the

@@ -508,6 +508,21 @@ try{
   await page.waitForTimeout(2000);
   assert.deepEqual(await page.evaluate(()=>({frames:testFrameCallbacks,messages:testWorkerMessages,draws:missionDiagnostics.draws})),profileIdle,'the profile dialog must settle to zero frames and zero worker messages');
 
+  // The official ranked certificate must stay retrievable after the reload:
+  // the rating is locked, so re-flying would only produce a practice record.
+  await page.locator('#open-profile').click();
+  const certificateDownload=page.waitForEvent('download');
+  await page.locator('.certificate-button[data-contract="101"]').first().click();
+  const certificate=JSON.parse(await readFile(await (await certificateDownload).path(),'utf8'));
+  assert.equal(certificate.attempt_mode,'Ranked','the stored certificate must be the ranked record');
+  assert.equal(certificate.contract_id,101);
+  assert.equal(certificate.public_id,beforeReload.publicId);
+  assert.equal(certificate.canonical_digest,rankedFdr.canonical_digest,'it must be the very document issued at certification');
+  await page.locator('.certificate-verify[data-contract="101"]').click();
+  await page.waitForFunction(()=>missionDiagnostics.verification()?.code===1,null,{timeout:180000});
+  assert.equal(await page.locator('#verify-verdict').textContent(),'\u2713 CRYPTOGRAPHICALLY & PHYSICALLY VERIFIED');
+  await page.locator('#verify-close').click();
+
   // Replaying a certified contract must be practice and must not farm Elo.
   assert.equal(await page.evaluate(()=>missionDiagnostics.isRanked('101')),true);
   assert.equal(await page.locator('#attempt-mode').inputValue(),'practice');
@@ -540,6 +555,10 @@ try{
   await page.locator('#verify-download').click();
   const dossierText=await readFile(await (await dossierDownload).path(),'utf8');
   assert.equal(dossierText,verified.dossier,'the downloaded dossier must be the verified one');
+  // The PDF path prints the verified document itself at its own page geometry.
+  await page.locator('#verify-print').click();
+  await page.waitForFunction(()=>document.getElementById('dossier-print-frame')?.srcdoc?.includes('id="section-4"'),null,{timeout:30000});
+  assert.equal(await page.evaluate(()=>document.getElementById('dossier-print-frame').srcdoc),verified.dossier);
 
   // The printed QR must decode to a payload that itself verifies.
   const qrPayload=decodeQrFromSvg(dossierText);

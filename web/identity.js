@@ -214,6 +214,39 @@ export function importBackup(text) {
   return result;
 }
 
+/// Attach the signed recorder to a ranked certificate.
+///
+/// The certificate is issued once, so it has to stay retrievable: without the
+/// stored document a reload would leave the rating locked but the official
+/// record unrecoverable except by flying again, which would be practice.
+/// Only ranked certificates are kept, and the size is bounded so a hostile or
+/// malformed document cannot exhaust the storage quota.
+export function attachCertificate(contractId, recorderJson) {
+  const record = state?.ranked?.[String(contractId)];
+  if (!record || typeof recorderJson !== 'string' || recorderJson.length > 65536) return false;
+  let document;
+  try {
+    document = JSON.parse(recorderJson);
+  } catch {
+    return false;
+  }
+  if (document?.attempt_mode !== 'Ranked' || String(document.contract_id) !== String(contractId)) return false;
+  if (document.public_key !== hexOf(profile().publicKey)) return false;
+  record.recorder = recorderJson;
+  persist();
+  notify();
+  return true;
+}
+
+function hexOf(bytes) {
+  return bytes.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/// The stored signed certificate for a contract, or null.
+export function certificate(contractId) {
+  return state?.ranked?.[String(contractId)]?.recorder ?? null;
+}
+
 /// Whether this contract already has a certified ranked certificate.
 export function isRanked(contractId) {
   if (!state) return false;

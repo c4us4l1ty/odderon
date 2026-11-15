@@ -230,6 +230,9 @@ function showDebrief(report){
     try{
       const fields=recorder.stampOutcome(lastCapture,{ranked:outcome.ranked,before:outcome.before,after:outcome.after});
       lastRecorder=recorder.sign(wasm,fields,identity.profile().callsign);
+      // A ranked certificate is issued once, so keep the signed document with
+      // the certificate; a later reload must still be able to export it.
+      if(outcome.ranked)identity.attachCertificate(contractId,lastRecorder.json);
       signed.textContent=`Flight recorder signed by ${lastRecorder.document.public_id}. ${outcome.ranked?'Ranked certificate':'Practice record'}; canonical digest ${lastRecorder.document.canonical_digest.slice(0,16)}…`;
     }catch(error){signed.textContent=`Recorder could not be signed: ${String(error.message||error)}`;}
   }else{signed.textContent='No recorder was captured for this flight.';}

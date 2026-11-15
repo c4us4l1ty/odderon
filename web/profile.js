@@ -1,5 +1,7 @@
 // Flight License & Profile dialog. Pure DOM: no animation frames, no timers.
 import * as identity from './identity.js';
+import { download } from './recorder.js';
+import { openVerify } from './verify.js';
 
 const $ = id => document.getElementById(id);
 let dialog = null;
@@ -60,11 +62,33 @@ function render() {
   } else {
     const table = document.createElement('table');
     table.className = 'prediction-table';
-    table.innerHTML = '<thead><tr><th>Contract</th><th>Score</th><th>Elo after</th><th>Change</th></tr></thead>';
+    table.innerHTML = '<thead><tr><th>Contract</th><th>Score</th><th>Elo after</th><th>Change</th><th>Official certificate</th></tr></thead>';
     const tbody = document.createElement('tbody');
     for (const [contract, record] of entries.sort((a, b) => Number(a[0]) - Number(b[0]))) {
       const row = document.createElement('tr');
       row.innerHTML = `<th scope="row">${contract}</th><td>${(record.score * 100).toFixed(1)}%</td><td>${record.elo.toFixed(1)}</td><td>${record.delta >= 0 ? '+' : ''}${record.delta.toFixed(1)}</td>`;
+      const cell = document.createElement('td');
+      const stored = identity.certificate(contract);
+      if (stored) {
+        // The certificate is the signed recorder, so it can be exported and
+        // independently verified long after the flight.
+        const save = document.createElement('button');
+        save.type = 'button';
+        save.className = 'certificate-button';
+        save.dataset.contract = contract;
+        save.textContent = 'Download';
+        save.addEventListener('click', () => download(`contract-${contract}.odderon-fdr.json`, `${stored}\n`, 'application/json'));
+        const check = document.createElement('button');
+        check.type = 'button';
+        check.className = 'certificate-button certificate-verify';
+        check.dataset.contract = contract;
+        check.textContent = 'Verify';
+        check.addEventListener('click', () => { dialog.close(); openVerify(stored); });
+        cell.append(save, check);
+      } else {
+        cell.textContent = 'Not stored in this browser';
+      }
+      row.append(cell);
       tbody.append(row);
     }
     table.append(tbody);

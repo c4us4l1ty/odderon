@@ -46,3 +46,9 @@
 .verify-verdict{font-size:.9rem;font-weight:700;letter-spacing:.04em;margin:.9rem 0 .3rem;min-height:1.2em}
 .verify-verdict.is-verified{color:#8fe0b0}
 .verify-verdict.is-rejected{color:#eda88a}
+
+/* The dossier print frame is off-screen but rendered, so the browser can
+   print the document at its own @page geometry. */
+.dossier-print-frame{position:fixed;left:-10000px;top:0;width:210mm;height:297mm;border:0}
+.certificate-button{margin-left:.35rem;padding:.2rem .5rem;font-size:.7rem;border:1px solid var(--line,#2b3f45);border-radius:.35rem;background:transparent;color:inherit;cursor:pointer}
+.certificate-button:hover{border-color:var(--gold,#c9a227)}

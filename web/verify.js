@@ -48,6 +48,7 @@ function show(result) {
     detail.textContent = 'The document could not be interpreted as a flight recorder.';
   }
   $('verify-download').hidden = !(result.code === 1 && result.dossier);
+  $('verify-print').hidden = !(result.code === 1 && result.dossier);
   $('verify-download-json').hidden = !result.json;
   $('verify-busy').hidden = true;
   for (const listener of listeners) listener(result);
@@ -63,6 +64,7 @@ function run(inputs) {
   $('verify-verdict').className = 'verify-verdict';
   $('verify-detail').textContent = '';
   $('verify-download').hidden = true;
+  $('verify-print').hidden = true;
   $('verify-download-json').hidden = true;
   worker = new Worker('./mission-worker.js', { type: 'module' });
   const current = worker;
@@ -125,7 +127,8 @@ function build() {
     <p id="verify-verdict" class="verify-verdict" role="status"></p>
     <p id="verify-detail" class="profile-note"></p>
     <div class="profile-row">
-      <button type="button" id="verify-download" hidden>Download dossier (HTML, print to PDF)</button>
+      <button type="button" id="verify-download" hidden>Download dossier (HTML)</button>
+      <button type="button" id="verify-print" hidden>Print dossier (PDF)</button>
       <button type="button" id="verify-download-json" hidden>Download recorder JSON</button>
     </div>`;
   document.body.append(dialog);
@@ -149,6 +152,24 @@ function build() {
     if (lastResult?.dossier) {
       recorder.download('odderon-dossier.html', lastResult.dossier, 'text/html');
     }
+  });
+  $('verify-print').addEventListener('click', () => {
+    if (!lastResult?.dossier) return;
+    // Print the verified document itself, not the surrounding app page. The
+    // frame is sandboxed to same-origin scripts and self-contained HTML, so
+    // printing needs no network and schedules no animation frames here.
+    document.getElementById('dossier-print-frame')?.remove();
+    const frame = document.createElement('iframe');
+    frame.id = 'dossier-print-frame';
+    frame.setAttribute('sandbox', 'allow-same-origin allow-modals');
+    frame.setAttribute('aria-hidden', 'true');
+    frame.className = 'dossier-print-frame';
+    frame.addEventListener('load', () => {
+      frame.contentWindow?.focus();
+      frame.contentWindow?.print();
+    }, { once: true });
+    frame.srcdoc = lastResult.dossier;
+    document.body.append(frame);
   });
   $('verify-download-json').addEventListener('click', () => {
     if (lastResult?.json) {
