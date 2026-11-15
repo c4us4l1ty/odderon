@@ -29,7 +29,7 @@ pub mod thermal;
 pub use bus::{BusSpec, PowerBudget};
 pub use environment::ThermalEnvironment;
 pub use fluid::{Fluid, FluidProperties};
-pub use stage::{StageThermal, StageThermalHistory};
+pub use stage::{needs_thermal_model, StageThermal, StageThermalHistory};
 pub use thermal::{
     cryocooler_point, heat_balance, ideal_epsilon_for_layers, integrate_along, integrate_tank,
     CryocoolerPoint, HeatBalance, ShellMaterial, TankHistory, TankSpec, TankState, ThermalClock,

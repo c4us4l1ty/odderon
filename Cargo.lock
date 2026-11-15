@@ -122,6 +122,7 @@ dependencies = [
  "odd-ephem",
  "odd-propulsion",
  "odd-sim",
+ "odd-systems",
 ]
 
 [[package]]
@@ -213,6 +214,7 @@ dependencies = [
  "odd-propulsion",
  "odd-report",
  "odd-sim",
+ "odd-systems",
 ]
 
 [[package]]

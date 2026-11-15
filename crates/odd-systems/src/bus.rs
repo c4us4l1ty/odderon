@@ -6,7 +6,7 @@
 //! design tension WP 1.6 is meant to expose.
 
 /// Solar array, battery and fixed loads. All powers in W.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BusSpec {
     /// Array output at 1 AU, normal incidence, W.
     pub array_w_at_1au: f64,

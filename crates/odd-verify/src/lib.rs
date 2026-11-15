@@ -54,6 +54,18 @@ pub struct FlightSettings {
     pub dry_mass: f64,
     pub engine: Engine,
     pub node_metric: bool,
+    /// Physical engine design and cryogenic fit-out. `None` means the stage
+    /// carries no tank model (storables, or a legacy schema-1/2 record), so
+    /// boil-off is identically zero and older certificates still replay.
+    pub thermal: Option<ThermalInputs>,
+}
+
+/// The physical inputs the tank model needs, all of them design choices.
+#[derive(Clone, Copy, Debug)]
+pub struct ThermalInputs {
+    pub engine_spec: odd_propulsion::EngineSpec,
+    pub design: odd_contracts::ThermalDesign,
+    pub load_kg: f64,
 }
 
 /// Everything a flight produced: the flown path, the 58-field report, the
@@ -65,6 +77,8 @@ pub struct FlightOutcome {
     pub burns: Vec<odd_astro::perturb::burn::Burn>,
     /// Exact swept angle per burn, in command order. Their sum is report[57].
     pub burn_sweeps: Vec<f64>,
+    /// Boil-off evaluated along the flown spline. Inert for storable stages.
+    pub thermal: odd_contracts::ThermalOutcome,
 }
 
 /// Earth-relative Moon state at a mission time. Shared with the browser's
@@ -188,6 +202,31 @@ pub fn compute(
                 - std::f64::consts::PI,
         )
     };
+    // Boil-off is integrated along the *flown* spline with the same adaptive
+    // stepper and the same ephemeris, so replay reproduces the vent history.
+    let thermal = match s.thermal {
+        Some(inputs) => odd_contracts::thermal::evaluate(
+            odd_contracts::thermal::ThermalStage {
+                contract: &contract,
+                spec: &inputs.engine_spec,
+                load_kg: inputs.load_kg,
+                design: &inputs.design,
+            },
+            &integrated.trajectory,
+            odd_systems::ThermalClock {
+                start_s: 0.0,
+                // Boil-off accrues for the whole flight, not just up to the
+                // scoring instant: a tug that reaches its apoapsis on day 3
+                // keeps losing propellant until the contract window closes.
+                end_s: if impacted { evaluation_s } else { end },
+                options,
+            },
+            eph,
+            s.epoch,
+        )
+        .unwrap_or_else(|_| odd_contracts::ThermalOutcome::inert()),
+        None => odd_contracts::ThermalOutcome::inert(),
+    };
     let mut report = [f64::NAN; REPORT_LEN];
     report[0] = final_state.mass;
     if let Some(ap) = ap {
@@ -306,6 +345,7 @@ pub fn compute(
         }
     }
     Some(FlightOutcome {
+        thermal,
         trajectory: integrated.trajectory,
         report,
         final_state,
@@ -371,6 +411,9 @@ fn settings_from_spec(
     }
     Some((
         FlightSettings {
+            // Schema 1/2 records predate the tank model; they replay with no
+            // boil-off so their certificates remain valid.
+            thermal: None,
             contract_id: spec.contract_id,
             epoch: spec.epoch_s,
             initial: Keyframe {

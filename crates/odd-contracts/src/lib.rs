@@ -7,6 +7,9 @@
 //! engine is a physical `EngineSpec`, and thrust, specific impulse and engine
 //! dry mass are derived from it by `odd-propulsion`. A player may redesign
 //! the engine before locking a prediction; the recorder signs the design.
+pub mod thermal;
+pub use thermal::{ThermalDesign, ThermalOutcome};
+
 use odd_astro::{
     elements::Elements,
     force_model::{FlightLimits, ForceModel, Radiation, Zonal},

@@ -11,6 +11,7 @@ odd-ephem = { path = "../odd-ephem" }
 odd-report = { path = "../odd-report" }
 odd-propulsion = { path = "../odd-propulsion" }
 odd-sim = { path = "../odd-sim" }
+odd-systems = { path = "../odd-systems" }
 libm = "0.2"
 
 [dev-dependencies]

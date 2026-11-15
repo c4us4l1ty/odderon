@@ -11,4 +11,5 @@ odd-core = { path = "../odd-core" }
 odd-sim = { path = "../odd-sim" }
 odd-ephem = { path = "../odd-ephem" }
 odd-propulsion = { path = "../odd-propulsion" }
+odd-systems = { path = "../odd-systems" }
 libm = "0.2"

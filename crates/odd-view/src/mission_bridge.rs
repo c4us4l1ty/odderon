@@ -34,12 +34,29 @@ struct Settings {
     nodes: Vec<ManeuverNode>,
     guidance: Vec<Option<State>>,
     node_metric: bool,
+    /// Cryogenic fit-out. Editable by the player; signed into FDR v3.
+    thermal_design: odd_contracts::ThermalDesign,
 }
 impl Settings {
+    /// The tank model applies only to cryogenic pairs, and only when a load
+    /// is actually aboard.
+    fn thermal_inputs(&self) -> Option<odd_verify::ThermalInputs> {
+        let load = self.initial.mass - self.dry_mass;
+        if load <= 0.0 {
+            return None;
+        }
+        Some(odd_verify::ThermalInputs {
+            engine_spec: self.engine_spec,
+            design: self.thermal_design,
+            load_kg: load,
+        })
+    }
+
     /// The physical inputs the portable evaluator needs. Node schedule and
     /// guidance travel in the compiled `Plan`, not in the settings.
     fn flight(&self) -> FlightSettings {
         FlightSettings {
+            thermal: self.thermal_inputs(),
             contract_id: self.contract_id,
             epoch: self.epoch,
             initial: self.initial,
@@ -57,6 +74,7 @@ struct Execution {
     final_state: Keyframe,
     burn_epochs: Vec<(f64, f64)>,
     burn_sweeps: Vec<f64>,
+    thermal: odd_contracts::ThermalOutcome,
 }
 static SETTINGS: Mutex<Option<Settings>> = Mutex::new(None);
 static PLAN: Mutex<Option<Plan>> = Mutex::new(None);
@@ -89,6 +107,7 @@ pub extern "C" fn mission_contract(id: u32) -> i32 {
     *SETTINGS.lock().unwrap() = Some(Settings {
         contract_id: id,
         engine_spec: c.engine_spec,
+        thermal_design: odd_contracts::ThermalDesign::baseline(),
         epoch: odd_contracts::START_EPOCH,
         initial: c.initial,
         duration_us: c.duration_us,
@@ -177,6 +196,7 @@ pub extern "C" fn mission_setup(
         // The free sandbox has no catalog stage, so it carries a placeholder
         // design and cannot produce a certified recorder.
         engine_spec: odd_contracts::STORABLE_BASELINE,
+        thermal_design: odd_contracts::ThermalDesign::baseline(),
         epoch: epoch as i64,
         initial: Keyframe {
             time: 0.0,
@@ -437,6 +457,7 @@ pub extern "C" fn mission_execute() -> i32 {
         final_state: outcome.final_state,
         burn_epochs: outcome.burns.iter().map(|b| (b.start, b.end)).collect(),
         burn_sweeps: outcome.burn_sweeps,
+        thermal: outcome.thermal,
     });
     1
 }
@@ -988,6 +1009,7 @@ pub(crate) fn dossier_geometry() -> Option<odd_report::dossier::Geometry> {
             })
             .collect(),
         burn_sweeps: execution.burn_sweeps,
+        thermal: execution.thermal,
     };
     let commands: Vec<(i64, [f64; 3])> = settings
         .nodes
