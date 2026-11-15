@@ -102,8 +102,11 @@ fn sign(fdr: &mut Fdr) {
         .expect("record shape must be valid");
 }
 
+/// `oracle_fdr_engine_recomputation_anti_cheat`: a valid signed record with a
+/// player-designed engine verifies through the same portable replay a Worker
+/// or CLI would run.
 #[test]
-fn a_custom_engine_flight_verifies_through_the_portable_path() {
+fn oracle_fdr_engine_recomputation_anti_cheat() {
     let (spec, flight) = custom();
     let fdr = record(spec, &flight);
     let solved = odd_verify::certify_engine(&fdr)

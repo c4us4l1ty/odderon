@@ -439,6 +439,8 @@ pub extern "C" fn maneuver_oracle_byte(index: u32) -> u32 {
         .map_or(256, u32::from)
 }
 
+/// `oracle_wasm_bit_parity_propulsion`, native half.
+///
 /// WP 1.5 propulsion parity grid: 32 engine designs spanning all four
 /// propellant pairs, mixture ratio, chamber pressure, expansion ratio, bell
 /// length and ambient altitude. Every field of the solution is hashed as raw

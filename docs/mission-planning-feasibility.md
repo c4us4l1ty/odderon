@@ -31,8 +31,12 @@ These are prototype work-package gates, not flight-operations certification.
 Since they were written, `crates/odd-identity` (persisted flight license) and
 `crates/odd-report` (signed recorder, deterministic dossier, verification QR)
 have shipped, and the browser keeps one ranked certificate per contract.
-Cryogenic boil-off (WP 1.6) and a server-authoritative rating (WP 1.9) remain
-deferred; the propulsion and engine-design model is WP 1.5.
+`crates/odd-propulsion` (WP 1.5) has also shipped: the engine is now a
+physical design solved from chamber conditions and nozzle geometry, the
+browser exposes it as a draggable CAD and Schlieren lab, and the signed
+recorder carries the design rather than a claimed thrust. Cryogenic boil-off
+(WP 1.6), the AI chief engineer (WP 1.7) and a server-authoritative rating
+(WP 1.9) remain deferred.
 
 ## Apsides, directions and time quantization
 

@@ -146,15 +146,67 @@ static structure.
   `propulsion_fingerprint()` hashes 24 solution fields, the separation
   record and 24 flow stations for each of 32 designs spanning all four
   propellants and 0–87.5 km ambient. Native, Node and Chrome agree.
+- **`oracle_fdr_engine_recomputation_anti_cheat`** —
+  `crates/odd-verify/tests/engine_anti_cheat.rs`. A custom LOX/LCH4 design
+  verifies through the portable replay; records claiming more `Isp`, more
+  thrust, a lighter engine or a better engine than the one signed are all
+  rejected by name even though the signature is valid.
+- **`oracle_browser_cad_lab_and_idle_gate`** — the lab block in
+  `tests/browser/observatory.mjs`. It drags the exit-radius handle on the
+  cross-section, sweeps O/F past stoichiometric, sweeps altitude from 0 to
+  100 km watching the bell separate and re-attach, fits a redesign to the
+  stage, flies the contract, checks the signed record carries the design
+  rather than a thrust claim, and confirms Annex B prints it. The existing
+  two-second idle assertions then require zero animation callbacks, zero
+  redraws and zero worker messages.
 - `tests/atmosphere_parity.rs` pins the test-stand pressure model against
   `odd-astro`'s drag density so the two atmospheres cannot drift.
+- `src/plume.rs` unit tests pin the Prandtl–Meyer round trip, the vacuum
+  and separated regimes, the exact detachment coordinate, and a bounded
+  axisymmetric Schlieren raster.
+
+## The free jet and the Schlieren field
+
+`src/plume.rs` reconstructs what a Schlieren photograph of the jet shows, so
+the browser can paint a continuous density gradient without inventing flow
+features of its own. It is a reduced-order reconstruction, **not CFD**.
+
+- **Prandtl–Meyer expansion.** `nu(M)` is the exact perfect-gas function;
+  its inverse is bisected to 1e-6 in Mach. An underexpanded lip fans outward
+  by `nu(M_jet) - nu(M_exit)`, where `M_jet` follows from expanding `Pe` to
+  ambient.
+- **Oblique lip shock.** An overexpanded or detached jet is *compressed*, not
+  expanded. `oblique_shock()` solves the normal-shock pressure relation for
+  the wave angle `beta` by bisection, then returns the deflection `theta`
+  from the theta-beta-Mach relation. It returns `None` when a normal shock
+  cannot supply the required compression, which is precisely the condition
+  for the shock to detach.
+- **Detachment.** When Summerfield separation fires, the free jet starts at
+  `x_sep * L_nozzle` with the radius and wall pressure there, taken from the
+  shared `nozzle::separation_pressure()`. The drawn line and the computed
+  line therefore cannot disagree; a test pins them to 1e-12.
+- **Shock-cell train.** Prandtl–Pack spacing `L = 1.306 D sqrt(M^2 - 1)`.
+  The core pressure oscillates about ambient with an exponentially decaying
+  amplitude while the shear layer breathes in antiphase, which is what draws
+  the Mach diamonds.
+- **Mach disk.** Ashkenas–Sherman standoff `x_M / D = 0.67 sqrt(Pe / Pamb)`,
+  drawn only above a two-to-one pressure ratio where a disk actually forms.
+- **Density and gradient.** `density_at(x, r)` is isentropic inside the bell
+  and a mixing shear layer outside. `schlieren()` central-differences it on a
+  regular grid, weights the radial term (a vertical knife edge) four times
+  the axial one, and compresses the dynamic range with `log1p` so the wall
+  discontinuity does not hide the plume. The browser receives normalized
+  values in [0, 1] and paints them; it differentiates nothing.
 
 ## Limits
 
 Quasi-1D perfect-gas flow with frozen composition: no finite-rate kinetics,
 no two-phase flow, no film-cooling or ablative cooling model, no combustion
 instability, no throttle transients, no start/shutdown sequence, no thrust
-structure loads beyond the static side-load estimate. The pump model uses
+structure loads beyond the static side-load estimate. The Schlieren field
+is a feature reconstruction, not a solved flow field: cell shape, shear-layer
+thickness and the mixing length are modelled, so the image is qualitatively
+right and quantitatively indicative only. The pump model uses
 bulk density rather than separate oxidizer and fuel pump work, which
 under-states hydrolox pump power. The wall solution assumes every gram of
 fuel passes through the jacket. Calibration is anchored at the four table
