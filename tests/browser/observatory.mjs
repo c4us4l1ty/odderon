@@ -356,6 +356,83 @@ try{
     await page.locator('#node-time').fill('200');
   }
 
+  // oracle_browser_cad_lab_and_idle_gate: design the engine on the canvas,
+  // watch the Schlieren field and the dossier inputs respond, then fly it.
+  {
+    await page.waitForFunction(()=>missionDiagnostics.engine?.solution,null,{timeout:60000});
+    const start=await page.evaluate(()=>missionDiagnostics.engine);
+    assert.equal(start.code,1,'the contract baseline must solve');
+    assert.equal(start.stations,96,'the axial flow field must be sampled');
+    assert.equal(start.raster,true,'the Schlieren raster must be built in Rust');
+    // Let the flight worker finish first: its causal panel sits above the lab
+    // and changes height when it lands, which would move the canvas between
+    // measuring the handle and pressing on it.
+    await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:120000});
+    // Moving the pointer off the planner closes any open physics-lens
+    // projection, which shrinks the column above the lab. Settle that first
+    // so the handle coordinates are measured against the final layout.
+    await page.mouse.move(4,4);
+    await page.locator('#engine-canvas').scrollIntoViewIfNeeded();
+    await page.waitForFunction(()=>missionDiagnostics.engine?.handles.length===3&&!missionDiagnostics.engine.pending&&missionDiagnostics.lens===null,null,{timeout:30000});
+    const labBox=await page.locator('#engine-canvas').boundingBox();
+    const settled=await page.evaluate(()=>missionDiagnostics.engine);
+    const exitHandle=settled.handles.find(h=>h.key==='exit');
+    assert.ok(exitHandle,'the exit radius must be a draggable handle');
+    await page.mouse.move(labBox.x+exitHandle.at[0],labBox.y+exitHandle.at[1]);
+    await page.mouse.down();
+    await page.mouse.move(labBox.x+exitHandle.at[0]+4,labBox.y+exitHandle.at[1]-24,{steps:6});
+    await page.mouse.up();
+    const widened=await page.evaluate(()=>missionDiagnostics.engine);
+    assert.ok(widened.spec.exit>start.spec.exit,'dragging the exit handle must widen the bell');
+    assert.ok(widened.draws>start.draws,'the cross-section must repaint');
+    assert.ok(widened.solution.vacuumIsp!==start.solution.vacuumIsp,'a bigger bell must change vacuum Isp');
+    // Mixture ratio: the efficiency peak is fuel-rich, the temperature peak
+    // is not. Both come from the same solve the recorder will sign.
+    await page.locator('#engine-propellant').selectOption('0');
+    const mixture=[];
+    for(const ratio of [4.8,6.0,7.94]){
+      await page.locator('#engine-of').fill(String(ratio));
+      await page.locator('#engine-of').dispatchEvent('input');
+      const d=await page.evaluate(()=>missionDiagnostics.engine);
+      mixture.push({ratio,isp:d.solution.vacuumIsp,tc:d.solution.tc,molar:d.solution.molar});
+    }
+    assert.ok(mixture[0].isp>mixture[2].isp,'fuel-rich must beat stoichiometric on Isp');
+    assert.ok(mixture[2].tc>mixture[0].tc,'stoichiometric must run hotter');
+    assert.ok(mixture[2].molar>mixture[0].molar,'fuel-rich exhaust must be lighter');
+    assert.match(await page.locator('#engine-causal').textContent(),/near the temperature peak/);
+    // Altitude: a big bell separates at sea level and re-attaches on the way up.
+    await page.locator('#engine-propellant').selectOption('1');
+    await page.locator('#engine-of').fill('2.36');await page.locator('#engine-of').dispatchEvent('input');
+    await page.locator('#engine-pc').fill('5');
+    await page.locator('#engine-throat').fill('50');
+    await page.locator('#engine-exit').fill('447.2');
+    await page.locator('#engine-altitude').fill('0');await page.locator('#engine-altitude').dispatchEvent('input');
+    const sea=await page.evaluate(()=>missionDiagnostics.engine);
+    assert.equal(sea.plume.regime,3,'sea level must separate inside the bell');
+    assert.ok(sea.solution.separationX>0.1&&sea.solution.separationX<0.9);
+    assert.match(await page.locator('#engine-causal').textContent(),/separates inside the bell/);
+    await page.locator('#engine-altitude').fill('35');await page.locator('#engine-altitude').dispatchEvent('input');
+    const high=await page.evaluate(()=>missionDiagnostics.engine);
+    assert.notEqual(high.plume.regime,3,'the bell must flow full above 35 km');
+    assert.ok(high.solution.vacuumIsp>sea.solution.isp,'vacuum Isp must beat the separated stand');
+    // Fit the contract baseline back so the certified rescue stays flyable,
+    // then apply a modest redesign and check the stage really moved.
+    await page.locator('#engine-reset').click();
+    await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:60000});
+    await page.locator('#engine-of').fill('2.1');await page.locator('#engine-of').dispatchEvent('input');
+    const redesign=await page.evaluate(()=>missionDiagnostics.engine);
+    await page.locator('#engine-apply').click();
+    await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:120000});
+    const fitted=await page.evaluate(()=>({lab:missionDiagnostics.engine,wasm:!!missionDiagnostics.wasm()}));
+    assert.ok(fitted.lab.solution.stageWet>0,'the stage must be rebuilt around the design');
+    assert.equal(await page.evaluate(()=>missionDiagnostics.causalValid),true,'the combined causal graph must stay acyclic');
+    assert.ok(Math.abs(fitted.lab.spec.of-redesign.spec.of)<1e-9,'the applied design must be the drawn one');
+  }
+
+  // Fitting a new engine clears the plan: the old burn durations were computed
+  // for the old thrust and mass, so they must not survive the redesign.
+  assert.equal(await page.evaluate(()=>missionDiagnostics.nodes.length),0,'a redesign must discard the stale plan');
+  await page.locator('#add-node').click();
   await page.locator('#node-t').fill('82.38547669');
   await page.locator('#add-node').click();
   await page.locator('#node-time').fill('2979.885241');
@@ -390,7 +467,15 @@ try{
   const rankedDownload=page.waitForEvent('download');
   await page.locator('#export-fdr').click();
   const rankedFdr=JSON.parse(await readFile(await (await rankedDownload).path(),'utf8'));
-  assert.equal(rankedFdr.schema_version,1);
+  assert.equal(rankedFdr.schema_version,2);
+  // oracle_fdr_engine_recomputation_anti_cheat (browser half): the signed
+  // record carries the physical design, never a client thrust/Isp claim.
+  assert.equal(typeof rankedFdr.engine_propellant,'string');
+  assert.ok(Number.isInteger(rankedFdr.engine_propellant_id));
+  for(const key of ['engine_of_ratio','engine_p_c_pa','engine_r_throat_m','engine_r_exit_m','engine_length_fraction']){
+    assert.ok(Number.isFinite(rankedFdr[key])&&rankedFdr[key]>0,`${key} must be a physical design number`);
+  }
+  assert.ok(Math.abs(rankedFdr.engine_of_ratio-2.1)<1e-9,'the flight must carry the redesigned mixture ratio');
   assert.equal(rankedFdr.contract_id,101);
   assert.equal(rankedFdr.attempt_mode,'Ranked');
   assert.equal(rankedFdr.public_id,firstRated.publicId);
@@ -435,7 +520,10 @@ try{
   await page.waitForFunction(()=>missionDiagnostics.nodes.length===3&&!missionDiagnostics.pending&&missionDiagnostics.report?.[30]===0,null,{timeout:240000});
   const tugNodes=await page.evaluate(()=>missionDiagnostics.nodes);
   assert.ok(tugNodes[1].guidance&&tugNodes[2].guidance,'later kicks must carry numerical guidance');
-  assert.ok(Math.abs(tugNodes[1].time-10300.419216)<2,`second kick epoch ${tugNodes[1].time}`);
+  // The tug now flies a physically derived engine (18.087 kN, 449.91 s) rather
+  // than the card's rounded 18 kN / 450 s, so its burns are slightly shorter
+  // and the targeted periapsis lands a couple of seconds later.
+  assert.ok(Math.abs(tugNodes[1].time-10303.134747)<2,`second kick epoch ${tugNodes[1].time}`);
   await page.locator('#prefill').click();
   // Predict the achieved apoapsis radius convention in altitude fields.
   const tugReport=await page.evaluate(()=>missionDiagnostics.report);
@@ -551,6 +639,12 @@ try{
   assert.equal(await page.locator('#verify-verdict').textContent(),'\u2713 CRYPTOGRAPHICALLY & PHYSICALLY VERIFIED');
   assert.ok(verified.dossier.includes('id="section-4"'));
   assert.ok(verified.dossier.includes('id="coalition-table"'));
+  // Annex B prints the physical design and a vector cross-section, so a
+  // reader can recompute the engine without trusting the claimed thrust.
+  assert.ok(verified.dossier.includes('id="annex-b"'),'the dossier must print the engine annex');
+  assert.ok(verified.dossier.includes('id="engine-table"'));
+  assert.ok(verified.dossier.includes('id="engine-figure"'));
+  assert.ok(verified.dossier.includes(practice.document.engine_propellant));
   const dossierDownload=page.waitForEvent('download');
   await page.locator('#verify-download').click();
   const dossierText=await readFile(await (await dossierDownload).path(),'utf8');
@@ -568,6 +662,17 @@ try{
   await page.locator('#verify-run').click();
   await page.waitForFunction(()=>missionDiagnostics.verification()?.code===1&&missionDiagnostics.verification()?.dossier,null,{timeout:180000});
   assert.equal(await page.evaluate(()=>missionDiagnostics.verification().code),1,'the decoded QR payload must verify');
+
+  // oracle_fdr_engine_recomputation_anti_cheat: claiming a better engine than
+  // the signed geometry produces must be refused. Editing the throat radius
+  // breaks the signature; forging a consistent record is covered natively by
+  // odd-verify's engine_anti_cheat suite.
+  const engineTampered=structuredClone(practice.document);
+  engineTampered.engine_r_throat_m*=1.01;
+  await page.locator('#verify-input').fill(JSON.stringify(engineTampered));
+  await page.locator('#verify-run').click();
+  await page.waitForFunction(()=>missionDiagnostics.verification()?.code===-1,null,{timeout:60000});
+  assert.match(await page.locator('#verify-verdict').textContent(),/SignatureMismatch/);
 
   // A single edited bit must be rejected with SignatureMismatch.
   const tampered=structuredClone(practice.document);

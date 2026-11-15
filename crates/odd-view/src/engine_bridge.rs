@@ -48,6 +48,10 @@ struct Raster {
 
 static LAB: Mutex<Option<Lab>> = Mutex::new(None);
 static RASTER: Mutex<Option<Raster>> = Mutex::new(None);
+/// Engine chains live apart from the flight chains so editing a design never
+/// re-renders the flight panel, which sits above the lab canvas and would
+/// shift it under the pointer mid-drag.
+static ENGINE_CAUSAL: Mutex<Vec<odd_app::causal::CausalChain>> = Mutex::new(Vec::new());
 
 fn spec_from(
     propellant: u32,
@@ -401,16 +405,14 @@ pub extern "C" fn mission_engine_schlieren_at(index: u32) -> f64 {
 }
 
 /// Diagnose the solved design through the same odd-app causal DAG the flight
-/// warnings use, appending to that registry. Returns the combined count, so
-/// the browser reads every chain back with the existing causal accessors.
+/// warnings use, into the engine registry. Returns the chain count.
 #[no_mangle]
 pub extern "C" fn mission_engine_diagnose() -> u32 {
-    // Build the inputs inside the lock, then release it before touching the
-    // flight causal registry: the two statics must never be held together.
     let inputs = {
         let guard = LAB.lock().unwrap();
         let Some(lab) = guard.as_ref() else {
-            return mission_bridge::causal_count();
+            *ENGINE_CAUSAL.lock().unwrap() = Vec::new();
+            return 0;
         };
         let s = &lab.solution;
         odd_app::causal::EngineInputs {
@@ -428,7 +430,79 @@ pub extern "C" fn mission_engine_diagnose() -> u32 {
             peak_temperature_of: lab.spec.propellant.peak_temperature_of(),
         }
     };
-    mission_bridge::append_causal(odd_app::causal::diagnose_engine(&inputs))
+    let chains = odd_app::causal::diagnose_engine(&inputs);
+    let len = chains.len() as u32;
+    *ENGINE_CAUSAL.lock().unwrap() = chains;
+    len
+}
+
+#[no_mangle]
+pub extern "C" fn mission_engine_causal_count() -> u32 {
+    ENGINE_CAUSAL.lock().unwrap().len() as u32
+}
+
+/// Warning discriminant in `odd_app::causal::Warning` declaration order.
+#[no_mangle]
+pub extern "C" fn mission_engine_causal_warning(chain: u32) -> u32 {
+    ENGINE_CAUSAL
+        .lock()
+        .unwrap()
+        .get(chain as usize)
+        .map_or(u32::MAX, |c| c.warning as u32)
+}
+
+#[no_mangle]
+pub extern "C" fn mission_engine_causal_node_count(chain: u32) -> u32 {
+    ENGINE_CAUSAL
+        .lock()
+        .unwrap()
+        .get(chain as usize)
+        .map_or(0, |c| c.nodes.len() as u32)
+}
+
+#[no_mangle]
+pub extern "C" fn mission_engine_causal_node_kind(chain: u32, node: u32) -> u32 {
+    ENGINE_CAUSAL
+        .lock()
+        .unwrap()
+        .get(chain as usize)
+        .and_then(|c| c.nodes.get(node as usize))
+        .map_or(u32::MAX, |n| n.kind as u32)
+}
+
+fn engine_node_text(chain: u32, node: u32) -> Option<String> {
+    Some(
+        ENGINE_CAUSAL
+            .lock()
+            .unwrap()
+            .get(chain as usize)?
+            .nodes
+            .get(node as usize)?
+            .text
+            .to_string(),
+    )
+}
+
+#[no_mangle]
+pub extern "C" fn mission_engine_causal_node_len(chain: u32, node: u32) -> u32 {
+    engine_node_text(chain, node).map_or(0, |s| s.len() as u32)
+}
+
+#[no_mangle]
+pub extern "C" fn mission_engine_causal_node_byte(chain: u32, node: u32, index: u32) -> f64 {
+    engine_node_text(chain, node).map_or(f64::NAN, |s| {
+        s.as_bytes()
+            .get(index as usize)
+            .map_or(f64::NAN, |b| f64::from(*b))
+    })
+}
+
+/// Both registries must be acyclic and terminate in a demonstration.
+#[no_mangle]
+pub extern "C" fn mission_engine_causal_valid() -> i32 {
+    i32::from(odd_app::causal::is_valid_dag(
+        &ENGINE_CAUSAL.lock().unwrap(),
+    ))
 }
 
 #[cfg(test)]

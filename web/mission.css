@@ -75,7 +75,7 @@
 .engine-readout strong{display:block;font:20px Georgia,serif;color:#e6d49e}
 .engine-readout span{display:block;font-size:10px;color:#9bad9f;margin-top:6px}
 .engine-readout .is-warning strong{color:#edbc98}
-#engine-causal{font-size:11px;line-height:1.65;color:#bdcdbd;margin-top:10px}
+#engine-causal{font-size:11px;line-height:1.65;color:#bdcdbd;margin-top:10px;min-height:3.3em}
 @media(max-width:850px){.engine-grid{grid-template-columns:1fr}.engine-view{height:300px}}
 @media(max-width:450px){.engine-card{padding:16px}}
 @media print{.engine-card{border:1px solid #999;background:#fff;color:#000}.engine-controls,.engine-view{display:none!important}.engine-readout div{background:#f4f4f4}.engine-readout strong{color:#000}}

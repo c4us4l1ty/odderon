@@ -37,14 +37,13 @@ const REGIMES = ['Adapted', 'Underexpanded', 'Overexpanded', 'Separated inside t
 const BANDS = { 0: [2.5, 10], 1: [1.4, 3.6], 2: [2.0, 4.6], 3: [1.0, 3.0] };
 const OPTIMAL = { 0: [4.5, 6.5], 1: [2.2, 2.7], 2: [3.2, 3.8], 3: [1.6, 2.2] };
 const LABELS = { 0: 'LOX / LH2', 1: 'LOX / RP-1', 2: 'LOX / LCH4', 3: 'NTO / MMH' };
-const STATIONS = 96;
 // Raster resolution. The gradient is sampled in Rust; a coarse grid keeps a
 // drag interactive without asking the browser to differentiate anything.
 const RASTER_W = 220, RASTER_H = 110;
 
 const $ = id => document.getElementById(id);
 
-export function createLab({ wasm, onApply, onDiagnose, isLocked }) {
+export function createLab({ wasm, onApply, onDiagnose, isLocked, annotate }) {
   const canvas = $('engine-canvas');
   const ctx = canvas.getContext('2d');
   const controls = {
@@ -338,6 +337,10 @@ export function createLab({ wasm, onApply, onDiagnose, isLocked }) {
     }
     $('engine-apply').disabled = lastCode === -5 || solution.flightReady !== 1 || isLocked();
     onDiagnose?.();
+    // The acronym law applies to the lab too: every registered term must
+    // carry its projection, including the ones in these readout labels.
+    annotate?.(readout);
+    annotate?.(status);
   }
 
   function refresh() { solve(); }

@@ -284,14 +284,18 @@ const ENGINE_EVIDENCE=[
   ()=>{const d=engineLab?.diagnostics();if(!d?.solution)return '';const s=d.solution;return ` Wall ${s.wallTemperature.toFixed(0)} K against a 1350 K limit, at ${(s.heatFlux/1e6).toFixed(1)} MW/m² throat heat flux.`;},
   ()=>{const d=engineLab?.diagnostics();if(!d?.solution)return '';const s=d.solution;return ` O/F ${s.of.toFixed(2)} gives ${s.tc.toFixed(0)} K and ${(s.molar*1000).toFixed(2)} g/mol, for ${s.vacuumIsp.toFixed(1)} s vacuum specific impulse.`;}
 ];
-function renderEngineCausal(count,flightCount){
-  const target=$('engine-causal');if(!target)return;target.replaceChildren();
-  for(let c=flightCount;c<count;c++){
-    const warning=wasm.mission_causal_warning(c),demo=wasmString(wasm.mission_causal_demo_len(c),j=>wasm.mission_causal_demo_byte(c,j));
-    const row=document.createElement('div');row.className='cause-chain';row.dataset.demo=demo;row.dataset.warning=String(warning);
-    const n=wasm.mission_causal_node_count(c);
+// The engine registry is separate from the flight one: redrawing the flight
+// panel would resize the content above the lab canvas and move it under the
+// pointer mid-drag.
+function renderEngineCausal(){
+  const target=$('engine-causal');if(!target||!wasm)return;target.replaceChildren();
+  const count=wasm.mission_engine_diagnose();
+  for(let c=0;c<count;c++){
+    const warning=wasm.mission_engine_causal_warning(c);
+    const row=document.createElement('div');row.className='cause-chain';row.dataset.warning=String(warning);
+    const n=wasm.mission_engine_causal_node_count(c);
     for(let j=0;j<n;j++){
-      const kind=wasm.mission_causal_node_kind(c,j),text=wasmString(wasm.mission_causal_node_len(c,j),k=>wasm.mission_causal_node_byte(c,j,k));
+      const kind=wasm.mission_engine_causal_node_kind(c,j),text=wasmString(wasm.mission_engine_causal_node_len(c,j),k=>wasm.mission_engine_causal_node_byte(c,j,k));
       if(j)row.append(document.createTextNode(' ← '));
       const span=document.createElement(kind===0?'strong':'span');span.textContent=text;row.append(span);
     }
@@ -304,11 +308,8 @@ function updateCausal(){
   const target=$('causal-text');target.replaceChildren();$('split-kick').hidden=true;
   if(!wasm)return;
   const inputs=causalInputs();
-  const flightCount=wasm.mission_diagnose(inputs.twr,inputs.minPeri*1000,120000,inputs.lossFraction,inputs.propellantDeficit?1:0,inputs.shortfall,inputs.impacted?1:0,inputs.sweep);
-  // Engine chains append to the same registry, so one DAG check covers both.
-  const count=engineLab?wasm.mission_engine_diagnose():flightCount;
-  renderEngineCausal(count,flightCount);
-  for(let c=0;c<flightCount;c++){
+  const count=wasm.mission_diagnose(inputs.twr,inputs.minPeri*1000,120000,inputs.lossFraction,inputs.propellantDeficit?1:0,inputs.shortfall,inputs.impacted?1:0,inputs.sweep);
+  for(let c=0;c<count;c++){
     const warning=wasm.mission_causal_warning(c),demo=wasmString(wasm.mission_causal_demo_len(c),j=>wasm.mission_causal_demo_byte(c,j));
     const row=document.createElement('div');row.className='cause-chain';row.dataset.demo=demo;row.dataset.warning=String(warning);
     const n=wasm.mission_causal_node_count(c);
@@ -526,11 +527,11 @@ canvas.addEventListener('pointermove',e=>{
 function endDrag(e){if(drag&&drag.pointer===e.pointerId){drag=null;stopLens();scheduleFlight();}}
 canvas.addEventListener('pointerup',endDrag);canvas.addEventListener('pointercancel',endDrag);canvas.addEventListener('lostpointercapture',endDrag);canvas.addEventListener('pointerleave',e=>{if(!drag&&!intoLens(e))stopLens();});
 new ResizeObserver(draw).observe(canvas.parentElement);
-window.missionDiagnostics=Object.freeze({wasm:()=>wasm,recorder:()=>lastRecorder,verification:()=>verificationResult(),openVerify,profile:()=>identity.profile(),isRanked:id=>identity.isRanked(id),openProfile,get nodeTimeRange(){return nodeTimeRange();},clampNodeTime,get nodeMarker(){const n=nodes[selected];if(!n||!wasm)return null;const s=readState(wasm,n.time);return s.some(x=>!Number.isFinite(x))?null:toCanvas(s);},get pathEnds(){return preview.length?[toCanvas(preview[0].state),toCanvas(preview[preview.length-1].state)]:null;},get nodes(){return nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));},get pending(){return !!worker||timer!==null;},get draws(){return draws;},get messages(){return messages;},get locked(){return !!locked;},get report(){return lastReport?[...lastReport]:null;},get computeMs(){return lastComputeMs;},get lunarInfo(){return lastLunarInfo?[...lastLunarInfo]:null;},get lens(){return activeLens;},get lensDraws(){return lensDraws;},get lensPending(){return lensGovernor.frame!==null;},get engine(){return engineLab?engineLab.diagnostics():null;},get causalValid(){return wasm?wasm.mission_causal_valid()===1:false;},get acronymViolations(){return acronymViolations();},get handles(){if(selected<0||!wasm)return [];const state=readState(wasm,nodes[selected].time);return handles(toCanvas(state),state).map(h=>({key:h.key,end:h.end}));}});
+window.missionDiagnostics=Object.freeze({wasm:()=>wasm,recorder:()=>lastRecorder,verification:()=>verificationResult(),openVerify,profile:()=>identity.profile(),isRanked:id=>identity.isRanked(id),openProfile,get nodeTimeRange(){return nodeTimeRange();},clampNodeTime,get nodeMarker(){const n=nodes[selected];if(!n||!wasm)return null;const s=readState(wasm,n.time);return s.some(x=>!Number.isFinite(x))?null:toCanvas(s);},get pathEnds(){return preview.length?[toCanvas(preview[0].state),toCanvas(preview[preview.length-1].state)]:null;},get nodes(){return nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));},get pending(){return !!worker||timer!==null;},get draws(){return draws;},get messages(){return messages;},get locked(){return !!locked;},get report(){return lastReport?[...lastReport]:null;},get computeMs(){return lastComputeMs;},get lunarInfo(){return lastLunarInfo?[...lastLunarInfo]:null;},get lens(){return activeLens;},get lensDraws(){return lensDraws;},get lensPending(){return lensGovernor.frame!==null;},get engine(){return engineLab?engineLab.diagnostics():null;},get causalValid(){return wasm?wasm.mission_causal_valid()===1&&wasm.mission_engine_causal_valid()===1:false;},get acronymViolations(){return acronymViolations();},get handles(){if(selected<0||!wasm)return [];const state=readState(wasm,nodes[selected].time);return handles(toCanvas(state),state).map(h=>({key:h.key,end:h.end}));}});
 try{const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error('The physics module is not available. Build it first.');({instance:{exports:wasm}}=await WebAssembly.instantiate(await response.arrayBuffer(),{}));identity.init(wasm);initProfile();initVerify(wasm);loadGlossary(wasm);
 // The lab reads canonical stage numbers back after a redesign so the planner,
 // the worker payload and the signed recorder cannot disagree about the engine.
-engineLab=createLab({wasm,isLocked:()=>!!locked,onDiagnose:()=>{if(nodes.length||preview.length)updateCausal();},onApply:baselineOnly=>{
+engineLab=createLab({wasm,isLocked:()=>!!locked,annotate:annotateAcronyms,onDiagnose:()=>renderEngineCausal(),onApply:baselineOnly=>{
   if(!baselineOnly){nodes=[];selected=-1;}
   DURATION=wasm.mission_parameter(1);DRY=wasm.mission_parameter(3);
   setup=Array.from({length:12},(_,i)=>wasm.mission_parameter(i));
