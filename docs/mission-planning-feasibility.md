@@ -427,7 +427,10 @@ which is why the crate needs no `getrandom` and builds for wasm32 without a shim
 The public identifier is `ODD-ID-` plus base32 of the first ten public-key bytes.
 
 The license, callsign, player rating, per-contract ratings and certified
-certificates persist in one versioned `localStorage` record. **This is a local
+certificates persist in one versioned `localStorage` record, which also archives
+up to eight identities so switching away and back resumes a pilot's own progress.
+Without that archive a switch would erase the certificates of the identity being
+left, which would let the same contract be certified twice. **This is a local
 practice identity, not key custody**: `localStorage` is readable by any script on
 the origin, and the profile dialog and the exported backup both say so. A ranked
 certificate is issued once per contract; later attempts are practice and cannot

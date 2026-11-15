@@ -638,5 +638,44 @@ try{
     assert.deepEqual(probeErrors,[],`${label} must not raise a page error`);
     await probe.close();
   }
-  assert.deepEqual(errors,[]);console.log('Browser viewport, interactions, bounds, WebGL, responsive layout, three mission prototypes, license persistence, signed-dossier verification and damaged-storage repair passed.');
+  // Switching identity must not destroy the identity being left. Erasing its
+  // certificates would also let the same contract be certified twice, so this
+  // is an integrity check, not only a convenience one.
+  {
+    const probe=await browser.newPage({viewport:{width:1280,height:900}});
+    const probeErrors=[];probe.on('pageerror',e=>probeErrors.push(String(e).split('\n')[0]));
+    await probe.addInitScript(()=>{localStorage.setItem('odderon.flightLicense.v1',JSON.stringify({
+      schema:1,entropyHex:'00112233445566778899aabbccddeeff',callsign:'PILOT A',elo:1337.5,
+      missionElo:{101:812.5},ranked:{101:{score:0.9,elo:1337.5,delta:17.5,at:1}},flights:[{contractId:'101'}]
+    }));});
+    await probe.goto(`http://127.0.0.1:${server.address().port}/mission.html`);
+    await probe.waitForFunction(()=>window.missionDiagnostics?.profile?.(),null,{timeout:30000});
+    const first=await probe.evaluate(()=>missionDiagnostics.profile());
+    assert.equal(first.elo,1337.5);
+    await probe.locator('#open-profile').click();
+    // A seven-group key must be refused with a useful message.
+    await probe.locator('#profile-restore-input').fill('ODD-FEED-DCBA-0099-8877-6655-4433-2211');
+    assert.equal(await probe.locator('#profile-restore').isDisabled(),true);
+    assert.match(await probe.locator('#profile-restore-status').textContent(),/eight 4-character hex groups/);
+    await probe.locator('#profile-restore-input').fill('ODD-FEED-DCBA-0099-8877-6655-4433-2211-0123');
+    assert.equal(await probe.locator('#profile-restore').isEnabled(),true);
+    await probe.locator('#profile-restore').click();
+    const second=await probe.evaluate(()=>missionDiagnostics.profile());
+    assert.notEqual(second.publicId,first.publicId,'a different key must switch identity');
+    assert.equal(second.elo,1200,'a new identity starts at the base rating');
+    assert.deepEqual(second.ranked,{},'a new identity has no certificates');
+    assert.equal(await probe.locator('#topbar-elo').textContent(),'1200');
+    // Returning with the original twelve words must resume, not reset.
+    await probe.locator('#profile-restore-input').fill(first.mnemonic);
+    await probe.locator('#profile-restore').click();
+    const resumed=await probe.evaluate(()=>missionDiagnostics.profile());
+    assert.equal(resumed.publicId,first.publicId);
+    assert.equal(resumed.elo,1337.5,'switching back must not erase the rating');
+    assert.equal(resumed.callsign,'PILOT A');
+    assert.deepEqual(Object.keys(resumed.ranked),['101'],'the certificate must survive the round trip');
+    assert.equal(await probe.evaluate(()=>missionDiagnostics.isRanked('101')),true,'a certified contract must stay certified after a switch');
+    assert.deepEqual(probeErrors,[]);
+    await probe.close();
+  }
+  assert.deepEqual(errors,[]);console.log('Browser viewport, interactions, bounds, WebGL, responsive layout, three mission prototypes, license persistence, signed-dossier verification, damaged-storage repair and identity switching passed.');
 } finally{if(browser)await browser.close();await new Promise(r=>server.close(r));}

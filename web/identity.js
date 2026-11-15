@@ -9,6 +9,9 @@ const KEY = 'odderon.flightLicense.v1';
 const SCHEMA = 1;
 const START_ELO = 1200;
 const MISSION_K = 8;
+/// Identities kept in the local archive. Switching must not destroy progress,
+/// but the archive cannot grow without bound in a fixed storage quota.
+const MAX_PROFILES = 8;
 
 let wasm = null;
 let state = null;
@@ -18,7 +21,7 @@ export const eloK = ranked => (ranked < 20 ? 40 : 20);
 export const missionK = MISSION_K;
 
 function defaults() {
-  return { schema: SCHEMA, entropyHex: null, callsign: '', elo: START_ELO, missionElo: {}, ranked: {}, flights: [] };
+  return { schema: SCHEMA, entropyHex: null, callsign: '', elo: START_ELO, missionElo: {}, ranked: {}, flights: [], profiles: {} };
 }
 
 const finiteOr = (value, fallback) =>
@@ -40,36 +43,70 @@ function read() {
     const parsed = JSON.parse(raw);
     if (parsed?.schema !== SCHEMA || typeof parsed.entropyHex !== 'string') return null;
     if (!/^[0-9a-f]{32}$/i.test(parsed.entropyHex)) return null;
-    const missionElo = {};
-    for (const [id, rating] of Object.entries(parsed.missionElo ?? {})) {
-      if (typeof rating === 'number' && Number.isFinite(rating)) missionElo[id] = rating;
-    }
-    const ranked = {};
-    for (const [id, record] of Object.entries(parsed.ranked ?? {})) {
-      if (!record || typeof record !== 'object') continue;
-      if (!Number.isFinite(record.score) || !Number.isFinite(record.elo)) continue;
-      ranked[id] = {
-        score: record.score,
-        elo: record.elo,
-        delta: finiteOr(record.delta, 0),
-        at: finiteOr(record.at, 0),
-        ...(typeof record.recorder === 'string' ? { recorder: record.recorder } : {}),
-      };
+    const profiles = {};
+    for (const [hex, archived] of Object.entries(parsed.profiles ?? {})) {
+      if (/^[0-9a-f]{32}$/.test(hex) && archived && typeof archived === 'object') {
+        profiles[hex] = repairProfile(archived);
+      }
     }
     return {
       schema: SCHEMA,
       entropyHex: parsed.entropyHex.toLowerCase(),
-      callsign: typeof parsed.callsign === 'string' && /^[\w \-]{1,24}$/.test(parsed.callsign) ? parsed.callsign : '',
-      elo: finiteOr(parsed.elo, START_ELO),
-      missionElo,
-      ranked,
-      flights: Array.isArray(parsed.flights)
-        ? parsed.flights.filter(flight => flight && typeof flight === 'object').slice(-200)
-        : [],
+      ...repairProfile(parsed),
+      profiles: trimProfiles(profiles),
     };
   } catch {
     return null;
   }
+}
+
+/// Validate one profile's progress fields. Used for both the active record and
+/// every archived identity, so the two cannot drift apart.
+function repairProfile(source) {
+  const missionElo = {};
+  for (const [id, rating] of Object.entries(source.missionElo ?? {})) {
+    if (typeof rating === 'number' && Number.isFinite(rating)) missionElo[id] = rating;
+  }
+  const ranked = {};
+  for (const [id, record] of Object.entries(source.ranked ?? {})) {
+    if (!record || typeof record !== 'object') continue;
+    if (!Number.isFinite(record.score) || !Number.isFinite(record.elo)) continue;
+    ranked[id] = {
+      score: record.score,
+      elo: record.elo,
+      delta: finiteOr(record.delta, 0),
+      at: finiteOr(record.at, 0),
+      ...(typeof record.recorder === 'string' ? { recorder: record.recorder } : {}),
+    };
+  }
+  return {
+    callsign: typeof source.callsign === 'string' && /^[\w \-]{1,24}$/.test(source.callsign) ? source.callsign : '',
+    elo: finiteOr(source.elo, START_ELO),
+    missionElo,
+    ranked,
+    flights: Array.isArray(source.flights)
+      ? source.flights.filter(flight => flight && typeof flight === 'object').slice(-200)
+      : [],
+  };
+}
+
+/// Keep the most recently written identities. Insertion order is the recency
+/// order because a switch re-inserts the profile it is leaving.
+function trimProfiles(profiles) {
+  const keys = Object.keys(profiles);
+  for (const key of keys.slice(0, Math.max(0, keys.length - MAX_PROFILES))) delete profiles[key];
+  return profiles;
+}
+
+/// The active identity's progress, without the secret or the archive.
+function progress() {
+  return {
+    callsign: state.callsign,
+    elo: state.elo,
+    missionElo: { ...state.missionElo },
+    ranked: { ...state.ranked },
+    flights: [...state.flights],
+  };
 }
 
 function persist() {
@@ -195,15 +232,24 @@ export function restore(text) {
   }
   const identity = identityFields();
   const hex = entropyHexFromKey(identity.flightKey);
-  // Restoring an existing profile keeps its rating; a new one starts fresh.
-  const previous = read();
-  const sameSecret = previous?.entropyHex === hex;
-  state = sameSecret
-    ? previous
-    : { ...defaults(), entropyHex: hex, callsign: identity.publicId.slice(7, 13) };
+  // Archive the identity being left, then resume the target's own progress.
+  // Overwriting a single record would destroy the other pilot's rating and,
+  // worse, erase its certificates — which would let the same contract be
+  // certified twice by switching away and back.
+  const profiles = { ...state.profiles };
+  delete profiles[state.entropyHex];
+  profiles[state.entropyHex] = progress();
+  const resumed = profiles[hex];
+  state = {
+    ...defaults(),
+    ...(resumed ?? {}),
+    entropyHex: hex,
+    callsign: resumed?.callsign || identity.publicId.slice(7, 13),
+    profiles: trimProfiles(profiles),
+  };
   persist();
   notify();
-  return { ok: true, publicId: identity.publicId };
+  return { ok: true, publicId: identity.publicId, resumed: Boolean(resumed) };
 }
 
 function entropyHexFromKey(flightKey) {
