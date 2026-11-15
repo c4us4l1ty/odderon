@@ -17,6 +17,14 @@ self.onmessage=async ({data})=>{
       const verdict=read(2);
       let dossier=null,dossierError=null;
       if(code===1){
+        // Tell the module where this page is served so the printed QR is an
+        // absolute, scannable URL rather than a bare fragment.
+        if(typeof data.origin==='string'&&data.origin){
+          w.mission_fdr_origin_reset();
+          let accepted=true;
+          for(const byte of new TextEncoder().encode(data.origin))if(w.mission_fdr_origin_byte(byte)!==1){accepted=false;break;}
+          if(!accepted||w.mission_fdr_origin_commit()!==1)w.mission_fdr_origin_reset();
+        }
         if(w.mission_fdr_dossier_from_record()===1)dossier=read(1);
         else dossierError='The flight verified, but the dossier could not be rendered: the verification payload is too large for a QR code.';
       }

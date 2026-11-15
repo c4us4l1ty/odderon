@@ -47,6 +47,12 @@ static FIELDS: Mutex<Vec<f64>> = Mutex::new(Vec::new());
 static RECORDER: Mutex<Option<Fdr>> = Mutex::new(None);
 static JSON: Mutex<String> = Mutex::new(String::new());
 static DOSSIER: Mutex<String> = Mutex::new(String::new());
+/// The deployment page URL, supplied by the browser. A QR code has to carry
+/// an absolute URL to be scannable by a phone; the module cannot know the
+/// origin it is served from, so the page states it.
+static ORIGIN: Mutex<String> = Mutex::new(String::new());
+/// Bound the origin so a hostile page cannot inflate the QR payload.
+const MAX_ORIGIN: usize = 512;
 static VERDICT: Mutex<Option<Result<(), FdrError>>> = Mutex::new(None);
 static REPLAYED: Mutex<Option<[f64; REPORT_LEN]>> = Mutex::new(None);
 static GEOMETRY: Mutex<Option<odd_report::dossier::Geometry>> = Mutex::new(None);
@@ -467,7 +473,7 @@ pub extern "C" fn mission_fdr_dossier() -> i32 {
     let Some(geometry) = bridge::dossier_geometry() else {
         return 0;
     };
-    let payload = fdr.verify_payload();
+    let payload = dossier_payload(&fdr);
     let Ok(document) = odd_report::dossier::html(&fdr, &geometry, &payload) else {
         return 0;
     };
@@ -488,7 +494,7 @@ pub extern "C" fn mission_fdr_dossier_from_record() -> i32 {
     let Some(geometry) = GEOMETRY.lock().unwrap().clone() else {
         return 0;
     };
-    let payload = fdr.verify_payload();
+    let payload = dossier_payload(&fdr);
     let Ok(document) = odd_report::dossier::html(&fdr, &geometry, &payload) else {
         return 0;
     };
@@ -644,8 +650,111 @@ pub extern "C" fn mission_fdr_field_at(index: u32) -> f64 {
         .unwrap_or(f64::NAN)
 }
 
+/// The QR text: an absolute URL when the page told us where it is served,
+/// otherwise the bare fragment (which the dossier labels as relative rather
+/// than inventing a host).
+fn dossier_payload(fdr: &Fdr) -> String {
+    let fragment = fdr.verify_payload();
+    let origin = ORIGIN.lock().unwrap().clone();
+    if origin.is_empty() {
+        return fragment;
+    }
+    format!("{origin}{fragment}")
+}
+
+/// Clear the deployment URL.
+#[no_mangle]
+pub extern "C" fn mission_fdr_origin_reset() {
+    ORIGIN.lock().unwrap().clear();
+}
+
+/// Absorb one UTF-8 byte of the deployment page URL (no fragment). Only
+/// `http://` and `https://` are accepted, so a `javascript:` or `data:` URL
+/// can never be printed as a scan target. Returns 0 when rejected.
+#[no_mangle]
+pub extern "C" fn mission_fdr_origin_byte(byte: f64) -> i32 {
+    if !byte.is_finite() || byte < 0.0 || byte > 255.0 || byte.fract() != 0.0 {
+        return 0;
+    }
+    let mut origin = ORIGIN.lock().unwrap();
+    if origin.len() >= MAX_ORIGIN {
+        return 0;
+    }
+    origin.push(byte as u8 as char);
+    if !origin.starts_with("http://") && !origin.starts_with("https://") {
+        // Still building the scheme: allow the prefix, reject anything else.
+        if !"http://".starts_with(origin.as_str()) && !"https://".starts_with(origin.as_str()) {
+            origin.clear();
+            return 0;
+        }
+    }
+    1
+}
+
+/// Validate the accumulated URL. Returns 1 when it is usable as a QR base.
+#[no_mangle]
+pub extern "C" fn mission_fdr_origin_commit() -> i32 {
+    let mut origin = ORIGIN.lock().unwrap();
+    let usable = (origin.starts_with("http://") || origin.starts_with("https://"))
+        && origin.len() > "https://".len()
+        && !origin.contains('#')
+        && !origin.contains('?')
+        && origin.bytes().all(|b| b.is_ascii_graphic());
+    if !usable {
+        origin.clear();
+        return 0;
+    }
+    1
+}
+
 #[cfg(test)]
 mod tests {
+    /// A phone camera cannot resolve a bare fragment, so the printed scan
+    /// target must be the absolute deployment URL when the page supplies it.
+    #[test]
+    fn the_scan_target_is_absolute_when_the_page_states_its_origin() {
+        let fdr = flown_recorder();
+        mission_fdr_origin_reset();
+        let url = "https://flights.example.org/mission.html";
+        for byte in url.bytes() {
+            assert_eq!(mission_fdr_origin_byte(f64::from(byte)), 1);
+        }
+        assert_eq!(mission_fdr_origin_commit(), 1);
+        let payload = dossier_payload(&fdr);
+        assert!(payload.starts_with(url));
+        assert!(payload.ends_with(&fdr.verify_payload()));
+        assert_eq!(payload, format!("{url}{}", fdr.verify_payload()));
+        mission_fdr_origin_reset();
+        assert_eq!(dossier_payload(&fdr), fdr.verify_payload());
+    }
+
+    /// A hostile or malformed origin must never reach the printed page.
+    #[test]
+    fn a_non_http_origin_is_refused() {
+        for bad in [
+            "javascript:alert(1)",
+            "data:text/html,x",
+            "file:///etc/passwd",
+            "https://x.test/p#frag",
+            "https://x.test/p?q=1",
+            "https://",
+        ] {
+            mission_fdr_origin_reset();
+            for byte in bad.bytes() {
+                if mission_fdr_origin_byte(f64::from(byte)) != 1 {
+                    break;
+                }
+            }
+            assert_eq!(mission_fdr_origin_commit(), 0, "{bad} must be refused");
+            assert!(ORIGIN.lock().unwrap().is_empty());
+        }
+        // Non-finite and out-of-range bytes are refused too.
+        mission_fdr_origin_reset();
+        assert_eq!(mission_fdr_origin_byte(f64::NAN), 0);
+        assert_eq!(mission_fdr_origin_byte(300.0), 0);
+        assert_eq!(mission_fdr_origin_byte(104.5), 0);
+    }
+
     use super::*;
 
     fn roundtrip_fields(fdr: &Fdr) -> Fdr {

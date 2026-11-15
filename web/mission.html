@@ -39,7 +39,7 @@
       <div class="engine-grid">
         <div class="engine-view"><canvas id="engine-canvas" aria-label="Engine cross-section and Schlieren field. Drag the throat, exit or length handle, or use the numeric controls."></canvas><span id="engine-view-label">CHAMBER · THROAT · BELL · FREE JET</span></div>
         <div class="engine-controls">
-          <label for="engine-propellant">Propellant pair</label><select id="engine-propellant"><option value="0">LOX / LH2</option><option value="1">LOX / RP-1</option><option value="2">LOX / LCH4</option><option value="3">NTO / MMH</option></select>
+          <label for="engine-propellant">Propellant pair</label><select id="engine-propellant"><!-- Options are built from odd_propulsion through the bridge. --></select>
           <label for="engine-of">Mixture ratio O/F <small id="engine-of-band">—</small></label><input id="engine-of" type="range" min="2.5" max="10" step="0.01" value="6">
           <label for="engine-pc">Chamber pressure <small>MPa</small></label><input id="engine-pc" type="number" min="0.2" max="40" step="0.01" value="3.5">
           <label for="engine-throat">Throat radius <small>mm</small></label><input id="engine-throat" type="number" min="5" max="1000" step="0.1" value="28.8">

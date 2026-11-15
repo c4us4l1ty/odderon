@@ -46,6 +46,33 @@ const manual = await page.evaluate(() => window.missionDiagnostics.assembly);
 check('assembly panel is present', manual !== null, JSON.stringify(manual));
 check('starts fully manual', manual.mask === 0 && manual.margin === 0 && manual.cost === 1);
 
+// --- 1b. The propellant ordering is read from Rust, not restated in JS. ---
+const propellants = await page.evaluate(() => window.missionDiagnostics.engine.propellants);
+const options = await page.evaluate(() => [...document.getElementById('engine-propellant').options]
+  .map(o => ({ value: Number(o.value), label: o.textContent })));
+console.log('propellant table', JSON.stringify(propellants));
+check('the selector is built from the solver', propellants.length === 4 && options.length === 4);
+check('selector values are the signed wire ids',
+  propellants.every((p, i) => p.id === i && options[i].value === p.id));
+check('selector labels are the solver labels',
+  propellants.every((p, i) => options[i].label === p.label));
+check('the calibration bands came from Rust',
+  propellants.every(p => Number.isFinite(p.band[0]) && p.band[1] > p.band[0]));
+// Solving each id must return the same propellant the label promises.
+const bandAgreement = await page.evaluate(() => {
+  const w = window.missionDiagnostics.wasm();
+  const out = [];
+  for (let i = 0; i < w.mission_propellant_count(); i++) {
+    const lo = w.mission_propellant_band(i, 0), hi = w.mission_propellant_band(i, 1);
+    // A mixture ratio just outside the band must be refused by the solver.
+    const code = w.mission_engine_solve(i, lo - 0.05, 3.5e6, 0.0288, 0.3155, 0.8, 0);
+    out.push({ id: i, lo, hi, code });
+  }
+  return out;
+});
+check('the solver enforces the band it advertises',
+  bandAgreement.every(r => r.code !== 1), JSON.stringify(bandAgreement));
+
 // --- 2. Clicking the chief checkboxes changes real mass and cost. ---
 for (const bit of [0, 1, 2, 3]) {
   await page.click(`#delegate-${bit}`);
@@ -112,7 +139,24 @@ if (rec?.json) {
   check('signed mask is the flown mask', parsed.delegation_mask === 0b1111, String(parsed.delegation_mask));
 }
 
+// --- 6b. The dossier's scan target must be an absolute, scannable URL. ---
+await page.click('#verify-flight');
+await page.waitForFunction(() => {
+  const v = window.missionDiagnostics.verification();
+  return v && v.code === 1 && v.dossier;
+}, null, { timeout: 180000 });
+const verified = await page.evaluate(() => window.missionDiagnostics.verification());
+const scanLine = verified.dossier.match(/Scan at:\s*<code>([^<]*)<\/code>/)?.[0] ?? '';
+const scanUrl = verified.dossier.match(/Scan at:\s*<code>([^<]*)<\/code>/)?.[1] ?? '';
+console.log('scan line:', scanLine.slice(0, 140));
+check('the flight verifies end to end', verified.code === 1, verified.verdict);
+check('the scan target is an absolute URL', /^https?:\/\//.test(scanUrl), scanUrl.slice(0, 80));
+check('the scan target carries the verify fragment', scanUrl.includes('#verify='));
+check('the scan target points at this page', scanUrl.startsWith(`${new URL(page.url()).origin}/mission.html#verify=`));
+check('the dossier no longer prints a relative placeholder', !/relative to the serving origin/i.test(scanLine));
+
 // --- 7. The cryogenic tug: the design lever must change mass AND loss. ---
+await page.evaluate(() => document.getElementById('verify-dialog').close());
 // The contract selector is locked during a flight; unlock the plan first.
 await page.click('#unlock');
 await page.selectOption('#mission-select', '103');
