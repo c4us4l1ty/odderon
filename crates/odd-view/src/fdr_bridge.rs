@@ -713,6 +713,7 @@ mod tests {
     /// target must be the absolute deployment URL when the page supplies it.
     #[test]
     fn the_scan_target_is_absolute_when_the_page_states_its_origin() {
+        let _guard = bridge::test_lock();
         let fdr = flown_recorder();
         mission_fdr_origin_reset();
         let url = "https://flights.example.org/mission.html";
@@ -731,6 +732,7 @@ mod tests {
     /// A hostile or malformed origin must never reach the printed page.
     #[test]
     fn a_non_http_origin_is_refused() {
+        let _guard = bridge::test_lock();
         for bad in [
             "javascript:alert(1)",
             "data:text/html,x",
