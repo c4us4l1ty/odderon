@@ -36,6 +36,8 @@ struct Settings {
     node_metric: bool,
     /// Cryogenic fit-out. Editable by the player; signed into FDR v3.
     thermal_design: odd_contracts::ThermalDesign,
+    /// Which disciplines the Chief-AI sized. Signed into FDR v3.
+    delegation: odd_contracts::DelegationMask,
 }
 impl Settings {
     /// The tank model applies only to cryogenic pairs, and only when a load
@@ -108,6 +110,7 @@ pub extern "C" fn mission_contract(id: u32) -> i32 {
         contract_id: id,
         engine_spec: c.engine_spec,
         thermal_design: odd_contracts::ThermalDesign::baseline(),
+        delegation: odd_contracts::DelegationMask::MANUAL,
         epoch: odd_contracts::START_EPOCH,
         initial: c.initial,
         duration_us: c.duration_us,
@@ -197,6 +200,7 @@ pub extern "C" fn mission_setup(
         // design and cannot produce a certified recorder.
         engine_spec: odd_contracts::STORABLE_BASELINE,
         thermal_design: odd_contracts::ThermalDesign::baseline(),
+        delegation: odd_contracts::DelegationMask::MANUAL,
         epoch: epoch as i64,
         initial: Keyframe {
             time: 0.0,
@@ -886,6 +890,11 @@ pub(crate) struct CapturedFlight {
     pub commands: Vec<CapturedCommand>,
     pub report: [f64; REPORT_LEN],
     pub final_state: Keyframe,
+    /// The cryogenic fit-out that actually flew, and what it produced.
+    pub thermal_design: odd_contracts::ThermalDesign,
+    pub thermal: odd_contracts::ThermalOutcome,
+    pub tank_volumes_m3: [f64; 2],
+    pub delegation: odd_contracts::DelegationMask,
 }
 
 /// Snapshot the executed flight for signing. Requires a completed execution.
@@ -917,6 +926,20 @@ pub(crate) fn capture_flight() -> Option<CapturedFlight> {
         thrust_n: settings.engine.thrust_newtons,
         specific_impulse_s: settings.engine.specific_impulse_seconds,
         node_metric: settings.node_metric,
+        thermal_design: settings.thermal_design,
+        tank_volumes_m3: {
+            let load = settings.initial.mass - settings.dry_mass;
+            let contract = odd_contracts::Contract::get(settings.contract_id)?;
+            match settings
+                .thermal_design
+                .stage(&contract, &settings.engine_spec, load)
+            {
+                Some(stage) => [stage.oxidizer.volume_m3, stage.fuel.volume_m3],
+                None => [0.0, 0.0],
+            }
+        },
+        thermal: execution.thermal.clone(),
+        delegation: settings.delegation,
         prediction,
         commands: settings
             .nodes

@@ -727,6 +727,9 @@ mod tests {
     pub(crate) fn sample() -> Fdr {
         let mut fdr = Fdr {
             schema_version: SCHEMA_VERSION,
+            thermal_specs: Vec::new(),
+            delegation_mask: 0,
+            vent_events: Vec::new(),
             contract_id: 101,
             attempt_mode: AttemptMode::Ranked,
             callsign: "TEST PILOT".into(),

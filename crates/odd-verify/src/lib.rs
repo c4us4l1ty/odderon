@@ -369,12 +369,17 @@ pub struct FlightSpec {
     pub prediction: [f64; 6],
     /// (epoch in microseconds, TNW delta-v, optional guidance state)
     pub commands: Vec<(i64, [f64; 3], Option<[f64; 6]>)>,
+    /// The signed cryogenic fit-out, rebuilt from the record. `None` for a
+    /// pre-v3 record or a storable stage.
+    pub thermal: Option<ThermalInputs>,
 }
 
 pub struct ReplayOutcome {
     pub report: [f64; REPORT_LEN],
     pub final_state_hash: [u8; 32],
     pub geometry: Geometry,
+    /// Recomputed relief-valve openings, for comparison with the signed list.
+    pub vent_events: Vec<odd_report::VentEvent>,
 }
 
 fn settings_from_spec(
@@ -413,7 +418,7 @@ fn settings_from_spec(
         FlightSettings {
             // Schema 1/2 records predate the tank model; they replay with no
             // boil-off so their certificates remain valid.
-            thermal: None,
+            thermal: spec.thermal,
             contract_id: spec.contract_id,
             epoch: spec.epoch_s,
             initial: Keyframe {
@@ -586,6 +591,17 @@ pub fn replay_flight(spec: &FlightSpec) -> Option<ReplayOutcome> {
         report: outcome.report,
         final_state_hash: hash,
         geometry,
+        vent_events: outcome
+            .thermal
+            .vents
+            .iter()
+            .map(|event| odd_report::VentEvent {
+                time_us: event.time_us,
+                tank: event.tank,
+                pressure_pa: event.pressure_pa,
+                temperature_k: event.temperature_k,
+            })
+            .collect(),
     })
 }
 
@@ -605,6 +621,10 @@ pub fn verify_record(fdr: &Fdr) -> Result<ReplayOutcome, FdrError> {
         .ok_or(FdrError::Malformed("the command timeline does not compile"))?;
     fdr.compare_metrics(&outcome.report)?;
     fdr.compare_final_state(&outcome.final_state_hash)?;
+    // Gate three (v3): the signed vent history must be what the signed
+    // thermal spec actually produces. A client cannot claim less boil-off
+    // than its own hardware causes.
+    fdr.compare_vent_events(&outcome.vent_events)?;
     Ok(outcome)
 }
 
@@ -716,6 +736,7 @@ pub fn replay_engine(fdr: &Fdr) -> (f64, f64) {
 pub fn spec_from_record(fdr: &Fdr) -> FlightSpec {
     let (thrust_n, specific_impulse_s) = replay_engine(fdr);
     FlightSpec {
+        thermal: thermal_inputs_from_record(fdr),
         contract_id: fdr.contract_id,
         epoch_s: fdr.epoch_s,
         duration_us: fdr.duration_us,
@@ -748,4 +769,43 @@ pub fn hash_final_state(report: &[f64; REPORT_LEN], state: &Keyframe) -> [u8; 32
         ],
         state.mass,
     )
+}
+
+/// Rebuild the tank model's inputs from the **signed** thermal spec.
+///
+/// Nothing here is taken on trust: the spec is physical hardware, and the
+/// boil-off it implies is recomputed by the same integrator the flight used.
+/// A record with no thermal block (schema 1/2, or a storable stage) has no
+/// tank model, so its replay produces no vent events.
+pub fn thermal_inputs_from_record(fdr: &Fdr) -> Option<ThermalInputs> {
+    if fdr.schema_version < odd_report::SCHEMA_VERSION {
+        return None;
+    }
+    let spec = fdr.thermal_specs.first()?;
+    let engine = fdr.engine?;
+    let design = odd_contracts::ThermalDesign {
+        mli_layers: spec.mli_layers,
+        epsilon_eff: spec.epsilon_eff,
+        shell: spec.tank_shell_material,
+        absorptivity: spec.absorptivity,
+        outer_epsilon: spec.outer_epsilon,
+        strut_conductance_w_k: spec.strut_conductance_w_k,
+        relief_pressure_pa: spec.relief_pressure_pa,
+        radiator_area_m2: spec.radiator_area_m2,
+        radiator_epsilon: spec.radiator_epsilon,
+        cryocooler_lift_w: spec.cryocooler_w,
+        cryocooler_carnot_fraction: spec.cryocooler_carnot_fraction,
+        bus: odd_systems::BusSpec {
+            array_w_at_1au: spec.array_w_at_1au,
+            avionics_w: spec.avionics_w,
+            electric_propulsion_w: spec.electric_propulsion_w,
+        },
+        structure_temperature_k: spec.structure_temperature_k,
+        sink_temperature_k: spec.sink_temperature_k,
+    };
+    Some(ThermalInputs {
+        engine_spec: engine,
+        design,
+        load_kg: fdr.initial_mass_kg - fdr.dry_mass_kg,
+    })
 }

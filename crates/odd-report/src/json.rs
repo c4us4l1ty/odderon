@@ -106,6 +106,69 @@ impl Object<'_> {
         }
         self.out.push(']');
     }
+
+    /// Per-stage cryogenic fit-out. Transport only: the signed bytes come
+    /// from `Fdr::canonical_bytes`, never from this rendering.
+    pub fn thermal_specs(&mut self, name: &str, specs: &[crate::fdr::StageThermalSpec]) {
+        self.key(name);
+        self.out.push('[');
+        for (index, spec) in specs.iter().enumerate() {
+            if index > 0 {
+                self.out.push(',');
+            }
+            self.out.push('{');
+            let mut o = Object {
+                out: self.out,
+                first: true,
+            };
+            o.number("stage", spec.stage as f64);
+            o.array("tank_volumes_m3", &spec.tank_volumes_m3);
+            o.number("propellant_id", spec.propellant_id as f64);
+            o.number("mli_layers", spec.mli_layers as f64);
+            o.number("epsilon_eff", spec.epsilon_eff);
+            o.number("tank_shell_material", spec.tank_shell_material as f64);
+            o.number("absorptivity", spec.absorptivity);
+            o.number("outer_epsilon", spec.outer_epsilon);
+            o.number("strut_conductance_w_k", spec.strut_conductance_w_k);
+            o.number("relief_pressure_pa", spec.relief_pressure_pa);
+            o.number("radiator_area_m2", spec.radiator_area_m2);
+            o.number("radiator_epsilon", spec.radiator_epsilon);
+            o.number("cryocooler_w", spec.cryocooler_w);
+            o.number(
+                "cryocooler_carnot_fraction",
+                spec.cryocooler_carnot_fraction,
+            );
+            o.number("array_w_at_1au", spec.array_w_at_1au);
+            o.number("avionics_w", spec.avionics_w);
+            o.number("electric_propulsion_w", spec.electric_propulsion_w);
+            o.number("structure_temperature_k", spec.structure_temperature_k);
+            o.number("sink_temperature_k", spec.sink_temperature_k);
+            self.out.push('}');
+        }
+        self.out.push(']');
+    }
+
+    /// Exact relief-valve openings.
+    pub fn vent_events(&mut self, name: &str, events: &[crate::fdr::VentEvent]) {
+        self.key(name);
+        self.out.push('[');
+        for (index, event) in events.iter().enumerate() {
+            if index > 0 {
+                self.out.push(',');
+            }
+            self.out.push('{');
+            let mut o = Object {
+                out: self.out,
+                first: true,
+            };
+            o.number("time_us", event.time_us as f64);
+            o.number("tank", event.tank as f64);
+            o.number("pressure_pa", event.pressure_pa);
+            o.number("temperature_k", event.temperature_k);
+            self.out.push('}');
+        }
+        self.out.push(']');
+    }
 }
 
 /// JSON string escaping. Control characters use the short forms where JSON

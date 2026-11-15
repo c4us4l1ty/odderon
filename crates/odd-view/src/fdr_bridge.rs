@@ -32,7 +32,16 @@ const COMMAND_OFFSET: usize = HEADER;
 /// time_us, dvT, dvN, dvW, guided flag, six guidance components.
 const COMMAND_STRIDE: usize = 11;
 const MAX_COMMANDS: usize = 12;
-const MAX_FIELDS: usize = HEADER + MAX_COMMANDS * COMMAND_STRIDE + REPORT_LEN + 32 + 32 + 64;
+/// v3 trailer, appended after the signature so every historical index stays
+/// put: mask, spec count, the specs, vent count, the vents.
+const THERMAL_SPEC_STRIDE: usize = 20;
+const VENT_STRIDE: usize = 4;
+const MAX_THERMAL_SPECS: usize = 1;
+const MAX_VENT_EVENTS: usize = odd_report::MAX_VENT_EVENTS;
+const V3_TRAILER_MAX: usize =
+    2 + MAX_THERMAL_SPECS * THERMAL_SPEC_STRIDE + MAX_VENT_EVENTS * VENT_STRIDE;
+const MAX_FIELDS: usize =
+    HEADER + MAX_COMMANDS * COMMAND_STRIDE + REPORT_LEN + 32 + 32 + 64 + V3_TRAILER_MAX;
 
 static FIELDS: Mutex<Vec<f64>> = Mutex::new(Vec::new());
 static RECORDER: Mutex<Option<Fdr>> = Mutex::new(None);
@@ -115,7 +124,14 @@ fn parse_fields(fields: &[f64], callsign: &str) -> Option<Fdr> {
     }
     let command_count = command_count as usize;
     let metrics_at = COMMAND_OFFSET + command_count * COMMAND_STRIDE;
-    if fields.len() != metrics_at + REPORT_LEN + 32 + 32 + 64 {
+    let base_len = metrics_at + REPORT_LEN + 32 + 32 + 64;
+    // Pre-v3 records end at the signature; v3 appends a variable-length
+    // trailer whose own counts are checked below.
+    if schema >= i64::from(SCHEMA_VERSION) {
+        if fields.len() < base_len + 3 || fields.len() > base_len + V3_TRAILER_MAX {
+            return None;
+        }
+    } else if fields.len() != base_len {
         return None;
     }
     let mut commands = Vec::with_capacity(command_count);
@@ -151,6 +167,62 @@ fn parse_fields(fields: &[f64], callsign: &str) -> Option<Fdr> {
     let final_state_hash: [u8; 32] = bytes(hash_at, 32)?.try_into().ok()?;
     let public_key: [u8; 32] = bytes(hash_at + 32, 32)?.try_into().ok()?;
     let signature: [u8; 64] = bytes(hash_at + 64, 64)?.try_into().ok()?;
+    // --- v3 trailer ---
+    let mut thermal_specs = Vec::new();
+    let mut vent_events = Vec::new();
+    let mut delegation_mask = 0u8;
+    if schema >= i64::from(SCHEMA_VERSION) {
+        let mut at = hash_at + 128;
+        delegation_mask = u8::try_from(integer(*fields.get(at)?)?).ok()?;
+        let spec_count = integer(*fields.get(at + 1)?)?;
+        if !(0..=MAX_THERMAL_SPECS as i64).contains(&spec_count) {
+            return None;
+        }
+        at += 2;
+        for _ in 0..spec_count {
+            let f = fields.get(at..at + THERMAL_SPEC_STRIDE)?;
+            thermal_specs.push(odd_report::StageThermalSpec {
+                stage: u8::try_from(integer(f[0])?).ok()?,
+                tank_volumes_m3: [f[1], f[2]],
+                propellant_id: u8::try_from(integer(f[3])?).ok()?,
+                mli_layers: u32::try_from(integer(f[4])?).ok()?,
+                epsilon_eff: f[5],
+                tank_shell_material: u8::try_from(integer(f[6])?).ok()?,
+                absorptivity: f[7],
+                outer_epsilon: f[8],
+                strut_conductance_w_k: f[9],
+                relief_pressure_pa: f[10],
+                radiator_area_m2: f[11],
+                radiator_epsilon: f[12],
+                cryocooler_w: f[13],
+                cryocooler_carnot_fraction: f[14],
+                array_w_at_1au: f[15],
+                avionics_w: f[16],
+                electric_propulsion_w: f[17],
+                structure_temperature_k: f[18],
+                sink_temperature_k: f[19],
+            });
+            at += THERMAL_SPEC_STRIDE;
+        }
+        let vent_count = integer(*fields.get(at)?)?;
+        if !(0..=MAX_VENT_EVENTS as i64).contains(&vent_count) {
+            return None;
+        }
+        at += 1;
+        for _ in 0..vent_count {
+            let f = fields.get(at..at + VENT_STRIDE)?;
+            vent_events.push(odd_report::VentEvent {
+                time_us: integer(f[0])?,
+                tank: u8::try_from(integer(f[1])?).ok()?,
+                pressure_pa: f[2],
+                temperature_k: f[3],
+            });
+            at += VENT_STRIDE;
+        }
+        if at != fields.len() {
+            return None;
+        }
+    }
     Some(Fdr {
         schema_version: u16::try_from(schema).ok()?,
         contract_id: u32::try_from(contract).ok()?,
@@ -171,6 +243,9 @@ fn parse_fields(fields: &[f64], callsign: &str) -> Option<Fdr> {
         final_state_hash,
         elo_before: fields[23],
         elo_after: fields[24],
+        thermal_specs,
+        delegation_mask,
+        vent_events,
         public_key,
         signature,
     })
@@ -243,6 +318,43 @@ pub extern "C" fn mission_fdr_capture(mode: u32, elo_before: f64, elo_after: f64
         ),
         elo_before,
         elo_after,
+        thermal_specs: if captured.thermal.inert {
+            Vec::new()
+        } else {
+            vec![odd_report::StageThermalSpec {
+                stage: 0,
+                tank_volumes_m3: captured.tank_volumes_m3,
+                propellant_id: captured.engine_spec.propellant as u8,
+                mli_layers: captured.thermal_design.mli_layers,
+                epsilon_eff: captured.thermal_design.epsilon_eff,
+                tank_shell_material: captured.thermal_design.shell,
+                absorptivity: captured.thermal_design.absorptivity,
+                outer_epsilon: captured.thermal_design.outer_epsilon,
+                strut_conductance_w_k: captured.thermal_design.strut_conductance_w_k,
+                relief_pressure_pa: captured.thermal_design.relief_pressure_pa,
+                radiator_area_m2: captured.thermal_design.radiator_area_m2,
+                radiator_epsilon: captured.thermal_design.radiator_epsilon,
+                cryocooler_w: captured.thermal_design.cryocooler_lift_w,
+                cryocooler_carnot_fraction: captured.thermal_design.cryocooler_carnot_fraction,
+                array_w_at_1au: captured.thermal_design.bus.array_w_at_1au,
+                avionics_w: captured.thermal_design.bus.avionics_w,
+                electric_propulsion_w: captured.thermal_design.bus.electric_propulsion_w,
+                structure_temperature_k: captured.thermal_design.structure_temperature_k,
+                sink_temperature_k: captured.thermal_design.sink_temperature_k,
+            }]
+        },
+        delegation_mask: captured.delegation.0,
+        vent_events: captured
+            .thermal
+            .vents
+            .iter()
+            .map(|event| odd_report::VentEvent {
+                time_us: event.time_us,
+                tank: event.tank,
+                pressure_pa: event.pressure_pa,
+                temperature_k: event.temperature_k,
+            })
+            .collect(),
         public_key: [0; 32],
         signature: [0; 64],
     };
@@ -468,6 +580,43 @@ pub extern "C" fn mission_fdr_fields_from_record() -> u32 {
     fields.extend(fdr.final_state_hash.iter().map(|byte| *byte as f64));
     fields.extend(fdr.public_key.iter().map(|byte| *byte as f64));
     fields.extend(fdr.signature.iter().map(|byte| *byte as f64));
+    if fdr.schema_version >= SCHEMA_VERSION {
+        fields.push(f64::from(fdr.delegation_mask));
+        fields.push(fdr.thermal_specs.len() as f64);
+        for spec in &fdr.thermal_specs {
+            fields.extend_from_slice(&[
+                f64::from(spec.stage),
+                spec.tank_volumes_m3[0],
+                spec.tank_volumes_m3[1],
+                f64::from(spec.propellant_id),
+                f64::from(spec.mli_layers),
+                spec.epsilon_eff,
+                f64::from(spec.tank_shell_material),
+                spec.absorptivity,
+                spec.outer_epsilon,
+                spec.strut_conductance_w_k,
+                spec.relief_pressure_pa,
+                spec.radiator_area_m2,
+                spec.radiator_epsilon,
+                spec.cryocooler_w,
+                spec.cryocooler_carnot_fraction,
+                spec.array_w_at_1au,
+                spec.avionics_w,
+                spec.electric_propulsion_w,
+                spec.structure_temperature_k,
+                spec.sink_temperature_k,
+            ]);
+        }
+        fields.push(fdr.vent_events.len() as f64);
+        for event in &fdr.vent_events {
+            fields.extend_from_slice(&[
+                event.time_us as f64,
+                f64::from(event.tank),
+                event.pressure_pa,
+                event.temperature_k,
+            ]);
+        }
+    }
     let count = fields.len() as u32;
     *FIELDS.lock().unwrap() = fields;
     count
@@ -500,6 +649,9 @@ mod tests {
         let license = odd_identity::License::from_entropy([3u8; 16]);
         let mut fdr = Fdr {
             schema_version: SCHEMA_VERSION,
+            thermal_specs: Vec::new(),
+            delegation_mask: 0,
+            vent_events: Vec::new(),
             contract_id: 101,
             attempt_mode: AttemptMode::Ranked,
             callsign: "BRIDGE TEST".into(),
