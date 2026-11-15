@@ -4,7 +4,7 @@
 //! `oracle_summerfield_separation_and_fuel_rich_optimum`. The published
 //! numbers are the acceptance criteria from the work-package card; the
 //! tolerances are the card's, not tuned to the implementation.
-use odd_propulsion::{nozzle, solve_engine, EngineSpec, Propellant, PropulsionError};
+use odd_propulsion::{nozzle, solve_engine, EngineSpec, Propellant};
 
 fn rs25() -> EngineSpec {
     EngineSpec {
@@ -318,32 +318,4 @@ fn every_propellant_peaks_isp_inside_its_optimal_band() {
         // The optimum must be interior, not pinned to a calibration edge.
         assert!(best.0 > lo + 1e-9 && best.0 < hi - 1e-9);
     }
-}
-
-/// A thermally limited design is a real solution with a named cause, not a
-/// convergence failure. The contract layer must refuse it by name so the lab
-/// can tell the designer what to change.
-#[test]
-fn a_hot_throat_is_refused_by_name_not_as_a_numerical_failure() {
-    let contract = odd_contracts::Contract::get(101).unwrap();
-    // A tiny throat at high chamber pressure drives the Bartz flux up hard.
-    let hot = EngineSpec {
-        propellant: Propellant::LoxRp1,
-        of_ratio: 2.7,
-        p_c_pa: 30.0e6,
-        r_throat_m: 0.006,
-        r_exit_m: 0.006 * 4.0,
-        length_fraction: 0.8,
-    };
-    let solved = solve_engine(&hot, 0.0).expect("a hot design still solves");
-    assert!(
-        solved.thermal_limit_exceeded,
-        "wall {:.0} K",
-        solved.throat_wall_temperature_k
-    );
-    assert!(!solved.flight_ready());
-    assert_eq!(
-        contract.vehicle(hot).err(),
-        Some(PropulsionError::ThermalLimitExceeded)
-    );
 }

@@ -129,7 +129,10 @@ hot-wall temperature solves
 fixed 40-step iteration so the answer never depends on a convergence history.
 Above **1350 K** (copper-chrome-niobium liner in a nickel jacket) the solution
 is flagged `thermal_limit_exceeded` and a contract will not accept the
-engine.
+engine. `solve_engine` still returns the solution so the field stays
+readable in the lab; `Contract::vehicle` refuses it with the named
+`PropulsionError::ThermalLimitExceeded` rather than a generic convergence
+error, so the designer is told to lower chamber pressure or open the throat.
 
 Because `h_g ∝ D_t^-0.2` while the coolant coefficient barely moves with
 scale, **small throats run hot**: a 6 mm kerolox throat at 30 MPa trips the
@@ -170,13 +173,23 @@ static structure.
   thrust, a lighter engine or a better engine than the one signed are all
   rejected by name even though the signature is valid.
 - **`oracle_browser_cad_lab_and_idle_gate`** — the lab block in
-  `tests/browser/observatory.mjs`. It drags the exit-radius handle on the
-  cross-section, sweeps O/F past stoichiometric, sweeps altitude from 0 to
+  `tests/browser/observatory.mjs`. It drags all five handles on the
+  cross-section (throat, exit, bell length, the mixture-ratio track and the
+  injector pressure handle), sweeps O/F past stoichiometric, sweeps altitude from 0 to
   100 km watching the bell separate and re-attach, fits a redesign to the
   stage, flies the contract, checks the signed record carries the design
   rather than a thrust claim, and confirms Annex B prints it. The existing
   two-second idle assertions then require zero animation callbacks, zero
   redraws and zero worker messages.
+- `every_propellant_peaks_isp_inside_its_optimal_band` sweeps 1001 mixture
+  ratios per propellant and requires the `Isp` argmax to be **interior** to
+  its band — LH2 4.5–6.5, RP-1 2.2–2.7, LCH4 3.2–3.8, MMH 1.6–2.2 — so a
+  curve that merely flattens against a band edge cannot pass.
+- `crates/odd-contracts/tests/thermal.rs` requires a hot throat to be
+  refused as `ThermalLimitExceeded`, not as a numerical failure.
+- The same browser block hands the signed payload to the native
+  `verify_record` CLI and requires a verified verdict, then requires a
+  one-ulp throat forgery to be rejected. Portability is a gate, not a claim.
 - `tests/atmosphere_parity.rs` pins the test-stand pressure model against
   `odd-astro`'s drag density so the two atmospheres cannot drift.
 - `src/plume.rs` unit tests pin the Prandtl–Meyer round trip, the vacuum
