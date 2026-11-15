@@ -438,3 +438,89 @@ pub extern "C" fn maneuver_oracle_byte(index: u32) -> u32 {
         .copied()
         .map_or(256, u32::from)
 }
+
+/// WP 1.5 propulsion parity grid: 32 engine designs spanning all four
+/// propellant pairs, mixture ratio, chamber pressure, expansion ratio, bell
+/// length and ambient altitude. Every field of the solution is hashed as raw
+/// IEEE-754 bits, so a single-ULP divergence between native and wasm fails.
+pub fn propulsion_fingerprint() -> [u8; 32] {
+    use odd_propulsion::{nozzle, solve_engine, EngineSpec, Propellant};
+    let mut values: Vec<u64> = Vec::new();
+    for index in 0..32_u32 {
+        let propellant = Propellant::from_u8((index % 4) as u8).unwrap();
+        let (lo, hi) = propellant.of_band();
+        let step = f64::from((index / 4) % 4) / 3.0;
+        let of_ratio = lo + (hi - lo) * (0.25 + 0.5 * step);
+        let p_c_pa = 1.5e6 + 6.0e6 * f64::from(index % 5);
+        let r_throat_m = 0.02 + 0.03 * f64::from((index / 2) % 4);
+        let expansion = 8.0 + 20.0 * f64::from(index % 4);
+        let spec = EngineSpec {
+            propellant,
+            of_ratio,
+            p_c_pa,
+            r_throat_m,
+            r_exit_m: r_throat_m * libm::sqrt(expansion),
+            length_fraction: 0.6 + 0.1 * f64::from(index % 5),
+        };
+        let altitude = f64::from(index % 8) * 12_500.0;
+        let ambient = nozzle::ambient_pressure(altitude);
+        let solved = solve_engine(&spec, ambient).unwrap();
+        values.extend([
+            solved.ambient_pressure_pa.to_bits(),
+            solved.thrust_n.to_bits(),
+            solved.specific_impulse_s.to_bits(),
+            solved.mass_flow_kg_s.to_bits(),
+            solved.exhaust_velocity_m_s.to_bits(),
+            solved.c_star_m_s.to_bits(),
+            solved.chamber_temperature_k.to_bits(),
+            solved.molar_mass_kg_mol.to_bits(),
+            solved.gamma.to_bits(),
+            solved.bulk_density_kg_m3.to_bits(),
+            solved.expansion_ratio.to_bits(),
+            solved.exit_mach.to_bits(),
+            solved.exit_pressure_pa.to_bits(),
+            solved.exit_temperature_k.to_bits(),
+            solved.divergence_factor.to_bits(),
+            solved.nozzle_length_m.to_bits(),
+            solved.throat_heat_flux_w_m2.to_bits(),
+            solved.throat_wall_temperature_k.to_bits(),
+            solved.film_coefficient_w_m2_k.to_bits(),
+            solved.dry_mass_kg.to_bits(),
+            solved.pump_power_w.to_bits(),
+            solved.chamber_radius_m.to_bits(),
+            solved.chamber_length_m.to_bits(),
+            u64::from(solved.thermal_limit_exceeded),
+        ]);
+        match solved.separation {
+            Some(sep) => values.extend([
+                1,
+                sep.x_norm.to_bits(),
+                sep.area_ratio_sep.to_bits(),
+                sep.side_load_kn.to_bits(),
+            ]),
+            None => values.extend([0, 0, 0, 0]),
+        }
+        // The sampled flow field is part of the contract too: the browser
+        // draws it and the dossier prints it.
+        for station in odd_propulsion::flow_profile(&spec, ambient, 24).unwrap() {
+            values.extend([
+                station.x_norm.to_bits(),
+                station.radius_m.to_bits(),
+                station.mach.to_bits(),
+                station.pressure_pa.to_bits(),
+                station.density_kg_m3.to_bits(),
+            ]);
+        }
+    }
+    canonical_hash(1, &values).unwrap()
+}
+#[cfg(target_arch = "wasm32")]
+#[no_mangle]
+pub extern "C" fn propulsion_oracle_byte(index: u32) -> u32 {
+    static FINGERPRINT: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
+    FINGERPRINT
+        .get_or_init(propulsion_fingerprint)
+        .get(index as usize)
+        .copied()
+        .map_or(256, u32::from)
+}

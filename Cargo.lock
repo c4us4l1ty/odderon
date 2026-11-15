@@ -137,9 +137,11 @@ dependencies = [
 name = "odd-core-oracle"
 version = "0.1.0"
 dependencies = [
+ "libm",
  "odd-astro",
  "odd-core",
  "odd-ephem",
+ "odd-propulsion",
  "odd-sim",
 ]
 
@@ -157,6 +159,14 @@ version = "0.1.0"
 dependencies = [
  "ed25519-compact",
  "sha2",
+]
+
+[[package]]
+name = "odd-propulsion"
+version = "0.1.0"
+dependencies = [
+ "libm",
+ "odd-astro",
 ]
 
 [[package]]

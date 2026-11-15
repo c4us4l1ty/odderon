@@ -12,3 +12,5 @@ odd-astro = { path = "../../crates/odd-astro" }
 odd-core = { path = "../../crates/odd-core" }
 odd-ephem = { path = "../../crates/odd-ephem" }
 odd-sim = { path = "../../crates/odd-sim" }
+odd-propulsion = { path = "../../crates/odd-propulsion" }
+libm = "0.2"

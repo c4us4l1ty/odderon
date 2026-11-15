@@ -5,6 +5,7 @@ fn main() {
         odd_core_oracle::blended_integrator_fingerprint(),
         odd_core_oracle::analytical_integrator_fingerprint(),
         odd_core_oracle::maneuver_fingerprint(),
+        odd_core_oracle::propulsion_fingerprint(),
     ] {
         for byte in hash {
             print!("{byte:02x}");
