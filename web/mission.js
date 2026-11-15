@@ -57,6 +57,10 @@ const lens={
   leo:'A close Earth parking orbit, here a few hundred kilometers up. The projection compares the parking circle with Earth’s surface.',
   dag:'A cause-and-effect chain with no loops. Each warning points from symptom to mechanism to cause to a one-click demonstration.',
   pdr:'An engineering dossier comparing your locked prediction with modeled flight, signed error contributions and practice rating.',
+  mli:'Each film layer re-radiates heat to the next, so the leak falls as layers are added. The projection shows the outer skin running hot while only a small fraction reaches the liquid. Past about twenty layers the support struts, not the blanket, set the floor.',
+  cop:'A cryocooler lifts heat from the cold tank and rejects it, plus the electricity it consumed, through a warm radiator. The projection compares heat lifted with power drawn: at 20 K against a 300 K sink the electricity is one to two orders of magnitude larger, and the Carnot ceiling caps the ratio.',
+  gnc:'Guidance decides where to point, navigation decides where you are, and control moves the actuators. The projection shows the attitude hardware drawing from the same electrical bus that feeds the cooler and the propulsion.',
+  'boil-off':'Heat leaking into a cryogenic tank vaporizes liquid. Below the relief setting the tank self-pressurizes; at relief it vents and that propellant is lost to the mission. The projection shows the liquid level falling as heat arrives.',
   t:'A push along the direction of travel changes orbital energy. Near the closest point, a forward push raises the farthest point of the orbit; a backward push lowers it. The projection shows kinetic-energy gain or loss and the opposite side breathing outward or inward.',
   n:'This sideways push stays in the orbital plane and is perpendicular to the direction of travel. Near an apsis it points roughly inward or outward; away from one it is not exactly radial. The projection rotates the eccentricity vector.',
   w:'This push is perpendicular to the orbital plane. It changes the direction of the orbit’s angular momentum and tilts the plane about the line of nodes. The projection shows torque as radius crossed with force.',
@@ -437,6 +441,33 @@ function drawLens(){
     arrow(cx,cy,cx+60,cy,'#80d9cb');arrow(cx,cy,cx,cy-45,'#e1bc76');arrow(cx,cy,cx-35,cy+35,'#bdade0');lensCtx.fillText('Along / sideways / out of plane',10,14);
   }else if(key==='leo'){
     lensCtx.fillStyle='#607f71';lensCtx.beginPath();lensCtx.arc(cx,cy,30,0,Math.PI*2);lensCtx.fill();lensCtx.strokeStyle='#70d7dc';lensCtx.beginPath();lensCtx.arc(cx,cy,42+2*phase,0,Math.PI*2);lensCtx.stroke();lensCtx.fillText('Low Earth parking orbit',10,14);
+  }else if(key==='mli'){
+    const layers=6;for(let i=0;i<layers;i++){const x=cx-50+i*14;lensCtx.strokeStyle=i===0?'#edbc98':'#3d5a4e';lensCtx.beginPath();lensCtx.moveTo(x,cy-40);lensCtx.lineTo(x,cy+40);lensCtx.stroke();}
+    arrow(cx-80,cy,cx-54,cy,'#e1bc76');arrow(cx+34,cy,cx+44,cy,'#80d9cb');
+    lensCtx.fillStyle='#607f71';lensCtx.fillRect(cx+48,cy-30,26,60);
+    lensCtx.fillText('Outer skin runs hot; only a fraction reaches the liquid',10,14);
+    lensCtx.fillText('More layers help less once the struts dominate',10,h-8);
+  }else if(key==='cop'){
+    const lift=26,draw=70;
+    lensCtx.fillStyle='#80d9cb';lensCtx.fillRect(cx-60,cy-lift/2,24,lift);
+    lensCtx.fillStyle='#edbc98';lensCtx.fillRect(cx+36,cy-draw/2,24,draw);
+    arrow(cx-30,cy,cx+30,cy,'#e1bc76');
+    lensCtx.fillText('Heat lifted at the cold tank',cx-96,cy+lift/2+16);
+    lensCtx.fillText('Electricity drawn',cx+22,cy+draw/2+16);
+    lensCtx.fillText('Carnot caps the ratio: cold / (hot − cold)',10,14);
+  }else if(key==='gnc'){
+    lensCtx.strokeStyle='#3d5a4e';lensCtx.strokeRect(cx-24,cy-18,48,36);
+    arrow(cx,cy,cx+52*Math.cos(phase),cy+34*Math.sin(phase),'#bdade0');
+    lensCtx.fillText('Sensors, computer and actuators hold attitude',10,14);
+    lensCtx.fillText('They draw from the same bus as the cooler',10,h-8);
+  }else if(key==='boil-off'){
+    const level=34+10*Math.sin(phase);
+    lensCtx.strokeStyle='#3d5a4e';lensCtx.strokeRect(cx-30,cy-34,60,68);
+    lensCtx.fillStyle='#70d7dc';lensCtx.fillRect(cx-29,cy+34-level,58,level);
+    arrow(cx-70,cy-20,cx-34,cy-20,'#e1bc76');
+    for(let i=0;i<3;i++){const y=cy-40-((lensPhase*18+i*12)%30);lensCtx.fillStyle='#edbc98';lensCtx.beginPath();lensCtx.arc(cx,y,2.5,0,Math.PI*2);lensCtx.fill();}
+    lensCtx.fillText('Heat in vaporizes liquid; the relief valve vents it',10,14);
+    lensCtx.fillText('Vented propellant is gone from the mission',10,h-8);
   }else if(key==='dag'){
     const labels=['Symptom','Mechanism','Cause','Demo'];for(let i=0;i<4;i++){const x=15+i*65;lensCtx.strokeStyle='#8ea98d';lensCtx.strokeRect(x,cy-12,52,24);lensCtx.fillStyle='#c7d3c4';lensCtx.fillText(labels[i],x+4,cy+4);if(i<3)arrow(x+52,cy,x+65,cy,'#e2bc79');}lensCtx.fillText('Deterministic cause chain',10,14);
   }else if(key==='pdr'){

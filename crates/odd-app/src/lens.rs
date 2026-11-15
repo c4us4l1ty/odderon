@@ -23,6 +23,10 @@ pub enum Projection {
     LowEarthOrbit,
     CausalGraph,
     DesignReview,
+    BlanketInsulation,
+    HeatPump,
+    AttitudeControl,
+    BoilOff,
 }
 
 impl Projection {
@@ -49,6 +53,10 @@ impl Projection {
             Self::LowEarthOrbit => "leo",
             Self::CausalGraph => "dag",
             Self::DesignReview => "pdr",
+            Self::BlanketInsulation => "mli",
+            Self::HeatPump => "cop",
+            Self::AttitudeControl => "gnc",
+            Self::BoilOff => "boil-off",
         }
     }
 }
@@ -142,6 +150,30 @@ pub const ACRONYMS: &[Acronym] = &[
         expansion: "Preliminary design review",
         plain: "An engineering dossier comparing prediction with modeled flight.",
         projection: Projection::DesignReview,
+    },
+    Acronym {
+        term: "MLI",
+        expansion: "Multi-layer insulation",
+        plain: "Stacked aluminized film sheets that block radiant heat. Each layer re-radiates to the next, so more layers leak less heat — but seams and supports set a floor, and past about twenty layers the struts dominate.",
+        projection: Projection::BlanketInsulation,
+    },
+    Acronym {
+        term: "COP",
+        expansion: "Coefficient of performance",
+        plain: "Heat lifted divided by electricity consumed. Lifting heat from 20 K to a 300 K radiator costs far more electricity than heat moved, and can never beat the Carnot limit of cold divided by temperature span.",
+        projection: Projection::HeatPump,
+    },
+    Acronym {
+        term: "GNC",
+        expansion: "Guidance, navigation and control",
+        plain: "The computers, sensors and actuators that decide where to point and push. Heavier avionics and more actuators cost mass and electrical power.",
+        projection: Projection::AttitudeControl,
+    },
+    Acronym {
+        term: "LH2",
+        expansion: "Liquid hydrogen",
+        plain: "Fuel held near 20 K. Sunlight and warm structure leak heat into it, so it boils away unless the tank is insulated or actively cooled. The lost mass is gone from the mission.",
+        projection: Projection::BoilOff,
     },
 ];
 
@@ -290,6 +322,10 @@ mod tests {
             "leo",
             "dag",
             "pdr",
+            "mli",
+            "cop",
+            "gnc",
+            "boil-off",
         ];
         for a in ACRONYMS {
             let key = a.projection.key();
