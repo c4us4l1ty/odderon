@@ -34,9 +34,26 @@ have shipped, and the browser keeps one ranked certificate per contract.
 `crates/odd-propulsion` (WP 1.5) has also shipped: the engine is now a
 physical design solved from chamber conditions and nozzle geometry, the
 browser exposes it as a draggable CAD and Schlieren lab, and the signed
-recorder carries the design rather than a claimed thrust. Cryogenic boil-off
-(WP 1.6), the AI chief engineer (WP 1.7) and a server-authoritative rating
-(WP 1.9) remain deferred.
+recorder carries the design rather than a claimed thrust.
+
+`crates/odd-systems` (WP 1.6) has shipped: cryogenic tanks are integrated by
+the same adaptive Dormand-Prince stepper as the trajectory, driven by actual
+sun/planet vectors and eclipse state, with active cooling drawing from the
+electrical bus ahead of electric propulsion. The 12.8 t cislunar tug loses
+582 kg (4.55%) over its 6.94-day window with a 20-layer blanket. Three numbers
+in that work-package card were physically impossible as written; the
+corrections and their derivations are in `docs/thermal.md`.
+
+`odd-contracts::chief_ai` (WP 1.7) has shipped: four deterministic department
+heads with a per-discipline `[AUTO-DELEGATED]`/`[MANUAL]` toggle, +35% mass and
++30% cost margins, a visible badge, and an efficiency cap of 0.65.
+
+FDR **schema v3 is frozen** (`docs/fdr-schema-changelog.md`): it signs the
+per-stage thermal spec, the delegation bitmask, the exact vent history and the
+integrated boil-off magnitude. Schema 1 and 2 records still verify.
+
+A server-authoritative rating (WP 1.9) remains deferred, deliberately: it will
+be written against the frozen v3 schema so no certificate is invalidated.
 
 ## Apsides, directions and time quantization
 

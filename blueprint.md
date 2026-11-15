@@ -361,8 +361,8 @@ WP	Crate(s)	Oracle Gate
 1.3	odd-app/lens	No unexplained acronym renders without hover projection (snapshot test)
 1.4	odd-astro/attribution, odd-app/debrief	Finite-burn loss isolated within 1%
 1.5	odd-propulsion	RS-25: Isp_vac 452 ± 8 s, Isp_sl 366 ± 10 s — SHIPPED, see docs/propulsion.md
-1.6	odd-systems	Known LH₂ tank: boil-off rate vs. published MLI heat-leak data within 15%
-1.7	odd-app/chief_ai	Delegated sizing reproduces textbook margins deterministically
+1.6	odd-systems	Known LH₂ tank: boil-off rate vs. published MLI heat-leak data within 15% — SHIPPED, see docs/thermal.md (card's 1.5%/day, 60-min orbit and COP 0.1 corrected; all 3 oracles pass)
+1.7	odd-contracts/chief_ai	Delegated sizing reproduces textbook margins deterministically — SHIPPED, +35%/+30%, Seff cap 0.65, hand-checked Elo gate
 1.8	odd-contracts, odd-report	Elo update matches hand calculation; PDF opens & QR decodes
 1.9 (new)	odd-sim/verify, odd-worker	Tampered FDR (one throttle bit flipped) rejected; clean FDR accepted; same verdict native/wasm/worker
 Part 8: Paste-Ready Task Card — Work Package 0.1

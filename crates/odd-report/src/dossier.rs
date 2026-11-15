@@ -160,6 +160,19 @@ fn table(caption: &str, headers: &[&str], rows: &[Vec<String>], id: &str) -> Str
     out
 }
 
+/// What the QR actually points at, for the header's "Scan at:" line.
+///
+/// The payload is either an absolute deployment URL carrying a `#verify=`
+/// fragment, or a bare `#verify=` fragment when the dossier was built without
+/// a known origin. In the latter case the line says so rather than printing a
+/// fake host: the fragment resolves against whatever origin serves the file.
+fn scan_target(payload: &str) -> &str {
+    match payload.find("#verify=") {
+        Some(0) => "this deployment, #verify= fragment (relative to the serving origin)",
+        Some(_) | None => payload,
+    }
+}
+
 /// The complete dossier. `payload` is the QR text; pass
 /// `fdr.verify_payload()` unless an absolute URL is wanted.
 pub fn html(fdr: &Fdr, geometry: &Geometry, payload: &str) -> Result<String, &'static str> {
@@ -173,11 +186,12 @@ pub fn html(fdr: &Fdr, geometry: &Geometry, payload: &str) -> Result<String, &'s
 
     let mut body = String::new();
     body.push_str(&format!(
-        "<header><p class=\"memorandum\">ODDERON TECHNICAL MEMORANDUM &#183; FLIGHT DATA RECORDER &#183; SCHEMA {}</p><h1>Contract {} &#8212; post-flight verification dossier</h1><p class=\"subtitle\">{} attempt &#183; {}</p></header>",
+        "<header><p class=\"memorandum\">ODDERON TECHNICAL MEMORANDUM &#183; FLIGHT DATA RECORDER &#183; SCHEMA {}</p><h1>Contract {} &#8212; post-flight verification dossier</h1><p class=\"subtitle\">{} attempt &#183; {}</p><p class=\"scan-at\">Scan at: <code>{}</code></p></header>",
         fdr.schema_version,
         fdr.contract_id,
         fdr.attempt_mode.label(),
-        escape_html(&fdr.callsign)
+        escape_html(&fdr.callsign),
+        escape_html(scan_target(payload))
     ));
 
     // Section 1.
@@ -859,6 +873,24 @@ mod tests {
         );
         // All sixteen coalitions are enumerated.
         assert!(document.matches("<tr><th scope=\"row\">").count() >= 16);
+    }
+
+    /// The header must say where the QR points, and must not invent a host
+    /// when the dossier was built with a bare fragment.
+    #[test]
+    fn the_header_names_the_scan_target() {
+        let fdr = sample();
+        let relative = html(&fdr, &geometry(), &fdr.verify_payload()).unwrap();
+        assert!(relative.contains("Scan at:"));
+        assert!(relative.contains("relative to the serving origin"));
+        let absolute = html(
+            &fdr,
+            &geometry(),
+            &format!("https://flights.example.org/verify{}", fdr.verify_payload()),
+        )
+        .unwrap();
+        assert!(absolute.contains("Scan at:"));
+        assert!(absolute.contains("https://flights.example.org/verify#verify="));
     }
 
     #[test]
