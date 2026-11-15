@@ -29,7 +29,7 @@ pub extern "C" fn mission_input_reset() {
 /// byte or the buffer is full.
 #[no_mangle]
 pub extern "C" fn mission_input_absorb(byte: f64) -> i32 {
-    if !byte.is_finite() || byte < 0.0 || byte > 255.0 || byte.fract() != 0.0 {
+    if !byte.is_finite() || !(0.0..=255.0).contains(&byte) || byte.fract() != 0.0 {
         return 0;
     }
     let mut input = INPUT.lock().unwrap();
@@ -202,7 +202,7 @@ pub extern "C" fn mission_verify_reset() {
 /// Append a key byte (channel 0) or signature byte (channel 1).
 #[no_mangle]
 pub extern "C" fn mission_verify_absorb(channel: u32, byte: f64) -> i32 {
-    if !byte.is_finite() || byte < 0.0 || byte > 255.0 || byte.fract() != 0.0 {
+    if !byte.is_finite() || !(0.0..=255.0).contains(&byte) || byte.fract() != 0.0 {
         return 0;
     }
     let mut guard = match channel {
@@ -240,7 +240,8 @@ pub extern "C" fn mission_verify() -> i32 {
 #[no_mangle]
 pub extern "C" fn mission_ed25519_selftest() -> u32 {
     use ed25519_compact::{KeyPair, Seed};
-    const VECTORS: [([u8; 32], [u8; 32], &[u8], [u8; 64]); 3] = [
+    type Vector = ([u8; 32], [u8; 32], &'static [u8], [u8; 64]);
+    const VECTORS: [Vector; 3] = [
         (
             [
                 0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60, 0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec,
