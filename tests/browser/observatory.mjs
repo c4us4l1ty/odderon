@@ -255,6 +255,9 @@ try{
   assert.equal(await page.locator('#lens-close').isVisible(),true);
   await page.locator('#lens-close').click();
   await page.waitForFunction(()=>missionDiagnostics.lens===null&&!missionDiagnostics.lensPending);
+  // Raw mouse coordinates are viewport-relative, so bring the canvas on
+  // screen first instead of depending on the height of neighbouring panels.
+  await page.locator('#plan-canvas').scrollIntoViewIfNeeded();
   const missionBox=await page.locator('#plan-canvas').boundingBox();
   await page.mouse.click(missionBox.x+missionBox.width/2+(6378137+260000)*missionBox.height/(2.45*(6378137+550000)),missionBox.y+missionBox.height/2);
   assert.equal(await page.evaluate(()=>missionDiagnostics.nodes.length),1,'clicking the path should place a maneuver');
@@ -276,6 +279,7 @@ try{
     // clamp. Restore an interior time so the preview is populated again.
     await page.locator('#node-time').fill('200');
     await page.waitForFunction(()=>missionDiagnostics.pathEnds!==null);
+    await page.locator('#plan-canvas').scrollIntoViewIfNeeded();
     const box=await page.locator('#plan-canvas').boundingBox();
     const ends=await page.evaluate(()=>missionDiagnostics.pathEnds);
     assert.ok(ends,'preview exposes its endpoints');
@@ -322,6 +326,7 @@ try{
   await page.locator('#node-w').focus();
   assert.match(await page.locator('#lens-text').textContent(),/perpendicular to the orbital plane/);
   const handle=await page.evaluate(()=>missionDiagnostics.handles.find(h=>h.key==='t').end);
+  await page.locator('#plan-canvas').scrollIntoViewIfNeeded();
   const canvasBox=await page.locator('#plan-canvas').boundingBox();
   await page.mouse.move(canvasBox.x+handle[0],canvasBox.y+handle[1]);await page.mouse.down();await page.mouse.move(canvasBox.x+handle[0]+5,canvasBox.y+handle[1]+5,{steps:3});await page.mouse.up();
   assert.notEqual(await page.evaluate(()=>missionDiagnostics.nodes[1].dv[0]),81.50942505,'dragging a handle should change the maneuver');
@@ -334,6 +339,14 @@ try{
   const score=Number(debrief.match(/([0-9.]+)%Mission score/)?.[1]);
   assert.ok(score>80,`rescue score: ${score}; ${debrief}`);
   assert.equal(await page.evaluate(()=>missionDiagnostics.locked),true);
+  // oracle_browser_persistence_and_idle_gate: the first execution of a
+  // contract is ranked, moves Astro-Elo, and locks its certificate.
+  const firstRated=await page.evaluate(()=>missionDiagnostics.profile());
+  assert.ok(firstRated.ranked['101'],'contract 101 must hold a ranked certificate');
+  assert.notEqual(firstRated.elo,1200,'a ranked flight must move Astro-Elo off its start value');
+  assert.equal(firstRated.elo,firstRated.ranked['101'].elo);
+  assert.equal(firstRated.flights,1);
+  assert.match(await page.locator('#elo-result').textContent(),/Ranked flight certified/);
   await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:10000});
   const missionIdle=await page.evaluate(()=>({frames:testFrameCallbacks,messages:testWorkerMessages,draws:missionDiagnostics.draws}));
   await page.waitForTimeout(2000);
@@ -396,5 +409,65 @@ try{
   const tugIdle=await page.evaluate(()=>({frames:testFrameCallbacks,messages:testWorkerMessages,draws:missionDiagnostics.draws}));
   await page.waitForTimeout(2000);
   assert.deepEqual(await page.evaluate(()=>({frames:testFrameCallbacks,messages:testWorkerMessages,draws:missionDiagnostics.draws})),tugIdle,'Contract 103 must settle without frames, redraws, or worker messages');
-  assert.deepEqual(errors,[]);console.log('Browser viewport, interactions, bounds, WebGL, responsive layout and all three mission prototypes passed.');
+  // oracle_browser_persistence_and_idle_gate: identity and rating must
+  // survive a full document reload, not merely live in module state.
+  const beforeReload=await page.evaluate(()=>missionDiagnostics.profile());
+  assert.deepEqual(Object.keys(beforeReload.ranked).sort(),['101','102','103']);
+  await page.reload();
+  await page.waitForFunction(()=>!document.getElementById('add-node').disabled,null,{timeout:30000});
+  const afterReload=await page.evaluate(()=>missionDiagnostics.profile());
+  assert.equal(afterReload.publicId,beforeReload.publicId,'the license must survive a reload');
+  assert.deepEqual(afterReload.publicKey,beforeReload.publicKey);
+  assert.equal(afterReload.mnemonic,beforeReload.mnemonic);
+  assert.equal(afterReload.elo,beforeReload.elo,'Astro-Elo must survive a reload');
+  assert.deepEqual(afterReload.ranked,beforeReload.ranked);
+  assert.equal(await page.locator('#topbar-elo').textContent(),beforeReload.elo.toFixed(0));
+
+  // The profile dialog exposes the backup and restores from it.
+  await page.locator('#open-profile').click();
+  assert.equal(await page.locator('#profile-dialog').isVisible(),true);
+  assert.equal(await page.locator('#profile-public-id').textContent(),beforeReload.publicId);
+  await page.locator('#profile-reveal summary').click();
+  assert.equal(await page.locator('#copy-mnemonic-value').textContent(),beforeReload.mnemonic);
+  assert.equal(await page.locator('#copy-flight-key-value').textContent(),beforeReload.flightKey);
+  const download=page.waitForEvent('download');
+  await page.locator('#profile-download').click();
+  const backup=JSON.parse(await readFile(await (await download).path(),'utf8'));
+  assert.equal(backup.kind,'odderon-flight-license');
+  assert.equal(backup.publicId,beforeReload.publicId);
+  assert.equal(backup.mnemonic,beforeReload.mnemonic);
+  assert.equal(backup.elo,beforeReload.elo);
+  // Live validation must reject a corrupted mnemonic and accept the real one.
+  await page.locator('#profile-restore-input').fill('not twelve real words at all');
+  assert.equal(await page.locator('#profile-restore').isDisabled(),true);
+  await page.locator('#profile-restore-input').fill(backup.mnemonic);
+  assert.equal(await page.locator('#profile-restore').isEnabled(),true);
+  await page.locator('#profile-restore').click();
+  assert.match(await page.locator('#profile-restore-status').textContent(),/Restored ODD-ID-/);
+  assert.equal(await page.evaluate(()=>missionDiagnostics.profile().elo),beforeReload.elo,'restoring the same license must keep its rating');
+  await page.locator('#profile-callsign').fill('GATE-PILOT');
+  await page.locator('#profile-callsign-form button[type=submit]').click();
+  assert.equal(await page.evaluate(()=>missionDiagnostics.profile().callsign),'GATE-PILOT');
+  await page.locator('#profile-close').click();
+  assert.equal(await page.locator('#profile-dialog').isVisible(),false);
+  await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:10000});
+  const profileIdle=await page.evaluate(()=>({frames:testFrameCallbacks,messages:testWorkerMessages,draws:missionDiagnostics.draws}));
+  await page.waitForTimeout(2000);
+  assert.deepEqual(await page.evaluate(()=>({frames:testFrameCallbacks,messages:testWorkerMessages,draws:missionDiagnostics.draws})),profileIdle,'the profile dialog must settle to zero frames and zero worker messages');
+
+  // Replaying a certified contract must be practice and must not farm Elo.
+  assert.equal(await page.evaluate(()=>missionDiagnostics.isRanked('101')),true);
+  assert.equal(await page.locator('#attempt-mode').inputValue(),'practice');
+  assert.equal(await page.locator('#attempt-mode option[value=ranked]').isDisabled(),true);
+  await page.locator('#example').click();
+  await page.locator('#prefill').click();
+  await page.locator('#execute').click();
+  await page.waitForFunction(()=>!document.getElementById('debrief').hidden||(missionDiagnostics.locked&&!missionDiagnostics.pending),null,{timeout:120000});
+  assert.equal(await page.locator('#debrief').isHidden(),false,`practice replay error: ${await page.locator('#execute-status').textContent()}`);
+  assert.match(await page.locator('#elo-result').textContent(),/Practice flight — Astro-Elo unchanged/);
+  const afterPractice=await page.evaluate(()=>missionDiagnostics.profile());
+  assert.equal(afterPractice.elo,beforeReload.elo,'a replayed contract must not change Astro-Elo');
+  assert.equal(afterPractice.flights,beforeReload.flights+1);
+  assert.deepEqual(afterPractice.ranked,beforeReload.ranked,'the certified certificate must stay locked');
+  assert.deepEqual(errors,[]);console.log('Browser viewport, interactions, bounds, WebGL, responsive layout, all three mission prototypes and license persistence passed.');
 } finally{if(browser)await browser.close();await new Promise(r=>server.close(r));}
