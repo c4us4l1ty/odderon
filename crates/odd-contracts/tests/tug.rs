@@ -41,8 +41,16 @@ fn first_apo(path: &odd_astro::spline::TrajectorySpline, after: f64) -> f64 {
 fn oracle_contract_103_surviving_targeted_trajectory_and_attribution() {
     let c = Contract::get(103).unwrap();
     assert_eq!(c.objective, Objective::TransLunarApoapsis);
-    assert_eq!(c.initial.mass, 18_000.0);
+    // Dry mass now follows the solved engine, so the card's 18,000 kg is a
+    // budget the design lands within 20 g of, not a hard-coded literal.
+    assert!(
+        (c.initial.mass - 18_000.0).abs() < 0.05,
+        "{}",
+        c.initial.mass
+    );
     assert_eq!(c.initial.mass - c.dry_mass_kg, 12_800.0);
+    assert!((c.engine.thrust_newtons - 18_000.0).abs() < 200.0);
+    assert!((c.engine.specific_impulse_seconds - 450.0).abs() < 3.0);
     let eph = Ephemeris::bundled().unwrap();
     let split = split_tug(3, 3240.0, 1600.0, &eph).unwrap();
     assert_eq!(split.nodes.len(), 3);

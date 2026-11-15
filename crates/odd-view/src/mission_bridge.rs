@@ -1077,7 +1077,9 @@ mod tests {
     fn canonical_contract_and_lock() {
         let _guard = TEST_LOCK.lock().unwrap();
         assert_eq!(mission_contract(103), 1);
-        assert_eq!(mission_parameter(2), 18_000.0);
+        // Wet mass follows the solved engine mass, so it lands within grams
+        // of the card's 18,000 kg rather than being the literal.
+        assert!((mission_parameter(2) - 18_000.0).abs() < 0.05);
         assert_eq!(mission_add_node(1600.0, 1080.0, 0.0, 0.0), 1);
         assert_eq!(mission_compile(), 1);
         assert_eq!(

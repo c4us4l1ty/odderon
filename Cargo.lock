@@ -120,6 +120,7 @@ dependencies = [
  "odd-astro",
  "odd-core",
  "odd-ephem",
+ "odd-propulsion",
  "odd-sim",
 ]
 
