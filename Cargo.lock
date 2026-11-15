@@ -233,6 +233,7 @@ dependencies = [
  "odd-propulsion",
  "odd-report",
  "odd-sim",
+ "odd-systems",
  "odd-verify",
 ]
 
