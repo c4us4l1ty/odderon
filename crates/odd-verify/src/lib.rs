@@ -715,8 +715,18 @@ pub fn certify_engine(fdr: &Fdr) -> Result<Option<EngineSolution>, FdrError> {
     }
     if let Some(contract) = Contract::get(fdr.contract_id) {
         certify_contract(fdr, &contract)?;
+        // Recompute from the signed cryogenic fit-out and delegation mask:
+        // a heavier blanket, a radiator or a chief's margin all cost dry
+        // mass, so a record cannot claim hardware without carrying it.
+        let design = thermal_inputs_from_record(fdr)
+            .map(|inputs| inputs.design)
+            .unwrap_or_else(odd_contracts::ThermalDesign::baseline);
         let vehicle = contract
-            .vehicle(*spec)
+            .vehicle_delegated(
+                *spec,
+                odd_contracts::DelegationMask(fdr.delegation_mask),
+                &design,
+            )
             .map_err(|_| FdrError::EngineUnusable)?;
         if fdr.dry_mass_kg.to_bits() != vehicle.dry_mass_kg.to_bits() {
             return Err(FdrError::EngineMismatch("dry mass"));

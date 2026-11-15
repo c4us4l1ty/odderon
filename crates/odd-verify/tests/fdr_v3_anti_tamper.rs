@@ -274,9 +274,16 @@ fn oracle_fdr_v3_anti_tamper() {
     downgraded.sign(&attacker).unwrap();
     assert_eq!(downgraded.verify_signature(), Ok(()));
     let verdict = verify_record(&downgraded);
+    // A thinner blanket is lighter hardware, so the claimed dry mass no
+    // longer matches the signed fit-out: the mass gate catches it before the
+    // replay even runs. Either rejection is a refusal; both are asserted so
+    // a future change cannot quietly let the downgrade through.
     assert!(
-        matches!(verdict, Err(FdrError::PhysicsReplayMismatch { .. })),
-        "a re-signed downgrade must fail the physics replay, got {:?}",
+        matches!(
+            verdict,
+            Err(FdrError::PhysicsReplayMismatch { .. }) | Err(FdrError::EngineMismatch("dry mass"))
+        ),
+        "a re-signed downgrade must be rejected, got {:?}",
         verdict.err()
     );
     println!(

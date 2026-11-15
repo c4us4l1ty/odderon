@@ -1168,6 +1168,16 @@ pub extern "C" fn mission_delegation_readout(field: u32) -> f64 {
         2 => settings.dry_mass,
         3 => settings.initial.mass,
         4 => outcome.efficiency_cap,
+        5 => Contract::get(settings.contract_id)
+            .and_then(|c| {
+                c.vehicle_delegated(
+                    settings.engine_spec,
+                    settings.delegation,
+                    &settings.thermal_design,
+                )
+                .ok()
+            })
+            .map_or(f64::NAN, |v| v.thermal_fitout_kg),
         _ => f64::NAN,
     }
 }
@@ -1215,6 +1225,20 @@ pub extern "C" fn mission_thermal_get(field: u32) -> f64 {
         4 => d.strut_conductance_w_k,
         5 => d.relief_pressure_pa,
         6 => f64::from(d.shell),
+        // 7: does this stage actually carry cryogenic tanks? The assembly
+        // disables the cryo knobs when it does not, instead of offering a
+        // control that silently does nothing.
+        7 => {
+            let Some(contract) = Contract::get(settings.contract_id) else {
+                return f64::NAN;
+            };
+            let load = settings.initial.mass - settings.dry_mass;
+            if d.stage(&contract, &settings.engine_spec, load).is_some() {
+                1.0
+            } else {
+                0.0
+            }
+        }
         _ => f64::NAN,
     }
 }
@@ -1228,6 +1252,12 @@ pub extern "C" fn mission_thermal_get(field: u32) -> f64 {
 #[no_mangle]
 pub extern "C" fn mission_thermal_set(field: u32, value: f64) -> i32 {
     if !value.is_finite() || value < 0.0 {
+        return 0;
+    }
+    // Refuse cryogenic edits on a storable stage: there is no fit-out to
+    // size, and accepting one would put hardware in the flown mass that the
+    // record has no thermal block to prove.
+    if mission_thermal_get(7) != 1.0 {
         return 0;
     }
     {

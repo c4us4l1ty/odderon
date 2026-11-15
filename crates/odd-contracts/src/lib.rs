@@ -86,6 +86,9 @@ pub struct Vehicle {
     pub delegation_margin_kg: f64,
     /// Stack cost multiplier from delegation. 1.0 when manual.
     pub delegation_cost_multiplier: f64,
+    /// Kilograms of cryogenic fit-out beyond the contract's baseline
+    /// blanket. Negative when the player chose a lighter blanket.
+    pub thermal_fitout_kg: f64,
 }
 
 /// Baseline orbital-maneuvering engine: a storable pressure-fed-class tug
@@ -264,17 +267,59 @@ impl Contract {
         // tank volume and must be flown differently.
         let sphere_radius = libm::cbrt(3.0 * self.tank_volume_m3 / (4.0 * std::f64::consts::PI));
         let tank_area_m2 = 4.0 * std::f64::consts::PI * sphere_radius * sphere_radius;
+        // A storable stage has no cryogenic fit-out: no blanket, no radiator,
+        // and nothing for a thermal chief to size.
+        let cryogenic = design.stage(self, &spec, propellant_kg).is_some();
+        let (volume, area) = if cryogenic {
+            (self.tank_volume_m3, tank_area_m2)
+        } else {
+            (0.0, 0.0)
+        };
+        // A storable stage carries no radiator or cooler either, so the
+        // chief has no thermal hardware to add margin to. Sanitising here
+        // keeps the verifier's recomputation identical for a stage whose
+        // thermal block is legitimately absent from the record.
+        let sizing_design = if cryogenic {
+            *design
+        } else {
+            let mut sanitized = *design;
+            sanitized.radiator_area_m2 = 0.0;
+            sanitized.cryocooler_lift_w = 0.0;
+            sanitized
+        };
         let hardware = chief_ai::hardware_mass(
             solution.dry_mass_kg,
-            self.tank_volume_m3,
-            tank_area_m2,
+            volume,
+            area,
             design.relief_pressure_pa,
-            design,
+            &sizing_design,
         );
+        // The airframe allowance already includes the baseline blanket.
+        // Anything beyond it — more layers, a heavier shell, a higher relief
+        // pressure, radiator panels — is real hardware and must be paid for
+        // in dry mass, or active cooling would be free and the cryogenic
+        // trade-off would not exist.
+        let baseline = ThermalDesign::baseline();
+        let baseline_hardware = chief_ai::hardware_mass(
+            solution.dry_mass_kg,
+            volume,
+            area,
+            baseline.relief_pressure_pa,
+            &baseline,
+        );
+        let thermal_index = chief_ai::Department::Thermal as usize;
+        let thermal_fitout_kg = if cryogenic {
+            hardware[thermal_index].base_kg - baseline_hardware[thermal_index].base_kg
+        } else {
+            0.0
+        };
         // Equal cost weight per discipline: the assembly has no currency
         // model yet, so cost is a relative multiplier, not an invented price.
         let outcome = chief_ai::apply(delegation, &hardware, &[1.0; 4]);
-        let dry_mass_kg = self.airframe_mass_kg + solution.dry_mass_kg + outcome.mass_penalty_kg;
+        let dry_mass_kg = self.airframe_mass_kg
+            + solution.dry_mass_kg
+            + thermal_fitout_kg
+            + outcome.mass_penalty_kg;
         Ok(Vehicle {
             spec,
             solution,
@@ -290,6 +335,7 @@ impl Contract {
             volume_limited: capacity < self.propellant_budget_kg,
             delegation_margin_kg: outcome.mass_penalty_kg,
             delegation_cost_multiplier: outcome.cost_multiplier,
+            thermal_fitout_kg,
         })
     }
 
