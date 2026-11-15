@@ -10,8 +10,9 @@
 //! numbers arrive through a fixed-layout f64 array, text through the shared
 //! byte channel, and strings leave as length + byte.
 use super::identity_bridge;
-use super::mission_bridge::{self as bridge, FlightSpec, REPORT_LEN};
+use super::mission_bridge::{self as bridge};
 use odd_report::{AttemptMode, Command, Fdr, FdrError, SCHEMA_VERSION};
+use odd_verify::REPORT_LEN;
 use std::sync::Mutex;
 
 /// Fixed header layout of the transport array. Commands follow at
@@ -20,8 +21,13 @@ use std::sync::Mutex;
 ///
 /// 0 schema, 1 contract, 2 mode, 3 epoch_s, 4 duration_us, 5 initial mass,
 /// 6 dry mass, 7 thrust, 8 isp, 9..15 initial state, 15 node metric,
-/// 16..22 prediction, 22 command count, 23 elo before, 24 elo after.
-const HEADER: usize = 25;
+/// 16..22 prediction, 22 command count, 23 elo before, 24 elo after,
+/// 25 propellant id, 26 O/F, 27 chamber pressure, 28 throat radius,
+/// 29 exit radius, 30 bell length fraction.
+///
+/// The engine block is present for schema 2 and all-NaN for a legacy
+/// schema-1 document, so one layout serves both.
+const HEADER: usize = 31;
 const COMMAND_OFFSET: usize = HEADER;
 /// time_us, dvT, dvN, dvW, guided flag, six guidance components.
 const COMMAND_STRIDE: usize = 11;
@@ -35,27 +41,6 @@ static DOSSIER: Mutex<String> = Mutex::new(String::new());
 static VERDICT: Mutex<Option<Result<(), FdrError>>> = Mutex::new(None);
 static REPLAYED: Mutex<Option<[f64; REPORT_LEN]>> = Mutex::new(None);
 static GEOMETRY: Mutex<Option<odd_report::dossier::Geometry>> = Mutex::new(None);
-
-/// Translate a recorder into the simulator's replay request.
-fn spec(fdr: &Fdr) -> FlightSpec {
-    FlightSpec {
-        contract_id: fdr.contract_id,
-        epoch_s: fdr.epoch_s,
-        duration_us: fdr.duration_us,
-        initial_mass_kg: fdr.initial_mass_kg,
-        dry_mass_kg: fdr.dry_mass_kg,
-        thrust_n: fdr.thrust_n,
-        specific_impulse_s: fdr.specific_impulse_s,
-        initial_state: fdr.initial_state,
-        node_metric: fdr.node_metric,
-        prediction: fdr.prediction_baseline,
-        commands: fdr
-            .commands
-            .iter()
-            .map(|command| (command.time_us, command.delta_v_tnw, command.guidance))
-            .collect(),
-    }
-}
 
 #[no_mangle]
 pub extern "C" fn mission_fdr_reset() {
@@ -97,6 +82,24 @@ pub extern "C" fn mission_fdr_parse() -> i32 {
     };
     *RECORDER.lock().unwrap() = Some(fdr);
     1
+}
+
+/// Read the signed engine design out of the transport header. A legacy
+/// document carries NaN there and parses to `None`.
+fn engine_from_fields(fields: &[f64]) -> Option<Option<odd_propulsion::EngineSpec>> {
+    let schema = integer(fields[0])?;
+    if schema < i64::from(SCHEMA_VERSION) {
+        return Some(None);
+    }
+    let propellant = integer(fields[25])?;
+    Some(Some(odd_propulsion::EngineSpec {
+        propellant: odd_propulsion::Propellant::from_u8(u8::try_from(propellant).ok()?)?,
+        of_ratio: fields[26],
+        p_c_pa: fields[27],
+        r_throat_m: fields[28],
+        r_exit_m: fields[29],
+        length_fraction: fields[30],
+    }))
 }
 
 fn parse_fields(fields: &[f64], callsign: &str) -> Option<Fdr> {
@@ -159,6 +162,7 @@ fn parse_fields(fields: &[f64], callsign: &str) -> Option<Fdr> {
         dry_mass_kg: fields[6],
         thrust_n: fields[7],
         specific_impulse_s: fields[8],
+        engine: engine_from_fields(fields)?,
         initial_state: core::array::from_fn(|index| fields[9 + index]),
         node_metric: integer(fields[15])? == 1,
         prediction_baseline: core::array::from_fn(|index| fields[16 + index]),
@@ -188,6 +192,11 @@ pub extern "C" fn mission_fdr_capture(mode: u32, elo_before: f64, elo_after: f64
     let Some(captured) = bridge::capture_flight() else {
         return 0;
     };
+    // Only a catalog contract has a stage whose engine, dry mass and load can
+    // be recomputed. A free-sandbox flight has nothing to certify against.
+    if odd_contracts::Contract::get(captured.contract_id).is_none() {
+        return 0;
+    }
     let fdr = Fdr {
         schema_version: SCHEMA_VERSION,
         contract_id: captured.contract_id,
@@ -199,6 +208,7 @@ pub extern "C" fn mission_fdr_capture(mode: u32, elo_before: f64, elo_after: f64
         dry_mass_kg: captured.dry_mass,
         thrust_n: captured.thrust_n,
         specific_impulse_s: captured.specific_impulse_s,
+        engine: Some(captured.engine_spec),
         initial_state: [
             captured.initial.position[0],
             captured.initial.position[1],
@@ -286,14 +296,16 @@ pub extern "C" fn mission_fdr_verify() -> i32 {
 /// The full check. Kept separate from the export so native tests can call it
 /// with a constructed recorder.
 pub(crate) fn verify_and_replay(fdr: &Fdr) -> Result<(), FdrError> {
-    fdr.verify_signature()?;
-    let outcome = bridge::replay_flight(&spec(fdr))
-        .ok_or(FdrError::Malformed("the command timeline does not compile"))?;
-    *REPLAYED.lock().unwrap() = Some(outcome.report);
-    *GEOMETRY.lock().unwrap() = Some(outcome.geometry);
-    fdr.compare_metrics(&outcome.report)?;
-    fdr.compare_final_state(&outcome.final_state_hash)?;
-    Ok(())
+    // The check itself is portable: odd_verify::verify_record is what a CLI
+    // or an edge worker calls. This wrapper only caches what the UI shows.
+    match odd_verify::verify_record(fdr) {
+        Ok(outcome) => {
+            *REPLAYED.lock().unwrap() = Some(outcome.report);
+            *GEOMETRY.lock().unwrap() = Some(outcome.geometry);
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// First differing metric index, or -1. Names the field a rejection is about.
@@ -421,12 +433,26 @@ pub extern "C" fn mission_fdr_fields_from_record() -> u32 {
         fdr.thrust_n,
         fdr.specific_impulse_s,
     ];
+    // Header continues below with the fixed 31-field layout; the engine block
+    // is appended after the elo fields to keep the historical indices stable.
+    let engine_tail = match &fdr.engine {
+        Some(engine) => [
+            engine.propellant as u8 as f64,
+            engine.of_ratio,
+            engine.p_c_pa,
+            engine.r_throat_m,
+            engine.r_exit_m,
+            engine.length_fraction,
+        ],
+        None => [f64::NAN; 6],
+    };
     fields.extend_from_slice(&fdr.initial_state);
     fields.push(f64::from(fdr.node_metric));
     fields.extend_from_slice(&fdr.prediction_baseline);
     fields.push(fdr.commands.len() as f64);
     fields.push(fdr.elo_before);
     fields.push(fdr.elo_after);
+    fields.extend_from_slice(&engine_tail);
     for command in &fdr.commands {
         fields.push(command.time_us as f64);
         fields.extend_from_slice(&command.delta_v_tnw);
@@ -483,6 +509,7 @@ mod tests {
             dry_mass_kg: 1020.0,
             thrust_n: 2400.0,
             specific_impulse_s: 310.0,
+            engine: Some(odd_contracts::STORABLE_BASELINE),
             initial_state: [6_638_137.0, 0.0, 0.0, 0.0, 7_748.0, 0.0],
             node_metric: false,
             prediction_baseline: [180.0, 550_000.0, 260_000.0, 120.0, 10_800.0, f64::NAN],

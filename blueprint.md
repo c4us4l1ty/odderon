@@ -360,7 +360,7 @@ WP	Crate(s)	Oracle Gate
 1.2	odd-astro/integrator,spline	SSO precession +0.9856°/day; energy drift < 1e-9 J/kg; native vs wasm state hash identical
 1.3	odd-app/lens	No unexplained acronym renders without hover projection (snapshot test)
 1.4	odd-astro/attribution, odd-app/debrief	Finite-burn loss isolated within 1%
-1.5	odd-propulsion	RS-25: Isp_vac 452 ± 8 s, Isp_sl 366 ± 10 s
+1.5	odd-propulsion	RS-25: Isp_vac 452 ± 8 s, Isp_sl 366 ± 10 s — SHIPPED, see docs/propulsion.md
 1.6	odd-systems	Known LH₂ tank: boil-off rate vs. published MLI heat-leak data within 15%
 1.7	odd-app/chief_ai	Delegated sizing reproduces textbook margins deterministically
 1.8	odd-contracts, odd-report	Elo update matches hand calculation; PDF opens & QR decodes

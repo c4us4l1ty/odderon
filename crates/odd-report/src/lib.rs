@@ -19,7 +19,10 @@ pub mod json;
 pub mod metrics;
 pub mod qr;
 
-pub use fdr::{AttemptMode, Command, Fdr, FdrError, METRIC_COUNT, SCHEMA_VERSION};
+pub use fdr::{
+    AttemptMode, Command, Fdr, FdrError, LEGACY_SCHEMA_VERSION, METRIC_COUNT, SCHEMA_VERSION,
+};
+pub use odd_propulsion::{EngineSolution, EngineSpec, Propellant};
 
 /// A successful verification, after both the signature and the replay agree.
 pub const VERIFIED_BANNER: &str = "\u{2713} CRYPTOGRAPHICALLY & PHYSICALLY VERIFIED";

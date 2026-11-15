@@ -15,14 +15,34 @@
 //! different bit patterns and the replay check compares bits.
 use crate::json::Json;
 use odd_identity::{License, LicenseError};
+use odd_propulsion::{EngineSpec, Propellant};
 use sha2::{Digest, Sha256};
 
-pub const SCHEMA_VERSION: u16 = 1;
+/// Schema 2 carries the physical engine design and is the only schema this
+/// build issues. Schema 1 records (thrust and Isp as bare claims) still parse
+/// and verify so certificates issued before WP 1.5 do not become unreadable;
+/// they are labelled legacy because their engine was never certified.
+pub const SCHEMA_VERSION: u16 = 2;
+/// Last schema whose engine was an unverified claim.
+pub const LEGACY_SCHEMA_VERSION: u16 = 1;
 pub const METRIC_COUNT: usize = 58;
 /// Domain separator for the signed bytes. Distinct from the key-derivation
 /// domain so a license signature can never be replayed as a flight signature.
-pub const SIGN_DOMAIN: &[u8] = b"odderon-flight-data-recorder-v1\0";
+pub const SIGN_DOMAIN: &[u8] = b"odderon-flight-data-recorder-v2\0";
+/// Domain of pre-engine records. Kept distinct so a legacy signature can
+/// never be replayed as a schema-2 signature.
+pub const LEGACY_SIGN_DOMAIN: &[u8] = b"odderon-flight-data-recorder-v1\0";
 const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
+/// A schema-2 record without an engine is malformed and can never be signed;
+/// this sentinel only keeps `canonical_bytes` total for such a record.
+const UNSIGNABLE_ENGINE: EngineSpec = EngineSpec {
+    propellant: Propellant::LoxLh2,
+    of_ratio: f64::NAN,
+    p_c_pa: f64::NAN,
+    r_throat_m: f64::NAN,
+    r_exit_m: f64::NAN,
+    length_fraction: f64::NAN,
+};
 pub const MAX_CALLSIGN: usize = 24;
 pub const MAX_COMMANDS: usize = 64;
 
@@ -70,8 +90,13 @@ pub struct Fdr {
     pub duration_us: i64,
     pub initial_mass_kg: f64,
     pub dry_mass_kg: f64,
+    /// Derived performance, recorded for readability. A schema-2 verifier
+    /// recomputes both from `engine` and refuses a mismatch; these floats are
+    /// never trusted as inputs.
     pub thrust_n: f64,
     pub specific_impulse_s: f64,
+    /// The physical engine design. `None` only for a legacy schema-1 record.
+    pub engine: Option<EngineSpec>,
     /// Initial position then velocity, J2000, at mission time zero.
     pub initial_state: [f64; 6],
     /// True when attribution measures node rotation instead of apoapsis.
@@ -106,6 +131,16 @@ pub enum FdrError {
     },
     /// The recorded final-state hash does not match the replayed final state.
     FinalStateMismatch,
+    /// A recorded derived quantity disagrees with the engine the record
+    /// signs: the client claimed performance the design cannot produce.
+    EngineMismatch(&'static str),
+    /// The engine design itself is outside the model's validated envelope.
+    EngineUnusable,
+    /// The record signs a framing condition the contract fixes. A contract
+    /// defines where the flight starts, when, and for how long; a player who
+    /// could choose those could start on the target orbit and score a perfect
+    /// rescue without doing anything.
+    ContractMismatch(&'static str),
     /// A ranked document was submitted for a contract already certified.
     AlreadyCertified(u32),
     License(LicenseError),
@@ -126,6 +161,17 @@ impl core::fmt::Display for FdrError {
             Self::FinalStateMismatch => {
                 write!(f, "PhysicsReplayMismatch: final_state_hash does not reproduce")
             }
+            Self::EngineMismatch(field) => write!(
+                f,
+                "EngineMismatch: recorded {field} is not what the signed engine design produces"
+            ),
+            Self::EngineUnusable => {
+                write!(f, "EngineUnusable: the signed engine design does not solve")
+            }
+            Self::ContractMismatch(field) => write!(
+                f,
+                "ContractMismatch: recorded {field} is not what the contract specifies"
+            ),
             Self::AlreadyCertified(id) => {
                 write!(f, "contract {id} already has a certified ranked certificate")
             }
@@ -193,7 +239,7 @@ impl Fdr {
     /// reader acts on is here; the public key and signature are not.
     pub fn canonical_bytes(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(1024);
-        out.extend_from_slice(SIGN_DOMAIN);
+        out.extend_from_slice(self.sign_domain());
         put_u16(&mut out, self.schema_version);
         put_u32(&mut out, self.contract_id);
         out.push(self.attempt_mode as u8);
@@ -205,6 +251,16 @@ impl Fdr {
         put_f64(&mut out, self.dry_mass_kg);
         put_f64(&mut out, self.thrust_n);
         put_f64(&mut out, self.specific_impulse_s);
+        if self.schema_version >= SCHEMA_VERSION {
+            // The design, not the claim. Six fields, fixed order.
+            let engine = self.engine.unwrap_or(UNSIGNABLE_ENGINE);
+            out.push(engine.propellant as u8);
+            put_f64(&mut out, engine.of_ratio);
+            put_f64(&mut out, engine.p_c_pa);
+            put_f64(&mut out, engine.r_throat_m);
+            put_f64(&mut out, engine.r_exit_m);
+            put_f64(&mut out, engine.length_fraction);
+        }
         for value in &self.initial_state {
             put_f64(&mut out, *value);
         }
@@ -237,14 +293,38 @@ impl Fdr {
         out
     }
 
+    /// Domain separator for this record's schema.
+    pub fn sign_domain(&self) -> &'static [u8] {
+        if self.schema_version <= LEGACY_SCHEMA_VERSION {
+            LEGACY_SIGN_DOMAIN
+        } else {
+            SIGN_DOMAIN
+        }
+    }
+
+    /// True when the engine was never certified by this build's physics.
+    pub fn is_legacy(&self) -> bool {
+        self.schema_version <= LEGACY_SCHEMA_VERSION
+    }
+
     /// SHA-256 of the canonical bytes: the digest printed in the dossier.
     pub fn digest(&self) -> [u8; 32] {
         Sha256::digest(self.canonical_bytes()).into()
     }
 
     pub fn validate_shape(&self) -> Result<(), FdrError> {
-        if self.schema_version != SCHEMA_VERSION {
+        if self.schema_version != SCHEMA_VERSION && self.schema_version != LEGACY_SCHEMA_VERSION {
             return Err(FdrError::UnsupportedSchema(self.schema_version));
+        }
+        if self.schema_version >= SCHEMA_VERSION {
+            let Some(engine) = &self.engine else {
+                return Err(FdrError::Malformed("engine design missing"));
+            };
+            if engine.validate().is_err() {
+                return Err(FdrError::EngineUnusable);
+            }
+        } else if self.engine.is_some() {
+            return Err(FdrError::Malformed("legacy record carries an engine"));
         }
         if self.commands.len() > MAX_COMMANDS {
             return Err(FdrError::Malformed("too many commands"));
@@ -369,10 +449,21 @@ impl Fdr {
     /// layout `canonical_bytes` writes, so the two cannot drift.
     pub fn from_canonical_with_signature(bytes: &[u8]) -> Result<Self, FdrError> {
         let mut reader = Reader::new(bytes);
-        reader.expect(SIGN_DOMAIN)?;
+        // The domain is read first so a legacy document is parsed with the
+        // legacy layout instead of misreading its engine block.
+        let legacy = if bytes.starts_with(LEGACY_SIGN_DOMAIN) {
+            reader.expect(LEGACY_SIGN_DOMAIN)?;
+            true
+        } else {
+            reader.expect(SIGN_DOMAIN)?;
+            false
+        };
         let schema_version = reader.u16()?;
-        if schema_version != SCHEMA_VERSION {
+        if schema_version != SCHEMA_VERSION && schema_version != LEGACY_SCHEMA_VERSION {
             return Err(FdrError::UnsupportedSchema(schema_version));
+        }
+        if legacy != (schema_version == LEGACY_SCHEMA_VERSION) {
+            return Err(FdrError::Malformed("schema and signing domain disagree"));
         }
         let contract_id = reader.u32()?;
         let attempt_mode =
@@ -389,6 +480,20 @@ impl Fdr {
         let dry_mass_kg = reader.f64()?;
         let thrust_n = reader.f64()?;
         let specific_impulse_s = reader.f64()?;
+        let engine = if legacy {
+            None
+        } else {
+            let propellant =
+                Propellant::from_u8(reader.u8()?).ok_or(FdrError::Malformed("propellant pair"))?;
+            Some(EngineSpec {
+                propellant,
+                of_ratio: reader.f64()?,
+                p_c_pa: reader.f64()?,
+                r_throat_m: reader.f64()?,
+                r_exit_m: reader.f64()?,
+                length_fraction: reader.f64()?,
+            })
+        };
         let initial_state = reader.array::<6>()?;
         let node_metric = match reader.u8()? {
             0 => false,
@@ -435,6 +540,7 @@ impl Fdr {
             dry_mass_kg,
             thrust_n,
             specific_impulse_s,
+            engine,
             initial_state,
             node_metric,
             prediction_baseline,
@@ -467,6 +573,18 @@ impl Fdr {
             o.number("dry_mass_kg", self.dry_mass_kg);
             o.number("thrust_n", self.thrust_n);
             o.number("specific_impulse_s", self.specific_impulse_s);
+            match &self.engine {
+                Some(engine) => {
+                    o.string("engine_propellant", engine.propellant.label());
+                    o.number("engine_propellant_id", engine.propellant as u8 as f64);
+                    o.number("engine_of_ratio", engine.of_ratio);
+                    o.number("engine_p_c_pa", engine.p_c_pa);
+                    o.number("engine_r_throat_m", engine.r_throat_m);
+                    o.number("engine_r_exit_m", engine.r_exit_m);
+                    o.number("engine_length_fraction", engine.length_fraction);
+                }
+                None => o.string("engine_propellant", "legacy (uncertified)"),
+            }
             o.array("initial_state", &self.initial_state);
             o.boolean("node_metric", self.node_metric);
             o.array("prediction_baseline", &self.prediction_baseline);

@@ -12,6 +12,9 @@ pub enum Warning {
     ApoapsisShortfall,
     Impact,
     LongFiniteBurnArc,
+    FlowSeparationAtAltitude,
+    ThroatThermalOverload,
+    StoichiometricTemperatureSpike,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -155,6 +158,60 @@ pub fn diagnose(i: &Inputs) -> Vec<CausalChain> {
     out
 }
 
+/// Engine-lab inputs, all plain numbers so this module stays independent of
+/// the propulsion crate and the browser.
+pub struct EngineInputs {
+    pub altitude_m: f64,
+    pub ambient_pa: f64,
+    pub exit_pressure_pa: f64,
+    /// Normalized separation point, or NaN when the flow stays attached.
+    pub separation_x_norm: f64,
+    pub side_load_kn: f64,
+    pub wall_temperature_k: f64,
+    pub wall_limit_k: f64,
+    pub throat_heat_flux_w_m2: f64,
+    pub chamber_temperature_k: f64,
+    pub of_ratio: f64,
+    pub stoichiometric_of: f64,
+    pub peak_temperature_of: f64,
+}
+
+/// Diagnose the engine design. Same DAG shape and demo discipline as the
+/// flight warnings, so the browser renders both with one code path.
+pub fn diagnose_engine(i: &EngineInputs) -> Vec<CausalChain> {
+    let mut out = Vec::new();
+    if i.separation_x_norm.is_finite() {
+        out.push(chain(
+            Warning::FlowSeparationAtAltitude,
+            "Flow separates inside the bell at this altitude",
+            "Exit pressure is far below ambient, so the boundary layer cannot stay attached",
+            "The expansion ratio is too large for the ambient pressure at this altitude",
+            "separation",
+        ));
+    }
+    if i.wall_temperature_k.is_finite() && i.wall_temperature_k > i.wall_limit_k {
+        out.push(chain(
+            Warning::ThroatThermalOverload,
+            "Regeneratively cooled throat wall exceeds its material limit",
+            "Convective heat flux outruns what the coolant channel can carry away",
+            "Chamber pressure and throat heat flux are too high for this wall material",
+            "thermal",
+        ));
+    }
+    // "Hotter" is not "better": peak temperature sits near stoichiometric while
+    // peak Isp sits fuel-rich because light exhaust molecules matter more.
+    if i.of_ratio > i.peak_temperature_of * 0.9 {
+        out.push(chain(
+            Warning::StoichiometricTemperatureSpike,
+            "Mixture ratio is near the temperature peak, not the efficiency peak",
+            "Burning near stoichiometric maximizes chamber temperature and heat load",
+            "Running fuel-rich lowers molar mass, which raises exhaust velocity even though the flame is cooler",
+            "mixture",
+        ));
+    }
+    out
+}
+
 /// Verify acyclicity and that every chain terminates in a demo.
 pub fn is_valid_dag(chains: &[CausalChain]) -> bool {
     chains.iter().all(|c| {
@@ -225,5 +282,41 @@ mod tests {
             burn_sweep_deg: 2.0,
         };
         assert!(diagnose(&i).is_empty());
+    }
+
+    fn engine(separated: bool, hot: bool, of: f64) -> EngineInputs {
+        EngineInputs {
+            altitude_m: 0.0,
+            ambient_pa: 101_325.0,
+            exit_pressure_pa: 8_000.0,
+            separation_x_norm: if separated { 0.35 } else { f64::NAN },
+            side_load_kn: 1.2,
+            wall_temperature_k: if hot { 1500.0 } else { 900.0 },
+            wall_limit_k: 1350.0,
+            throat_heat_flux_w_m2: 4.0e7,
+            chamber_temperature_k: 3400.0,
+            of_ratio: of,
+            stoichiometric_of: 7.94,
+            peak_temperature_of: 8.0,
+        }
+    }
+
+    #[test]
+    fn engine_warnings_are_chains_with_demos() {
+        let chains = diagnose_engine(&engine(true, true, 7.9));
+        assert_eq!(chains.len(), 3);
+        assert!(is_valid_dag(&chains));
+        assert_eq!(chains[0].warning, Warning::FlowSeparationAtAltitude);
+        assert_eq!(chains[1].warning, Warning::ThroatThermalOverload);
+        assert_eq!(chains[2].warning, Warning::StoichiometricTemperatureSpike);
+        for c in &chains {
+            assert!(!c.demo.is_empty());
+            assert!(c.nodes.iter().any(|n| n.kind == NodeKind::Cause));
+        }
+    }
+
+    #[test]
+    fn a_fuel_rich_cool_attached_engine_is_quiet() {
+        assert!(diagnose_engine(&engine(false, false, 5.2)).is_empty());
     }
 }

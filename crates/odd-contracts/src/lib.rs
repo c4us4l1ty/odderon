@@ -1,6 +1,12 @@
 //! Three playable Block-1 contracts and an explicit local scoring rule.
-//! Challenge ratings are catalog labels, not a persisted player Elo system.
+//! Challenge ratings are catalog labels; the ranked ladder is local.
 //! SI units internally; the browser performs display conversions only.
+//!
+//! Each contract owns a *stage*, not an engine lookup: a fixed airframe mass,
+//! a fixed tank volume and a structural propellant budget. The baseline
+//! engine is a physical `EngineSpec`, and thrust, specific impulse and engine
+//! dry mass are derived from it by `odd-propulsion`. A player may redesign
+//! the engine before locking a prediction; the recorder signs the design.
 use odd_astro::{
     elements::Elements,
     force_model::{FlightLimits, ForceModel, Radiation, Zonal},
@@ -9,6 +15,7 @@ use odd_astro::{
     spline::Keyframe,
 };
 use odd_core::frames::State;
+use odd_propulsion::{solve_engine, EngineSolution, EngineSpec, Propellant, PropulsionError};
 use odd_sim::{
     mission::{apsides, PredictionBaseline},
     planner::ManeuverNode,
@@ -42,11 +49,66 @@ pub struct Contract {
     pub objective: Objective,
     pub initial: Keyframe,
     pub duration_us: i64,
+    /// Derived: airframe plus the solved baseline engine mass.
     pub dry_mass_kg: f64,
+    /// Derived from `engine_spec` at zero ambient pressure.
     pub engine: Engine,
+    /// The baseline physical engine design.
+    pub engine_spec: EngineSpec,
+    /// Structure, tanks, avionics and payload. Excludes the engine.
+    pub airframe_mass_kg: f64,
+    /// Usable propellant volume. A low-density pair cannot fill the mass
+    /// budget, which is the whole point of offering hydrolox.
+    pub tank_volume_m3: f64,
+    /// Structural load limit on propellant mass.
+    pub propellant_budget_kg: f64,
     /// Derived from the documented reference geometry, not a performance lookup.
     pub reference_delta_v_m_s: f64,
 }
+
+/// A stage with a chosen engine: everything the propagator needs.
+#[derive(Clone, Copy, Debug)]
+pub struct Vehicle {
+    pub spec: EngineSpec,
+    pub solution: EngineSolution,
+    pub engine: Engine,
+    pub dry_mass_kg: f64,
+    pub propellant_kg: f64,
+    pub initial_mass_kg: f64,
+    /// True when the tank volume, not the structure, limited the load.
+    pub volume_limited: bool,
+}
+
+/// Baseline orbital-maneuvering engine: a storable pressure-fed-class tug
+/// engine sized to the card's 2.4 kN. Solving it gives 2,396.8 N and 310.6 s.
+pub const STORABLE_BASELINE: EngineSpec = EngineSpec {
+    propellant: Propellant::NtoMmh,
+    of_ratio: 2.0,
+    p_c_pa: 1.5e6,
+    r_throat_m: 0.0164,
+    r_exit_m: 0.0164 * 7.416_198_487_930_862, // sqrt(55)
+    length_fraction: 0.8,
+};
+
+/// Baseline cislunar tug engine: fuel-rich hydrolox, 3.5 MPa, expansion 120.
+/// Solving it gives 18,087 N and 449.9 s, within half a percent of the card.
+pub const TUG_BASELINE: EngineSpec = EngineSpec {
+    propellant: Propellant::LoxLh2,
+    of_ratio: 5.2,
+    p_c_pa: 3.5e6,
+    r_throat_m: 0.0288,
+    r_exit_m: 0.0288 * 10.954_451_150_103_322, // sqrt(120)
+    length_fraction: 0.8,
+};
+
+/// Overwritten by `with_baseline_engine` before a contract escapes this
+/// module; it exists only because `Contract` is built as a literal.
+const STORABLE_PLACEHOLDER: Engine = Engine {
+    thrust_newtons: 0.0,
+    specific_impulse_seconds: 0.0,
+    stage: 0,
+    engine: 0,
+};
 
 impl Contract {
     pub fn get(id: u32) -> Option<Self> {
@@ -77,15 +139,15 @@ impl Contract {
                 mass: 1200.0,
             },
             duration_us: 10_800_000_000,
-            dry_mass_kg: 1020.0,
-            engine: Engine {
-                thrust_newtons: 2400.0,
-                specific_impulse_seconds: 310.0,
-                stage: 0,
-                engine: 0,
-            },
+            dry_mass_kg: 0.0,
+            engine: STORABLE_PLACEHOLDER,
+            engine_spec: STORABLE_BASELINE,
+            airframe_mass_kg: 1016.9,
+            tank_volume_m3: 0.152,
+            propellant_budget_kg: 180.0,
             reference_delta_v_m_s: transfer.total_delta_v_m_s,
         }
+        .with_baseline_engine()
     }
     fn sso() -> Self {
         let rp = EARTH_EQUATORIAL_RADIUS + 250_000.0;
@@ -112,15 +174,15 @@ impl Contract {
             },
             duration_us: 432_000_000_000,
             // Unspecified in the original card; explicitly borrowed from 101.
-            dry_mass_kg: 1020.0,
-            engine: Engine {
-                thrust_newtons: 2400.0,
-                specific_impulse_seconds: 310.0,
-                stage: 0,
-                engine: 0,
-            },
+            dry_mass_kg: 0.0,
+            engine: STORABLE_PLACEHOLDER,
+            engine_spec: STORABLE_BASELINE,
+            airframe_mass_kg: 1016.9,
+            tank_volume_m3: 0.152,
+            propellant_budget_kg: 180.0,
             reference_delta_v_m_s: libm::hypot(dv_t, dv_w),
         }
+        .with_baseline_engine()
     }
     fn tug() -> Self {
         let r = EARTH_EQUATORIAL_RADIUS + 200_000.0;
@@ -137,18 +199,61 @@ impl Contract {
                 mass: 18_000.0,
             },
             duration_us: 600_000_000_000,
-            dry_mass_kg: 5200.0,
-            engine: Engine {
-                thrust_newtons: 18_000.0,
-                specific_impulse_seconds: 450.0,
-                stage: 0,
-                engine: 0,
-            },
+            dry_mass_kg: 0.0,
+            engine: STORABLE_PLACEHOLDER,
+            engine_spec: TUG_BASELINE,
+            airframe_mass_kg: 5182.1,
+            tank_volume_m3: 38.6,
+            propellant_budget_kg: 12_800.0,
             // Demonstrated three-kick reference budget. The separate 3,120 m/s
             // oracle is a gravity-loss regression, not a target-reaching claim.
             reference_delta_v_m_s: 3240.0,
         }
+        .with_baseline_engine()
     }
+    /// Solve the stage with its baseline engine and fill the derived fields.
+    fn with_baseline_engine(mut self) -> Self {
+        let vehicle = self
+            .vehicle(self.engine_spec)
+            .expect("the baseline engine of every contract must solve");
+        self.engine = vehicle.engine;
+        self.dry_mass_kg = vehicle.dry_mass_kg;
+        self.initial.mass = vehicle.initial_mass_kg;
+        self
+    }
+
+    /// Design the stage around a player's engine. Thrust, specific impulse,
+    /// engine mass and the propellant load all follow from physics; the
+    /// airframe, tank volume and structural budget do not change.
+    pub fn vehicle(&self, spec: EngineSpec) -> Result<Vehicle, PropulsionError> {
+        // Orbital contracts fly in vacuum. Ambient performance belongs to the
+        // test stand, not to the flight.
+        let solution = solve_engine(&spec, 0.0)?;
+        if solution.thermal_limit_exceeded {
+            return Err(PropulsionError::ThermalLimitExceeded);
+        }
+        if !solution.flight_ready() {
+            return Err(PropulsionError::NumericalRange);
+        }
+        let capacity = self.tank_volume_m3 * solution.bulk_density_kg_m3;
+        let propellant_kg = libm::fmin(capacity, self.propellant_budget_kg);
+        let dry_mass_kg = self.airframe_mass_kg + solution.dry_mass_kg;
+        Ok(Vehicle {
+            spec,
+            solution,
+            engine: Engine {
+                thrust_newtons: solution.thrust_n,
+                specific_impulse_seconds: solution.specific_impulse_s,
+                stage: 0,
+                engine: 0,
+            },
+            dry_mass_kg,
+            propellant_kg,
+            initial_mass_kg: dry_mass_kg + propellant_kg,
+            volume_limited: capacity < self.propellant_budget_kg,
+        })
+    }
+
     pub fn limits(&self) -> FlightLimits {
         FlightLimits {
             pole: [0.0, 0.0, 1.0],

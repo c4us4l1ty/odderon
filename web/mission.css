@@ -52,3 +52,30 @@
 .dossier-print-frame{position:fixed;left:-10000px;top:0;width:210mm;height:297mm;border:0}
 .certificate-button{margin-left:.35rem;padding:.2rem .5rem;font-size:.7rem;border:1px solid var(--line,#2b3f45);border-radius:.35rem;background:transparent;color:inherit;cursor:pointer}
 .certificate-button:hover{border-color:var(--gold,#c9a227)}
+
+/* Engine CAD & Schlieren lab. Static styles only: the governor owns every
+   animation frame, and the idle gate forbids keyframe animation. */
+.engine-card{border:1px solid var(--line);background:#13211f;padding:24px;margin-top:16px}
+.engine-card h2{font-size:32px;margin-top:12px}
+.engine-card h2 em{color:#c1d2b7}
+.engine-grid{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:18px;margin-top:18px}
+.engine-view{position:relative;min-height:300px;height:clamp(300px,30vw,420px);background:#08110f;border:1px solid #34493f;overflow:hidden;touch-action:none}
+/* style.css positions every canvas absolutely for the observatory scene. */
+.engine-view canvas{cursor:crosshair}
+.engine-view span{position:absolute;top:12px;left:14px;font-size:9px;letter-spacing:.12em;color:#849b90;pointer-events:none}
+.engine-controls{display:flex;flex-direction:column;gap:6px}
+.engine-controls label{font-size:11px;color:#cbd7c9;margin-top:8px}
+.engine-controls small{font-size:10px;color:#829589;float:right}
+.engine-controls input,.engine-controls select{width:100%;background:#0d1c1b;color:#e3eddf;border:1px solid #40544b;border-radius:3px;padding:8px}
+.engine-controls input[type=range]{padding:0;accent-color:#bbd1b3}
+.engine-controls select{appearance:auto}
+#engine-status{font-size:11px;color:#c4d7c1;min-height:16px;line-height:1.6}
+.engine-readout{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin:18px 0 4px}
+.engine-readout div{background:#1a2c26;padding:12px}
+.engine-readout strong{display:block;font:20px Georgia,serif;color:#e6d49e}
+.engine-readout span{display:block;font-size:10px;color:#9bad9f;margin-top:6px}
+.engine-readout .is-warning strong{color:#edbc98}
+#engine-causal{font-size:11px;line-height:1.65;color:#bdcdbd;margin-top:10px;min-height:3.3em}
+@media(max-width:850px){.engine-grid{grid-template-columns:1fr}.engine-view{height:300px}}
+@media(max-width:450px){.engine-card{padding:16px}}
+@media print{.engine-card{border:1px solid #999;background:#fff;color:#000}.engine-controls,.engine-view{display:none!important}.engine-readout div{background:#f4f4f4}.engine-readout strong{color:#000}}

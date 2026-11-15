@@ -35,6 +35,19 @@ is local to one browser, not key custody; see
 [mission-planning feasibility](docs/mission-planning-feasibility.md) for the gate
 map and the limits.
 
+Work Package 1.5 replaces the fixed engine card with a solved liquid engine:
+`crates/odd-propulsion` computes chamber properties, nozzle flow, Summerfield
+separation, Bartz throat heating and dry mass from a physical design, using
+only `f64` and `libm` so native and wasm results are bit-identical. The mission
+page exposes it as an Engine CAD & Schlieren lab — drag the throat, exit, bell
+length, mixture ratio and chamber pressure on the cross-section itself, sweep
+test-stand altitude, and watch the flow separate and re-attach. The signed recorder stores the *design*, and
+`crates/odd-verify` recomputes thrust, specific impulse and engine mass from it
+before replaying the flight, so a client cannot claim performance its geometry
+cannot produce. See [propulsion notes](docs/propulsion.md) for the calibration
+anchors, the contour-corrected separation criterion, the plume reconstruction
+and the model's limits.
+
 Work Package 0.1 provides SI quantities, epochs, UTC conversion, hierarchical
 reference-frame snapshots, and versioned hashing in `crates/odd-core`.
 [Foundation notes](docs/foundation.md) describe the scientific assumptions,

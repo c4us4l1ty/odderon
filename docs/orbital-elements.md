@@ -5,7 +5,10 @@ are **osculating two-body approximations**, not flight predictions. A state is
 relative to the central body in caller-supplied non-rotating axes at one common
 epoch. The APIs use SI units and radians. They do not model the central body's
 surface, atmosphere, oblateness, third bodies, finite burns, uncertainties or
-mission constraints. The browser observatory is not yet a maneuver planner.
+mission constraints. These helpers are the Level-1 preview behind the
+interactive maneuver planner at `web/mission.html`; the finite-burn, perturbed
+flight that actually scores a contract is `odd-sim`/`odd-contracts` territory,
+documented in [mission-planning feasibility](mission-planning-feasibility.md).
 
 ## Elements and singularities
 

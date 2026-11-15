@@ -5,16 +5,19 @@ import { createServer } from 'node:http';
 import { spawn, execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
+// `oracle_wasm_bit_parity_propulsion`: the propulsion fingerprint is the
+// sixth hash below. Native x86_64, Node wasm and headless Chrome wasm must
+// agree bit for bit over all 32 designs, or this script exits non-zero.
 const wasm = await readFile(resolve('target/wasm32-unknown-unknown/debug/odd_core_oracle.wasm'));
 const expected = execFileSync(resolve('target/debug/odd-core-oracle'), { encoding: 'utf8' }).trim().split('\n');
 const { instance } = await WebAssembly.instantiate(wasm, {});
-const fingerprints = exp => ['oracle_byte','integrator_oracle_byte','blended_integrator_oracle_byte','analytical_integrator_oracle_byte','maneuver_oracle_byte'].map(name=>Array.from({length:32},(_,i)=>exp[name](i).toString(16).padStart(2,'0')).join(''));
+const fingerprints = exp => ['oracle_byte','integrator_oracle_byte','blended_integrator_oracle_byte','analytical_integrator_oracle_byte','maneuver_oracle_byte','propulsion_oracle_byte'].map(name=>Array.from({length:32},(_,i)=>exp[name](i).toString(16).padStart(2,'0')).join(''));
 const nodeResult = fingerprints(instance.exports);
 if (nodeResult.join(',') !== expected.join(',')) throw new Error(`Native/Node wasm mismatch: ${expected} != ${nodeResult}`);
 
 const html = `<!doctype html><html><body><script>
 fetch('/oracle.wasm').then(r => r.arrayBuffer()).then(b => WebAssembly.instantiate(b, {})).then(({instance}) => {
-  const hash = ['oracle_byte','integrator_oracle_byte','blended_integrator_oracle_byte','analytical_integrator_oracle_byte','maneuver_oracle_byte'].map(name=>Array.from({length:32},(_,i)=>instance.exports[name](i).toString(16).padStart(2,'0')).join('')).join(',');
+  const hash = ['oracle_byte','integrator_oracle_byte','blended_integrator_oracle_byte','analytical_integrator_oracle_byte','maneuver_oracle_byte','propulsion_oracle_byte'].map(name=>Array.from({length:32},(_,i)=>instance.exports[name](i).toString(16).padStart(2,'0')).join('')).join(',');
   return fetch('/result?value=' + encodeURIComponent(hash));
 }).catch(e => fetch('/result?error=' + encodeURIComponent(String(e))));
 </script></body></html>`;

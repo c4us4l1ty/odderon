@@ -105,8 +105,11 @@ if [ -x /tmp/chromium ] && [ -f "$CACHE/al2023/lib/libnspr4.so" ]; then
   say "Chromium already present"
 else
   say "Extracting headless Chromium"
+  # The package is dual-published: the ESM entry has a `default` export, the
+  # CJS entry *is* the class. Accept both so a clean provision works.
   node -e '
-    const C = require("@sparticuz/chromium").default;
+    const M = require("@sparticuz/chromium");
+    const C = M.default ?? M;
     C.executablePath().then(p => console.log("chromium:", p))
       .catch(e => { console.error(e); process.exit(1); });
   '

@@ -7,6 +7,7 @@ use odd_ephem::{
 };
 use std::sync::{Mutex, OnceLock};
 
+mod engine_bridge;
 mod fdr_bridge;
 mod identity_bridge;
 mod mission_bridge;
