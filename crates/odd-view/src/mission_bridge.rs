@@ -522,6 +522,19 @@ pub extern "C" fn mission_diagnose(
     *CAUSAL.lock().unwrap() = chains;
     len
 }
+
+/// Append engine-lab chains to the same registry the flight warnings use, so
+/// one renderer and one acyclicity check cover both. Call after
+/// `mission_diagnose`; returns the combined chain count.
+pub(crate) fn causal_count() -> u32 {
+    CAUSAL.lock().unwrap().len() as u32
+}
+
+pub(crate) fn append_causal(chains: Vec<odd_app::causal::CausalChain>) -> u32 {
+    let mut registry = CAUSAL.lock().unwrap();
+    registry.extend(chains);
+    registry.len() as u32
+}
 #[no_mangle]
 pub extern "C" fn mission_causal_count() -> u32 {
     CAUSAL.lock().unwrap().len() as u32

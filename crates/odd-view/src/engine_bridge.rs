@@ -251,6 +251,37 @@ pub extern "C" fn mission_engine_baseline() -> i32 {
     )
 }
 
+/// Diagnose the solved design through the same odd-app causal DAG the flight
+/// warnings use, appending to that registry. Returns the combined count, so
+/// the browser reads every chain back with the existing causal accessors.
+#[no_mangle]
+pub extern "C" fn mission_engine_diagnose() -> u32 {
+    // Build the inputs inside the lock, then release it before touching the
+    // flight causal registry: the two statics must never be held together.
+    let inputs = {
+        let guard = LAB.lock().unwrap();
+        let Some(lab) = guard.as_ref() else {
+            return mission_bridge::causal_count();
+        };
+        let s = &lab.solution;
+        odd_app::causal::EngineInputs {
+            altitude_m: 0.0,
+            ambient_pa: lab.ambient,
+            exit_pressure_pa: s.exit_pressure_pa,
+            separation_x_norm: s.separation.map_or(f64::NAN, |sep| sep.x_norm),
+            side_load_kn: s.separation.map_or(0.0, |sep| sep.side_load_kn),
+            wall_temperature_k: s.throat_wall_temperature_k,
+            wall_limit_k: odd_propulsion::thermal_mass::MAX_WALL_TEMPERATURE_K,
+            throat_heat_flux_w_m2: s.throat_heat_flux_w_m2,
+            chamber_temperature_k: s.chamber_temperature_k,
+            of_ratio: lab.spec.of_ratio,
+            stoichiometric_of: lab.spec.propellant.stoichiometric_of(),
+            peak_temperature_of: lab.spec.propellant.peak_temperature_of(),
+        }
+    };
+    mission_bridge::append_causal(odd_app::causal::diagnose_engine(&inputs))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

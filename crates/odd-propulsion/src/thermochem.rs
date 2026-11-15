@@ -70,6 +70,11 @@ impl Propellant {
             Self::NtoMmh => 2.57,
         }
     }
+    /// Mixture ratio at which chamber temperature peaks. Distinct from
+    /// stoichiometric because dissociation shifts the maximum slightly rich.
+    pub fn peak_temperature_of(self) -> f64 {
+        self.constants().tc_peak_of
+    }
     /// Mixture ratios the calibration covers. Outside them the closed forms
     /// are extrapolation, so the solver refuses rather than inventing data.
     pub fn of_band(self) -> (f64, f64) {
