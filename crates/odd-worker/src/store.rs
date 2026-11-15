@@ -45,6 +45,7 @@ pub struct StoredFdr {
     pub attempt_num: u32,
     pub mode: AttemptMode,
     pub score_s: f64,
+    pub delegation_mask: u8,
     pub receipt: Option<ServerReceipt>,
 }
 
@@ -259,15 +260,12 @@ impl Store for MemoryStore {
                 }
             }
             let player = self.load_player(&fdr.pubkey)?;
-            // The delegation mask is recovered from the stored FDR bytes by
-            // the engine when it builds the public leaderboard; the store
-            // keeps the row minimal and the engine fills the mask.
             rows.push(LeaderRow {
                 callsign: player.callsign,
                 pubkey: fdr.pubkey,
                 elo: player.elo,
                 score_s: fdr.score_s,
-                delegation_mask: 0,
+                delegation_mask: fdr.delegation_mask,
                 fdr_hash: *hash,
             });
         }

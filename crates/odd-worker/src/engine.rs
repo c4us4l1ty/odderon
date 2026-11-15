@@ -199,6 +199,7 @@ impl<S: Store> AuthorityEngine<S> {
             attempt_num,
             mode,
             score_s,
+            delegation_mask: fdr.delegation_mask,
             receipt: Some(receipt.clone()),
         };
         self.store.save_fdr(&fdr_hash, &stored)?;

@@ -163,6 +163,58 @@ impl ServerReceipt {
     pub fn is_certified_ranked(&self, server_pk: &PubKey) -> bool {
         self.payload.mode == AttemptMode::Ranked && self.verify(server_pk)
     }
+
+    /// Serialize for storage: the canonical payload bytes followed by the
+    /// 64-byte signature. This is the blob the SQLite and D1 adapters keep.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = self.payload.canonical_bytes();
+        out.extend_from_slice(&self.server_sig);
+        out
+    }
+
+    /// Parse a stored receipt blob. Returns `None` on any length or
+    /// domain mismatch; the signature is *not* checked here (call `verify`).
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        let dom = RECEIPT_DOMAIN.len();
+        let expected = dom + 2 + 32 + 32 + 4 + 4 + 1 + 8 * 4 + 8 + 64;
+        if bytes.len() != expected || bytes.get(..dom) != Some(RECEIPT_DOMAIN) {
+            return None;
+        }
+        let mut p = dom;
+        let take = |p: &mut usize, n: usize| -> &[u8] {
+            let s = &bytes[*p..*p + n];
+            *p += n;
+            s
+        };
+        let schema_v3 = u16::from_be_bytes(take(&mut p, 2).try_into().ok()?);
+        let fdr_hash: Hash = take(&mut p, 32).try_into().ok()?;
+        let pubkey: PubKey = take(&mut p, 32).try_into().ok()?;
+        let contract_id = u32::from_be_bytes(take(&mut p, 4).try_into().ok()?);
+        let attempt_num = u32::from_be_bytes(take(&mut p, 4).try_into().ok()?);
+        let mode = AttemptMode::from_u8(take(&mut p, 1)[0])?;
+        let score_s_bits = u64::from_be_bytes(take(&mut p, 8).try_into().ok()?);
+        let elo_before_bits = u64::from_be_bytes(take(&mut p, 8).try_into().ok()?);
+        let elo_after_bits = u64::from_be_bytes(take(&mut p, 8).try_into().ok()?);
+        let mission_elo_after_bits = u64::from_be_bytes(take(&mut p, 8).try_into().ok()?);
+        let timestamp_s = i64::from_be_bytes(take(&mut p, 8).try_into().ok()?);
+        let server_sig: Sig = take(&mut p, 64).try_into().ok()?;
+        Some(Self {
+            payload: ReceiptPayload {
+                schema_v3,
+                fdr_hash,
+                pubkey,
+                contract_id,
+                attempt_num,
+                mode,
+                score_s_bits,
+                elo_before_bits,
+                elo_after_bits,
+                mission_elo_after_bits,
+                timestamp_s,
+            },
+            server_sig,
+        })
+    }
 }
 
 /// The certification banner the UI and dossier print. The stored local

@@ -17,6 +17,10 @@ cargo clippy --locked --offline --workspace --all-targets -- -D warnings
 step "workspace tests (lib + integration)"
 cargo test --locked --offline --workspace --lib --tests --no-fail-fast
 
+step "server authority: local HTTP/SQLite adapter + anti-cheat oracles (no cloud credentials)"
+cargo clippy --locked --offline -p odd-worker --all-targets --features local -- -D warnings
+cargo test --locked --offline -p odd-worker --features local --lib --tests
+
 step "release wasm"
 cargo build --locked --offline --release -p odd-view --target wasm32-unknown-unknown
 cp target/wasm32-unknown-unknown/release/odd_view.wasm web/odd_view.wasm
