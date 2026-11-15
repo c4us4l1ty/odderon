@@ -10,8 +10,9 @@
 //! numbers arrive through a fixed-layout f64 array, text through the shared
 //! byte channel, and strings leave as length + byte.
 use super::identity_bridge;
-use super::mission_bridge::{self as bridge, FlightSpec, REPORT_LEN};
+use super::mission_bridge::{self as bridge};
 use odd_report::{AttemptMode, Command, Fdr, FdrError, SCHEMA_VERSION};
+use odd_verify::REPORT_LEN;
 use std::sync::Mutex;
 
 /// Fixed header layout of the transport array. Commands follow at
@@ -35,27 +36,6 @@ static DOSSIER: Mutex<String> = Mutex::new(String::new());
 static VERDICT: Mutex<Option<Result<(), FdrError>>> = Mutex::new(None);
 static REPLAYED: Mutex<Option<[f64; REPORT_LEN]>> = Mutex::new(None);
 static GEOMETRY: Mutex<Option<odd_report::dossier::Geometry>> = Mutex::new(None);
-
-/// Translate a recorder into the simulator's replay request.
-fn spec(fdr: &Fdr) -> FlightSpec {
-    FlightSpec {
-        contract_id: fdr.contract_id,
-        epoch_s: fdr.epoch_s,
-        duration_us: fdr.duration_us,
-        initial_mass_kg: fdr.initial_mass_kg,
-        dry_mass_kg: fdr.dry_mass_kg,
-        thrust_n: fdr.thrust_n,
-        specific_impulse_s: fdr.specific_impulse_s,
-        initial_state: fdr.initial_state,
-        node_metric: fdr.node_metric,
-        prediction: fdr.prediction_baseline,
-        commands: fdr
-            .commands
-            .iter()
-            .map(|command| (command.time_us, command.delta_v_tnw, command.guidance))
-            .collect(),
-    }
-}
 
 #[no_mangle]
 pub extern "C" fn mission_fdr_reset() {
@@ -286,14 +266,16 @@ pub extern "C" fn mission_fdr_verify() -> i32 {
 /// The full check. Kept separate from the export so native tests can call it
 /// with a constructed recorder.
 pub(crate) fn verify_and_replay(fdr: &Fdr) -> Result<(), FdrError> {
-    fdr.verify_signature()?;
-    let outcome = bridge::replay_flight(&spec(fdr))
-        .ok_or(FdrError::Malformed("the command timeline does not compile"))?;
-    *REPLAYED.lock().unwrap() = Some(outcome.report);
-    *GEOMETRY.lock().unwrap() = Some(outcome.geometry);
-    fdr.compare_metrics(&outcome.report)?;
-    fdr.compare_final_state(&outcome.final_state_hash)?;
-    Ok(())
+    // The check itself is portable: odd_verify::verify_record is what a CLI
+    // or an edge worker calls. This wrapper only caches what the UI shows.
+    match odd_verify::verify_record(fdr) {
+        Ok(outcome) => {
+            *REPLAYED.lock().unwrap() = Some(outcome.report);
+            *GEOMETRY.lock().unwrap() = Some(outcome.geometry);
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// First differing metric index, or -1. Names the field a rejection is about.

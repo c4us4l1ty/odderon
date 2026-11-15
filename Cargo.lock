@@ -179,6 +179,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "odd-verify"
+version = "0.1.0"
+dependencies = [
+ "libm",
+ "odd-astro",
+ "odd-contracts",
+ "odd-core",
+ "odd-ephem",
+ "odd-identity",
+ "odd-report",
+ "odd-sim",
+]
+
+[[package]]
 name = "odd-view"
 version = "0.1.0"
 dependencies = [
@@ -191,6 +205,7 @@ dependencies = [
  "odd-identity",
  "odd-report",
  "odd-sim",
+ "odd-verify",
 ]
 
 [[package]]
