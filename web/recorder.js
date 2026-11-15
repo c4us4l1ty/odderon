@@ -7,7 +7,7 @@
 // The secret never enters a worker: the flight worker captures the unsigned
 // fields, this module signs them on the main thread with the active license,
 // and a one-shot worker does the expensive verification replay.
-export const HEADER = 25;
+export const HEADER = 31;
 export const COMMAND_STRIDE = 11;
 export const METRIC_COUNT = 58;
 const MODE = 2;
@@ -25,7 +25,8 @@ function hexBytes(hex, count) {
 
 /// Build the transport array from a parsed recorder JSON document.
 export function fieldsFromJson(document) {
-  if (document?.schema_version !== 1) throw Error('unsupported recorder schema');
+  const schema = document?.schema_version;
+  if (schema !== 1 && schema !== 2) throw Error('unsupported recorder schema');
   const mode = document.attempt_mode === 'Ranked' ? 0 : document.attempt_mode === 'Practice' ? 1 : null;
   if (mode === null) throw Error('unknown attempt mode');
   const commands = document.command_timeline;
@@ -52,7 +53,22 @@ export function fieldsFromJson(document) {
     commands.length,
     document.elo_before,
     document.elo_after,
+    // Schema 2 signs the engine design. Legacy records carry NaN here, which
+    // the bridge reads back as "no design".
+    ...(schema === 2
+      ? [
+          Number(document.engine_propellant_id),
+          Number(document.engine_of_ratio),
+          Number(document.engine_p_c_pa),
+          Number(document.engine_r_throat_m),
+          Number(document.engine_r_exit_m),
+          Number(document.engine_length_fraction),
+        ]
+      : [NaN, NaN, NaN, NaN, NaN, NaN]),
   ];
+  if (schema === 2 && !Number.isInteger(document.engine_propellant_id)) {
+    throw Error('recorder is missing its engine design');
+  }
   for (const command of commands) {
     if (!Number.isInteger(command.time_us)) throw Error('command time must be integer microseconds');
     if (command.delta_v_tnw?.length !== 3) throw Error('command needs three delta-v components');

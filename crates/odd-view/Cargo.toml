@@ -17,4 +17,5 @@ odd-app = { path = "../odd-app" }
 odd-identity = { path = "../odd-identity" }
 odd-report = { path = "../odd-report" }
 odd-verify = { path = "../odd-verify" }
+odd-propulsion = { path = "../odd-propulsion" }
 ed25519-compact = { version = "2.6.1", default-features = false }

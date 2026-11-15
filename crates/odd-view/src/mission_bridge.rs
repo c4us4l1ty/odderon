@@ -25,6 +25,7 @@ const MU: f64 = odd_contracts::EARTH_MU;
 #[derive(Clone)]
 struct Settings {
     contract_id: u32,
+    engine_spec: odd_propulsion::EngineSpec,
     epoch: i64,
     initial: Keyframe,
     duration_us: i64,
@@ -87,6 +88,7 @@ pub extern "C" fn mission_contract(id: u32) -> i32 {
     let Some(c) = Contract::get(id) else { return 0 };
     *SETTINGS.lock().unwrap() = Some(Settings {
         contract_id: id,
+        engine_spec: c.engine_spec,
         epoch: odd_contracts::START_EPOCH,
         initial: c.initial,
         duration_us: c.duration_us,
@@ -172,6 +174,9 @@ pub extern "C" fn mission_setup(
     }
     *settings = Some(Settings {
         contract_id: 0,
+        // The free sandbox has no catalog stage, so it carries a placeholder
+        // design and cannot produce a certified recorder.
+        engine_spec: odd_contracts::STORABLE_BASELINE,
         epoch: epoch as i64,
         initial: Keyframe {
             time: 0.0,
@@ -847,6 +852,7 @@ pub(crate) struct CapturedCommand {
 
 pub(crate) struct CapturedFlight {
     pub contract_id: u32,
+    pub engine_spec: odd_propulsion::EngineSpec,
     pub epoch_s: i64,
     pub duration_us: i64,
     pub initial: Keyframe,
@@ -881,6 +887,7 @@ pub(crate) fn capture_flight() -> Option<CapturedFlight> {
     };
     Some(CapturedFlight {
         contract_id: settings.contract_id,
+        engine_spec: settings.engine_spec,
         epoch_s: settings.epoch,
         duration_us: settings.duration_us,
         initial: settings.initial,
@@ -916,6 +923,42 @@ pub(crate) fn capture_flight() -> Option<CapturedFlight> {
         report: execution.report,
         final_state: execution.final_state,
     })
+}
+
+/// The catalog contract behind the current session, if any.
+pub(crate) fn current_contract() -> Option<Contract> {
+    let settings = SETTINGS.lock().unwrap();
+    Contract::get(settings.as_ref()?.contract_id)
+}
+
+/// The engine design the current session flies.
+pub(crate) fn current_engine_spec() -> Option<odd_propulsion::EngineSpec> {
+    Some(SETTINGS.lock().unwrap().as_ref()?.engine_spec)
+}
+
+/// Rebuild the stage around a player-designed engine. Mass, thrust and Isp
+/// all move together, and any compiled plan is discarded because its burn
+/// durations were computed for the old engine.
+pub(crate) fn apply_engine_design(spec: odd_propulsion::EngineSpec) -> i32 {
+    let mut guard = SETTINGS.lock().unwrap();
+    let Some(settings) = guard.as_mut() else {
+        return 0;
+    };
+    let Some(contract) = Contract::get(settings.contract_id) else {
+        return 0;
+    };
+    let Ok(vehicle) = contract.vehicle(spec) else {
+        return -1;
+    };
+    settings.engine_spec = spec;
+    settings.engine = vehicle.engine;
+    settings.dry_mass = vehicle.dry_mass_kg;
+    settings.initial.mass = vehicle.initial_mass_kg;
+    settings.nodes.clear();
+    settings.guidance.clear();
+    drop(guard);
+    clear_results();
+    1
 }
 
 /// Figure geometry for the flight currently on screen.

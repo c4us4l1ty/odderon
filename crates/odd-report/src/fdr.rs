@@ -567,6 +567,7 @@ impl Fdr {
             match &self.engine {
                 Some(engine) => {
                     o.string("engine_propellant", engine.propellant.label());
+                    o.number("engine_propellant_id", engine.propellant as u8 as f64);
                     o.number("engine_of_ratio", engine.of_ratio);
                     o.number("engine_p_c_pa", engine.p_c_pa);
                     o.number("engine_r_throat_m", engine.r_throat_m);
