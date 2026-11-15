@@ -154,6 +154,9 @@ check('the scan target is an absolute URL', /^https?:\/\//.test(scanUrl), scanUr
 check('the scan target carries the verify fragment', scanUrl.includes('#verify='));
 check('the scan target points at this page', scanUrl.startsWith(`${new URL(page.url()).origin}/mission.html#verify=`));
 check('the dossier no longer prints a relative placeholder', !/relative to the serving origin/i.test(scanLine));
+check('the dossier prints the cryogenic annex', verified.dossier.includes('id="annex-c"'));
+check('the dossier names the delegated disciplines', /Delegation bitmask/.test(verified.dossier)
+  && /capped at 0.65/.test(verified.dossier));
 
 // --- 7. The cryogenic tug: the design lever must change mass AND loss. ---
 await page.evaluate(() => document.getElementById('verify-dialog').close());
