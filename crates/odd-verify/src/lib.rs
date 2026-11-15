@@ -721,6 +721,17 @@ pub fn certify_engine(fdr: &Fdr) -> Result<Option<EngineSolution>, FdrError> {
         let design = thermal_inputs_from_record(fdr)
             .map(|inputs| inputs.design)
             .unwrap_or_else(odd_contracts::ThermalDesign::baseline);
+        // A delegated discipline must carry the chief's textbook hardware.
+        // Claiming the delegation bit while flying hand-optimised hardware
+        // would buy the badge without paying the chief's mass.
+        if let Some(department) = odd_contracts::chief_ai::delegation_deviation(
+            &contract,
+            *spec,
+            &design,
+            odd_contracts::DelegationMask(fdr.delegation_mask),
+        ) {
+            return Err(FdrError::DelegationSpecMismatch(department));
+        }
         let vehicle = contract
             .vehicle_delegated(
                 *spec,

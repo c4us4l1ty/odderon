@@ -78,8 +78,8 @@ fn signed_stage(design: &ThermalDesign, mask: DelegationMask) -> (Fdr, License) 
         node_metric: false,
         delegation: mask,
         thermal: Some(ThermalInputs {
-            engine_spec: contract.engine_spec,
-            design: *design,
+            engine_spec: vehicle.effective.engine,
+            design: vehicle.effective.thermal,
             load_kg: load,
         }),
     };
@@ -131,7 +131,7 @@ fn signed_stage(design: &ThermalDesign, mask: DelegationMask) -> (Fdr, License) 
         ),
         elo_before: 1200.0,
         elo_after: 1200.0,
-        thermal_specs: vec![thermal_spec(design, &contract, load)],
+        thermal_specs: vec![thermal_spec(&vehicle.effective.thermal, &contract, load)],
         delegation_mask: mask.0,
         boil_off_kg: outcome.thermal.tank_lost_kg,
         cryocooler_energy_j: outcome.thermal.cooler_energy_j,

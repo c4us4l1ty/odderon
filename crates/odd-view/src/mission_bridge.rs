@@ -42,14 +42,29 @@ struct Settings {
 impl Settings {
     /// The tank model applies only to cryogenic pairs, and only when a load
     /// is actually aboard.
+    /// The design that actually flies: the player's sliders with every
+    /// delegated discipline replaced by its chief's textbook choice. The
+    /// flight, the capture and the assembly readouts all resolve through
+    /// here so they cannot disagree about what was flown.
+    fn effective(&self) -> Option<odd_contracts::chief_ai::ChiefDesign> {
+        let contract = Contract::get(self.contract_id)?;
+        Some(odd_contracts::chief_ai::substitute(
+            &contract,
+            self.engine_spec,
+            &self.thermal_design,
+            self.delegation,
+        ))
+    }
+
     fn thermal_inputs(&self) -> Option<odd_verify::ThermalInputs> {
         let load = self.initial.mass - self.dry_mass;
         if load <= 0.0 {
             return None;
         }
+        let effective = self.effective()?;
         Some(odd_verify::ThermalInputs {
-            engine_spec: self.engine_spec,
-            design: self.thermal_design,
+            engine_spec: effective.engine,
+            design: effective.thermal,
             load_kg: load,
         })
     }
@@ -917,9 +932,10 @@ pub(crate) fn capture_flight() -> Option<CapturedFlight> {
         }
         None => [f64::NAN; 6],
     };
+    let effective = settings.effective()?;
     Some(CapturedFlight {
         contract_id: settings.contract_id,
-        engine_spec: settings.engine_spec,
+        engine_spec: effective.engine,
         epoch_s: settings.epoch,
         duration_us: settings.duration_us,
         initial: settings.initial,
@@ -927,14 +943,11 @@ pub(crate) fn capture_flight() -> Option<CapturedFlight> {
         thrust_n: settings.engine.thrust_newtons,
         specific_impulse_s: settings.engine.specific_impulse_seconds,
         node_metric: settings.node_metric,
-        thermal_design: settings.thermal_design,
+        thermal_design: effective.thermal,
         tank_volumes_m3: {
             let load = settings.initial.mass - settings.dry_mass;
             let contract = odd_contracts::Contract::get(settings.contract_id)?;
-            match settings
-                .thermal_design
-                .stage(&contract, &settings.engine_spec, load)
-            {
+            match effective.thermal.stage(&contract, &effective.engine, load) {
                 Some(stage) => [stage.oxidizer.volume_m3, stage.fuel.volume_m3],
                 None => [0.0, 0.0],
             }
@@ -1056,6 +1069,81 @@ pub(crate) fn test_lock() -> std::sync::MutexGuard<'static, ()> {
     tests::TEST_LOCK.lock().unwrap()
 }
 
+/// The value actually flown for a cryogenic/power field, after chief
+/// substitution. Same field ids as `mission_thermal_get`. The assembly shows
+/// this next to a locked slider so the player can see what the chief bought.
+#[no_mangle]
+pub extern "C" fn mission_thermal_effective(field: u32) -> f64 {
+    let Some(settings) = SETTINGS.lock().unwrap().clone() else {
+        return f64::NAN;
+    };
+    let Some(effective) = settings.effective() else {
+        return f64::NAN;
+    };
+    let d = &effective.thermal;
+    match field {
+        0 => f64::from(d.mli_layers),
+        1 => d.epsilon_eff,
+        2 => d.cryocooler_lift_w,
+        3 => d.radiator_area_m2,
+        4 => d.strut_conductance_w_k,
+        5 => d.relief_pressure_pa,
+        6 => f64::from(d.shell),
+        8 => d.bus.array_w_at_1au,
+        9 => d.bus.avionics_w,
+        _ => f64::NAN,
+    }
+}
+
+/// Which department owns a field, so the assembly knows which slider to lock
+/// when that department is delegated. Returns the department discriminant
+/// (1 Thermal, 2 Power, 3 GNC) or u32::MAX when the field is unknown.
+#[no_mangle]
+pub extern "C" fn mission_thermal_owner(field: u32) -> u32 {
+    match field {
+        0..=6 => 1,
+        8 => 2,
+        9 => 3,
+        _ => u32::MAX,
+    }
+}
+
+/// The engine the stage actually flies after propulsion substitution:
+/// 0 thrust N, 1 specific impulse s, 2 dry kg, 3 mixture ratio, 4 chamber Pa,
+/// 5 throat m, 6 exit m, 7 bell length fraction, 8 propellant id.
+#[no_mangle]
+pub extern "C" fn mission_engine_effective(field: u32) -> f64 {
+    let Some(settings) = SETTINGS.lock().unwrap().clone() else {
+        return f64::NAN;
+    };
+    let Some(effective) = settings.effective() else {
+        return f64::NAN;
+    };
+    let Some(contract) = Contract::get(settings.contract_id) else {
+        return f64::NAN;
+    };
+    let Ok(vehicle) = contract.vehicle_delegated(
+        settings.engine_spec,
+        settings.delegation,
+        &settings.thermal_design,
+    ) else {
+        return f64::NAN;
+    };
+    let spec = effective.engine;
+    match field {
+        0 => vehicle.engine.thrust_newtons,
+        1 => vehicle.engine.specific_impulse_seconds,
+        2 => vehicle.solution.dry_mass_kg,
+        3 => spec.of_ratio,
+        4 => spec.p_c_pa,
+        5 => spec.r_throat_m,
+        6 => spec.r_exit_m,
+        7 => spec.length_fraction,
+        8 => f64::from(spec.propellant as u8),
+        _ => f64::NAN,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Vehicle assembly: Chief-AI delegation and the cryogenic design lever.
 //
@@ -1106,12 +1194,29 @@ fn delegation_outcome() -> Option<odd_contracts::chief_ai::DelegationOutcome> {
         .ok()?;
     let radius = libm::cbrt(3.0 * contract.tank_volume_m3 / (4.0 * std::f64::consts::PI));
     let area = 4.0 * std::f64::consts::PI * radius * radius;
+    let flown = &vehicle.effective.thermal;
+    let cryogenic = flown
+        .stage(&contract, &vehicle.effective.engine, vehicle.propellant_kg)
+        .is_some();
+    let sizing = if cryogenic {
+        *flown
+    } else {
+        let mut sanitized = *flown;
+        sanitized.radiator_area_m2 = 0.0;
+        sanitized.cryocooler_lift_w = 0.0;
+        sanitized
+    };
+    let (volume, area) = if cryogenic {
+        (contract.tank_volume_m3, area)
+    } else {
+        (0.0, 0.0)
+    };
     let hardware = odd_contracts::chief_ai::hardware_mass(
         vehicle.solution.dry_mass_kg,
-        contract.tank_volume_m3,
+        volume,
         area,
-        settings.thermal_design.relief_pressure_pa,
-        &settings.thermal_design,
+        flown.relief_pressure_pa,
+        &sizing,
     );
     Some(odd_contracts::chief_ai::apply(
         settings.delegation,
@@ -1233,8 +1338,15 @@ pub extern "C" fn mission_thermal_get(field: u32) -> f64 {
             let Some(contract) = Contract::get(settings.contract_id) else {
                 return f64::NAN;
             };
+            let Some(effective) = settings.effective() else {
+                return f64::NAN;
+            };
             let load = settings.initial.mass - settings.dry_mass;
-            if d.stage(&contract, &settings.engine_spec, load).is_some() {
+            if effective
+                .thermal
+                .stage(&contract, &effective.engine, load)
+                .is_some()
+            {
                 1.0
             } else {
                 0.0

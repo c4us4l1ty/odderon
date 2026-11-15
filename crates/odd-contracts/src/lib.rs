@@ -86,6 +86,9 @@ pub struct Vehicle {
     pub delegation_margin_kg: f64,
     /// Stack cost multiplier from delegation. 1.0 when manual.
     pub delegation_cost_multiplier: f64,
+    /// The specification actually flown after chief substitution. When a
+    /// discipline is delegated this differs from what the player typed.
+    pub effective: chief_ai::ChiefDesign,
     /// Kilograms of cryogenic fit-out beyond the contract baseline:
     /// blanket, radiator panels and the solar array that runs the cooler.
     /// Negative when the player chose lighter hardware than the baseline.
@@ -252,6 +255,13 @@ impl Contract {
         delegation: DelegationMask,
         design: &ThermalDesign,
     ) -> Result<Vehicle, PropulsionError> {
+        // A delegated discipline is REPLACED by the chief's textbook choice,
+        // not merely padded. Everything below masses the hardware that
+        // actually flies, and the verifier recomputes the same substitution
+        // from the signed mask.
+        let effective = chief_ai::substitute(self, spec, design, delegation);
+        let spec = effective.engine;
+        let design = &effective.thermal;
         // Orbital contracts fly in vacuum. Ambient performance belongs to the
         // test stand, not to the flight.
         let solution = solve_engine(&spec, 0.0)?;
@@ -341,6 +351,7 @@ impl Contract {
             volume_limited: capacity < self.propellant_budget_kg,
             delegation_margin_kg: outcome.mass_penalty_kg,
             delegation_cost_multiplier: outcome.cost_multiplier,
+            effective,
             thermal_fitout_kg,
         })
     }

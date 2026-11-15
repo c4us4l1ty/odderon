@@ -217,6 +217,9 @@ pub enum FdrError {
     /// A recorded derived quantity disagrees with the engine the record
     /// signs: the client claimed performance the design cannot produce.
     EngineMismatch(&'static str),
+    /// A delegated discipline's signed hardware is not the chief's
+    /// textbook choice, so the record claims delegation it did not use.
+    DelegationSpecMismatch(&'static str),
     /// The engine design itself is outside the model's validated envelope.
     EngineUnusable,
     /// The record signs a framing condition the contract fixes. A contract
@@ -247,6 +250,10 @@ impl core::fmt::Display for FdrError {
             Self::EngineMismatch(field) => write!(
                 f,
                 "EngineMismatch: recorded {field} is not what the signed engine design produces"
+            ),
+            Self::DelegationSpecMismatch(department) => write!(
+                f,
+                "DelegationSpecMismatch: {department} is marked AUTO-DELEGATED but its signed hardware is not the chief's textbook choice"
             ),
             Self::EngineUnusable => {
                 write!(f, "EngineUnusable: the signed engine design does not solve")
