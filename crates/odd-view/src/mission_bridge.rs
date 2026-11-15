@@ -948,8 +948,10 @@ pub(crate) fn apply_engine_design(spec: odd_propulsion::EngineSpec) -> i32 {
     let Some(contract) = Contract::get(settings.contract_id) else {
         return 0;
     };
-    let Ok(vehicle) = contract.vehicle(spec) else {
-        return -1;
+    let vehicle = match contract.vehicle(spec) {
+        Ok(vehicle) => vehicle,
+        Err(odd_propulsion::PropulsionError::ThermalLimitExceeded) => return -2,
+        Err(_) => return -1,
     };
     settings.engine_spec = spec;
     settings.engine = vehicle.engine;

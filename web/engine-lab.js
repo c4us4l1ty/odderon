@@ -484,9 +484,11 @@ export function createLab({ wasm, onApply, onDiagnose, isLocked, annotate }) {
     const code = wasm.mission_engine_apply();
     if (code !== 1) {
       $('engine-status').classList.add('failure');
-      $('engine-status').textContent = code === -1
-        ? 'This design cannot fly the contract: it is over the thermal limit or the tank cannot hold a useful load.'
-        : 'Load a contract before fitting an engine.';
+      $('engine-status').textContent = code === -2
+        ? 'ThermalLimitExceeded: the throat wall is over its 1350 K limit. Lower chamber pressure or open the throat.'
+        : code === -1
+          ? 'This design cannot fly the contract: it produces no usable thrust.'
+          : 'Load a contract before fitting an engine.';
       return;
     }
     onApply?.();

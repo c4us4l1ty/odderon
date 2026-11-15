@@ -109,6 +109,9 @@ pub extern "C" fn mission_engine_solve(
         Err(PropulsionError::ChamberPressureOutOfRange) => return -2,
         Err(PropulsionError::GeometryOutOfRange) => return -3,
         Err(PropulsionError::NumericalRange) => return -4,
+        // solve_engine reports the thermal flag on a successful solution so
+        // the field stays readable; this arm keeps the match exhaustive.
+        Err(PropulsionError::ThermalLimitExceeded) => return -5,
     };
     let stations = nozzle::stations(
         spec.geometry(),
@@ -253,7 +256,7 @@ pub extern "C" fn mission_engine_station(index: u32, field: u32) -> f64 {
 /// Fit the solved design to the loaded contract and clear any compiled plan:
 /// a new engine changes mass, thrust and Isp, so old nodes are meaningless.
 /// Returns 1 on success, 0 when nothing is solved or no contract is loaded,
-/// -1 when the design cannot fly (thermal limit or no thrust).
+/// -1 when the design cannot fly, -2 when it is over the throat wall limit.
 #[no_mangle]
 pub extern "C" fn mission_engine_apply() -> i32 {
     let spec = {

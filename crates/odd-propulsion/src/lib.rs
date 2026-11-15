@@ -68,6 +68,10 @@ pub enum PropulsionError {
     ChamberPressureOutOfRange,
     GeometryOutOfRange,
     NumericalRange,
+    /// The solved design exceeds the regeneratively cooled wall limit. It is
+    /// a real solution, not a failure to converge, so it is named separately:
+    /// a designer needs to know to lower chamber pressure or open the throat.
+    ThermalLimitExceeded,
 }
 
 impl core::fmt::Display for PropulsionError {
@@ -79,6 +83,11 @@ impl core::fmt::Display for PropulsionError {
                 write!(f, "throat, exit radius or bell length out of range")
             }
             Self::NumericalRange => write!(f, "no converged isentropic solution"),
+            Self::ThermalLimitExceeded => write!(
+                f,
+                "throat wall exceeds the {} K regeneratively cooled limit",
+                thermal_mass::MAX_WALL_TEMPERATURE_K
+            ),
         }
     }
 }

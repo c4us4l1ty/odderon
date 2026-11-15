@@ -229,6 +229,9 @@ impl Contract {
         // Orbital contracts fly in vacuum. Ambient performance belongs to the
         // test stand, not to the flight.
         let solution = solve_engine(&spec, 0.0)?;
+        if solution.thermal_limit_exceeded {
+            return Err(PropulsionError::ThermalLimitExceeded);
+        }
         if !solution.flight_ready() {
             return Err(PropulsionError::NumericalRange);
         }

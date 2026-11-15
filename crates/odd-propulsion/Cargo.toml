@@ -8,3 +8,4 @@ libm = "0.2"
 
 [dev-dependencies]
 odd-astro = { path = "../odd-astro" }
+odd-contracts = { path = "../odd-contracts" }
