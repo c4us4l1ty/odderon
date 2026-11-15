@@ -730,6 +730,8 @@ mod tests {
             thermal_specs: Vec::new(),
             delegation_mask: 0,
             vent_events: Vec::new(),
+            boil_off_kg: [0.0; 2],
+            cryocooler_energy_j: 0.0,
             contract_id: 101,
             attempt_mode: AttemptMode::Ranked,
             callsign: "TEST PILOT".into(),

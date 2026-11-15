@@ -139,6 +139,9 @@ pub fn thermal_environment(
 #[derive(Clone, Debug)]
 pub struct ThermalOutcome {
     pub lost_kg: f64,
+    /// Oxidizer then fuel loss, kg. Signed separately because the vent
+    /// *openings* can be identical while the integrated loss differs.
+    pub tank_lost_kg: [f64; 2],
     pub cooler_energy_j: f64,
     pub vents: Vec<odd_systems::VentEvent>,
     /// True when the pair is storable and no tank model applies.
@@ -149,6 +152,7 @@ impl ThermalOutcome {
     pub fn inert() -> Self {
         Self {
             lost_kg: 0.0,
+            tank_lost_kg: [0.0; 2],
             cooler_energy_j: 0.0,
             vents: Vec::new(),
             inert: true,
@@ -192,6 +196,10 @@ pub fn evaluate(
     })?;
     Ok(ThermalOutcome {
         lost_kg: history.lost_kg,
+        tank_lost_kg: [
+            history.oxidizer.state.vented_kg,
+            history.fuel.state.vented_kg,
+        ],
         cooler_energy_j: history.cooler_energy_j,
         vents: history.vents,
         inert: false,

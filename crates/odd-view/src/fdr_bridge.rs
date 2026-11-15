@@ -39,7 +39,7 @@ const VENT_STRIDE: usize = 4;
 const MAX_THERMAL_SPECS: usize = 1;
 const MAX_VENT_EVENTS: usize = odd_report::MAX_VENT_EVENTS;
 const V3_TRAILER_MAX: usize =
-    2 + MAX_THERMAL_SPECS * THERMAL_SPEC_STRIDE + MAX_VENT_EVENTS * VENT_STRIDE;
+    5 + MAX_THERMAL_SPECS * THERMAL_SPEC_STRIDE + MAX_VENT_EVENTS * VENT_STRIDE;
 const MAX_FIELDS: usize =
     HEADER + MAX_COMMANDS * COMMAND_STRIDE + REPORT_LEN + 32 + 32 + 64 + V3_TRAILER_MAX;
 
@@ -171,6 +171,7 @@ fn parse_fields(fields: &[f64], callsign: &str) -> Option<Fdr> {
     let mut thermal_specs = Vec::new();
     let mut vent_events = Vec::new();
     let mut delegation_mask = 0u8;
+    let mut parsed_loss = ([0.0; 2], 0.0);
     if schema >= i64::from(SCHEMA_VERSION) {
         let mut at = hash_at + 128;
         delegation_mask = u8::try_from(integer(*fields.get(at)?)?).ok()?;
@@ -204,6 +205,11 @@ fn parse_fields(fields: &[f64], callsign: &str) -> Option<Fdr> {
             });
             at += THERMAL_SPEC_STRIDE;
         }
+        parsed_loss = (
+            [*fields.get(at)?, *fields.get(at + 1)?],
+            *fields.get(at + 2)?,
+        );
+        at += 3;
         let vent_count = integer(*fields.get(at)?)?;
         if !(0..=MAX_VENT_EVENTS as i64).contains(&vent_count) {
             return None;
@@ -246,6 +252,8 @@ fn parse_fields(fields: &[f64], callsign: &str) -> Option<Fdr> {
         thermal_specs,
         delegation_mask,
         vent_events,
+        boil_off_kg: parsed_loss.0,
+        cryocooler_energy_j: parsed_loss.1,
         public_key,
         signature,
     })
@@ -344,6 +352,8 @@ pub extern "C" fn mission_fdr_capture(mode: u32, elo_before: f64, elo_after: f64
             }]
         },
         delegation_mask: captured.delegation.0,
+        boil_off_kg: captured.thermal.tank_lost_kg,
+        cryocooler_energy_j: captured.thermal.cooler_energy_j,
         vent_events: captured
             .thermal
             .vents
@@ -607,6 +617,8 @@ pub extern "C" fn mission_fdr_fields_from_record() -> u32 {
                 spec.sink_temperature_k,
             ]);
         }
+        fields.extend_from_slice(&fdr.boil_off_kg);
+        fields.push(fdr.cryocooler_energy_j);
         fields.push(fdr.vent_events.len() as f64);
         for event in &fdr.vent_events {
             fields.extend_from_slice(&[
@@ -652,6 +664,8 @@ mod tests {
             thermal_specs: Vec::new(),
             delegation_mask: 0,
             vent_events: Vec::new(),
+            boil_off_kg: [0.0; 2],
+            cryocooler_energy_j: 0.0,
             contract_id: 101,
             attempt_mode: AttemptMode::Ranked,
             callsign: "BRIDGE TEST".into(),

@@ -68,6 +68,8 @@ fn record(spec: EngineSpec, flight: &FlightSpec) -> Fdr {
         thermal_specs: Vec::new(),
         delegation_mask: 0,
         vent_events: Vec::new(),
+        boil_off_kg: [0.0; 2],
+        cryocooler_energy_j: 0.0,
         contract_id: flight.contract_id,
         attempt_mode: AttemptMode::Ranked,
         callsign: "ENGINE GATE".into(),

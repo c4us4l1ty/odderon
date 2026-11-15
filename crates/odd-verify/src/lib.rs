@@ -380,6 +380,9 @@ pub struct ReplayOutcome {
     pub geometry: Geometry,
     /// Recomputed relief-valve openings, for comparison with the signed list.
     pub vent_events: Vec<odd_report::VentEvent>,
+    /// Recomputed loss per tank and cooler draw, compared bit-exactly.
+    pub boil_off_kg: [f64; 2],
+    pub cryocooler_energy_j: f64,
 }
 
 fn settings_from_spec(
@@ -591,6 +594,8 @@ pub fn replay_flight(spec: &FlightSpec) -> Option<ReplayOutcome> {
         report: outcome.report,
         final_state_hash: hash,
         geometry,
+        boil_off_kg: outcome.thermal.tank_lost_kg,
+        cryocooler_energy_j: outcome.thermal.cooler_energy_j,
         vent_events: outcome
             .thermal
             .vents
@@ -625,6 +630,7 @@ pub fn verify_record(fdr: &Fdr) -> Result<ReplayOutcome, FdrError> {
     // thermal spec actually produces. A client cannot claim less boil-off
     // than its own hardware causes.
     fdr.compare_vent_events(&outcome.vent_events)?;
+    fdr.compare_boil_off(outcome.boil_off_kg, outcome.cryocooler_energy_j)?;
     Ok(outcome)
 }
 

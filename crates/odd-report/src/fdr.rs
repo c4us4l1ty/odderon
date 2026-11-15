@@ -185,6 +185,15 @@ pub struct Fdr {
     pub delegation_mask: u8,
     /// Every relief-valve opening, recomputed and compared on replay.
     pub vent_events: Vec<VentEvent>,
+    /// Total mass vented per tank, kg (oxidizer then fuel).
+    ///
+    /// The event *list* alone is not enough: a tank that starts at its relief
+    /// setting opens at t = 0 and stays open, so a worse blanket produces the
+    /// same two openings while losing far more propellant. The integrated
+    /// loss is therefore signed and compared too.
+    pub boil_off_kg: [f64; TANKS_PER_STAGE],
+    /// Electricity the cryocoolers drew over the flight, J.
+    pub cryocooler_energy_j: f64,
     pub public_key: [u8; 32],
     pub signature: [u8; 64],
 }
@@ -391,6 +400,10 @@ impl Fdr {
                 put_f64(&mut out, spec.structure_temperature_k);
                 put_f64(&mut out, spec.sink_temperature_k);
             }
+            for value in &self.boil_off_kg {
+                put_f64(&mut out, *value);
+            }
+            put_f64(&mut out, self.cryocooler_energy_j);
             put_u16(&mut out, self.vent_events.len() as u16);
             for event in &self.vent_events {
                 put_i64(&mut out, event.time_us);
@@ -444,6 +457,14 @@ impl Fdr {
             }
             if self.vent_events.len() > MAX_VENT_EVENTS {
                 return Err(FdrError::Malformed("too many vent events"));
+            }
+            if !self.cryocooler_energy_j.is_finite() || self.cryocooler_energy_j < 0.0 {
+                return Err(FdrError::Malformed("cryocooler energy"));
+            }
+            for value in &self.boil_off_kg {
+                if !value.is_finite() || *value < 0.0 {
+                    return Err(FdrError::Malformed("boil-off mass"));
+                }
             }
             for spec in &self.thermal_specs {
                 if spec.tank_shell_material > 2 {
@@ -599,6 +620,33 @@ impl Fdr {
     /// produces. Timestamps must match to the microsecond and the pressures
     /// and temperatures to the bit, because both sides ran the same
     /// deterministic ODE.
+    /// Compare the integrated boil-off and cooler draw against a replay.
+    /// Bit-exact: both sides ran the same deterministic ODE.
+    pub fn compare_boil_off(
+        &self,
+        replayed_kg: [f64; TANKS_PER_STAGE],
+        replayed_energy_j: f64,
+    ) -> Result<(), FdrError> {
+        if self.schema_version < SCHEMA_VERSION {
+            return Ok(());
+        }
+        for (index, (recorded, actual)) in self.boil_off_kg.iter().zip(replayed_kg).enumerate() {
+            if recorded.to_bits() != actual.to_bits() {
+                return Err(FdrError::PhysicsReplayMismatch {
+                    field: "boil_off_kg",
+                    index,
+                });
+            }
+        }
+        if self.cryocooler_energy_j.to_bits() != replayed_energy_j.to_bits() {
+            return Err(FdrError::PhysicsReplayMismatch {
+                field: "cryocooler_energy_j",
+                index: 0,
+            });
+        }
+        Ok(())
+    }
+
     pub fn compare_vent_events(&self, replayed: &[VentEvent]) -> Result<(), FdrError> {
         if self.schema_version < SCHEMA_VERSION {
             return Ok(());
@@ -750,76 +798,79 @@ impl Fdr {
         let elo_before = reader.f64()?;
         let elo_after = reader.f64()?;
         // --- FROZEN v3 BLOCK ---
-        let (thermal_specs, delegation_mask, vent_events) = if schema_version >= SCHEMA_VERSION {
-            let mask = reader.u8()?;
-            let spec_count = reader.u16()? as usize;
-            if spec_count > 16 {
-                return Err(FdrError::Malformed("too many thermal specs"));
-            }
-            let mut specs = Vec::with_capacity(spec_count);
-            for _ in 0..spec_count {
-                let stage = reader.u8()?;
-                let tank_volumes_m3 = reader.array::<TANKS_PER_STAGE>()?;
-                let propellant_id = reader.u8()?;
-                let mli_layers = reader.u32()?;
-                let epsilon_eff = reader.f64()?;
-                let tank_shell_material = reader.u8()?;
-                let absorptivity = reader.f64()?;
-                let outer_epsilon = reader.f64()?;
-                let strut_conductance_w_k = reader.f64()?;
-                let relief_pressure_pa = reader.f64()?;
-                let radiator_area_m2 = reader.f64()?;
-                let radiator_epsilon = reader.f64()?;
-                let cryocooler_w = reader.f64()?;
-                let cryocooler_carnot_fraction = reader.f64()?;
-                let array_w_at_1au = reader.f64()?;
-                let avionics_w = reader.f64()?;
-                let electric_propulsion_w = reader.f64()?;
-                let structure_temperature_k = reader.f64()?;
-                let sink_temperature_k = reader.f64()?;
-                specs.push(StageThermalSpec {
-                    stage,
-                    tank_volumes_m3,
-                    propellant_id,
-                    mli_layers,
-                    epsilon_eff,
-                    tank_shell_material,
-                    absorptivity,
-                    outer_epsilon,
-                    strut_conductance_w_k,
-                    relief_pressure_pa,
-                    radiator_area_m2,
-                    radiator_epsilon,
-                    cryocooler_w,
-                    cryocooler_carnot_fraction,
-                    array_w_at_1au,
-                    avionics_w,
-                    electric_propulsion_w,
-                    structure_temperature_k,
-                    sink_temperature_k,
-                });
-            }
-            let event_count = reader.u16()? as usize;
-            if event_count > MAX_VENT_EVENTS {
-                return Err(FdrError::Malformed("too many vent events"));
-            }
-            let mut events = Vec::with_capacity(event_count);
-            for _ in 0..event_count {
-                let time_us = reader.i64()?;
-                let tank = reader.u8()?;
-                let pressure_pa = reader.f64()?;
-                let temperature_k = reader.f64()?;
-                events.push(VentEvent {
-                    time_us,
-                    tank,
-                    pressure_pa,
-                    temperature_k,
-                });
-            }
-            (specs, mask, events)
-        } else {
-            (Vec::new(), 0, Vec::new())
-        };
+        let (thermal_specs, delegation_mask, vent_events, boil_off_kg, cryocooler_energy_j) =
+            if schema_version >= SCHEMA_VERSION {
+                let mask = reader.u8()?;
+                let spec_count = reader.u16()? as usize;
+                if spec_count > 16 {
+                    return Err(FdrError::Malformed("too many thermal specs"));
+                }
+                let mut specs = Vec::with_capacity(spec_count);
+                for _ in 0..spec_count {
+                    let stage = reader.u8()?;
+                    let tank_volumes_m3 = reader.array::<TANKS_PER_STAGE>()?;
+                    let propellant_id = reader.u8()?;
+                    let mli_layers = reader.u32()?;
+                    let epsilon_eff = reader.f64()?;
+                    let tank_shell_material = reader.u8()?;
+                    let absorptivity = reader.f64()?;
+                    let outer_epsilon = reader.f64()?;
+                    let strut_conductance_w_k = reader.f64()?;
+                    let relief_pressure_pa = reader.f64()?;
+                    let radiator_area_m2 = reader.f64()?;
+                    let radiator_epsilon = reader.f64()?;
+                    let cryocooler_w = reader.f64()?;
+                    let cryocooler_carnot_fraction = reader.f64()?;
+                    let array_w_at_1au = reader.f64()?;
+                    let avionics_w = reader.f64()?;
+                    let electric_propulsion_w = reader.f64()?;
+                    let structure_temperature_k = reader.f64()?;
+                    let sink_temperature_k = reader.f64()?;
+                    specs.push(StageThermalSpec {
+                        stage,
+                        tank_volumes_m3,
+                        propellant_id,
+                        mli_layers,
+                        epsilon_eff,
+                        tank_shell_material,
+                        absorptivity,
+                        outer_epsilon,
+                        strut_conductance_w_k,
+                        relief_pressure_pa,
+                        radiator_area_m2,
+                        radiator_epsilon,
+                        cryocooler_w,
+                        cryocooler_carnot_fraction,
+                        array_w_at_1au,
+                        avionics_w,
+                        electric_propulsion_w,
+                        structure_temperature_k,
+                        sink_temperature_k,
+                    });
+                }
+                let boil_off_kg = reader.array::<TANKS_PER_STAGE>()?;
+                let cryocooler_energy_j = reader.f64()?;
+                let event_count = reader.u16()? as usize;
+                if event_count > MAX_VENT_EVENTS {
+                    return Err(FdrError::Malformed("too many vent events"));
+                }
+                let mut events = Vec::with_capacity(event_count);
+                for _ in 0..event_count {
+                    let time_us = reader.i64()?;
+                    let tank = reader.u8()?;
+                    let pressure_pa = reader.f64()?;
+                    let temperature_k = reader.f64()?;
+                    events.push(VentEvent {
+                        time_us,
+                        tank,
+                        pressure_pa,
+                        temperature_k,
+                    });
+                }
+                (specs, mask, events, boil_off_kg, cryocooler_energy_j)
+            } else {
+                (Vec::new(), 0, Vec::new(), [0.0; TANKS_PER_STAGE], 0.0)
+            };
         let public_key = reader.bytes::<32>()?;
         let signature = reader.bytes::<64>()?;
         if !reader.at_end() {
@@ -848,6 +899,8 @@ impl Fdr {
             thermal_specs,
             delegation_mask,
             vent_events,
+            boil_off_kg,
+            cryocooler_energy_j,
             public_key,
             signature,
         };
@@ -898,6 +951,8 @@ impl Fdr {
             o.number("delegation_mask", self.delegation_mask as f64);
             o.thermal_specs("thermal_specs", &self.thermal_specs);
             o.vent_events("vent_events", &self.vent_events);
+            o.array("boil_off_kg", &self.boil_off_kg);
+            o.number("cryocooler_energy_j", self.cryocooler_energy_j);
             o.string("public_key", &crate::hex::encode(&self.public_key));
             o.string("ed25519_signature", &crate::hex::encode(&self.signature));
             o.string("canonical_digest", &crate::hex::encode(&self.digest()));
