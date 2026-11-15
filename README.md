@@ -7,6 +7,8 @@ The project vision and proposed design live in [BRAINSTORM.md](BRAINSTORM.md),
 [ARCHITECTURE_LAWS.md](ARCHITECTURE_LAWS.md), [blueprint.md](blueprint.md),
 [UI.md](UI.md), and [ELO.md](ELO.md).
 
+# One principle should govern: Odderon's ambition is civilization-scale. Its execution must be bottleneck-scale.
+
 ## Current implementation
 
 Phase 0 is accepted as a foundation with explicit scientific, scope, and
