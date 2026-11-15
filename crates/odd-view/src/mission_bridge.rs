@@ -1225,6 +1225,7 @@ pub extern "C" fn mission_thermal_get(field: u32) -> f64 {
         4 => d.strut_conductance_w_k,
         5 => d.relief_pressure_pa,
         6 => f64::from(d.shell),
+        8 => d.bus.array_w_at_1au,
         // 7: does this stage actually carry cryogenic tanks? The assembly
         // disables the cryo knobs when it does not, instead of offering a
         // control that silently does nothing.
@@ -1302,6 +1303,14 @@ pub extern "C" fn mission_thermal_set(field: u32, value: f64) -> i32 {
                     return 0;
                 }
                 d.relief_pressure_pa = value;
+            }
+            8 => {
+                // The array must at least cover the fixed avionics load, and
+                // its mass is charged to the stage like any other hardware.
+                if value < d.bus.avionics_w {
+                    return 0;
+                }
+                d.bus.array_w_at_1au = value;
             }
             6 => {
                 let Ok(id) = u8::try_from(value.round() as i64) else {

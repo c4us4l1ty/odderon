@@ -23,19 +23,25 @@ export const THERMAL_FIELDS = Object.freeze({
   strut: 4,
   relief: 5,
   shell: 6,
+  array: 8,
 });
 
 /// Snapshot the assembly the page is flying, for the worker payload.
 export function assemblyPayload(wasm) {
+  // A storable stage has no cryogenic fit-out, and the bridge refuses cryo
+  // edits there. Sending them anyway would make every reconfigure fail, so
+  // the snapshot carries only the knobs this stage actually has.
+  const cryogenic = wasm.mission_thermal_get(7) === 1;
   return {
     mask: wasm.mission_delegation_mask(),
     // Order matters: a cooler needs radiator area before it can be set.
-    fields: [
+    fields: cryogenic ? [
       [THERMAL_FIELDS.layers, wasm.mission_thermal_get(0)],
       [THERMAL_FIELDS.strut, wasm.mission_thermal_get(4)],
       [THERMAL_FIELDS.radiator, wasm.mission_thermal_get(3)],
       [THERMAL_FIELDS.cooler, wasm.mission_thermal_get(2)],
-    ],
+      [THERMAL_FIELDS.array, wasm.mission_thermal_get(8)],
+    ] : [],
   };
 }
 
@@ -65,6 +71,7 @@ export function createAssembly({ wasm, isLocked, annotate, onChange }) {
     strut: el('thermal-strut'),
     radiator: el('thermal-radiator'),
     cooler: el('thermal-cooler'),
+    array: el('thermal-array'),
   };
   const status = el('delegation-status');
   const thermalStatus = el('thermal-status');
@@ -85,6 +92,7 @@ export function createAssembly({ wasm, isLocked, annotate, onChange }) {
     thermalControls.strut.value = String(get(4));
     thermalControls.radiator.value = String(get(3));
     thermalControls.cooler.value = String(get(2));
+    thermalControls.array.value = String(get(8));
     el('thermal-epsilon').textContent = `effective emittance ${fmt(get(1), 5)}`;
     const mask = wasm.mission_delegation_mask();
     toggles.forEach((toggle, i) => { toggle.checked = (mask & (1 << DEPARTMENTS[i].bit)) !== 0; });
@@ -187,7 +195,7 @@ export function createAssembly({ wasm, isLocked, annotate, onChange }) {
   });
 
   // field ids mirror mission_thermal_set: 0 layers, 4 strut, 3 radiator, 2 lift.
-  const fields = { mli: 0, strut: 4, radiator: 3, cooler: 2 };
+  const fields = { mli: 0, strut: 4, radiator: 3, cooler: 2, array: 8 };
   for (const [key, field] of Object.entries(fields)) {
     const control = thermalControls[key];
     control.addEventListener('change', () => {
@@ -221,6 +229,7 @@ export function createAssembly({ wasm, isLocked, annotate, onChange }) {
       coolerLift: wasm.mission_thermal_get(2),
       radiatorArea: wasm.mission_thermal_get(3),
       strutConductance: wasm.mission_thermal_get(4),
+      arrayWatts: wasm.mission_thermal_get(8),
       cryogenic: wasm.mission_thermal_get(7) === 1,
       fitoutMass: wasm.mission_delegation_readout(5),
     }),

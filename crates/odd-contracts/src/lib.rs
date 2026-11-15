@@ -86,8 +86,9 @@ pub struct Vehicle {
     pub delegation_margin_kg: f64,
     /// Stack cost multiplier from delegation. 1.0 when manual.
     pub delegation_cost_multiplier: f64,
-    /// Kilograms of cryogenic fit-out beyond the contract's baseline
-    /// blanket. Negative when the player chose a lighter blanket.
+    /// Kilograms of cryogenic fit-out beyond the contract baseline:
+    /// blanket, radiator panels and the solar array that runs the cooler.
+    /// Negative when the player chose lighter hardware than the baseline.
     pub thermal_fitout_kg: f64,
 }
 
@@ -308,8 +309,13 @@ impl Contract {
             &baseline,
         );
         let thermal_index = chief_ai::Department::Thermal as usize;
+        let power_index = chief_ai::Department::Power as usize;
+        // Both halves of active cooling are hardware: the blanket/radiator
+        // and the array that powers the compressor. A storable stage signs
+        // no thermal block, so its fit-out stays at the contract baseline.
         let thermal_fitout_kg = if cryogenic {
-            hardware[thermal_index].base_kg - baseline_hardware[thermal_index].base_kg
+            (hardware[thermal_index].base_kg - baseline_hardware[thermal_index].base_kg)
+                + (hardware[power_index].base_kg - baseline_hardware[power_index].base_kg)
         } else {
             0.0
         };
