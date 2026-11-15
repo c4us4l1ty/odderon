@@ -26,7 +26,7 @@ function hexBytes(hex, count) {
 /// Build the transport array from a parsed recorder JSON document.
 export function fieldsFromJson(document) {
   const schema = document?.schema_version;
-  if (schema !== 1 && schema !== 2) throw Error('unsupported recorder schema');
+  if (schema !== 1 && schema !== 2 && schema !== 3) throw Error('unsupported recorder schema');
   const mode = document.attempt_mode === 'Ranked' ? 0 : document.attempt_mode === 'Practice' ? 1 : null;
   if (mode === null) throw Error('unknown attempt mode');
   const commands = document.command_timeline;
@@ -55,7 +55,7 @@ export function fieldsFromJson(document) {
     document.elo_after,
     // Schema 2 signs the engine design. Legacy records carry NaN here, which
     // the bridge reads back as "no design".
-    ...(schema === 2
+    ...(schema >= 2
       ? [
           Number(document.engine_propellant_id),
           Number(document.engine_of_ratio),
@@ -66,7 +66,7 @@ export function fieldsFromJson(document) {
         ]
       : [NaN, NaN, NaN, NaN, NaN, NaN]),
   ];
-  if (schema === 2 && !Number.isInteger(document.engine_propellant_id)) {
+  if (schema >= 2 && !Number.isInteger(document.engine_propellant_id)) {
     throw Error('recorder is missing its engine design');
   }
   for (const command of commands) {
@@ -85,6 +85,51 @@ export function fieldsFromJson(document) {
   fields.push(...hexBytes(document.final_state_hash, 32));
   fields.push(...hexBytes(document.public_key, 32));
   fields.push(...hexBytes(document.ed25519_signature, 64));
+  if (schema >= 3) {
+    // FDR v3 trailer. The order and width mirror `mission_fdr_fields_from_record`
+    // in the Rust bridge exactly; the signed bytes come from Rust, never from
+    // this rendering, so a mismatch here fails the signature rather than
+    // silently changing what the document means.
+    const specs = document.thermal_specs;
+    const vents = document.vent_events;
+    const loss = document.boil_off_kg;
+    if (!Array.isArray(specs) || !Array.isArray(vents) || !Array.isArray(loss) || loss.length !== 2) {
+      throw Error('recorder is missing its thermal block');
+    }
+    if (!Number.isInteger(document.delegation_mask) || (document.delegation_mask & ~0b1111) !== 0) {
+      throw Error('recorder has an invalid delegation mask');
+    }
+    fields.push(document.delegation_mask, specs.length);
+    for (const spec of specs) {
+      if (spec.tank_volumes_m3?.length !== 2) throw Error('a stage needs two tank volumes');
+      fields.push(
+        spec.stage,
+        ...spec.tank_volumes_m3.map(Number),
+        spec.propellant_id,
+        spec.mli_layers,
+        spec.epsilon_eff,
+        spec.tank_shell_material,
+        spec.absorptivity,
+        spec.outer_epsilon,
+        spec.strut_conductance_w_k,
+        spec.relief_pressure_pa,
+        spec.radiator_area_m2,
+        spec.radiator_epsilon,
+        spec.cryocooler_w,
+        spec.cryocooler_carnot_fraction,
+        spec.array_w_at_1au,
+        spec.avionics_w,
+        spec.electric_propulsion_w,
+        spec.structure_temperature_k,
+        spec.sink_temperature_k,
+      );
+    }
+    fields.push(...loss.map(Number), document.cryocooler_energy_j, vents.length);
+    for (const vent of vents) {
+      if (!Number.isInteger(vent.time_us)) throw Error('vent time must be integer microseconds');
+      fields.push(vent.time_us, vent.tank, vent.pressure_pa, vent.temperature_k);
+    }
+  }
   return { fields, callsign: String(document.callsign ?? '') };
 }
 

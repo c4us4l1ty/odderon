@@ -512,7 +512,17 @@ try{
   const rankedDownload=page.waitForEvent('download');
   await page.locator('#export-fdr').click();
   const rankedFdr=JSON.parse(await readFile(await (await rankedDownload).path(),'utf8'));
-  assert.equal(rankedFdr.schema_version,2);
+  assert.equal(rankedFdr.schema_version,3);
+  // FDR v3 is frozen: the delegation bitmask and the tank block travel in
+  // the signed bytes. Contract 101 flies storables, so it has no tank model
+  // and no vent events — but the fields must still be present and typed.
+  assert.equal(rankedFdr.delegation_mask,0,'a hand-flown stack is fully manual');
+  assert.ok(Array.isArray(rankedFdr.thermal_specs),'thermal_specs must be an array');
+  assert.ok(Array.isArray(rankedFdr.vent_events),'vent_events must be an array');
+  assert.equal(rankedFdr.thermal_specs.length,0,'storables have no cryogenic tanks');
+  assert.equal(rankedFdr.vent_events.length,0,'storables do not vent');
+  assert.deepEqual(rankedFdr.boil_off_kg,[0,0]);
+  assert.equal(rankedFdr.cryocooler_energy_j,0);
   // oracle_fdr_engine_recomputation_anti_cheat (browser half): the signed
   // record carries the physical design, never a client thrust/Isp claim.
   assert.equal(typeof rankedFdr.engine_propellant,'string');
