@@ -1,0 +1,13 @@
+[package]
+name = "odd-contracts"
+version = "0.1.0"
+edition = "2021"
+description = "Playable Block-1 cislunar contracts and local mission scoring"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+odd-astro = { path = "../odd-astro" }
+odd-core = { path = "../odd-core" }
+odd-sim = { path = "../odd-sim" }
+odd-ephem = { path = "../odd-ephem" }
+libm = "0.2"

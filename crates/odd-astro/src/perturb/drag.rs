@@ -121,6 +121,39 @@ pub struct DragParameters {
     pub mass: f64,
 }
 
+/// Radial distance to the reference ellipsoid along `r`, in meters.
+/// This is a geometric reference surface, not terrain or geodetic height.
+pub fn surface_radius(
+    r: [f64; 3],
+    pole: [f64; 3],
+    equatorial_radius: f64,
+    polar_radius: f64,
+) -> Result<f64, PerturbationError> {
+    if !r.iter().chain(pole.iter()).all(|x| x.is_finite())
+        || ![equatorial_radius, polar_radius]
+            .iter()
+            .all(|x| x.is_finite() && *x > 0.0)
+    {
+        return Err(PerturbationError::InvalidInput);
+    }
+    let distance = norm(r);
+    let pole_length = norm(pole);
+    if distance <= 0.0 || pole_length <= 0.0 || !distance.is_finite() || !pole_length.is_finite() {
+        return Err(PerturbationError::InvalidInput);
+    }
+    let sine = dot(r, pole) / (distance * pole_length);
+    let surface = 1.0
+        / libm::sqrt(
+            (1.0 - sine * sine) / (equatorial_radius * equatorial_radius)
+                + sine * sine / (polar_radius * polar_radius),
+        );
+    if surface.is_finite() && surface > 0.0 {
+        Ok(surface)
+    } else {
+        Err(PerturbationError::NumericalRange)
+    }
+}
+
 /// Drag for an oblate body whose symmetry axis is `pole`. Altitude is the
 /// geocentric radial distance above the ellipsoid in that direction, not
 /// terrain or geodetic height. `omega` is inertial angular velocity (rad/s).
@@ -152,16 +185,7 @@ pub fn acceleration(
         return Err(PerturbationError::InvalidInput);
     }
     let distance = norm(r);
-    let pole_length = norm(pole);
-    if distance <= 0.0 || pole_length <= 0.0 || !distance.is_finite() || !pole_length.is_finite() {
-        return Err(PerturbationError::InvalidInput);
-    }
-    let sine = dot(r, pole) / (distance * pole_length);
-    let surface = 1.0
-        / libm::sqrt(
-            (1.0 - sine * sine) / (equatorial_radius * equatorial_radius)
-                + sine * sine / (polar_radius * polar_radius),
-        );
+    let surface = surface_radius(r, pole, equatorial_radius, polar_radius)?;
     let rho = earth_density(distance - surface)?;
     let rotation = [
         omega[1] * r[2] - omega[2] * r[1],

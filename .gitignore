@@ -2,3 +2,5 @@
 /data/raw/
 /web/odd_view.wasm
 /node_modules/
+/.cache/
+/.venv/

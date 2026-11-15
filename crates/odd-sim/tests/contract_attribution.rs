@@ -1,11 +1,12 @@
-//! Metric-specific counterfactual regression. These are numerical fixtures,
-//! not browser mission acceptance tests or exact causal decompositions.
+//! Metric-specific exact-Shapley regressions for the playable contracts.
+//! Shares use absolute Shapley values; signed contributions retain direction
+//! and must reconstruct the full-minus-impulsive metric error.
 use odd_astro::{
-    attribution::propagate_counterfactuals,
     elements::Elements,
     force_model::{Environment, ForceModel, Radiation, ThirdBody, Zonal},
     integrator::{IntegrationError, Options},
     perturb::drag::DragParameters,
+    shapley::attribute_shapley,
     spline::Keyframe,
 };
 use odd_core::{epoch::Epoch, frames::State};
@@ -117,17 +118,24 @@ fn sso_node_regression_is_dominated_by_j2_sensitivity() {
     let plan = Plan::compile(initial, MU, 432_000_000_000, 1020.0, engine, &nodes).unwrap();
     let burns = plan.timeline.burns(&[engine]).unwrap();
     let eph = Ephemeris::bundled().unwrap();
-    let runs = propagate_counterfactuals(
+    let attribution = attribute_shapley(
         initial,
         432_000.0,
         opts(),
         model(initial.mass),
         &burns,
         &plan.impulses,
+        odd_astro::force_model::FlightLimits {
+            pole: [0.0, 0.0, 1.0],
+            equatorial_radius_m: R,
+            polar_radius_m: 6_356_752.314,
+            entry_altitude_m: Some(120_000.0),
+        },
         |t| env(&eph, t),
         node_angle,
     )
     .unwrap();
+    assert!(!attribution.truncated);
     let actual = model(initial.mass)
         .propagate_with_burns(initial, 432_000.0, opts(), &burns, |t| env(&eph, t))
         .unwrap()
@@ -143,14 +151,15 @@ fn sso_node_regression_is_dominated_by_j2_sensitivity() {
         "{apsis:?}"
     );
     assert!(apsis.eccentricity < 0.005);
-    let stats = runs.sensitivities().unwrap();
-    let shares = stats.metric_shares.unwrap();
+    let shares = attribution.shares.unwrap();
     assert!(
         shares[1] > 0.85,
-        "nodal shares={shares:?}, deltas={:?}",
-        stats.signed_metric_deltas
+        "nodal Shapley shares={shares:?}, contributions={:?}",
+        attribution.contributions
     );
-    let drift = runs.full.metric * 180.0 / std::f64::consts::PI;
+    assert!((shares.iter().sum::<f64>() - 1.0).abs() < 1e-12);
+    assert!(attribution.efficiency_residual.abs() < 1e-10);
+    let drift = attribution.full_metric * 180.0 / std::f64::consts::PI;
     assert!(
         (drift - 4.93).abs() < 0.15,
         "five-day drift {drift} degrees"

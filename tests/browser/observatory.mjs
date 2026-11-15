@@ -139,6 +139,63 @@ try{
   await page.setViewportSize({width:1440,height:1000});
   await page.goto(`http://127.0.0.1:${server.address().port}/mission.html`);
   await page.waitForFunction(()=>!document.getElementById('add-node').disabled,null,{timeout:30000});
+  // WP 1.3 snapshot gate: every rendered registry acronym is wrapped and has
+  // a live hover projection; the causal chains are the Rust engine's DAG.
+  assert.deepEqual(await page.evaluate(()=>missionDiagnostics.acronymViolations),[]);
+  assert.equal(await page.evaluate(()=>missionDiagnostics.causalValid),true);
+  const acronymSnapshot=await page.evaluate(()=>[...document.querySelectorAll('abbr.term')].map(a=>a.dataset.term).sort());
+  for(const term of ['RAAN','AOP','TWR','ISP'])assert.ok(acronymSnapshot.includes(term),`missing rendered acronym ${term}`);
+  // Art keys must arrive from odd_app::lens::Projection::key over the bridge.
+  // If that export broke, every term would silently fall back to the
+  // tangential demo, so assert the distinct keys the registry should produce.
+  const artKeys=await page.evaluate(async()=>{
+    const {instance}=await WebAssembly.instantiate(await (await fetch('./odd_view.wasm')).arrayBuffer(),{});
+    const w=instance.exports,dec=new TextDecoder(),keys={};
+    for(let i=0;i<w.mission_acronym_count();i++){
+      const read=(len,byte)=>dec.decode(Uint8Array.from({length:len},(_,j)=>byte(j)));
+      const term=read(w.mission_acronym_len(i,0),j=>w.mission_acronym_byte(i,0,j));
+      keys[term]=read(w.mission_acronym_key_len(i),j=>w.mission_acronym_key_byte(i,j));
+    }
+    return keys;
+  });
+  assert.equal(artKeys.TWR,'twr');
+  assert.equal(artKeys.TNW,'tnw');
+  assert.equal(artKeys.LEO,'leo');
+  assert.equal(artKeys.DAG,'dag');
+  assert.equal(artKeys.PDR,'pdr');
+  assert.ok(Object.values(artKeys).every(k=>k.length>0),'every acronym needs an art key');
+  // Let the one-shot flight worker finish first: it rebuilds the causal panel,
+  // so hovering while it is still running would race a DOM replacement.
+  await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:60000});
+  await page.locator('abbr.term[data-term="TWR"]').first().hover();
+  await page.waitForFunction(()=>missionDiagnostics.lens==='twr'&&!document.getElementById('lens-projection').hidden);
+  assert.match(await page.locator('#lens-projection').textContent(),/Thrust-to-weight ratio/);
+  const lensBefore=await page.evaluate(()=>missionDiagnostics.lensDraws);
+  await page.waitForFunction(n=>missionDiagnostics.lensDraws>n,lensBefore);
+  // The projection renders the hovered term inside itself. Re-entering the
+  // active projection must not rewrite those nodes, or the element under the
+  // pointer is destroyed and mouseover re-fires forever.
+  const stable=await page.evaluate(async()=>{
+    const proj=document.getElementById('lens-projection');
+    const node=proj.querySelector('abbr.term[data-term="TWR"]');
+    if(!node)return 'no-self-term';
+    node.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));
+    node.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));
+    await new Promise(r=>setTimeout(r,120));
+    return node.isConnected&&proj.querySelector('abbr.term[data-term="TWR"]')===node?'stable':'detached';
+  });
+  assert.equal(stable,'stable','hovering a term inside the projection must not detach it');
+  // Travelling from a hovered term to the Close button crosses a leave
+  // boundary. If that closes the lens, the button vanishes mid-click and can
+  // never be pressed. Hover the projection's own surviving term first so the
+  // pointer really does leave a `.term` on its way to the button.
+  await page.locator('#lens-projection abbr.term[data-term="TWR"]').hover();
+  assert.equal(await page.evaluate(()=>missionDiagnostics.lens),'twr');
+  await page.locator('#lens-close').hover();
+  assert.equal(await page.evaluate(()=>missionDiagnostics.lens),'twr','moving onto Close must not close the lens');
+  assert.equal(await page.locator('#lens-close').isVisible(),true);
+  await page.locator('#lens-close').click();
+  await page.waitForFunction(()=>missionDiagnostics.lens===null&&!missionDiagnostics.lensPending);
   const missionBox=await page.locator('#plan-canvas').boundingBox();
   await page.mouse.click(missionBox.x+missionBox.width/2+(6378137+260000)*missionBox.height/(2.45*(6378137+550000)),missionBox.y+missionBox.height/2);
   assert.equal(await page.evaluate(()=>missionDiagnostics.nodes.length),1,'clicking the path should place a maneuver');
@@ -179,8 +236,52 @@ try{
   const sso=await page.locator('#debrief-content').textContent();
   const ssoScore=Number(sso.match(/([0-9.]+)%Mission score/)?.[1]);
   assert.ok(ssoScore>80,`sun-synchronous score: ${ssoScore}; ${sso}`);
-  const j2=Number(sso.match(/Earth’s equatorial bulge: ([0-9.]+)%/)?.[1]);
-  assert.ok(j2>85,`node sensitivity must be dominated by equatorial bulge: ${sso}`);
+  const j2=Number(sso.match(/Earth equatorial bulge: ([0-9.]+)%/)?.[1]);
+  assert.ok(j2>85,`nodal Shapley attribution must be dominated by equatorial bulge: ${sso}`);
+  const ssoReport=await page.evaluate(()=>missionDiagnostics.report);
+  assert.ok(Math.abs(ssoReport.slice(6,10).reduce((a,b)=>a+b,0)-1)<1e-9);
+  assert.ok(Math.abs(ssoReport[17])<1e-9);
+  assert.deepEqual(await page.evaluate(()=>missionDiagnostics.acronymViolations),[]);
   await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:10000});
-  assert.deepEqual(errors,[]);console.log('Browser viewport, interactions, bounds, WebGL, responsive layout and mission prototype passed.');
+  // Contract 103: demonstrate the single-burn trap, then use the numerical
+  // perigee splitter, lock a prediction, and verify a surviving apoapsis and
+  // finite-burn-dominated sensitivity. The patched lunar preview is optional
+  // for this epoch; a radius target is not itself a lunar encounter.
+  await page.locator('#unlock').click();
+  await page.locator('#mission-select').selectOption('103');
+  await page.locator('#example').click();
+  await page.waitForFunction(()=>!missionDiagnostics.pending&&missionDiagnostics.report?.[30]===1,null,{timeout:180000});
+  assert.match(await page.locator('#causal-text').textContent(),/Impact/);
+  await page.locator('#split-kick').click();
+  await page.waitForFunction(()=>missionDiagnostics.nodes.length===3&&!missionDiagnostics.pending&&missionDiagnostics.report?.[30]===0,null,{timeout:240000});
+  const tugNodes=await page.evaluate(()=>missionDiagnostics.nodes);
+  assert.ok(tugNodes[1].guidance&&tugNodes[2].guidance,'later kicks must carry numerical guidance');
+  assert.ok(Math.abs(tugNodes[1].time-10300.419216)<2,`second kick epoch ${tugNodes[1].time}`);
+  await page.locator('#prefill').click();
+  // Predict the achieved apoapsis radius convention in altitude fields.
+  const tugReport=await page.evaluate(()=>missionDiagnostics.report);
+  await page.locator('#predict-apo').fill(String(tugReport[1]/1000));
+  await page.locator('#predict-peri').fill(String(tugReport[2]/1000));
+  await page.locator('#predict-time').fill(String(tugReport[29]));
+  await page.locator('#execute').click();
+  await page.waitForFunction(()=>!document.getElementById('debrief').hidden||(missionDiagnostics.locked&&!missionDiagnostics.pending),null,{timeout:240000});
+  assert.equal(await page.locator('#debrief').isHidden(),false,`mission error: ${await page.locator('#execute-status').textContent()}, page errors: ${errors}`);
+  const tug=await page.locator('#debrief-content').textContent();
+  const tugScore=Number(tug.match(/([0-9.]+)%Mission score/)?.[1]);
+  assert.ok(tugScore>80,`tug score: ${tugScore}; ${tug}`);
+  const tugFinite=Number(tug.match(/Finite-burn arc: ([0-9.]+)%/)?.[1]);
+  assert.ok(tugFinite>70,`finite-burn apoapsis Shapley attribution: ${tug}`);
+  const finalTug=await page.evaluate(()=>missionDiagnostics.report);
+  assert.equal(finalTug[30],0);assert.ok(Math.abs(finalTug[1]+6378137-380000000)<15000000);
+  assert.ok(Math.abs(finalTug.slice(6,10).reduce((a,b)=>a+b,0)-1)<1e-9);
+  assert.ok(Math.abs(finalTug[17])<1e-6);
+  assert.ok(Math.abs(finalTug[24])<1e-4,`finite-burn identity residual ${finalTug[24]} m/s`);
+  assert.ok(Math.abs(finalTug[24])/finalTug[20]<1e-8);
+  assert.deepEqual(await page.evaluate(()=>missionDiagnostics.acronymViolations),[]);
+  assert.equal(await page.locator('#export-pdr').isVisible(),true);
+  await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:10000});
+  const tugIdle=await page.evaluate(()=>({frames:testFrameCallbacks,messages:testWorkerMessages,draws:missionDiagnostics.draws}));
+  await page.waitForTimeout(2000);
+  assert.deepEqual(await page.evaluate(()=>({frames:testFrameCallbacks,messages:testWorkerMessages,draws:missionDiagnostics.draws})),tugIdle,'Contract 103 must settle without frames, redraws, or worker messages');
+  assert.deepEqual(errors,[]);console.log('Browser viewport, interactions, bounds, WebGL, responsive layout and all three mission prototypes passed.');
 } finally{if(browser)await browser.close();await new Promise(r=>server.close(r));}
