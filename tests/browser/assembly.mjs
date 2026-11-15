@@ -254,6 +254,25 @@ check('more cooling power means less boil-off', wellCooled.lost < cryoFlight.boi
   `${cryoFlight.boilOff.lost.toFixed(3)} -> ${wellCooled.lost.toFixed(3)} kg`);
 check('the cooler draw is reported', cryoFlight.boilOff.coolerJoules > 0);
 
+// --- 8. The cooled cryogenic record must survive the whole chain:
+// browser transport -> worker -> signature -> mass gate -> thermal replay.
+await page.evaluate(() => document.getElementById('verify-dialog')?.close());
+await page.click('#verify-flight');
+await page.waitForFunction(() => {
+  const v = window.missionDiagnostics.verification();
+  return v && v.code === 1 && v.dossier;
+}, null, { timeout: 240000 });
+const cryoVerified = await page.evaluate(() => window.missionDiagnostics.verification());
+check('the cooled cryogenic flight verifies', cryoVerified.code === 1, cryoVerified.verdict);
+check('the dossier reports the fitted cooler', /Commanded cooler lift/.test(cryoVerified.dossier)
+  && /400\.000/.test(cryoVerified.dossier));
+check('the dossier reports the array the player paid for', /16000\.0/.test(cryoVerified.dossier));
+check('the dossier reports the suppressed loss', /Total propellant lost<\/th><td>0\.000000 kg/.test(cryoVerified.dossier));
+check('the dossier reports the cooler electricity', /3460\.221041 MJ/.test(cryoVerified.dossier));
+const cryoRecord = await page.evaluate(() => JSON.parse(window.missionDiagnostics.recorder().json));
+check('the signed record carries the array sizing', cryoRecord.array_w_at_1au === 16000
+  || cryoRecord.thermal_specs?.[0]?.array_w_at_1au === 16000, JSON.stringify(cryoRecord.thermal_specs?.[0] ?? {}).slice(0, 200));
+
 check('no page errors', errors.length === 0, errors.join(' | '));
 await browser.close();
 server.close();
