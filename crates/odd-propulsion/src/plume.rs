@@ -81,6 +81,12 @@ pub fn prandtl_meyer(mach: f64, gamma: f64) -> f64 {
     k * atan(root / k) - atan(root)
 }
 
+/// Limiting Prandtl–Meyer angle as Mach tends to infinity, radians. A jet
+/// expanding into vacuum cannot turn further than this.
+pub fn prandtl_meyer_limit(gamma: f64) -> f64 {
+    core::f64::consts::FRAC_PI_2 * (sqrt((gamma + 1.0) / (gamma - 1.0)) - 1.0)
+}
+
 /// Invert the Prandtl–Meyer function by bisection. Monotone in Mach.
 pub fn mach_from_prandtl_meyer(nu: f64, gamma: f64) -> f64 {
     let ceiling = prandtl_meyer(1.0e4, gamma);
@@ -156,7 +162,13 @@ pub fn analyze(
         sqrt(squared.max(0.0) + origin_mach * origin_mach).max(1.0)
     };
     let expanding = regime == PlumeRegime::Underexpanded;
-    let lip_turn_rad = if expanding {
+    let lip_turn_rad = if ambient <= 1.0 {
+        // Vacuum: there is no back pressure to stop the expansion, so the
+        // lip turns by the full remaining Prandtl-Meyer angle to Mach
+        // infinity. This is the free-expansion boundary angle, and it is
+        // why a vacuum plume keeps widening instead of staying a cylinder.
+        (prandtl_meyer_limit(gamma) - prandtl_meyer(origin_mach, gamma)).max(0.0)
+    } else if expanding {
         (prandtl_meyer(jet_mach, gamma) - prandtl_meyer(origin_mach, gamma)).max(0.0)
     } else {
         0.0
@@ -334,13 +346,19 @@ impl Plume {
     pub fn boundary_radius(&self, s: f64) -> f64 {
         // Underexpanded jets fan outward; compressed jets neck down toward a
         // throat and then re-expand, which is what draws the diamond train.
+        // A vacuum jet has no back pressure, so its boundary keeps opening
+        // at the limiting expansion angle. Inside an atmosphere the shear
+        // layer stops widening once it has mixed out to a few radii.
+        let vacuum = self.ambient_pa <= 1.0;
         let spread = if self.lip_deflection_rad > 0.0 {
             -tan(self.lip_deflection_rad.min(0.5)) * s
+        } else if vacuum {
+            tan(self.lip_turn_rad.min(1.2)) * s
         } else {
-            tan(self.lip_turn_rad.min(0.6)) * s
+            tan(self.lip_turn_rad.min(0.6)) * s.min(3.0 * self.origin_radius_m)
         };
         let floor = 0.35 * self.origin_radius_m;
-        let growth = (self.origin_radius_m + spread.min(3.0 * self.origin_radius_m)).max(floor);
+        let growth = (self.origin_radius_m + spread).max(floor);
         if self.cell_length_m <= 1e-9 {
             return growth;
         }
@@ -435,11 +453,19 @@ mod tests {
     }
 
     #[test]
-    fn vacuum_is_adapted_with_no_cells() {
+    fn vacuum_is_adapted_with_no_cells_but_keeps_expanding() {
         let p = plume_at(0.0);
         assert_eq!(p.regime, PlumeRegime::Adapted);
         assert_eq!(p.cell_length_m, 0.0);
         assert!(p.mach_disk_m.is_nan());
+        // No back pressure means no shock cells, but the boundary still
+        // opens at the limiting Prandtl-Meyer angle.
+        assert!(p.lip_turn_rad > 0.0);
+        assert!(p.lip_turn_rad < prandtl_meyer_limit(p.gamma));
+        let far = p.boundary_radius(10.0 * p.origin_radius_m);
+        assert!(far > p.origin_radius_m, "a vacuum plume must widen");
+        // Density falls as the core area grows.
+        assert!(p.density_at(p.origin_x_m + 8.0 * p.origin_radius_m, 0.0) < p.origin_density_kg_m3);
     }
 
     #[test]
