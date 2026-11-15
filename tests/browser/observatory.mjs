@@ -423,10 +423,31 @@ try{
     const redesign=await page.evaluate(()=>missionDiagnostics.engine);
     await page.locator('#engine-apply').click();
     await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:120000});
-    const fitted=await page.evaluate(()=>({lab:missionDiagnostics.engine,wasm:!!missionDiagnostics.wasm()}));
+    const fitted=await page.evaluate(()=>({lab:missionDiagnostics.engine,applied:missionDiagnostics.appliedEngine,thrust:missionDiagnostics.wasm().mission_parameter(4),isp:missionDiagnostics.wasm().mission_parameter(5),wet:missionDiagnostics.wasm().mission_parameter(2)}));
     assert.ok(fitted.lab.solution.stageWet>0,'the stage must be rebuilt around the design');
     assert.equal(await page.evaluate(()=>missionDiagnostics.causalValid),true,'the combined causal graph must stay acyclic');
     assert.ok(Math.abs(fitted.lab.spec.of-redesign.spec.of)<1e-9,'the applied design must be the drawn one');
+    // Regression: the planner, the worker and the recorder must all fly the
+    // committed design. mission_contract() rebuilds the baseline, so a
+    // reconfigure that forgets to re-apply would preview one stage and fly
+    // another while still producing a valid signature.
+    assert.ok(fitted.applied,'fitting must commit a design');
+    assert.equal(fitted.thrust,fitted.lab.solution.vacuumThrust,'the planner stage must use the fitted engine');
+    assert.equal(fitted.isp,fitted.lab.solution.vacuumIsp);
+    assert.equal(fitted.wet,fitted.lab.solution.stageWet);
+    // A lab edit that was never applied must not reach the flight.
+    await page.locator('#engine-pc').fill('7');
+    await page.locator('#engine-pc').dispatchEvent('input');
+    await page.locator('#add-node').click();
+    await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:120000});
+    const unapplied=await page.evaluate(()=>({applied:missionDiagnostics.appliedEngine,labPc:missionDiagnostics.engine.spec.pc,thrust:missionDiagnostics.wasm().mission_parameter(4)}));
+    assert.equal(unapplied.labPc,7e6,'the lab previews the edit');
+    assert.equal(unapplied.applied.pc,fitted.applied.pc,'an unapplied edit must not be committed');
+    assert.equal(unapplied.thrust,fitted.thrust,'an unapplied edit must not change the flown stage');
+    await page.locator('#remove-node').click();
+    await page.locator('#engine-pc').fill(String(fitted.applied.pc/1e6));
+    await page.locator('#engine-pc').dispatchEvent('input');
+    await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:120000});
   }
 
   // Fitting a new engine clears the plan: the old burn durations were computed
@@ -476,6 +497,13 @@ try{
     assert.ok(Number.isFinite(rankedFdr[key])&&rankedFdr[key]>0,`${key} must be a physical design number`);
   }
   assert.ok(Math.abs(rankedFdr.engine_of_ratio-2.1)<1e-9,'the flight must carry the redesigned mixture ratio');
+  // The signed design must be the committed one, and its performance must be
+  // what that design solves to in vacuum — never a lab preview.
+  const committed=await page.evaluate(()=>missionDiagnostics.appliedEngine);
+  assert.ok(committed,'the certified flight must have a committed design');
+  assert.equal(rankedFdr.engine_p_c_pa,committed.pc);
+  assert.equal(rankedFdr.engine_r_throat_m,committed.throat);
+  assert.equal(rankedFdr.engine_r_exit_m,committed.exit);
   assert.equal(rankedFdr.contract_id,101);
   assert.equal(rankedFdr.attempt_mode,'Ranked');
   assert.equal(rankedFdr.public_id,firstRated.publicId);

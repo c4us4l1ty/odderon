@@ -20,6 +20,11 @@ const canvas=$('plan-canvas'),ctx=canvas.getContext('2d');
 const lensCanvas=$('lens-canvas'),lensCtx=lensCanvas.getContext('2d');
 let wasm,nodes=[],compiledOrder=[],selected=-1,preview=[],lunarPreview=[],actual=null,lastReport=null,lastLunarInfo=null,worker=null,timer=null,locked=null,drag=null,draws=0,messages=0,sequence=0;
 let activeLens=null,activeTerm=null,lensPhase=0,lensDraws=0,lastComputeMs=null,lastCapture=null,lastRecorder=null,engineLab=null;
+// The design the stage actually flies. The lab can be mid-edit without this
+// changing: only "Fit this engine to the stage" commits it. mission_contract()
+// rebuilds the baseline, so every reconfigure must re-apply this afterwards or
+// the preview would silently revert while the worker flew the new engine.
+let appliedEngine=null;
 const CONTRACT_RATINGS={101:800,102:1250,103:1650};
 const lensGovernor=new Governor(()=>drawLens());
 const SHAPLEY_NAMES=['Finite-burn arc','Earth equatorial bulge','Moon and Sun gravity','Atmospheric drag and sunlight pressure'];
@@ -77,8 +82,17 @@ const lens={
 const fields={time:$('node-time'),t:$('node-t'),n:$('node-n'),w:$('node-w')};
 const distance=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1]);
 function readState(w,t){return Array.from({length:7},(_,i)=>w.mission_preview(t,i));}
+/// Re-apply the committed design after any call that reloads the contract.
+/// Returns false when the design no longer fits, so the caller reports it
+/// instead of propagating a different stage than the one on screen.
+function reapplyEngine(w){
+  if(!appliedEngine||!contractId)return true;
+  const e=appliedEngine;
+  if(w.mission_engine_solve(e.propellant,e.of,e.pc,e.throat,e.exit,e.length,0)!==1)return false;
+  return w.mission_engine_apply()===1;
+}
 function configure(w,items){
-  if(contractId){if(!w.mission_contract(contractId))return false;}
+  if(contractId){if(!w.mission_contract(contractId))return false;if(!reapplyEngine(w))return false;}
   else if(!w.mission_setup(...setup))return false;
   if(!w.mission_metric(scenario==='102'?1:0))return false;
   const ordered=items.map((n,i)=>({n,i})).filter(x=>Math.hypot(...x.n.dv)>=1e-12).sort((a,b)=>a.n.time-b.n.time);
@@ -153,9 +167,9 @@ function scheduleFlight(){cancelFlight();const version=++sequence;timer=setTimeo
 function workerPayload(isLocked){
   const snapshot=nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));
   const payload={contract:contractId,setup,nodes:snapshot,metric:scenario==='102'?1:0,callsign:identity.profile()?.callsign??''};
-  // Send the physical design, not the performance it produces.
-  const lab=engineLab?.diagnostics();
-  if(lab?.spec)payload.engine={...lab.spec};
+  // Send the committed physical design, not the performance it produces and
+  // not whatever the lab is currently previewing.
+  if(appliedEngine)payload.engine={...appliedEngine};
   if(isLocked){const p=locked.prediction;payload.locked=[p.dv,p.apo*1000,p.peri*1000,p.fuel,p.time,Number.isFinite(p.miss)?p.miss:NaN];}
   return payload;
 }
@@ -338,7 +352,7 @@ $('split-kick').addEventListener('click',()=>{
       nodes=data.nodes;selected=nodes.length-1;updatePreview();$('plan-status').textContent='Three equal kicks placed at numerically propagated periapses. Check the gold path and the apoapsis radius.';annotateAcronyms($('plan-status'));
     };
     current.onerror=()=>{if(worker!==current)return;worker.terminate();worker=null;$('plan-status').textContent='Targeting worker failed.';$('split-kick').disabled=!!locked;};
-    messages++;current.postMessage({action:'split',kicks:3,total,first});return;
+    messages++;current.postMessage({action:'split',kicks:3,total,first,engine:appliedEngine?{...appliedEngine}:null});return;
   }
   const original=nodes[selected];if(!original||original.dv[0]<=0)return;
   const old=nodes.map(n=>({time:n.time,dv:[...n.dv]}));
@@ -497,7 +511,7 @@ $('mission-select').addEventListener('change',()=>{
     INITIAL=R+260000;TARGET=R+550000;DURATION=10800;DRY=1020;plane=[1,0];setup=[820497600,DURATION,1200,DRY,2400,310,INITIAL,0,0,0,Math.sqrt(MU/INITIAL),0];
     $('mission-rank').textContent='CONTRACT 101 / CADET · 800';$('mission-title').textContent='Orbit rescue';$('mission-description').textContent='Raise a 260 km circular orbit to 550 km, then make it circular within three hours. The dotted cyan path is your instantaneous-push preview; the gold path includes finite burns and modeled forces.';$('example').textContent='Show two-push example';
   }
-  if(engineLab){wasm.mission_contract(contractId);engineLab.loadBaseline();engineLab.setLocked();DRY=wasm.mission_parameter(3);setup=Array.from({length:12},(_,i)=>wasm.mission_parameter(i));}
+  if(engineLab){appliedEngine=null;wasm.mission_contract(contractId);engineLab.loadBaseline();engineLab.setLocked();DRY=wasm.mission_parameter(3);setup=Array.from({length:12},(_,i)=>wasm.mission_parameter(i));}
   fields.time.min=String(nodeTimeRange()[0]);fields.time.max=String(nodeTimeRange()[1]);$('debrief').hidden=true;for(const id of ['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time','predict-miss'])$(id).value='';annotateAcronyms($('mission-description'));annotateAcronyms($('mission-rank'));updatePreview();
 });
 $('prefill').addEventListener('click',prefill);
@@ -527,12 +541,16 @@ canvas.addEventListener('pointermove',e=>{
 function endDrag(e){if(drag&&drag.pointer===e.pointerId){drag=null;stopLens();scheduleFlight();}}
 canvas.addEventListener('pointerup',endDrag);canvas.addEventListener('pointercancel',endDrag);canvas.addEventListener('lostpointercapture',endDrag);canvas.addEventListener('pointerleave',e=>{if(!drag&&!intoLens(e))stopLens();});
 new ResizeObserver(draw).observe(canvas.parentElement);
-window.missionDiagnostics=Object.freeze({wasm:()=>wasm,recorder:()=>lastRecorder,verification:()=>verificationResult(),openVerify,profile:()=>identity.profile(),isRanked:id=>identity.isRanked(id),openProfile,get nodeTimeRange(){return nodeTimeRange();},clampNodeTime,get nodeMarker(){const n=nodes[selected];if(!n||!wasm)return null;const s=readState(wasm,n.time);return s.some(x=>!Number.isFinite(x))?null:toCanvas(s);},get pathEnds(){return preview.length?[toCanvas(preview[0].state),toCanvas(preview[preview.length-1].state)]:null;},get nodes(){return nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));},get pending(){return !!worker||timer!==null;},get draws(){return draws;},get messages(){return messages;},get locked(){return !!locked;},get report(){return lastReport?[...lastReport]:null;},get computeMs(){return lastComputeMs;},get lunarInfo(){return lastLunarInfo?[...lastLunarInfo]:null;},get lens(){return activeLens;},get lensDraws(){return lensDraws;},get lensPending(){return lensGovernor.frame!==null;},get engine(){return engineLab?engineLab.diagnostics():null;},get causalValid(){return wasm?wasm.mission_causal_valid()===1&&wasm.mission_engine_causal_valid()===1:false;},get acronymViolations(){return acronymViolations();},get handles(){if(selected<0||!wasm)return [];const state=readState(wasm,nodes[selected].time);return handles(toCanvas(state),state).map(h=>({key:h.key,end:h.end}));}});
+window.missionDiagnostics=Object.freeze({wasm:()=>wasm,recorder:()=>lastRecorder,verification:()=>verificationResult(),openVerify,profile:()=>identity.profile(),isRanked:id=>identity.isRanked(id),openProfile,get nodeTimeRange(){return nodeTimeRange();},clampNodeTime,get nodeMarker(){const n=nodes[selected];if(!n||!wasm)return null;const s=readState(wasm,n.time);return s.some(x=>!Number.isFinite(x))?null:toCanvas(s);},get pathEnds(){return preview.length?[toCanvas(preview[0].state),toCanvas(preview[preview.length-1].state)]:null;},get nodes(){return nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));},get pending(){return !!worker||timer!==null;},get draws(){return draws;},get messages(){return messages;},get locked(){return !!locked;},get report(){return lastReport?[...lastReport]:null;},get computeMs(){return lastComputeMs;},get lunarInfo(){return lastLunarInfo?[...lastLunarInfo]:null;},get lens(){return activeLens;},get lensDraws(){return lensDraws;},get lensPending(){return lensGovernor.frame!==null;},get engine(){return engineLab?engineLab.diagnostics():null;},get appliedEngine(){return appliedEngine?{...appliedEngine}:null;},get causalValid(){return wasm?wasm.mission_causal_valid()===1&&wasm.mission_engine_causal_valid()===1:false;},get acronymViolations(){return acronymViolations();},get handles(){if(selected<0||!wasm)return [];const state=readState(wasm,nodes[selected].time);return handles(toCanvas(state),state).map(h=>({key:h.key,end:h.end}));}});
 try{const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error('The physics module is not available. Build it first.');({instance:{exports:wasm}}=await WebAssembly.instantiate(await response.arrayBuffer(),{}));identity.init(wasm);initProfile();initVerify(wasm);loadGlossary(wasm);
 // The lab reads canonical stage numbers back after a redesign so the planner,
 // the worker payload and the signed recorder cannot disagree about the engine.
 engineLab=createLab({wasm,isLocked:()=>!!locked,annotate:annotateAcronyms,onDiagnose:()=>renderEngineCausal(),onApply:baselineOnly=>{
+  // The bridge already rebuilt the stage; record the committed design so every
+  // later reconfigure and every worker payload uses exactly this one.
+  appliedEngine=baselineOnly?null:{...engineLab.diagnostics().spec};
   if(!baselineOnly){nodes=[];selected=-1;}
+  if(!reapplyEngine(wasm))appliedEngine=null;
   DURATION=wasm.mission_parameter(1);DRY=wasm.mission_parameter(3);
   setup=Array.from({length:12},(_,i)=>wasm.mission_parameter(i));
   INITIAL=Math.hypot(setup[6],setup[7],setup[8]);

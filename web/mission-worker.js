@@ -24,6 +24,13 @@ self.onmessage=async ({data})=>{
     }
     if(data.action==='split'){
       if(!w.mission_contract(103))throw Error('Unknown contract.');
+      // Targeting propagates the real stage, so it must use the committed
+      // engine too or the kicks would be sized for the baseline.
+      if(data.engine){
+        const e=data.engine;
+        if(w.mission_engine_solve(e.propellant,e.of,e.pc,e.throat,e.exit,e.length,0)!==1)throw Error('The engine design is not flight-ready.');
+        if(w.mission_engine_apply()!==1)throw Error('The engine cannot fly this contract.');
+      }
       if(!w.mission_split_tug(data.kicks,data.total,data.first))throw Error('Numerical perigee targeting failed.');
       const nodes=Array.from({length:w.mission_node_count()},(_,i)=>({
         time:w.mission_node_time(i),
