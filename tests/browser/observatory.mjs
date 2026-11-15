@@ -5,7 +5,45 @@ import { readFile } from 'node:fs/promises';
 import { resolve, extname } from 'node:path';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import jsQR from 'jsqr';
 const root=resolve('web');
+
+// Rebuild the QR matrix from the emitted vector rectangles and decode it with
+// an independent decoder. This proves the printed code carries a payload that
+// actually verifies, rather than trusting the encoder a second time.
+function decodeQrFromSvg(svg){
+  const size=Number(svg.match(/data-qr-size="(\d+)"/)[1]);
+  const quiet=Number(svg.match(/data-qr-quiet="(\d+)"/)[1]);
+  const outer=size+2*quiet;
+  const start=svg.indexOf('<g fill="#000000">');
+  assert.ok(start>=0,'the QR must emit a dark-module group');
+  // Close the group relative to its own start: the trajectory figure earlier
+  // in the document has groups too.
+  const group=svg.slice(start,svg.indexOf('</g>',start));
+  const grid=Array.from({length:outer},()=>Array(outer).fill(false));
+  for(const match of group.matchAll(/<rect x="(\d+)" y="(\d+)" width="(\d+)" height="1"\/>/g)){
+    const [,x,y,width]=match.map(Number);
+    for(let offset=0;offset<width;offset++)grid[y][x+offset]=true;
+  }
+  const scale=6,pixels=outer*scale;
+  const data=new Uint8ClampedArray(pixels*pixels*4);
+  for(let y=0;y<pixels;y++)for(let x=0;x<pixels;x++){
+    const dark=grid[Math.floor(y/scale)][Math.floor(x/scale)];
+    const at=(y*pixels+x)*4,value=dark?0:255;
+    data[at]=value;data[at+1]=value;data[at+2]=value;data[at+3]=255;
+  }
+  const decoded=jsQR(data,pixels,pixels);
+  assert.ok(decoded,'an independent decoder must read the emitted QR');
+  return decoded.data;
+}
+
+// One unit in the last place, computed on the raw IEEE-754 bits.
+function nextUlp(value){
+  const buffer=new ArrayBuffer(8),view=new DataView(buffer);
+  view.setFloat64(0,value);
+  view.setBigUint64(0,view.getBigUint64(0)+1n);
+  return view.getFloat64(0);
+}
 const server=createServer(async (req,res)=>{
   const path=resolve(root,'.'+new URL(req.url,'http://test').pathname.replace(/\/$/,'/index.html'));
   if(!path.startsWith(root+'/')){res.writeHead(403).end();return;}
@@ -347,6 +385,21 @@ try{
   assert.equal(firstRated.elo,firstRated.ranked['101'].elo);
   assert.equal(firstRated.flights,1);
   assert.match(await page.locator('#elo-result').textContent(),/Ranked flight certified/);
+  // The executed flight is signed as a ranked certificate.
+  assert.match(await page.locator('#recorder-status').textContent(),/Flight recorder signed by ODD-ID-/);
+  const rankedDownload=page.waitForEvent('download');
+  await page.locator('#export-fdr').click();
+  const rankedFdr=JSON.parse(await readFile(await (await rankedDownload).path(),'utf8'));
+  assert.equal(rankedFdr.schema_version,1);
+  assert.equal(rankedFdr.contract_id,101);
+  assert.equal(rankedFdr.attempt_mode,'Ranked');
+  assert.equal(rankedFdr.public_id,firstRated.publicId);
+  assert.equal(rankedFdr.metrics.length,58);
+  assert.equal(rankedFdr.ed25519_signature.length,128);
+  assert.equal(rankedFdr.final_state_hash.length,64);
+  assert.ok(rankedFdr.elo_after!==rankedFdr.elo_before,'the rating change must be inside the signed record');
+  assert.ok(rankedFdr.command_timeline.length>=1);
+  assert.ok(Number.isInteger(rankedFdr.command_timeline[0].time_us));
   await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:10000});
   const missionIdle=await page.evaluate(()=>({frames:testFrameCallbacks,messages:testWorkerMessages,draws:missionDiagnostics.draws}));
   await page.waitForTimeout(2000);
@@ -469,5 +522,79 @@ try{
   assert.equal(afterPractice.elo,beforeReload.elo,'a replayed contract must not change Astro-Elo');
   assert.equal(afterPractice.flights,beforeReload.flights+1);
   assert.deepEqual(afterPractice.ranked,beforeReload.ranked,'the certified certificate must stay locked');
-  assert.deepEqual(errors,[]);console.log('Browser viewport, interactions, bounds, WebGL, responsive layout, all three mission prototypes and license persistence passed.');
+  // oracle_tamper_proof_fdr_verification and
+  // oracle_odd_report_deterministic_dossier, in the browser.
+  const practice=await page.evaluate(()=>missionDiagnostics.recorder());
+  assert.ok(practice,'the practice flight must also produce a signed recorder');
+  assert.equal(practice.document.attempt_mode,'Practice');
+  assert.equal(practice.document.elo_before,practice.document.elo_after,'a practice record must show no rating change');
+  await page.locator('#verify-flight').click();
+  await page.waitForFunction(()=>missionDiagnostics.verification()!==null,null,{timeout:180000});
+  const verified=await page.evaluate(()=>missionDiagnostics.verification());
+  assert.equal(verified.code,1,`verification failed: ${verified.verdict}`);
+  assert.equal(verified.verdict,'\u2713 CRYPTOGRAPHICALLY & PHYSICALLY VERIFIED');
+  assert.equal(await page.locator('#verify-verdict').textContent(),'\u2713 CRYPTOGRAPHICALLY & PHYSICALLY VERIFIED');
+  assert.ok(verified.dossier.includes('id="section-4"'));
+  assert.ok(verified.dossier.includes('id="coalition-table"'));
+  const dossierDownload=page.waitForEvent('download');
+  await page.locator('#verify-download').click();
+  const dossierText=await readFile(await (await dossierDownload).path(),'utf8');
+  assert.equal(dossierText,verified.dossier,'the downloaded dossier must be the verified one');
+
+  // The printed QR must decode to a payload that itself verifies.
+  const qrPayload=decodeQrFromSvg(dossierText);
+  assert.ok(qrPayload.startsWith('#verify='));
+  assert.equal(qrPayload,practice.payload,'the QR must carry this flight’s payload');
+  await page.locator('#verify-input').fill(qrPayload);
+  await page.locator('#verify-run').click();
+  await page.waitForFunction(()=>missionDiagnostics.verification()?.code===1&&missionDiagnostics.verification()?.dossier,null,{timeout:180000});
+  assert.equal(await page.evaluate(()=>missionDiagnostics.verification().code),1,'the decoded QR payload must verify');
+
+  // A single edited bit must be rejected with SignatureMismatch.
+  const tampered=structuredClone(practice.document);
+  tampered.metrics[1]=nextUlp(tampered.metrics[1]);
+  assert.notEqual(tampered.metrics[1],practice.document.metrics[1]);
+  await page.locator('#verify-input').fill(JSON.stringify(tampered));
+  await page.locator('#verify-run').click();
+  await page.waitForFunction(()=>missionDiagnostics.verification()?.code===-1,null,{timeout:60000});
+  assert.match(await page.locator('#verify-verdict').textContent(),/SignatureMismatch/);
+  // One microsecond of command timing is equally fatal.
+  const shifted=structuredClone(practice.document);
+  shifted.command_timeline[0].time_us+=1;
+  await page.locator('#verify-input').fill(JSON.stringify(shifted));
+  await page.locator('#verify-run').click();
+  await page.waitForFunction(()=>missionDiagnostics.verification()?.code===-1,null,{timeout:60000});
+  assert.match(await page.locator('#verify-verdict').textContent(),/SignatureMismatch/);
+
+  // A forger with a license of their own can re-sign a false metric. The
+  // signature then passes and the physics replay must catch it.
+  const forged=await page.evaluate(async ulp=>{
+    const recorder=await import('./recorder.js');
+    const current=missionDiagnostics.recorder();
+    const {fields,callsign}=recorder.fieldsFromJson(current.document);
+    // Locate the first metric in the flat transport layout.
+    const metricsAt=recorder.HEADER+current.document.command_timeline.length*recorder.COMMAND_STRIDE;
+    fields[metricsAt+1]=ulp;
+    const {fields:forgedFields,callsign:forgedCallsign}=recorder.fieldsFromJson(recorder.sign(missionDiagnostics.wasm(),fields,callsign).document);
+    return {fields:forgedFields,callsign:forgedCallsign};
+  },nextUlp(practice.document.metrics[1]));
+  await page.evaluate(async inputs=>{
+    const verify=await import('./verify.js');
+    verify.verifyFields(inputs.fields,inputs.callsign);
+  },forged);
+  await page.waitForFunction(()=>missionDiagnostics.verification()?.code===-2,null,{timeout:180000});
+  assert.match(await page.locator('#verify-verdict').textContent(),/PhysicsReplayMismatch/);
+  assert.equal(await page.evaluate(()=>missionDiagnostics.verification().mismatchIndex),1);
+  await page.locator('#verify-close').click();
+  await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:10000});
+  const verifyIdle=await page.evaluate(()=>({frames:testFrameCallbacks,messages:testWorkerMessages,draws:missionDiagnostics.draws}));
+  await page.waitForTimeout(2000);
+  assert.deepEqual(await page.evaluate(()=>({frames:testFrameCallbacks,messages:testWorkerMessages,draws:missionDiagnostics.draws})),verifyIdle,'verification must return to zero frames and zero worker messages');
+
+  // A shared #verify= link must verify on load with no account and no server.
+  await page.goto(`http://127.0.0.1:${server.address().port}/mission.html${practice.payload}`);
+  await page.waitForFunction(()=>missionDiagnostics.verification()?.code===1,null,{timeout:180000});
+  assert.equal(await page.locator('#verify-dialog').isVisible(),true);
+  assert.equal(await page.locator('#verify-verdict').textContent(),'\u2713 CRYPTOGRAPHICALLY & PHYSICALLY VERIFIED');
+  assert.deepEqual(errors,[]);console.log('Browser viewport, interactions, bounds, WebGL, responsive layout, three mission prototypes, license persistence and signed-dossier verification passed.');
 } finally{if(browser)await browser.close();await new Promise(r=>server.close(r));}

@@ -3,6 +3,8 @@
 import { Governor } from './governor.js';
 import * as identity from './identity.js';
 import { initProfile, openProfile } from './profile.js';
+import * as recorder from './recorder.js';
+import { initVerify, openVerify, verifyFields, result as verificationResult } from './verify.js';
 const $=id=>document.getElementById(id);
 const MU=3.986004418e14,R=6378137,G0=9.80665;
 let INITIAL=R+260000,TARGET=R+550000,DURATION=10800,DRY=1020,plane=[1,0],scenario='101',contractId=101;
@@ -16,7 +18,7 @@ let setup=[820497600,DURATION,1200,DRY,2400,310,INITIAL,0,0,0,Math.sqrt(MU/INITI
 const canvas=$('plan-canvas'),ctx=canvas.getContext('2d');
 const lensCanvas=$('lens-canvas'),lensCtx=lensCanvas.getContext('2d');
 let wasm,nodes=[],compiledOrder=[],selected=-1,preview=[],lunarPreview=[],actual=null,lastReport=null,lastLunarInfo=null,worker=null,timer=null,locked=null,drag=null,draws=0,messages=0,sequence=0;
-let activeLens=null,activeTerm=null,lensPhase=0,lensDraws=0,lastComputeMs=null;
+let activeLens=null,activeTerm=null,lensPhase=0,lensDraws=0,lastComputeMs=null,lastCapture=null,lastRecorder=null;
 const CONTRACT_RATINGS={101:800,102:1250,103:1650};
 const lensGovernor=new Governor(()=>drawLens());
 const SHAPLEY_NAMES=['Finite-burn arc','Earth equatorial bulge','Moon and Sun gravity','Atmospheric drag and sunlight pressure'];
@@ -149,7 +151,7 @@ function cancelFlight(){if(timer!==null){clearTimeout(timer);timer=null;}if(work
 function scheduleFlight(){cancelFlight();const version=++sequence;timer=setTimeout(()=>{timer=null;startFlight(false,version);},350);}
 function workerPayload(isLocked){
   const snapshot=nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));
-  const payload={contract:contractId,setup,nodes:snapshot,metric:scenario==='102'?1:0};
+  const payload={contract:contractId,setup,nodes:snapshot,metric:scenario==='102'?1:0,callsign:identity.profile()?.callsign??''};
   if(isLocked){const p=locked.prediction;payload.locked=[p.dv,p.apo*1000,p.peri*1000,p.fuel,p.time,Number.isFinite(p.miss)?p.miss:NaN];}
   return payload;
 }
@@ -157,7 +159,7 @@ function startFlight(isLocked,version=++sequence){
   cancelFlight();worker=new Worker('./mission-worker.js',{type:'module'});const current=worker;
   current.onmessage=({data})=>{messages++;if(worker!==current||version!==sequence)return;current.terminate();worker=null;
     if(data.error){$('plan-status').textContent=data.error;$('plan-status').classList.add('failure');if(isLocked)$('execute-status').textContent=data.error;return;}
-    actual=data.points;lastReport=data.report;lastComputeMs=Number.isFinite(data.computeMs)?data.computeMs:null;lastLunarInfo=data.lunarInfo?.[0]?data.lunarInfo:null;if(data.lunar?.length)lunarPreview=data.lunar;updateCausal();draw();$('plan-status').textContent='Flight model ready. No simulation runs while idle.';annotateAcronyms($('plan-status'));
+    actual=data.points;lastReport=data.report;lastCapture=data.capture??null;lastRecorder=null;lastComputeMs=Number.isFinite(data.computeMs)?data.computeMs:null;lastLunarInfo=data.lunarInfo?.[0]?data.lunarInfo:null;if(data.lunar?.length)lunarPreview=data.lunar;updateCausal();draw();$('plan-status').textContent='Flight model ready. No simulation runs while idle.';annotateAcronyms($('plan-status'));
     if(isLocked)showDebrief(data.report);
   };
   current.onerror=()=>{if(worker!==current)return;worker.terminate();worker=null;$('plan-status').textContent='Flight worker failed.';if(isLocked)$('execute-status').textContent='Flight worker failed.';};
@@ -220,8 +222,27 @@ function showDebrief(report){
     elo.textContent=`Practice flight — Astro-Elo unchanged at ${fmt(outcome.after,1)}. ${outcome.alreadyRanked?`Contract ${contractId} already has a certified ranked certificate, so this run cannot change the rating.`:'Practice mode was selected.'}`;
   }
   const actions=document.createElement('div');actions.className='button-row';
-  const print=document.createElement('button');print.id='export-pdr';print.textContent='Export PDR dossier (PDF)';print.title='Opens the browser print dialog; choose Save as PDF.';print.addEventListener('click',()=>window.print());actions.append(print);
-  $('debrief-content').replaceChildren(table,cards,loss,heading,list,elo,actions);
+  const print=document.createElement('button');print.id='export-pdr';print.textContent='Print debrief (PDF)';print.title='Opens the browser print dialog; choose Save as PDF.';print.addEventListener('click',()=>window.print());actions.append(print);
+  // Sign the recorder now that the rating outcome is settled. Signing is cheap
+  // and stays on this thread so the license secret never enters a worker.
+  const signed=document.createElement('p');signed.className='profile-note';signed.id='recorder-status';
+  if(lastCapture){
+    try{
+      const fields=recorder.stampOutcome(lastCapture,{ranked:outcome.ranked,before:outcome.before,after:outcome.after});
+      lastRecorder=recorder.sign(wasm,fields,identity.profile().callsign);
+      signed.textContent=`Flight recorder signed by ${lastRecorder.document.public_id}. ${outcome.ranked?'Ranked certificate':'Practice record'}; canonical digest ${lastRecorder.document.canonical_digest.slice(0,16)}…`;
+    }catch(error){signed.textContent=`Recorder could not be signed: ${String(error.message||error)}`;}
+  }else{signed.textContent='No recorder was captured for this flight.';}
+  const exportButton=document.createElement('button');exportButton.id='export-fdr';exportButton.textContent='Export signed recorder (.odderon-fdr.json)';exportButton.disabled=!lastRecorder;
+  exportButton.addEventListener('click',()=>{if(lastRecorder)recorder.download(`contract-${contractId}.odderon-fdr.json`,`${lastRecorder.json}\n`,'application/json');});
+  const dossierButton=document.createElement('button');dossierButton.id='verify-flight';dossierButton.textContent='Verify / Replay Dossier';dossierButton.disabled=!lastCapture;
+  dossierButton.addEventListener('click',()=>{
+    if(!lastRecorder)return;
+    const {fields,callsign}=recorder.fieldsFromJson(lastRecorder.document);
+    openVerify();verifyFields(fields,callsign);
+  });
+  actions.append(exportButton,dossierButton);
+  $('debrief-content').replaceChildren(table,cards,loss,heading,list,elo,signed,actions);
   annotateAcronyms($('debrief-content'));$('debrief').hidden=false;$('execute-status').textContent=impacted?'Flight ended in impact. The prediction remains locked.':'Flight complete. The prediction remains locked.';annotateAcronyms($('execute-status'));
 }
 // Warning discriminants follow odd_app::causal::Warning declaration order.
@@ -471,5 +492,5 @@ canvas.addEventListener('pointermove',e=>{
 function endDrag(e){if(drag&&drag.pointer===e.pointerId){drag=null;stopLens();scheduleFlight();}}
 canvas.addEventListener('pointerup',endDrag);canvas.addEventListener('pointercancel',endDrag);canvas.addEventListener('lostpointercapture',endDrag);canvas.addEventListener('pointerleave',e=>{if(!drag&&!intoLens(e))stopLens();});
 new ResizeObserver(draw).observe(canvas.parentElement);
-window.missionDiagnostics=Object.freeze({profile:()=>identity.profile(),isRanked:id=>identity.isRanked(id),openProfile,get nodeTimeRange(){return nodeTimeRange();},clampNodeTime,get nodeMarker(){const n=nodes[selected];if(!n||!wasm)return null;const s=readState(wasm,n.time);return s.some(x=>!Number.isFinite(x))?null:toCanvas(s);},get pathEnds(){return preview.length?[toCanvas(preview[0].state),toCanvas(preview[preview.length-1].state)]:null;},get nodes(){return nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));},get pending(){return !!worker||timer!==null;},get draws(){return draws;},get messages(){return messages;},get locked(){return !!locked;},get report(){return lastReport?[...lastReport]:null;},get computeMs(){return lastComputeMs;},get lunarInfo(){return lastLunarInfo?[...lastLunarInfo]:null;},get lens(){return activeLens;},get lensDraws(){return lensDraws;},get lensPending(){return lensGovernor.frame!==null;},get causalValid(){return wasm?wasm.mission_causal_valid()===1:false;},get acronymViolations(){return acronymViolations();},get handles(){if(selected<0||!wasm)return [];const state=readState(wasm,nodes[selected].time);return handles(toCanvas(state),state).map(h=>({key:h.key,end:h.end}));}});
-try{const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error('The physics module is not available. Build it first.');({instance:{exports:wasm}}=await WebAssembly.instantiate(await response.arrayBuffer(),{}));identity.init(wasm);initProfile();loadGlossary(wasm);annotateAcronyms(document.querySelector('.mission-main'));syncFields();updatePreview();}catch(e){$('plan-status').classList.add('failure');$('plan-status').textContent=String(e.message||e);annotateAcronyms($('plan-status'));}
+window.missionDiagnostics=Object.freeze({wasm:()=>wasm,recorder:()=>lastRecorder,verification:()=>verificationResult(),openVerify,profile:()=>identity.profile(),isRanked:id=>identity.isRanked(id),openProfile,get nodeTimeRange(){return nodeTimeRange();},clampNodeTime,get nodeMarker(){const n=nodes[selected];if(!n||!wasm)return null;const s=readState(wasm,n.time);return s.some(x=>!Number.isFinite(x))?null:toCanvas(s);},get pathEnds(){return preview.length?[toCanvas(preview[0].state),toCanvas(preview[preview.length-1].state)]:null;},get nodes(){return nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));},get pending(){return !!worker||timer!==null;},get draws(){return draws;},get messages(){return messages;},get locked(){return !!locked;},get report(){return lastReport?[...lastReport]:null;},get computeMs(){return lastComputeMs;},get lunarInfo(){return lastLunarInfo?[...lastLunarInfo]:null;},get lens(){return activeLens;},get lensDraws(){return lensDraws;},get lensPending(){return lensGovernor.frame!==null;},get causalValid(){return wasm?wasm.mission_causal_valid()===1:false;},get acronymViolations(){return acronymViolations();},get handles(){if(selected<0||!wasm)return [];const state=readState(wasm,nodes[selected].time);return handles(toCanvas(state),state).map(h=>({key:h.key,end:h.end}));}});
+try{const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error('The physics module is not available. Build it first.');({instance:{exports:wasm}}=await WebAssembly.instantiate(await response.arrayBuffer(),{}));identity.init(wasm);initProfile();initVerify(wasm);loadGlossary(wasm);annotateAcronyms(document.querySelector('.mission-main'));syncFields();updatePreview();}catch(e){$('plan-status').classList.add('failure');$('plan-status').textContent=String(e.message||e);annotateAcronyms($('plan-status'));}

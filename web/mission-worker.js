@@ -4,6 +4,21 @@ self.onmessage=async ({data})=>{
   try{
     const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error('Flight physics module unavailable.');
     const {instance:{exports:w}}=await WebAssembly.instantiate(await response.arrayBuffer(),{});
+    if(data.action==='verify'){
+      w.mission_fdr_reset();
+      for(const value of data.fields)if(!w.mission_fdr_field(value))throw Error('recorder field rejected');
+      w.mission_input_reset();
+      for(const byte of new TextEncoder().encode(data.callsign))w.mission_input_absorb(byte);
+      if(w.mission_fdr_parse()!==1)throw Error('The recorder layout is not valid.');
+      const started=performance.now();
+      const code=w.mission_fdr_verify();
+      const read=field=>{const n=w.mission_fdr_string_len(field);return new TextDecoder().decode(Uint8Array.from({length:n},(_,i)=>w.mission_fdr_string_byte(field,i)));};
+      const verdict=read(2);
+      let dossier=null;
+      if(code===1&&w.mission_fdr_dossier_from_record()===1)dossier=read(1);
+      self.postMessage({verification:{code,verdict,mismatchIndex:w.mission_fdr_mismatch_index(),mismatchName:read(4),dossier,json:read(0),computeMs:performance.now()-started}});
+      return;
+    }
     if(data.action==='split'){
       if(!w.mission_contract(103))throw Error('Unknown contract.');
       if(!w.mission_split_tug(data.kicks,data.total,data.first))throw Error('Numerical perigee targeting failed.');
@@ -38,6 +53,16 @@ self.onmessage=async ({data})=>{
     const report=Array.from({length:w.mission_report_len()},(_,i)=>w.mission_report(i));
     const lunarInfo=hasPatch?[w.mission_lunar_info(0),w.mission_lunar_info(1),w.mission_lunar_info(2)]:null;
     if(points.some(p=>p.some(x=>!Number.isFinite(x)))||!Number.isFinite(report[0]))throw Error('Flight returned an invalid state.');
-    self.postMessage({points,lunar,report,lunarInfo,computeMs});
+    // Capture the executed flight for signing. The page owns the license and
+    // the rating outcome, so the secret stays out of the worker: it stamps the
+    // mode and Elo and signs on the main thread.
+    let capture=null;
+    w.mission_input_reset();
+    for(const byte of new TextEncoder().encode(data.callsign??''))w.mission_input_absorb(byte);
+    if(w.mission_fdr_capture(1,0,0)===1){
+      const count=w.mission_fdr_fields_from_record();
+      capture=Array.from({length:count},(_,i)=>w.mission_fdr_field_at(i));
+    }
+    self.postMessage({points,lunar,report,lunarInfo,computeMs,capture});
   }catch(e){self.postMessage({error:String(e.message||e)});}
 };

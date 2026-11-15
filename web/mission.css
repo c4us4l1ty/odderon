@@ -37,3 +37,12 @@
 .profile-restore textarea{width:100%;box-sizing:border-box;font-family:ui-monospace,monospace;font-size:.8rem}
 .profile-restore h3,.profile-ranked h3{font-size:.9rem;margin:1.2rem 0 .4rem}
 .file-button{border:1px solid var(--line,#2b3f45);border-radius:.4rem;padding:.35rem .7rem;cursor:pointer;font-size:.8rem}
+
+/* Verification dialog. Shares the profile dialog's static chrome. */
+#verify-dialog{width:min(48rem,94vw);max-height:88vh;overflow:auto;padding:1.5rem;border:1px solid var(--line,#2b3f45);border-radius:.75rem;background:var(--panel,#0f1c20);color:inherit}
+#verify-dialog::backdrop{background:rgba(4,10,12,.72)}
+#verify-dialog textarea{width:100%;box-sizing:border-box;font-family:ui-monospace,monospace;font-size:.76rem}
+#verify-close{background:transparent;border:1px solid var(--line,#2b3f45);border-radius:.4rem;color:inherit;cursor:pointer;padding:.25rem .55rem}
+.verify-verdict{font-size:.9rem;font-weight:700;letter-spacing:.04em;margin:.9rem 0 .3rem;min-height:1.2em}
+.verify-verdict.is-verified{color:#8fe0b0}
+.verify-verdict.is-rejected{color:#eda88a}
