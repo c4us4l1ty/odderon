@@ -1,0 +1,10 @@
+[package]
+name = "odd-systems"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+odd-core = { path = "../odd-core" }
+odd-astro = { path = "../odd-astro" }
+odd-propulsion = { path = "../odd-propulsion" }
+libm = "0.2"
