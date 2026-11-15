@@ -1,7 +1,9 @@
 // Real Chromium/WebGL2 integration and demand-rendering gate.
 import { chromium } from 'playwright-core';
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { resolve, extname } from 'node:path';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -535,6 +537,25 @@ try{
   assert.ok(rankedFdr.elo_after!==rankedFdr.elo_before,'the rating change must be inside the signed record');
   assert.ok(rankedFdr.command_timeline.length>=1);
   assert.ok(Number.isInteger(rankedFdr.command_timeline[0].time_us));
+  // The portability claim is only real if a process with no browser, no wasm
+  // and no DOM reaches the same verdict from the same bytes. Hand this exact
+  // signed payload to the native CLI, then hand it a one-ulp engine forgery.
+  const portable=await page.evaluate(()=>missionDiagnostics.recorder());
+  const scratch=await mkdtemp(join(tmpdir(),'odderon-portable-'));
+  try{
+    const honest=join(scratch,'flight.txt');
+    await writeFile(honest,portable.payload);
+    const verdict=execFileSync('cargo',['run','--locked','--offline','-q','-p','odd-verify','--example','verify_record','--',honest],{encoding:'utf8'});
+    assert.match(verdict,/VERIFIED/,'the native verifier must accept a browser-signed record');
+    assert.match(verdict,/contract\s+101/);
+    const forged=join(scratch,'forged.json');
+    await writeFile(forged,JSON.stringify({...portable.document,engine_r_throat_m:nextUlp(portable.document.engine_r_throat_m)}));
+    let rejected=false;
+    try{execFileSync('cargo',['run','--locked','--offline','-q','-p','odd-verify','--example','verify_record','--',forged],{encoding:'utf8',stdio:'pipe'});}
+    catch(error){rejected=error.status===1;}
+    assert.ok(rejected,'a one-ulp engine forgery must be rejected by the native verifier');
+    console.log('Portable replay: native CLI verifies the browser-signed record and rejects a one-ulp engine forgery.');
+  }finally{await rm(scratch,{recursive:true,force:true});}
   await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:10000});
   const missionIdle=await page.evaluate(()=>({frames:testFrameCallbacks,messages:testWorkerMessages,draws:missionDiagnostics.draws}));
   await page.waitForTimeout(2000);
