@@ -105,6 +105,27 @@ Schema 1 and 2 records still parse and verify. They carry no thermal block, so
 their replay produces no vent events and no boil-off, and steps 6–7 are
 skipped. No existing certificate was invalidated by this freeze.
 
+### Verification-rule addendum (2026-11-14, no schema change)
+
+The v3 byte layout is unchanged and remains frozen. One **verification rule**
+was tightened while closing the acceptance audit:
+
+`certify_engine` now recomputes the stage's dry mass with
+`Contract::vehicle_delegated(spec, DelegationMask(fdr.delegation_mask), design)`,
+where `design` is rebuilt from the signed `StageThermalSpec`. Cryogenic
+fit-out beyond the contract baseline (blanket layers, shell, relief pressure,
+radiator panels, solar-array output) and every delegated discipline's +35 %
+margin are real dry mass, so a record cannot claim the hardware, or the
+cooling it buys, without carrying the kilograms.
+
+For a manual stage with the baseline design the computed mass is
+**bit-identical** to the previous `contract.vehicle(spec)`, so no existing
+certificate is invalidated. Pre-v3 records have no thermal block and are
+recomputed with `ThermalDesign::baseline()`, which is also unchanged.
+
+Guard: `crates/odd-verify/tests/thermal_fitout_anti_cheat.rs`
+(`oracle_cooling_cannot_be_claimed_without_its_mass`).
+
 ---
 
 ## v2 — physical engine design

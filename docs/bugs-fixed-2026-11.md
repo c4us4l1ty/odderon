@@ -163,3 +163,109 @@ mask, each new field needs the same three questions:
 1. Is it **signed**, and does the verifier **recompute** it rather than trust it?
 2. Does the **client commit** path carry the same value the verifier replays?
 3. Is its **wire encoding frozen** by a test, not just by convention?
+
+---
+
+# Bugs fixed during the WP 1.6/1.7 acceptance audit (2026-11-14)
+
+A second end-to-end audit ran after the cryogenic and delegation work
+shipped. As before, **every bug below was passing the suite when found**. The
+full reasoning is in `docs/audit-2026-11-14.md`; this file keeps the
+cause/fix/guard record.
+
+## 8. An entire work package was an inert library
+
+**Severity: critical (feature not shipped).** `chief_ai.rs` passed 15 tests
+while nothing in production called it: `cap_score`, `apply` and
+`hardware_mass` were referenced only from `tests/`, both `Settings`
+constructors hardcoded `DelegationMask::MANUAL`, `score()` had no mask
+parameter, and there was no UI, badge, mass penalty or cost. The signed mask
+was always 0.
+
+**Cause.** The oracle called the library directly, so it proved the
+arithmetic and never asked whether a player could reach it.
+
+**Fix.** `vehicle_delegated` charges the margin to the flown dry mass;
+`score_delegated` caps Seff; `odd_verify` passes and rebuilds the mask from
+the signed byte; the bridge exposes setters, readouts and badges; the
+assembly panel renders them.
+
+**Guards.** `crates/odd-verify/tests/delegation_flown.rs` (a *flown* delegated
+mission must mass more and score less, and dropping the mask must change the
+score) and `tests/browser/assembly.mjs` (clicks the checkboxes, flies the
+stage, reads the capped efficiency and the signed mask).
+
+**Lesson.** For every new API, grep for a production caller and add a test
+that exercises the shipped path before declaring the package done.
+
+## 9. Active cooling was free
+
+**Severity: critical (integrity).** `Contract::vehicle` charged only the
+engine and airframe. A player could fit 400 m² of radiator and sixty blanket
+layers, zero the boil-off, and carry none of the mass — the cryogenic
+trade-off did not exist.
+
+**Fix.** Fit-out beyond the contract baseline is charged to dry mass, and
+`certify_engine` recomputes it from the **signed** thermal spec and
+delegation mask. A storable stage has no fit-out and is not charged for one.
+
+**Guard.** `crates/odd-verify/tests/thermal_fitout_anti_cheat.rs` — re-signing
+a record that claims 173.8 kg of cooling hardware at the light baseline mass
+is refused with `EngineMismatch("dry mass")`.
+
+## 10. The hydrogen tank could never be cooled
+
+**Severity: major (design lever was useless).** The shared bus serves the
+oxidizer first. With the baseline 3 kW array the oxidizer's compressor
+saturates it, so the fuel tank receives nothing and keeps boiling — and
+array output was not a player control, so there was no way to fix it.
+
+**Fix.** Array output is a lever (`mission_thermal_set` field 8) and its mass
+is charged like any other hardware. Measured on the flown 6.94-day tug:
+155.553 kg → 0.000 kg boil-off for +130 kg of array.
+
+**Guard.** `tests/browser/assembly.mjs` flies both stages and asserts the
+loss falls while the dry mass rises.
+
+## 11. The printed QR could not be scanned
+
+**Severity: major.** The dossier QR carried a bare `#verify=…` fragment.
+A phone camera cannot resolve a fragment, so the printed "Scan at:" line was
+decorative.
+
+**Fix.** The page states its origin through `mission_fdr_origin_reset/byte/commit`;
+only `http(s)` URLs with no query or fragment are accepted, bounded at 512
+bytes. The QR now carries the absolute page URL plus the fragment.
+
+**Guards.** `crates/odd-view/src/fdr_bridge.rs` tests
+(`the_scan_target_is_absolute_when_the_page_states_its_origin`,
+`a_non_http_origin_is_refused`) and the observatory gate, which decodes the
+printed QR and asserts it is an absolute URL on the serving deployment.
+
+## 12. The propellant ordering existed in four unsynchronised copies
+
+**Severity: major (silent certificate re-labelling).** The Rust wire id, the
+`all()` order, the HTML `<option value>` list and the lab's `BANDS`/`LABELS`
+maps were four copies of one ordering. A signed record stores the bare
+discriminant, so reordering the enum would re-label every historical
+certificate with nothing failing.
+
+**Fix.** `mission_propellant_count/label/band/wire_id` expose the table;
+`engine-lab.js` builds the selector from it and no longer restates the maps.
+
+**Guard.** `tests/browser/assembly.mjs` asserts selector values equal the
+signed wire ids, labels equal the solver labels, and the solver refuses a
+mixture ratio just outside each advertised band.
+
+## 13. New bridge tests poisoned the shared statics
+
+**Severity: minor (intermittent gate failure).** The origin tests mutated the
+global `ORIGIN`/recorder statics without taking `bridge::test_lock()`, so a
+concurrently running dossier test compared HTML that had changed under it,
+panicked while holding a lock, and cascaded `PoisonError` into four unrelated
+tests. It reproduced only under parallel scheduling.
+
+**Fix.** Both tests take the established `test_lock()` guard.
+
+**Guard.** Four consecutive parallel `cargo test -p odd-view --lib` runs, then
+the full gate.
