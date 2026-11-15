@@ -196,6 +196,209 @@ where
     })
 }
 
+/// Counterfactuals evaluated at a common, physically reached epoch.
+/// If any run impacts before `end`, all outcomes are sampled at the earliest
+/// impact and `truncated` is true. Callers must not present a truncated target
+/// debrief as a successful prediction comparison.
+#[derive(Clone, Debug)]
+pub struct CheckedCounterfactuals {
+    pub counterfactuals: Counterfactuals,
+    pub common_end_s: f64,
+    pub requested_end_s: f64,
+    pub truncated: bool,
+}
+
+/// Seven checked propagations with terminal impact handling. The impulsive
+/// baseline may be re-propagated once to the common epoch if a finite run
+/// impacts earlier; this avoids comparing states at different times.
+#[allow(clippy::too_many_arguments)]
+pub fn propagate_counterfactuals_checked<F, M>(
+    initial: crate::spline::Keyframe,
+    end: f64,
+    options: crate::integrator::Options,
+    full_model: crate::force_model::ForceModel,
+    burns: &[crate::perturb::burn::Burn],
+    impulses: &[Impulse],
+    limits: crate::force_model::FlightLimits,
+    mut environment: F,
+    metric: M,
+) -> Result<CheckedCounterfactuals, crate::integrator::IntegrationError>
+where
+    F: FnMut(f64) -> Result<crate::force_model::Environment, crate::integrator::IntegrationError>,
+    M: Fn(crate::spline::Keyframe) -> Result<f64, crate::integrator::IntegrationError>,
+{
+    use crate::integrator::IntegrationError;
+    if impulses.iter().any(|b| {
+        !b.time.is_finite()
+            || b.time < initial.time
+            || b.time > end
+            || !b.propellant_kg.is_finite()
+            || b.propellant_kg < 0.0
+            || !b.delta_v_m_s.iter().all(|x| x.is_finite())
+    }) || impulses.windows(2).any(|w| w[0].time >= w[1].time)
+    {
+        return Err(IntegrationError::InvalidInput);
+    }
+    let mut plain = full_model;
+    plain.zonal = None;
+    plain.drag = None;
+    plain.radiation = None;
+    plain.third_body = false;
+    plain.burn = None;
+    let baseline = |until: f64,
+                    environment: &mut F|
+     -> Result<(crate::spline::Keyframe, Option<f64>), IntegrationError> {
+        let mut state = initial;
+        for impulse in impulses {
+            if impulse.time > until {
+                break;
+            }
+            let integrated = plain.propagate_with_limits(
+                state,
+                impulse.time,
+                options,
+                &[],
+                limits,
+                &mut *environment,
+            )?;
+            if let Some(stop) = integrated.stopped {
+                return Ok((stop.state, Some(stop.time)));
+            }
+            state = integrated
+                .trajectory
+                .sample(impulse.time)
+                .map_err(|_| IntegrationError::NumericalRange)?;
+            for i in 0..3 {
+                state.velocity[i] += impulse.delta_v_m_s[i];
+            }
+            state.mass -= impulse.propellant_kg;
+            if state.mass <= 0.0
+                || !state.mass.is_finite()
+                || !state.velocity.iter().all(|x| x.is_finite())
+            {
+                return Err(IntegrationError::NumericalRange);
+            }
+        }
+        let integrated =
+            plain.propagate_with_limits(state, until, options, &[], limits, &mut *environment)?;
+        if let Some(stop) = integrated.stopped {
+            return Ok((stop.state, Some(stop.time)));
+        }
+        Ok((
+            integrated
+                .trajectory
+                .sample(until)
+                .map_err(|_| IntegrationError::NumericalRange)?,
+            None,
+        ))
+    };
+    let (mut baseline_state, baseline_stop) = baseline(end, &mut environment)?;
+    let mut common = baseline_stop.unwrap_or(end);
+    let run = |model: crate::force_model::ForceModel,
+               environment: &mut F|
+     -> Result<(crate::spline::Keyframe, Option<f64>), IntegrationError> {
+        let integrated =
+            model.propagate_with_limits(initial, end, options, burns, limits, &mut *environment)?;
+        if let Some(stop) = integrated.stopped {
+            return Ok((stop.state, Some(stop.time)));
+        }
+        Ok((
+            integrated
+                .trajectory
+                .sample(end)
+                .map_err(|_| IntegrationError::NumericalRange)?,
+            None,
+        ))
+    };
+    let mut finite_only = run(plain, &mut environment)?;
+    let mut full = run(full_model, &mut environment)?;
+    let mut without = full_model;
+    without.zonal = None;
+    let mut no_j2 = run(without, &mut environment)?;
+    without = full_model;
+    without.third_body = false;
+    let mut no_third_body = run(without, &mut environment)?;
+    without = full_model;
+    without.drag = None;
+    let mut no_drag = run(without, &mut environment)?;
+    without = full_model;
+    without.radiation = None;
+    let mut no_srp = run(without, &mut environment)?;
+    for stop in [
+        finite_only.1,
+        full.1,
+        no_j2.1,
+        no_third_body.1,
+        no_drag.1,
+        no_srp.1,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        common = common.min(stop);
+    }
+    let truncated = common < end;
+    if truncated {
+        if baseline_stop.is_none_or(|t| t > common) {
+            baseline_state = baseline(common, &mut environment)?.0;
+        }
+        let resample = |pair: &mut (crate::spline::Keyframe, Option<f64>),
+                        model: crate::force_model::ForceModel,
+                        environment: &mut F|
+         -> Result<(), IntegrationError> {
+            if pair.1.is_none_or(|t| t > common) {
+                let integrated = model.propagate_with_limits(
+                    initial,
+                    common,
+                    options,
+                    burns,
+                    limits,
+                    &mut *environment,
+                )?;
+                pair.0 = integrated
+                    .trajectory
+                    .sample(common)
+                    .map_err(|_| IntegrationError::NumericalRange)?;
+            }
+            Ok(())
+        };
+        resample(&mut finite_only, plain, &mut environment)?;
+        resample(&mut full, full_model, &mut environment)?;
+        without = full_model;
+        without.zonal = None;
+        resample(&mut no_j2, without, &mut environment)?;
+        without = full_model;
+        without.third_body = false;
+        resample(&mut no_third_body, without, &mut environment)?;
+        without = full_model;
+        without.drag = None;
+        resample(&mut no_drag, without, &mut environment)?;
+        without = full_model;
+        without.radiation = None;
+        resample(&mut no_srp, without, &mut environment)?;
+    }
+    let outcome = |s: crate::spline::Keyframe| -> Result<Outcome, IntegrationError> {
+        Ok(Outcome {
+            position_m: s.position,
+            metric: metric(s)?,
+        })
+    };
+    Ok(CheckedCounterfactuals {
+        counterfactuals: Counterfactuals {
+            impulsive: outcome(baseline_state)?,
+            finite_only: outcome(finite_only.0)?,
+            full: outcome(full.0)?,
+            no_j2: outcome(no_j2.0)?,
+            no_third_body: outcome(no_third_body.0)?,
+            no_drag: outcome(no_drag.0)?,
+            no_srp: outcome(no_srp.0)?,
+        },
+        common_end_s: common,
+        requested_end_s: end,
+        truncated,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

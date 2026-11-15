@@ -12,3 +12,5 @@ odd-core = { path = "../odd-core" }
 odd-astro = { path = "../odd-astro" }
 odd-ephem = { path = "../odd-ephem" }
 odd-sim = { path = "../odd-sim" }
+odd-contracts = { path = "../odd-contracts" }
+odd-app = { path = "../odd-app" }

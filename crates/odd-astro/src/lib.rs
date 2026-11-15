@@ -8,12 +8,14 @@
 pub mod anomaly;
 pub mod attribution;
 pub mod elements;
+pub mod finite_burn;
 pub mod force_model;
 pub mod integrator;
 pub mod maneuver;
 pub mod patched_conics;
 pub mod perturb;
 pub mod propagation;
+pub mod shapley;
 pub mod spline;
 
 /// Invalid physical inputs, or results outside finite floating-point range.

@@ -1,7 +1,7 @@
 //! Multi-node two-body preview and quantized finite-burn compilation.
 //! Times are integer microseconds relative to the initial state. The preview
-//! switches conics at each impulse; it does not perform encounter finding,
-//! model dry-mass failures in flight, or predict lunar gravity assists.
+//! switches Earth-centered conics at each impulse. Encounter finding lives in
+//! `encounter`; this module does not model dry-mass failures during flight.
 use crate::{compile_burn, CommandError, CommandTimeline, Engine};
 use odd_astro::{
     anomaly::{
@@ -9,7 +9,7 @@ use odd_astro::{
         hyperbolic_from_true, hyperbolic_mean, true_from_elliptic, true_from_hyperbolic,
     },
     elements::Elements,
-    maneuver::{apply_impulse, TnwBasis},
+    maneuver::TnwBasis,
     spline::Keyframe,
 };
 use odd_core::frames::State;
@@ -102,6 +102,27 @@ impl Plan {
         engine: Engine,
         nodes: &[ManeuverNode],
     ) -> Result<Self, PlanError> {
+        Self::compile_guided(initial, mu, end_us, dry_mass_kg, engine, nodes, &[])
+    }
+
+    /// Compile with optional pre-burn reference states supplied by a numerical
+    /// preview. Each reference must describe the same node epoch in the same
+    /// inertial axes. Its TNW basis freezes the commanded inertial direction;
+    /// the ideal preview applies that *same inertial impulse* at the node.
+    /// This permits targeting an actual perturbed periapsis rather than the
+    /// periapsis of an earlier ideal conic. Empty guidance means ideal frames.
+    pub fn compile_guided(
+        initial: Keyframe,
+        mu: f64,
+        end_us: i64,
+        dry_mass_kg: f64,
+        engine: Engine,
+        nodes: &[ManeuverNode],
+        guidance: &[Option<State>],
+    ) -> Result<Self, PlanError> {
+        if !guidance.is_empty() && guidance.len() != nodes.len() {
+            return Err(PlanError::InvalidInput);
+        }
         if initial.time != 0.0
             || end_us <= 0
             || end_us > (1_i64 << 53)
@@ -128,14 +149,21 @@ impl Plan {
         let mut impulses = Vec::with_capacity(nodes.len());
         let mut propellant = 0.0;
         let mut total_dv = 0.0;
-        for node in nodes {
+        for (index, node) in nodes.iter().enumerate() {
             let previous = *segments.last().ok_or(PlanError::NumericalRange)?;
             let pre = kepler_coast(
                 previous.state,
                 mu,
                 (node.epoch_us - previous.epoch_us) as f64 / 1e6,
             )?;
-            let burn = compile_burn(pre, node.tnw_m_s, node.epoch_us, previous.mass_kg, engine)?;
+            let reference = guidance.get(index).copied().flatten().unwrap_or(pre);
+            let burn = compile_burn(
+                reference,
+                node.tnw_m_s,
+                node.epoch_us,
+                previous.mass_kg,
+                engine,
+            )?;
             let crate::CommandKind::Burn { dur_us, .. } = burn.command.kind;
             let burn_end = burn
                 .command
@@ -150,11 +178,17 @@ impl Plan {
                 return Err(PlanError::PropellantDeficit);
             }
             timeline.insert(burn.command)?;
-            let dv = TnwBasis::from_state(pre)
+            let dv = TnwBasis::from_state(reference)
                 .map_err(|_| PlanError::InvalidInput)?
                 .inertial_delta_v(node.tnw_m_s)
                 .map_err(|_| PlanError::NumericalRange)?;
-            let post = apply_impulse(pre, node.tnw_m_s).map_err(|_| PlanError::NumericalRange)?;
+            let post = State {
+                position_m: pre.position_m,
+                velocity_m_s: std::array::from_fn(|i| pre.velocity_m_s[i] + dv[i]),
+            };
+            if !post.velocity_m_s.iter().all(|v| v.is_finite()) {
+                return Err(PlanError::NumericalRange);
+            }
             impulses.push(odd_astro::attribution::Impulse {
                 time: node.epoch_us as f64 / 1e6,
                 delta_v_m_s: dv,

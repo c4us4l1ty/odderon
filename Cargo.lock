@@ -90,11 +90,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
+name = "odd-app"
+version = "0.1.0"
+dependencies = [
+ "libm",
+ "odd-astro",
+ "odd-core",
+]
+
+[[package]]
 name = "odd-astro"
 version = "0.1.0"
 dependencies = [
  "libm",
  "odd-core",
+]
+
+[[package]]
+name = "odd-contracts"
+version = "0.1.0"
+dependencies = [
+ "libm",
+ "odd-astro",
+ "odd-core",
+ "odd-ephem",
+ "odd-sim",
 ]
 
 [[package]]
@@ -139,7 +159,9 @@ dependencies = [
 name = "odd-view"
 version = "0.1.0"
 dependencies = [
+ "odd-app",
  "odd-astro",
+ "odd-contracts",
  "odd-core",
  "odd-ephem",
  "odd-sim",

@@ -14,9 +14,12 @@ performance limitations; see [Phase 0 status](docs/phase-0-status.md).
 WP 1.1 adds ideal two-body orbital elements and transfer calculations; see
 [orbital-elements notes](docs/orbital-elements.md) for validation and limits.
 
-An in-progress WP 1.3/1.4 prototype adds multi-node maneuver planning,
-locked predictions and two experimental mission scenarios. The third
-requested mission and some acceptance gates are not complete; see
+The WP 1.3/1.4 experimental mission loop adds a Rust-backed Visual Physics
+Lens and causal warning DAG, multi-node maneuver planning, locked predictions,
+impact handling, numerical perigee-kick targeting, exact Shapley error
+attribution, isolated finite-burn loss and three playable mission scenarios,
+including the cislunar Contract 103. It remains a simplified prototype with
+explicit model, performance and scoring limits; see
 [mission-planning feasibility](docs/mission-planning-feasibility.md).
 
 Work Package 0.1 provides SI quantities, epochs, UTC conversion, hierarchical
@@ -59,4 +62,6 @@ limitations. Positions are calculated from DE440s; visible surface features
 and the optional vehicle study are illustrative.
 
 After building and serving the WebAssembly module as above, open
-<http://localhost:8000/mission.html> for the experimental mission scenarios.
+<http://localhost:8000/mission.html> for the three experimental mission
+contracts. Contract 103's single-burn example demonstrates the perigee-kick
+trap; its splitter targets actual numerical periapses.
