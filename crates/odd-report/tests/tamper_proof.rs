@@ -148,7 +148,9 @@ fn every_other_signed_field_is_also_covered() {
             "engine propellant",
             Box::new(|f| {
                 if let Some(engine) = f.engine.as_mut() {
-                    engine.propellant = odd_propulsion::Propellant::LoxLh2;
+                    // Kerolox at O/F 2.0 is inside its calibrated band, so
+                    // the rejection is the signature and not the envelope.
+                    engine.propellant = odd_propulsion::Propellant::LoxRp1;
                 }
             }),
         ),
