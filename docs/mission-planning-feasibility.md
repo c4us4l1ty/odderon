@@ -162,7 +162,11 @@ have silently fallen back to the tangential drawing.
 rendered terms in focusable `abbr.term` elements, and drives a demand-scheduled
 canvas projection through `governor.js`. Hovering/focusing a term or handle
 starts the projection; leaving, blurring, Escape or the close button suspends
-it. Re-entering the projection that is already showing is a no-op: the lens
+it. Leaving *into the lens panel itself* does not suspend it, because the
+projection text and the close button live inside that panel — an unconditional
+suspend hid the button while the pointer was still travelling toward it, so it
+could never be clicked. Re-entering the projection that is already showing is
+a no-op: the lens
 renders the hovered term inside its own `#lens-projection`, so rewriting that
 text on every `mouseover` would destroy the node under the pointer and
 re-fire the event forever (and steal focus from a keyboard user). The same

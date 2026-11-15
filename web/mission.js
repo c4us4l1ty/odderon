@@ -313,6 +313,12 @@ function startLens(key,term){
   lensGovernor.resume();lensGovernor.invalidate(false);
 }
 function stopLens(){activeLens=null;activeTerm=null;$('lens-projection').hidden=true;$('lens-close').hidden=true;lensGovernor.suspend();}
+// Moving the pointer or focus into the lens panel must not close it: the
+// projection text and the Close button live inside that panel, so stopping on
+// every leave hid the button while the cursor was travelling toward it and
+// made it unclickable. A null relatedTarget (leaving the window) still closes.
+const intoLens=e=>!!e.relatedTarget?.closest?.('.lens');
+const leaveLens=e=>{if(!intoLens(e))stopLens();};
 $('lens-close').addEventListener('click',stopLens);
 function drawLens(){
   const w=lensCanvas.width,h=lensCanvas.height;lensCtx.clearRect(0,0,w,h);lensPhase+=0.05;lensDraws++;
@@ -374,16 +380,16 @@ function drawLens(){
   if(activeLens)lensGovernor.invalidate(false);
 }
 for(const key of Object.keys(fields)){
-  fields[key].addEventListener('focus',()=>startLens(key));fields[key].addEventListener('mouseenter',()=>startLens(key));fields[key].addEventListener('blur',stopLens);fields[key].addEventListener('mouseleave',stopLens);
+  fields[key].addEventListener('focus',()=>startLens(key));fields[key].addEventListener('mouseenter',()=>startLens(key));fields[key].addEventListener('blur',leaveLens);fields[key].addEventListener('mouseleave',leaveLens);
   fields[key].addEventListener('input',()=>{if(locked||selected<0)return;const value=Number(fields[key].value);if(!Number.isFinite(value))return;if(key==='time')nodes[selected].time=Math.max(1,Math.min(DURATION-1,value));else nodes[selected].dv[{t:0,n:1,w:2}[key]]=value;delete nodes[selected].guidance;updatePreview();});
 }
 document.addEventListener('mouseover',e=>{const t=e.target.closest?.('.term');if(t)startLens(GLOSSARY[t.dataset.term]?.key||'t',t.dataset.term);});
-document.addEventListener('mouseout',e=>{const t=e.target.closest?.('.term,button.demo');if(t&&!t.contains(e.relatedTarget))stopLens();});
+document.addEventListener('mouseout',e=>{const t=e.target.closest?.('.term,button.demo');if(t&&!t.contains(e.relatedTarget)&&!intoLens(e))stopLens();});
 document.addEventListener('focusin',e=>{const t=e.target.closest?.('.term');if(t)startLens(GLOSSARY[t.dataset.term]?.key||'t',t.dataset.term);});
-document.addEventListener('focusout',e=>{const t=e.target.closest?.('.term,button.demo');if(t&&!t.contains(e.relatedTarget))stopLens();});
+document.addEventListener('focusout',e=>{const t=e.target.closest?.('.term,button.demo');if(t&&!t.contains(e.relatedTarget)&&!intoLens(e))stopLens();});
 document.addEventListener('click',e=>{const b=e.target.closest?.('button.demo');if(b)startLens(b.dataset.demo);});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')stopLens();});
-$('lens-canvas').addEventListener('pointerleave',()=>{if(!drag)stopLens();});
+$('lens-canvas').addEventListener('pointerleave',e=>{if(!drag&&!intoLens(e))stopLens();});
 // Selection changes which node the sweep estimate and the split-kick offer
 // describe, so the causal panel must be rebuilt even though the physics is
 // unchanged. No re-propagation and no animation frame is scheduled here.
@@ -436,7 +442,7 @@ canvas.addEventListener('pointermove',e=>{
   const p=mousePoint(e),node=nodes[selected];if(drag.key==='time'){const near=nearestPath(p);if(near)node.time=Math.max(60,Math.min(DURATION-60,near.time));}else{const i={t:0,n:1,w:2}[drag.key];node.dv[i]=drag.initial+2*((p[0]-drag.start[0])*drag.dir[0]+(p[1]-drag.start[1])*drag.dir[1]);}delete node.guidance;updatePreview(false);
 });
 function endDrag(e){if(drag&&drag.pointer===e.pointerId){drag=null;stopLens();scheduleFlight();}}
-canvas.addEventListener('pointerup',endDrag);canvas.addEventListener('pointercancel',endDrag);canvas.addEventListener('lostpointercapture',endDrag);canvas.addEventListener('pointerleave',()=>{if(!drag)stopLens();});
+canvas.addEventListener('pointerup',endDrag);canvas.addEventListener('pointercancel',endDrag);canvas.addEventListener('lostpointercapture',endDrag);canvas.addEventListener('pointerleave',e=>{if(!drag&&!intoLens(e))stopLens();});
 new ResizeObserver(draw).observe(canvas.parentElement);
 window.missionDiagnostics=Object.freeze({get nodes(){return nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));},get pending(){return !!worker||timer!==null;},get draws(){return draws;},get messages(){return messages;},get locked(){return !!locked;},get report(){return lastReport?[...lastReport]:null;},get computeMs(){return lastComputeMs;},get lunarInfo(){return lastLunarInfo?[...lastLunarInfo]:null;},get lens(){return activeLens;},get lensDraws(){return lensDraws;},get lensPending(){return lensGovernor.frame!==null;},get causalValid(){return wasm?wasm.mission_causal_valid()===1:false;},get acronymViolations(){return acronymViolations();},get handles(){if(selected<0||!wasm)return [];const state=readState(wasm,nodes[selected].time);return handles(toCanvas(state),state).map(h=>({key:h.key,end:h.end}));}});
 try{const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error('The physics module is not available. Build it first.');({instance:{exports:wasm}}=await WebAssembly.instantiate(await response.arrayBuffer(),{}));loadGlossary(wasm);annotateAcronyms(document.querySelector('.mission-main'));syncFields();updatePreview();}catch(e){$('plan-status').classList.add('failure');$('plan-status').textContent=String(e.message||e);annotateAcronyms($('plan-status'));}

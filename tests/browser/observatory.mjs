@@ -185,6 +185,15 @@ try{
     return node.isConnected&&proj.querySelector('abbr.term[data-term="TWR"]')===node?'stable':'detached';
   });
   assert.equal(stable,'stable','hovering a term inside the projection must not detach it');
+  // Travelling from a hovered term to the Close button crosses a leave
+  // boundary. If that closes the lens, the button vanishes mid-click and can
+  // never be pressed. Hover the projection's own surviving term first so the
+  // pointer really does leave a `.term` on its way to the button.
+  await page.locator('#lens-projection abbr.term[data-term="TWR"]').hover();
+  assert.equal(await page.evaluate(()=>missionDiagnostics.lens),'twr');
+  await page.locator('#lens-close').hover();
+  assert.equal(await page.evaluate(()=>missionDiagnostics.lens),'twr','moving onto Close must not close the lens');
+  assert.equal(await page.locator('#lens-close').isVisible(),true);
   await page.locator('#lens-close').click();
   await page.waitForFunction(()=>missionDiagnostics.lens===null&&!missionDiagnostics.lensPending);
   const missionBox=await page.locator('#plan-canvas').boundingBox();
