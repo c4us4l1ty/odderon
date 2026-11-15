@@ -4,6 +4,12 @@ import { Governor } from './governor.js';
 const $=id=>document.getElementById(id);
 const MU=3.986004418e14,R=6378137,G0=9.80665;
 let INITIAL=R+260000,TARGET=R+550000,DURATION=10800,DRY=1020,plane=[1,0],scenario='101',contractId=101;
+// One boundary for every node-time entry path: typed input, path click and
+// pointer drag. Plan::compile rejects epochs <= 0 or beyond the flight end,
+// so the legal window is the open interval (0, DURATION) sampled at 1 s.
+const NODE_TIME_MIN=1;
+const nodeTimeRange=()=>[NODE_TIME_MIN,DURATION-NODE_TIME_MIN];
+const clampNodeTime=t=>{const [lo,hi]=nodeTimeRange();return Math.max(lo,Math.min(hi,t));};
 let setup=[820497600,DURATION,1200,DRY,2400,310,INITIAL,0,0,0,Math.sqrt(MU/INITIAL),0];
 const canvas=$('plan-canvas'),ctx=canvas.getContext('2d');
 const lensCanvas=$('lens-canvas'),lensCtx=lensCanvas.getContext('2d');
@@ -115,6 +121,7 @@ function syncFields(){
   if(!nodes.length){const o=document.createElement('option');o.textContent='No maneuver';$('node-select').append(o);}
   nodes.forEach((node,i)=>{const o=document.createElement('option');o.value=String(i);o.textContent=`Maneuver ${i+1} · ${Math.round(node.time)} s${node.guidance?' · guided':''}`;o.selected=i===selected;$('node-select').append(o);});
   for(const control of [...Object.values(fields),$('node-select'),$('remove-node')])control.disabled=!n||!!locked;
+  fields.time.min=String(nodeTimeRange()[0]);fields.time.max=String(nodeTimeRange()[1]);
   if(n){fields.time.value=String(Math.round(n.time));fields.t.value=String(+n.dv[0].toFixed(2));fields.n.value=String(+n.dv[1].toFixed(2));fields.w.value=String(+n.dv[2].toFixed(2));}
   $('add-node').disabled=!wasm||!!locked||nodes.length>=12;$('example').disabled=!wasm||!!locked;$('mission-select').disabled=!wasm||!!locked;$('split-kick').disabled=!!locked;
 }
@@ -381,7 +388,7 @@ function drawLens(){
 }
 for(const key of Object.keys(fields)){
   fields[key].addEventListener('focus',()=>startLens(key));fields[key].addEventListener('mouseenter',()=>startLens(key));fields[key].addEventListener('blur',leaveLens);fields[key].addEventListener('mouseleave',leaveLens);
-  fields[key].addEventListener('input',()=>{if(locked||selected<0)return;const value=Number(fields[key].value);if(!Number.isFinite(value))return;if(key==='time')nodes[selected].time=Math.max(1,Math.min(DURATION-1,value));else nodes[selected].dv[{t:0,n:1,w:2}[key]]=value;delete nodes[selected].guidance;updatePreview();});
+  fields[key].addEventListener('input',()=>{if(locked||selected<0)return;const value=Number(fields[key].value);if(!Number.isFinite(value))return;if(key==='time')nodes[selected].time=clampNodeTime(value);else nodes[selected].dv[{t:0,n:1,w:2}[key]]=value;delete nodes[selected].guidance;updatePreview();});
 }
 document.addEventListener('mouseover',e=>{const t=e.target.closest?.('.term');if(t)startLens(GLOSSARY[t.dataset.term]?.key||'t',t.dataset.term);});
 document.addEventListener('mouseout',e=>{const t=e.target.closest?.('.term,button.demo');if(t&&!t.contains(e.relatedTarget)&&!intoLens(e))stopLens();});
@@ -415,7 +422,7 @@ $('mission-select').addEventListener('change',()=>{
     INITIAL=R+260000;TARGET=R+550000;DURATION=10800;DRY=1020;plane=[1,0];setup=[820497600,DURATION,1200,DRY,2400,310,INITIAL,0,0,0,Math.sqrt(MU/INITIAL),0];
     $('mission-rank').textContent='CONTRACT 101 / CADET · 800';$('mission-title').textContent='Orbit rescue';$('mission-description').textContent='Raise a 260 km circular orbit to 550 km, then make it circular within three hours. The dotted cyan path is your instantaneous-push preview; the gold path includes finite burns and modeled forces.';$('example').textContent='Show two-push example';
   }
-  fields.time.max=String(DURATION-1);$('debrief').hidden=true;for(const id of ['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time','predict-miss'])$(id).value='';annotateAcronyms($('mission-description'));annotateAcronyms($('mission-rank'));updatePreview();
+  fields.time.min=String(nodeTimeRange()[0]);fields.time.max=String(nodeTimeRange()[1]);$('debrief').hidden=true;for(const id of ['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time','predict-miss'])$(id).value='';annotateAcronyms($('mission-description'));annotateAcronyms($('mission-rank'));updatePreview();
 });
 $('prefill').addEventListener('click',prefill);
 $('execute').addEventListener('click',()=>{
@@ -432,17 +439,17 @@ $('unlock').addEventListener('click',()=>{locked=null;cancelFlight();sequence++;
 canvas.addEventListener('pointerdown',e=>{
   if(locked||!preview.length||e.button!==0)return;const p=mousePoint(e),node=nodes[selected];
   if(node){const state=readState(wasm,node.time),center=toCanvas(state);for(const h of handles(center,state))if(distance(p,h.end)<12){drag={pointer:e.pointerId,key:h.key,start:p,initial:node.dv[{t:0,n:1,w:2}[h.key]],dir:h.dir};startLens(h.key);canvas.setPointerCapture(e.pointerId);return;}if(distance(p,center)<12){drag={pointer:e.pointerId,key:'time'};startLens('time');canvas.setPointerCapture(e.pointerId);return;}}
-  const nearest=nearestPath(p);if(nearest&&nearest.d<12&&nodes.length<12){nodes.push({time:Math.max(60,Math.min(DURATION-60,nearest.time)),dv:[10,0,0]});selected=nodes.length-1;updatePreview();}
+  const nearest=nearestPath(p);if(nearest&&nearest.d<12&&nodes.length<12){nodes.push({time:clampNodeTime(nearest.time),dv:[10,0,0]});selected=nodes.length-1;updatePreview();}
 });
 canvas.addEventListener('pointermove',e=>{
   if(!drag||drag.pointer!==e.pointerId||selected<0){
     if(!locked&&preview.length&&nodes[selected]){const p=mousePoint(e),state=readState(wasm,nodes[selected].time),center=toCanvas(state);const h=handles(center,state).find(h=>distance(p,h.end)<12);if(h)startLens(h.key);else if(activeLens&&!e.target.closest?.('.term'))stopLens();}
     return;
   }
-  const p=mousePoint(e),node=nodes[selected];if(drag.key==='time'){const near=nearestPath(p);if(near)node.time=Math.max(60,Math.min(DURATION-60,near.time));}else{const i={t:0,n:1,w:2}[drag.key];node.dv[i]=drag.initial+2*((p[0]-drag.start[0])*drag.dir[0]+(p[1]-drag.start[1])*drag.dir[1]);}delete node.guidance;updatePreview(false);
+  const p=mousePoint(e),node=nodes[selected];if(drag.key==='time'){const near=nearestPath(p);if(near)node.time=clampNodeTime(near.time);}else{const i={t:0,n:1,w:2}[drag.key];node.dv[i]=drag.initial+2*((p[0]-drag.start[0])*drag.dir[0]+(p[1]-drag.start[1])*drag.dir[1]);}delete node.guidance;updatePreview(false);
 });
 function endDrag(e){if(drag&&drag.pointer===e.pointerId){drag=null;stopLens();scheduleFlight();}}
 canvas.addEventListener('pointerup',endDrag);canvas.addEventListener('pointercancel',endDrag);canvas.addEventListener('lostpointercapture',endDrag);canvas.addEventListener('pointerleave',e=>{if(!drag&&!intoLens(e))stopLens();});
 new ResizeObserver(draw).observe(canvas.parentElement);
-window.missionDiagnostics=Object.freeze({get nodes(){return nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));},get pending(){return !!worker||timer!==null;},get draws(){return draws;},get messages(){return messages;},get locked(){return !!locked;},get report(){return lastReport?[...lastReport]:null;},get computeMs(){return lastComputeMs;},get lunarInfo(){return lastLunarInfo?[...lastLunarInfo]:null;},get lens(){return activeLens;},get lensDraws(){return lensDraws;},get lensPending(){return lensGovernor.frame!==null;},get causalValid(){return wasm?wasm.mission_causal_valid()===1:false;},get acronymViolations(){return acronymViolations();},get handles(){if(selected<0||!wasm)return [];const state=readState(wasm,nodes[selected].time);return handles(toCanvas(state),state).map(h=>({key:h.key,end:h.end}));}});
+window.missionDiagnostics=Object.freeze({get nodeTimeRange(){return nodeTimeRange();},clampNodeTime,get nodeMarker(){const n=nodes[selected];if(!n||!wasm)return null;const s=readState(wasm,n.time);return s.some(x=>!Number.isFinite(x))?null:toCanvas(s);},get pathEnds(){return preview.length?[toCanvas(preview[0].state),toCanvas(preview[preview.length-1].state)]:null;},get nodes(){return nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));},get pending(){return !!worker||timer!==null;},get draws(){return draws;},get messages(){return messages;},get locked(){return !!locked;},get report(){return lastReport?[...lastReport]:null;},get computeMs(){return lastComputeMs;},get lunarInfo(){return lastLunarInfo?[...lastLunarInfo]:null;},get lens(){return activeLens;},get lensDraws(){return lensDraws;},get lensPending(){return lensGovernor.frame!==null;},get causalValid(){return wasm?wasm.mission_causal_valid()===1:false;},get acronymViolations(){return acronymViolations();},get handles(){if(selected<0||!wasm)return [];const state=readState(wasm,nodes[selected].time);return handles(toCanvas(state),state).map(h=>({key:h.key,end:h.end}));}});
 try{const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error('The physics module is not available. Build it first.');({instance:{exports:wasm}}=await WebAssembly.instantiate(await response.arrayBuffer(),{}));loadGlossary(wasm);annotateAcronyms(document.querySelector('.mission-main'));syncFields();updatePreview();}catch(e){$('plan-status').classList.add('failure');$('plan-status').textContent=String(e.message||e);annotateAcronyms($('plan-status'));}

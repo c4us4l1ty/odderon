@@ -64,7 +64,11 @@ pub struct BurnLoss {
     pub identity_residual_m_s: f64,
     /// Total powered time, s.
     pub burn_duration_s: f64,
-    /// Total swept central angle over all burns, rad (sum of absolute turns).
+    /// Total swept central angle over all burns, rad, evaluated as the exact
+    /// integral `∫ |r × v| / |r|² dt` (the instantaneous rate of the polar
+    /// angle about the focus). Summed as absolute turn, so a reversal adds
+    /// rather than cancels. This is the arc actually flown, not the change in
+    /// osculating true anomaly: thrust also rotates the apsidal line.
     pub sweep_rad: f64,
 }
 
@@ -143,15 +147,7 @@ pub fn measure_burn(
         if hi <= lo {
             continue;
         }
-        let p0 = trajectory
-            .sample(lo)
-            .map_err(|_| IntegrationError::NumericalRange)?
-            .position;
-        let p1 = trajectory
-            .sample(hi)
-            .map_err(|_| IntegrationError::NumericalRange)?
-            .position;
-        sweep += libm::fabs(libm::atan2(norm(cross(p0, p1)), dot(p0, p1)));
+        let mut segment_sweep = 0.0;
         let mid = lo + (hi - lo) * 0.5;
         let half = (hi - lo) * 0.5;
         for (node, weight) in NODES.iter().zip(WEIGHTS) {
@@ -172,7 +168,16 @@ pub fn measure_burn(
             let g = s.position.map(|x| -mu * x / (radius * radius * radius));
             steering += half * weight * thrust_accel * (1.0 - dot(u, vhat));
             gravity += half * weight * -dot(g, vhat);
+            // Exact polar-angle rate |h|/r² = |r × v| / |r|², sampled at the
+            // same quadrature nodes as the loss integrals. Integrating the
+            // rate instead of summing endpoint chord angles keeps the arc
+            // accurate however far apart the cached keyframes happen to be.
+            segment_sweep +=
+                half * weight * norm(cross(s.position, s.velocity)) / (radius * radius);
         }
+        // Absolute turn per segment: a genuine reversal adds, while the
+        // integrand itself is non-negative so quadrature noise cannot cancel.
+        sweep += libm::fabs(segment_sweep);
     }
     let speed_gain = norm(end_state.velocity) - norm(start_state.velocity);
     let deficit = ideal - speed_gain;

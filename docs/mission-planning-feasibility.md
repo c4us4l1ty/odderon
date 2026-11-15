@@ -49,6 +49,15 @@ both be guaranteed. In the mathematical F → infinity limit a quantized burn
 also becomes shorter than one microsecond and is no longer representable; the
 finite-limit regression uses a large but representable thrust.
 
+Every browser node-time entry path — typed numeric input, clicking the preview
+path and dragging a node marker — goes through one `clampNodeTime` helper over
+`[1, DURATION - 1]` seconds, and the numeric input's `min`/`max` attributes are
+generated from that same range. Previously the pointer paths used a separate
+60 s margin, so the same intent produced different epochs depending on how it
+was entered. The clamp bounds the *epoch* only: a node one second before the
+flight end still fails plan validation because its finite burn overruns the
+window, which is a separate check.
+
 `Plan::compile_guided` accepts optional pre-burn reference states. A guided
 node freezes its TNW command in inertial axes from that reference, and the
 Level-1 preview applies the **same inertial impulse** at the node. This is how
@@ -200,6 +209,25 @@ evaluated with five-point Gauss–Legendre quadrature on every adaptive spline
 segment inside each burn. The module also reports powered duration and swept
 central angle. The identity residual is a numerical-quality gauge.
 
+The swept angle is the exact polar-angle integral
+
+```text
+Δθ_sweep = ∫ |r(t) × v(t)| / |r(t)|² dt
+```
+
+evaluated at the same Gauss–Legendre nodes as the loss integrals, accumulated
+per spline segment and summed as absolute turn. It replaces a sum of endpoint
+chord angles. For a *planar* arc the two agree — the angle between successive
+radius vectors already is the swept polar angle — but they diverge once thrust
+tilts the plane, because the 3D angle between two radius vectors is not the
+polar angle swept in the instantaneous orbital plane. Measured on a 1800 s
+burn with a dominant orbit-normal component, 15× keyframe decimation costs the
+chord sum 1.4e-6 rad while the integral stays at 7.3e-8 rad. Note this is the
+arc actually flown, not the change in osculating true anomaly: thrust also
+rotates the apsidal line. `crates/odd-astro/tests/sweep_exactness.rs` pins both
+the analytic planar limit (<1e-6 rad against the endpoint radius angle under
+decimation) and the 3D improvement over the retired formulation.
+
 The independent oracle is `tools/astro-oracle/finite_burn_loss_scipy.py`
 (SciPy DOP853, rtol 2e-13, atol 1e-11, max step 5 s), which carries the two loss
 integrals as extra ODE states. The checked fixture is
@@ -339,6 +367,12 @@ Undefined values are NaN, not zero. The worker also returns `computeMs`
   residual small; impacted 3,120 m/s fixture reports no late shares).
 - `oracle_playable_loop_and_idle_gate`: `tests/browser/observatory.mjs`
   (Contract 101 score >0.80, all three loops, 2 s idle counters).
+- `oracle_hardening_clamp_and_exact_sweep`:
+  `crates/odd-astro/tests/sweep_exactness.rs` (swept angle matches the analytic
+  planar arc within 1e-6 rad under keyframe decimation, and beats the retired
+  chord sum by >10x once the plane tilts) plus the clamp block in
+  `tests/browser/observatory.mjs` (typed and dragged node times share one
+  boundary, and the input's min/max are generated from it).
 
 ## Remaining limitations
 

@@ -201,6 +201,60 @@ try{
   assert.equal(await page.evaluate(()=>missionDiagnostics.nodes.length),1,'clicking the path should place a maneuver');
   await page.locator('#remove-node').click();
   await page.locator('#add-node').click();
+
+  // oracle_hardening_clamp_and_exact_sweep (browser half): typed entry and
+  // pointer dragging must enforce one identical [t_min, t_max] boundary.
+  {
+    const [lo,hi]=await page.evaluate(()=>missionDiagnostics.nodeTimeRange);
+    assert.equal(await page.locator('#node-time').getAttribute('min'),String(lo),'input min must match the shared clamp');
+    assert.equal(await page.locator('#node-time').getAttribute('max'),String(hi),'input max must match the shared clamp');
+    for(const [typed,expected] of [['-500',lo],['0',lo],[String(lo-1),lo],[String(hi+1),hi],['99999999',hi]]){
+      await page.locator('#node-time').fill(typed);
+      assert.equal(await page.evaluate(()=>missionDiagnostics.nodes[0].time),expected,`typed ${typed} should clamp to ${expected}`);
+    }
+    // A node at the upper boundary can still fail to compile because its
+    // finite burn overruns the flight end; that is plan validation, not the
+    // clamp. Restore an interior time so the preview is populated again.
+    await page.locator('#node-time').fill('200');
+    await page.waitForFunction(()=>missionDiagnostics.pathEnds!==null);
+    const box=await page.locator('#plan-canvas').boundingBox();
+    const ends=await page.evaluate(()=>missionDiagnostics.pathEnds);
+    assert.ok(ends,'preview exposes its endpoints');
+    const marker=await page.evaluate(()=>missionDiagnostics.nodeMarker);
+    assert.ok(marker,'selected node exposes a canvas marker');
+    // Drag onto the first preview sample, whose raw time is 0. The pointer
+    // path used to clamp this to a 60 s margin while the field allowed 1 s.
+    await page.mouse.move(box.x+marker[0],box.y+marker[1]);
+    await page.mouse.down();
+    await page.mouse.move(box.x+ends[0][0],box.y+ends[0][1],{steps:8});
+    await page.mouse.up();
+    const draggedLow=await page.evaluate(()=>missionDiagnostics.nodes[0].time);
+    assert.equal(draggedLow,lo,'dragging to the path start must clamp to the shared minimum');
+    assert.ok(draggedLow<60,'the old 60 s pointer margin must be gone');
+    await page.locator('#node-time').fill('-1000');
+    assert.equal(await page.evaluate(()=>missionDiagnostics.nodes[0].time),draggedLow,'dragged and typed lower clamps must agree exactly');
+    // Sweep the marker along the path. Every intermediate drag result must
+    // already satisfy the shared clamp. The upper boundary itself is not
+    // reachable by dragging: a node that close to the end fails plan
+    // validation because its burn overruns the flight, which clears the
+    // preview. That is physics validation, so the shared helper is checked
+    // directly for the upper bound instead.
+    await page.locator('#node-time').fill('200');
+    for(const fraction of [0.25,0.5,0.75]){
+      const live=await page.evaluate(()=>missionDiagnostics.pathEnds);
+      const from=await page.evaluate(()=>missionDiagnostics.nodeMarker);
+      await page.mouse.move(box.x+from[0],box.y+from[1]);
+      await page.mouse.down();
+      await page.mouse.move(box.x+live[0][0]+(live[1][0]-live[0][0])*fraction,box.y+live[0][1]+(live[1][1]-live[0][1])*fraction,{steps:4});
+      await page.mouse.up();
+      const t=await page.evaluate(()=>missionDiagnostics.nodes[0].time);
+      assert.equal(await page.evaluate(v=>missionDiagnostics.clampNodeTime(v),t),t,`dragged time ${t} must already be inside the shared clamp`);
+      await page.locator('#node-time').fill('200');
+    }
+    assert.equal(await page.evaluate(v=>missionDiagnostics.clampNodeTime(v),hi+1000),hi,'shared clamp must bind at the upper boundary');
+    await page.locator('#node-time').fill('200');
+  }
+
   await page.locator('#node-t').fill('82.38547669');
   await page.locator('#add-node').click();
   await page.locator('#node-time').fill('2979.885241');
