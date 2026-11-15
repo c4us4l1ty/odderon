@@ -238,6 +238,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "odd-worker"
+version = "0.1.0"
+dependencies = [
+ "ed25519-compact",
+ "libm",
+ "odd-astro",
+ "odd-contracts",
+ "odd-core",
+ "odd-ephem",
+ "odd-identity",
+ "odd-propulsion",
+ "odd-report",
+ "odd-sim",
+ "odd-systems",
+ "odd-verify",
+ "sha2",
+]
+
+[[package]]
 name = "pack-ephem"
 version = "0.1.0"
 

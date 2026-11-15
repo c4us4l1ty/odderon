@@ -382,6 +382,9 @@ pub struct FlightSpec {
 pub struct ReplayOutcome {
     pub report: [f64; REPORT_LEN],
     pub final_state_hash: [u8; 32],
+    /// The flown path, so a chunked verifier can sample each checkpoint
+    /// against the authoritative trajectory rather than trusting it.
+    pub trajectory: odd_astro::spline::TrajectorySpline,
     pub geometry: Geometry,
     /// Recomputed relief-valve openings, for comparison with the signed list.
     pub vent_events: Vec<odd_report::VentEvent>,
@@ -599,6 +602,7 @@ pub fn replay_flight(spec: &FlightSpec) -> Option<ReplayOutcome> {
     Some(ReplayOutcome {
         report: outcome.report,
         final_state_hash: hash,
+        trajectory: outcome.trajectory,
         geometry,
         boil_off_kg: outcome.thermal.tank_lost_kg,
         cryocooler_energy_j: outcome.thermal.cooler_energy_j,
