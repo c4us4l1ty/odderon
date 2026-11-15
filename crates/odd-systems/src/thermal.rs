@@ -208,6 +208,28 @@ pub fn cryocooler_point(
     commanded_lift_w: f64,
     available_w: f64,
 ) -> CryocoolerPoint {
+    cryocooler_point_with_load(spec, cold_k, commanded_lift_w, available_w, 0.0)
+}
+
+/// Minimum approach temperature across the cooler's internal heat
+/// exchangers, K. Without a floor the hot-side iteration can collapse onto
+/// the cold tip when the radiator is oversized for the load, which drives
+/// `COP = f·T_c/(T_h−T_c)` to infinity and makes active cooling free.
+pub const MIN_COOLER_APPROACH_K: f64 = 5.0;
+
+/// As `cryocooler_point`, but the radiator also absorbs its environment.
+///
+/// A radiator in sunlight or above a planet cannot sit at the tank
+/// temperature: it absorbs solar and planet-IR flux, which sets a floor on
+/// its rejection temperature and therefore a ceiling on the achievable COP.
+/// Ignoring that load is what let a big radiator produce free cooling.
+pub fn cryocooler_point_with_load(
+    spec: &TankSpec,
+    cold_k: f64,
+    commanded_lift_w: f64,
+    available_w: f64,
+    absorbed_w: f64,
+) -> CryocoolerPoint {
     if commanded_lift_w <= 0.0 || spec.radiator_area_m2 <= 0.0 || available_w <= 0.0 {
         return CryocoolerPoint {
             lift_w: 0.0,
@@ -231,12 +253,12 @@ pub fn cryocooler_point(
             power = available_w;
             lift = power * cop;
         }
-        let rejected = lift + power;
+        let rejected = lift + power + libm::fmax(0.0, absorbed_w);
         let next = libm::pow(
             rejected / rejection + libm::pow(SPACE_TEMPERATURE_K, 4.0),
             0.25,
         );
-        hot = next.max(cold_k + 1e-3);
+        hot = next.max(cold_k + MIN_COOLER_APPROACH_K);
     }
     CryocoolerPoint {
         lift_w: lift,
@@ -315,7 +337,19 @@ pub fn heat_balance(
     } else {
         0.0
     };
-    let cooler = cryocooler_point(spec, temperature_k, commanded, available_w);
+    // The radiator sees the same sky as the tank. A panel is normally
+    // mounted edge-on to the Sun, so it takes a quarter of the direct beam
+    // and half of the planet's IR disc.
+    let radiator_absorbed_w = spec.absorptivity
+        * spec.radiator_area_m2
+        * (0.25 * env.solar_flux_w_m2() * illumination + 0.5 * env.earth_ir_flux_w_m2());
+    let cooler = cryocooler_point_with_load(
+        spec,
+        temperature_k,
+        commanded,
+        available_w,
+        radiator_absorbed_w,
+    );
     HeatBalance {
         mli_w: mli,
         solar_w: solar,

@@ -21,12 +21,14 @@
 //! ideal-gas relief estimate, slosh, or transient chilldown of the shell.
 
 pub mod bus;
+pub mod coupled;
 pub mod environment;
 pub mod fluid;
 pub mod stage;
 pub mod thermal;
 
 pub use bus::{BusSpec, PowerBudget};
+pub use coupled::{allocate_bus, integrate_pair, BusAllocation, TankPair};
 pub use environment::ThermalEnvironment;
 pub use fluid::{Fluid, FluidProperties};
 pub use stage::{needs_thermal_model, StageThermal, StageThermalHistory};

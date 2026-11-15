@@ -9,8 +9,7 @@ use crate::bus::BusSpec;
 use crate::environment::ThermalEnvironment;
 use crate::fluid::Fluid;
 use crate::thermal::{
-    integrate_tank, ShellMaterial, TankHistory, TankSpec, TankState, ThermalClock, ThermalContext,
-    VentEvent,
+    ShellMaterial, TankHistory, TankSpec, TankState, ThermalClock, ThermalContext, VentEvent,
 };
 use odd_astro::integrator::IntegrationError;
 use odd_propulsion::{EngineSpec, Propellant};
@@ -38,6 +37,9 @@ pub struct StageThermalHistory {
     pub lost_kg: f64,
     /// Total cryocooler electrical energy, J.
     pub cooler_energy_j: f64,
+    /// The bus split the integrator applied at every accepted step. The
+    /// priority rule is checkable from this rather than asserted.
+    pub bus_trend: Vec<crate::coupled::BusAllocation>,
 }
 
 impl StageThermalHistory {
@@ -149,38 +151,26 @@ impl StageThermal {
         F: FnMut(f64) -> Result<ThermalEnvironment, IntegrationError>,
     {
         let (ox_initial, fuel_initial) = self.initial_states(engine, load_kg);
-        // Cooling is shared: the oxidizer is served first, then the fuel gets
-        // what the bus has left. Both draws are bounded by real generation.
+        // Both tanks advance in one state vector so the fuel's allowance is
+        // the exact instantaneous remainder of the bus, not the oxidizer's
+        // end-of-flight peak subtracted from a constant.
         let context = ThermalContext {
             structure_temperature_k: self.structure_temperature_k,
             sink_temperature_k: self.sink_temperature_k,
+            // Superseded inside the coupled integrator by the trajectory's
+            // own sunlight; kept in the struct for the single-tank API.
             bus_w: self.bus.discretionary_capacity(),
         };
-        let oxidizer = integrate_tank(
-            &self.oxidizer,
-            0,
-            ox_initial,
+        let (oxidizer, fuel, bus_trend) = crate::coupled::integrate_pair(
+            &crate::coupled::TankPair {
+                oxidizer: self.oxidizer,
+                fuel: self.fuel,
+                oxidizer_initial: ox_initial,
+                fuel_initial,
+            },
+            &self.bus,
             clock,
             context,
-            &mut environment,
-        )?;
-        let ox_peak = crate::thermal::cryocooler_point(
-            &self.oxidizer,
-            oxidizer.state.temperature_k,
-            self.oxidizer.cryocooler_lift_w,
-            self.bus.discretionary_capacity(),
-        )
-        .power_w;
-        let fuel_bus = libm::fmax(0.0, self.bus.discretionary_capacity() - ox_peak);
-        let fuel = integrate_tank(
-            &self.fuel,
-            1,
-            fuel_initial,
-            clock,
-            ThermalContext {
-                bus_w: fuel_bus,
-                ..context
-            },
             &mut environment,
         )?;
         let mut vents = oxidizer.vents.clone();
@@ -192,6 +182,7 @@ impl StageThermal {
             oxidizer,
             fuel,
             vents,
+            bus_trend,
         })
     }
 }
