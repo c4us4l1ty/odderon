@@ -13,3 +13,6 @@ odd-ephem = { path = "../odd-ephem" }
 odd-propulsion = { path = "../odd-propulsion" }
 odd-systems = { path = "../odd-systems" }
 libm = "0.2"
+
+[dev-dependencies]
+odd-app = { path = "../odd-app" }
