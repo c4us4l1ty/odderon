@@ -32,5 +32,6 @@ pub use fluid::{Fluid, FluidProperties};
 pub use stage::{StageThermal, StageThermalHistory};
 pub use thermal::{
     cryocooler_point, heat_balance, ideal_epsilon_for_layers, integrate_along, integrate_tank,
-    CryocoolerPoint, HeatBalance, ShellMaterial, TankHistory, TankSpec, TankState, VentEvent,
+    CryocoolerPoint, HeatBalance, ShellMaterial, TankHistory, TankSpec, TankState, ThermalClock,
+    ThermalContext, VentEvent,
 };

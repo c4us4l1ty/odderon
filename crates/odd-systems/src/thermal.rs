@@ -258,7 +258,12 @@ pub struct HeatBalance {
     /// Quasi-steady outer-skin temperature, K.
     pub skin_temperature_k: f64,
     pub strut_w: f64,
+    /// Heat lifted out of the propellant, W (thermal, at the cold tip).
     pub cryocooler_w: f64,
+    /// Electricity the cooler draws from the bus, W. Always >= the lift, and
+    /// at 20 K against a ~300 K sink it is one to two orders of magnitude
+    /// larger. This is the number that steals from electric propulsion.
+    pub cryocooler_bus_w: f64,
     /// Total in minus active cooling. Positive means the tank gains energy.
     pub net_w: f64,
     pub illumination: f64,
@@ -299,7 +304,18 @@ pub fn heat_balance(
     let mli = spec.epsilon_eff * sigma * spec.area_m2 * (skin4 - libm::pow(temperature_k, 4.0));
     // Struts and penetrations bypass the blanket entirely.
     let strut = spec.strut_conductance_w_k * (structure_k - temperature_k);
-    let cooler = cryocooler_point(spec, temperature_k, spec.cryocooler_lift_w, available_w);
+    // A real cooler is thermostatically modulated: it lifts only what it must
+    // to hold the setpoint, never enough to drive the liquid below its own
+    // cold-tip temperature. Without this clamp a 2 kW cooler on a 20 W load
+    // would refrigerate the tank towards absolute zero and then report the
+    // full nameplate draw forever.
+    let passive_w = mli + strut;
+    let commanded = if spec.cryocooler_lift_w > 0.0 && passive_w > 0.0 {
+        libm::fmin(spec.cryocooler_lift_w, passive_w)
+    } else {
+        0.0
+    };
+    let cooler = cryocooler_point(spec, temperature_k, commanded, available_w);
     HeatBalance {
         mli_w: mli,
         solar_w: solar,
@@ -307,6 +323,7 @@ pub fn heat_balance(
         skin_temperature_k,
         strut_w: strut,
         cryocooler_w: cooler.lift_w,
+        cryocooler_bus_w: cooler.power_w,
         // Solar and planet IR enter *through* the skin node, so they are
         // already inside `mli_w` and must not be added a second time.
         net_w: mli + strut - cooler.lift_w,
@@ -339,6 +356,8 @@ pub struct TankHistory {
     pub vents: Vec<VentEvent>,
     /// Time-averaged boil-off rate, kg/s.
     pub mean_boil_off_kg_s: f64,
+    /// Electricity drawn from the bus over the window, J. This is `∫P dt`
+    /// with `P = Q_lift/COP`, NOT the heat lifted.
     pub cryocooler_energy_j: f64,
     pub peak_pressure_pa: f64,
     /// Samples along the flight for the UI trend, `(t, T, liquid_kg)`.
@@ -526,7 +545,7 @@ where
             }
             let env = environment(next_t)?;
             let balance = heat_balance(spec, next[0], &env, structure_k, sink_k, bus_w);
-            cooler_energy += balance.cryocooler_w * h;
+            cooler_energy += balance.cryocooler_bus_w * h;
             // While venting, a net-negative balance closes the valve again.
             if venting && balance.net_w < 0.0 {
                 venting = false;
