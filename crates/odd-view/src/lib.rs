@@ -7,6 +7,8 @@ use odd_ephem::{
 };
 use std::sync::{Mutex, OnceLock};
 
+mod fdr_bridge;
+mod identity_bridge;
 mod mission_bridge;
 
 // position, velocity, Sun relative Earth, Earth and Moon body-to-J2000 matrices,

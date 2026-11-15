@@ -7,6 +7,8 @@ The project vision and proposed design live in [BRAINSTORM.md](BRAINSTORM.md),
 [ARCHITECTURE_LAWS.md](ARCHITECTURE_LAWS.md), [blueprint.md](blueprint.md),
 [UI.md](UI.md), and [ELO.md](ELO.md).
 
+# One principle should govern: Odderon's ambition is civilization-scale. Its execution must be bottleneck-scale.
+
 ## Current implementation
 
 Phase 0 is accepted as a foundation with explicit scientific, scope, and
@@ -21,6 +23,17 @@ attribution, isolated finite-burn loss and three playable mission scenarios,
 including the cislunar Contract 103. It remains a simplified prototype with
 explicit model, performance and scoring limits; see
 [mission-planning feasibility](docs/mission-planning-feasibility.md).
+
+Phases 1–3 add a persistent Aerospace Flight License and signed flight records:
+`crates/odd-identity` derives a 12-word mnemonic, an `ODD-` flight key and an
+RFC 8032 Ed25519 keypair from one 128-bit secret, and `crates/odd-report` signs a
+canonical flight data recorder and emits a deterministic print-ready dossier with
+a vector QR verification payload. The browser persists the license and ranked
+Astro-Elo locally, certifies each contract once, and can verify any shared
+recorder by checking the signature and re-running the flight bit for bit. Identity
+is local to one browser, not key custody; see
+[mission-planning feasibility](docs/mission-planning-feasibility.md) for the gate
+map and the limits.
 
 Work Package 0.1 provides SI quantities, epochs, UTC conversion, hierarchical
 reference-frame snapshots, and versioned hashing in `crates/odd-core`.

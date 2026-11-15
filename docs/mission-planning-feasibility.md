@@ -49,6 +49,15 @@ both be guaranteed. In the mathematical F → infinity limit a quantized burn
 also becomes shorter than one microsecond and is no longer representable; the
 finite-limit regression uses a large but representable thrust.
 
+Every browser node-time entry path — typed numeric input, clicking the preview
+path and dragging a node marker — goes through one `clampNodeTime` helper over
+`[1, DURATION - 1]` seconds, and the numeric input's `min`/`max` attributes are
+generated from that same range. Previously the pointer paths used a separate
+60 s margin, so the same intent produced different epochs depending on how it
+was entered. The clamp bounds the *epoch* only: a node one second before the
+flight end still fails plan validation because its finite burn overruns the
+window, which is a separate check.
+
 `Plan::compile_guided` accepts optional pre-burn reference states. A guided
 node freezes its TNW command in inertial axes from that reference, and the
 Level-1 preview applies the **same inertial impulse** at the node. This is how
@@ -200,6 +209,25 @@ evaluated with five-point Gauss–Legendre quadrature on every adaptive spline
 segment inside each burn. The module also reports powered duration and swept
 central angle. The identity residual is a numerical-quality gauge.
 
+The swept angle is the exact polar-angle integral
+
+```text
+Δθ_sweep = ∫ |r(t) × v(t)| / |r(t)|² dt
+```
+
+evaluated at the same Gauss–Legendre nodes as the loss integrals, accumulated
+per spline segment and summed as absolute turn. It replaces a sum of endpoint
+chord angles. For a *planar* arc the two agree — the angle between successive
+radius vectors already is the swept polar angle — but they diverge once thrust
+tilts the plane, because the 3D angle between two radius vectors is not the
+polar angle swept in the instantaneous orbital plane. Measured on a 1800 s
+burn with a dominant orbit-normal component, 15× keyframe decimation costs the
+chord sum 1.4e-6 rad while the integral stays at 7.3e-8 rad. Note this is the
+arc actually flown, not the change in osculating true anomaly: thrust also
+rotates the apsidal line. `crates/odd-astro/tests/sweep_exactness.rs` pins both
+the analytic planar limit (<1e-6 rad against the endpoint radius angle under
+decimation) and the 3D improvement over the retired formulation.
+
 The independent oracle is `tools/astro-oracle/finite_burn_loss_scipy.py`
 (SciPy DOP853, rtol 2e-13, atol 1e-11, max step 5 s), which carries the two loss
 integrals as extra ODE states. The checked fixture is
@@ -314,7 +342,10 @@ Shapley attribution, acronym snapshot/hover gate and post-mission idle gate.
   radius error m.
 - 41–56 the 16 coalition metrics; 57 isolated finite-burn swept angle rad.
 
-Undefined values are NaN, not zero. The worker also returns `computeMs`
+Undefined values are NaN, not zero. Infinities are refused by name at signing
+time: the JSON transport prints every non-finite value as null and reads null
+back as NaN, so an infinity could not survive its own round trip. The worker also
+returns `computeMs`
 (measured around `mission_execute`) outside the deterministic physics report.
 
 ## Acceptance gate map
@@ -339,15 +370,103 @@ Undefined values are NaN, not zero. The worker also returns `computeMs`
   residual small; impacted 3,120 m/s fixture reports no late shares).
 - `oracle_playable_loop_and_idle_gate`: `tests/browser/observatory.mjs`
   (Contract 101 score >0.80, all three loops, 2 s idle counters).
+- `oracle_hardening_clamp_and_exact_sweep`:
+  `crates/odd-astro/tests/sweep_exactness.rs` (swept angle matches the analytic
+  planar arc within 1e-6 rad under keyframe decimation, and beats the retired
+  chord sum by >10x once the plane tilts) plus the clamp block in
+  `tests/browser/observatory.mjs` (typed and dragged node times share one
+  boundary, and the input's min/max are generated from it).
+
+- `oracle_identity_roundtrip_and_rfc8032`:
+  `crates/odd-identity/src/lib.rs` unit tests (2048 words, sorted, lowercase
+  ASCII, 4–10 characters, unique four-letter prefixes; entropy ↔ 12 words ↔
+  `ODD-` key lossless; a substituted word fails the 4-bit checksum),
+  `crates/odd-identity/tests/rfc8032.rs` (the three published RFC 8032 §7.1
+  vectors reproduce byte for byte, and the derived seed signs identically to a
+  plain Ed25519 key), and the identity block in
+  `tests/browser/observatory.mjs`, which calls `mission_ed25519_selftest()`
+  inside the compiled wasm32 module and requires all three vectors to pass
+  there too, then round-trips both encodings and rejects a flipped message bit.
+- `oracle_tamper_proof_fdr_verification`:
+  `crates/odd-report/tests/tamper_proof.rs` (one ULP in every finite metric,
+  one microsecond on every command, and nineteen other field mutations each
+  rejected with `SignatureMismatch`; transport round trips; malformed and
+  future schemas named) and `crates/odd-view/src/fdr_bridge.rs` tests, which
+  fly Contract 101, replay it bit for bit, and then **re-sign** a false metric
+  and a shifted command so the signature check passes and
+  `PhysicsReplayMismatch` / `FinalStateMismatch` must catch them. The browser
+  gate repeats all of it in wasm32, including the re-signed forgery.
+- `oracle_odd_report_deterministic_dossier`:
+  `crates/odd-report/tests/tamper_proof.rs` and the odd-view export test (two
+  runs byte-identical including the QR matrix, all four sections plus the
+  annex present, both figures vector, no raster assets), and
+  `tests/browser/observatory.mjs`, which rebuilds the QR matrix from the
+  emitted SVG rectangles, decodes it with `jsqr`, and verifies the decoded
+  payload again.
+- `oracle_browser_persistence_and_idle_gate`:
+  `tests/browser/observatory.mjs` (the first execution of a contract certifies
+  it and moves Astro-Elo; license, public key, mnemonic, rating and all three
+  certificates survive a full document reload; the profile dialog exports a
+  backup that re-imports to the same identity and rating; a corrupted
+  mnemonic is rejected while the real one validates; replaying a certified
+  contract stays practice with the rating and certificate unchanged; the
+  profile dialog and the verification dialog each settle to 0 animation
+  callbacks and 0 worker messages over 2 s; a shared `#verify=` link verifies
+  in a fresh document).
+
+## Flight identity and signed records
+
+`crates/odd-identity` owns one 128-bit secret with three derived faces: a
+12-word mnemonic (128 bits plus a 4-bit SHA-256 checksum, packed as 12 × 11-bit
+indices into the compile-time 2048-word table), an `ODD-` hex flight key carrying
+the bare entropy, and an Ed25519 keypair whose seed is
+`SHA-512("odderon-flight-license-ed25519-v1" || entropy)[..32]`. The domain
+separator keeps a license key from ever being confused with another purpose.
+Randomness is supplied by the caller (`crypto.getRandomValues` in the browser),
+which is why the crate needs no `getrandom` and builds for wasm32 without a shim.
+The public identifier is `ODD-ID-` plus base32 of the first ten public-key bytes.
+
+The license, callsign, player rating, per-contract ratings and certified
+certificates persist in one versioned `localStorage` record, which also archives
+up to eight identities so switching away and back resumes a pilot's own progress.
+Without that archive a switch would erase the certificates of the identity being
+left, which would let the same contract be certified twice. **This is a local
+practice identity, not key custody**: `localStorage` is readable by any script on
+the origin, and the profile dialog and the exported backup both say so. A ranked
+certificate is issued once per contract; later attempts are practice and cannot
+move the rating. The signed recorder is stored with the certificate, because a
+locked rating would otherwise leave the official record unrecoverable except by
+flying again, which would be practice; the profile dialog can export and
+re-verify it after a reload.
+
+`crates/odd-report` signs a canonical fixed-layout byte string, not JSON. Every
+field a reader acts on is inside it, including the callsign and the Elo change.
+Floats are raw IEEE-754 bits so a decimal round trip cannot round a metric; all
+NaNs collapse to one canonical quiet NaN because undefined fields are common and
+NaN payloads are not platform-stable, while signed zero is preserved because the
+replay compares bits. Verification is two independent checks: the signature over
+bytes rebuilt from the typed fields, then a Level-3 replay through the *same*
+`compute` function the live flight used, requiring all 58 fields and the
+terminal-state hash to reproduce bit for bit.
 
 ## Remaining limitations
 
 This is an experimental prototype. There is no launch-window optimizer,
 B-plane targeting, lunar orbit insertion, terrain/landing model, space-weather
-atmosphere, thrust steering law, cryogenic boil-off model, or persisted
-multiplayer rating. The perigee splitter is a bounded forward search for two or
+atmosphere, thrust steering law, cryogenic boil-off model, or server-backed
+multiplayer rating. Astro-Elo and the flight license are local to one browser;
+there is no account recovery beyond the exported backup, no revocation, and no
+defence against someone who reads the origin's storage. The perigee splitter is a bounded forward search for two or
 three equal kicks, not a global optimizer. The lunar patch is a display/preview
-aid; continuous third-body gravity remains the execution model. The PDR button
-is a print-to-PDF export, not the later signed/QR `odd-report` dossier. Exact
+aid; continuous third-body gravity remains the execution model. The debrief print button is a plain print-to-PDF export; the signed,
+QR-bearing dossier is a separate export that is only issued after a successful
+verify-and-replay, either as a self-contained HTML download or printed to PDF
+from a sandboxed frame at the document's own `@page` geometry. No server-side PDF
+renderer is involved. The dossier QR carries an origin-independent `#verify=`
+fragment, so a reader must prepend the deployment address; it is not a scannable
+absolute URL. It is encoded at error correction M, falling back deterministically
+to L for a maximal twelve-command guided flight whose payload exceeds M's byte
+capacity; the level actually used is stated in both the SVG and the printed
+verification block. Exact
 Shapley is computationally heavier than the original four-run/<5 ms card; the
 implementation chooses mathematical exactness and reports measured cost.

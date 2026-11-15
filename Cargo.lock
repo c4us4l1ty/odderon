@@ -56,6 +56,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ed25519-compact"
+version = "2.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9547879431a90e352a35863a54416d92898a787b9af09e6ae2e09a96bd78be80"
+
+[[package]]
 name = "embedded-io"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -146,6 +152,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "odd-identity"
+version = "0.1.0"
+dependencies = [
+ "ed25519-compact",
+ "sha2",
+]
+
+[[package]]
+name = "odd-report"
+version = "0.1.0"
+dependencies = [
+ "odd-identity",
+ "qrcodegen",
+ "sha2",
+]
+
+[[package]]
 name = "odd-sim"
 version = "0.1.0"
 dependencies = [
@@ -159,11 +182,14 @@ dependencies = [
 name = "odd-view"
 version = "0.1.0"
 dependencies = [
+ "ed25519-compact",
  "odd-app",
  "odd-astro",
  "odd-contracts",
  "odd-core",
  "odd-ephem",
+ "odd-identity",
+ "odd-report",
  "odd-sim",
 ]
 
@@ -191,6 +217,12 @@ checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
 ]
+
+[[package]]
+name = "qrcodegen"
+version = "1.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4339fc7a1021c9c1621d87f5e3505f2805c8c105420ba2f2a4df86814590c142"
 
 [[package]]
 name = "quote"

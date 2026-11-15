@@ -9,6 +9,7 @@
   },
   "devDependencies": {
     "@sparticuz/chromium": "141.0.0",
+    "jsqr": "1.4.0",
     "playwright-core": "1.56.1"
   }
 }

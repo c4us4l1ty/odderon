@@ -5,7 +5,45 @@ import { readFile } from 'node:fs/promises';
 import { resolve, extname } from 'node:path';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import jsQR from 'jsqr';
 const root=resolve('web');
+
+// Rebuild the QR matrix from the emitted vector rectangles and decode it with
+// an independent decoder. This proves the printed code carries a payload that
+// actually verifies, rather than trusting the encoder a second time.
+function decodeQrFromSvg(svg){
+  const size=Number(svg.match(/data-qr-size="(\d+)"/)[1]);
+  const quiet=Number(svg.match(/data-qr-quiet="(\d+)"/)[1]);
+  const outer=size+2*quiet;
+  const start=svg.indexOf('<g fill="#000000">');
+  assert.ok(start>=0,'the QR must emit a dark-module group');
+  // Close the group relative to its own start: the trajectory figure earlier
+  // in the document has groups too.
+  const group=svg.slice(start,svg.indexOf('</g>',start));
+  const grid=Array.from({length:outer},()=>Array(outer).fill(false));
+  for(const match of group.matchAll(/<rect x="(\d+)" y="(\d+)" width="(\d+)" height="1"\/>/g)){
+    const [,x,y,width]=match.map(Number);
+    for(let offset=0;offset<width;offset++)grid[y][x+offset]=true;
+  }
+  const scale=6,pixels=outer*scale;
+  const data=new Uint8ClampedArray(pixels*pixels*4);
+  for(let y=0;y<pixels;y++)for(let x=0;x<pixels;x++){
+    const dark=grid[Math.floor(y/scale)][Math.floor(x/scale)];
+    const at=(y*pixels+x)*4,value=dark?0:255;
+    data[at]=value;data[at+1]=value;data[at+2]=value;data[at+3]=255;
+  }
+  const decoded=jsQR(data,pixels,pixels);
+  assert.ok(decoded,'an independent decoder must read the emitted QR');
+  return decoded.data;
+}
+
+// One unit in the last place, computed on the raw IEEE-754 bits.
+function nextUlp(value){
+  const buffer=new ArrayBuffer(8),view=new DataView(buffer);
+  view.setFloat64(0,value);
+  view.setBigUint64(0,view.getBigUint64(0)+1n);
+  return view.getFloat64(0);
+}
 const server=createServer(async (req,res)=>{
   const path=resolve(root,'.'+new URL(req.url,'http://test').pathname.replace(/\/$/,'/index.html'));
   if(!path.startsWith(root+'/')){res.writeHead(403).end();return;}
@@ -164,6 +202,65 @@ try{
   assert.equal(artKeys.DAG,'dag');
   assert.equal(artKeys.PDR,'pdr');
   assert.ok(Object.values(artKeys).every(k=>k.length>0),'every acronym needs an art key');
+
+  // oracle_identity_roundtrip_and_rfc8032 (wasm32 half): the compiled module
+  // must sign identically to the native build, not merely compile.
+  const identity=await page.evaluate(async()=>{
+    const {instance}=await WebAssembly.instantiate(await (await fetch('./odd_view.wasm')).arrayBuffer(),{});
+    const w=instance.exports,dec=new TextDecoder(),enc=new TextEncoder();
+    const read=(len,byte)=>dec.decode(Uint8Array.from({length:len},(_,j)=>byte(j)));
+    const absorb=bytes=>{w.mission_input_reset();for(const b of bytes)if(!w.mission_input_absorb(b))throw Error('absorb failed');};
+    const str=field=>read(w.mission_identity_string_len(field),i=>w.mission_identity_string_byte(field,i));
+    const out={vectors:w.mission_ed25519_selftest(),words:w.mission_word_count()};
+    out.loaded=w.mission_identity_from_entropy(0x00112233,0x44556677,0x8899aabb,0xccddeeff);
+    out.key=str(2);out.mnemonic=str(1);out.publicId=str(0);
+    out.pubkey=Array.from({length:32},(_,i)=>w.mission_identity_pubkey(i));
+    // Restore through each encoding and confirm the same public key returns.
+    absorb(enc.encode(out.mnemonic));
+    out.mnemonicValid=w.mission_identity_mnemonic_valid();
+    out.mnemonicRestore=w.mission_identity_from_mnemonic();
+    out.fromMnemonic=Array.from({length:32},(_,i)=>w.mission_identity_pubkey(i));
+    absorb(enc.encode(out.key));
+    out.keyValid=w.mission_identity_key_valid();
+    out.keyRestore=w.mission_identity_from_key();
+    out.fromKey=Array.from({length:32},(_,i)=>w.mission_identity_pubkey(i));
+    // A one-word substitution must be rejected by the checksum.
+    const words=out.mnemonic.split(' ');
+    const replacement=read(w.mission_word_len(0),i=>w.mission_word_byte(0,i));
+    words[3]=words[3]===replacement?read(w.mission_word_len(1),i=>w.mission_word_byte(1,i)):replacement;
+    absorb(enc.encode(words.join(' ')));
+    out.corruptRejected=w.mission_identity_mnemonic_valid()===0;
+    // Sign, verify, then flip one message bit.
+    const message=enc.encode('odderon canonical flight data recorder');
+    absorb(message);
+    out.signed=w.mission_identity_sign();
+    const signature=Array.from({length:w.mission_signature_len()},(_,i)=>w.mission_signature_byte(i));
+    w.mission_verify_reset();
+    for(const b of out.pubkey)w.mission_verify_absorb(0,b);
+    for(const b of signature)w.mission_verify_absorb(1,b);
+    out.verifies=w.mission_verify();
+    absorb(enc.encode('odderon canonical flight data Recorder'));
+    out.tamperRejected=w.mission_verify()===0;
+    out.signatureLength=signature.length;
+    return out;
+  });
+  assert.equal(identity.vectors,3,'RFC 8032 vectors must reproduce inside wasm32');
+  assert.equal(identity.words,2048);
+  assert.equal(identity.loaded,1);
+  assert.equal(identity.key,'ODD-0011-2233-4455-6677-8899-AABB-CCDD-EEFF');
+  assert.equal(identity.mnemonic.split(' ').length,12);
+  assert.match(identity.publicId,/^ODD-ID-[A-Z2-7]{16}$/);
+  assert.equal(identity.mnemonicValid,1);
+  assert.equal(identity.mnemonicRestore,1);
+  assert.equal(identity.keyValid,1);
+  assert.equal(identity.keyRestore,1);
+  assert.deepEqual(identity.fromMnemonic,identity.pubkey,'mnemonic must restore the same identity');
+  assert.deepEqual(identity.fromKey,identity.pubkey,'flight key must restore the same identity');
+  assert.equal(identity.corruptRejected,true,'a substituted word must fail the checksum');
+  assert.equal(identity.signed,1);
+  assert.equal(identity.signatureLength,64);
+  assert.equal(identity.verifies,1);
+  assert.equal(identity.tamperRejected,true,'a flipped message bit must not verify');
   // Let the one-shot flight worker finish first: it rebuilds the causal panel,
   // so hovering while it is still running would race a DOM replacement.
   await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:60000});
@@ -196,11 +293,69 @@ try{
   assert.equal(await page.locator('#lens-close').isVisible(),true);
   await page.locator('#lens-close').click();
   await page.waitForFunction(()=>missionDiagnostics.lens===null&&!missionDiagnostics.lensPending);
+  // Raw mouse coordinates are viewport-relative, so bring the canvas on
+  // screen first instead of depending on the height of neighbouring panels.
+  await page.locator('#plan-canvas').scrollIntoViewIfNeeded();
   const missionBox=await page.locator('#plan-canvas').boundingBox();
   await page.mouse.click(missionBox.x+missionBox.width/2+(6378137+260000)*missionBox.height/(2.45*(6378137+550000)),missionBox.y+missionBox.height/2);
   assert.equal(await page.evaluate(()=>missionDiagnostics.nodes.length),1,'clicking the path should place a maneuver');
   await page.locator('#remove-node').click();
   await page.locator('#add-node').click();
+
+  // oracle_hardening_clamp_and_exact_sweep (browser half): typed entry and
+  // pointer dragging must enforce one identical [t_min, t_max] boundary.
+  {
+    const [lo,hi]=await page.evaluate(()=>missionDiagnostics.nodeTimeRange);
+    assert.equal(await page.locator('#node-time').getAttribute('min'),String(lo),'input min must match the shared clamp');
+    assert.equal(await page.locator('#node-time').getAttribute('max'),String(hi),'input max must match the shared clamp');
+    for(const [typed,expected] of [['-500',lo],['0',lo],[String(lo-1),lo],[String(hi+1),hi],['99999999',hi]]){
+      await page.locator('#node-time').fill(typed);
+      assert.equal(await page.evaluate(()=>missionDiagnostics.nodes[0].time),expected,`typed ${typed} should clamp to ${expected}`);
+    }
+    // A node at the upper boundary can still fail to compile because its
+    // finite burn overruns the flight end; that is plan validation, not the
+    // clamp. Restore an interior time so the preview is populated again.
+    await page.locator('#node-time').fill('200');
+    await page.waitForFunction(()=>missionDiagnostics.pathEnds!==null);
+    await page.locator('#plan-canvas').scrollIntoViewIfNeeded();
+    const box=await page.locator('#plan-canvas').boundingBox();
+    const ends=await page.evaluate(()=>missionDiagnostics.pathEnds);
+    assert.ok(ends,'preview exposes its endpoints');
+    const marker=await page.evaluate(()=>missionDiagnostics.nodeMarker);
+    assert.ok(marker,'selected node exposes a canvas marker');
+    // Drag onto the first preview sample, whose raw time is 0. The pointer
+    // path used to clamp this to a 60 s margin while the field allowed 1 s.
+    await page.mouse.move(box.x+marker[0],box.y+marker[1]);
+    await page.mouse.down();
+    await page.mouse.move(box.x+ends[0][0],box.y+ends[0][1],{steps:8});
+    await page.mouse.up();
+    const draggedLow=await page.evaluate(()=>missionDiagnostics.nodes[0].time);
+    assert.equal(draggedLow,lo,'dragging to the path start must clamp to the shared minimum');
+    assert.ok(draggedLow<60,'the old 60 s pointer margin must be gone');
+    await page.locator('#node-time').fill('-1000');
+    assert.equal(await page.evaluate(()=>missionDiagnostics.nodes[0].time),draggedLow,'dragged and typed lower clamps must agree exactly');
+    // Sweep the marker along the path. Every intermediate drag result must
+    // already satisfy the shared clamp. The upper boundary itself is not
+    // reachable by dragging: a node that close to the end fails plan
+    // validation because its burn overruns the flight, which clears the
+    // preview. That is physics validation, so the shared helper is checked
+    // directly for the upper bound instead.
+    await page.locator('#node-time').fill('200');
+    for(const fraction of [0.25,0.5,0.75]){
+      const live=await page.evaluate(()=>missionDiagnostics.pathEnds);
+      const from=await page.evaluate(()=>missionDiagnostics.nodeMarker);
+      await page.mouse.move(box.x+from[0],box.y+from[1]);
+      await page.mouse.down();
+      await page.mouse.move(box.x+live[0][0]+(live[1][0]-live[0][0])*fraction,box.y+live[0][1]+(live[1][1]-live[0][1])*fraction,{steps:4});
+      await page.mouse.up();
+      const t=await page.evaluate(()=>missionDiagnostics.nodes[0].time);
+      assert.equal(await page.evaluate(v=>missionDiagnostics.clampNodeTime(v),t),t,`dragged time ${t} must already be inside the shared clamp`);
+      await page.locator('#node-time').fill('200');
+    }
+    assert.equal(await page.evaluate(v=>missionDiagnostics.clampNodeTime(v),hi+1000),hi,'shared clamp must bind at the upper boundary');
+    await page.locator('#node-time').fill('200');
+  }
+
   await page.locator('#node-t').fill('82.38547669');
   await page.locator('#add-node').click();
   await page.locator('#node-time').fill('2979.885241');
@@ -209,6 +364,7 @@ try{
   await page.locator('#node-w').focus();
   assert.match(await page.locator('#lens-text').textContent(),/perpendicular to the orbital plane/);
   const handle=await page.evaluate(()=>missionDiagnostics.handles.find(h=>h.key==='t').end);
+  await page.locator('#plan-canvas').scrollIntoViewIfNeeded();
   const canvasBox=await page.locator('#plan-canvas').boundingBox();
   await page.mouse.move(canvasBox.x+handle[0],canvasBox.y+handle[1]);await page.mouse.down();await page.mouse.move(canvasBox.x+handle[0]+5,canvasBox.y+handle[1]+5,{steps:3});await page.mouse.up();
   assert.notEqual(await page.evaluate(()=>missionDiagnostics.nodes[1].dv[0]),81.50942505,'dragging a handle should change the maneuver');
@@ -221,6 +377,29 @@ try{
   const score=Number(debrief.match(/([0-9.]+)%Mission score/)?.[1]);
   assert.ok(score>80,`rescue score: ${score}; ${debrief}`);
   assert.equal(await page.evaluate(()=>missionDiagnostics.locked),true);
+  // oracle_browser_persistence_and_idle_gate: the first execution of a
+  // contract is ranked, moves Astro-Elo, and locks its certificate.
+  const firstRated=await page.evaluate(()=>missionDiagnostics.profile());
+  assert.ok(firstRated.ranked['101'],'contract 101 must hold a ranked certificate');
+  assert.notEqual(firstRated.elo,1200,'a ranked flight must move Astro-Elo off its start value');
+  assert.equal(firstRated.elo,firstRated.ranked['101'].elo);
+  assert.equal(firstRated.flights,1);
+  assert.match(await page.locator('#elo-result').textContent(),/Ranked flight certified/);
+  // The executed flight is signed as a ranked certificate.
+  assert.match(await page.locator('#recorder-status').textContent(),/Flight recorder signed by ODD-ID-/);
+  const rankedDownload=page.waitForEvent('download');
+  await page.locator('#export-fdr').click();
+  const rankedFdr=JSON.parse(await readFile(await (await rankedDownload).path(),'utf8'));
+  assert.equal(rankedFdr.schema_version,1);
+  assert.equal(rankedFdr.contract_id,101);
+  assert.equal(rankedFdr.attempt_mode,'Ranked');
+  assert.equal(rankedFdr.public_id,firstRated.publicId);
+  assert.equal(rankedFdr.metrics.length,58);
+  assert.equal(rankedFdr.ed25519_signature.length,128);
+  assert.equal(rankedFdr.final_state_hash.length,64);
+  assert.ok(rankedFdr.elo_after!==rankedFdr.elo_before,'the rating change must be inside the signed record');
+  assert.ok(rankedFdr.command_timeline.length>=1);
+  assert.ok(Number.isInteger(rankedFdr.command_timeline[0].time_us));
   await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:10000});
   const missionIdle=await page.evaluate(()=>({frames:testFrameCallbacks,messages:testWorkerMessages,draws:missionDiagnostics.draws}));
   await page.waitForTimeout(2000);
@@ -283,5 +462,220 @@ try{
   const tugIdle=await page.evaluate(()=>({frames:testFrameCallbacks,messages:testWorkerMessages,draws:missionDiagnostics.draws}));
   await page.waitForTimeout(2000);
   assert.deepEqual(await page.evaluate(()=>({frames:testFrameCallbacks,messages:testWorkerMessages,draws:missionDiagnostics.draws})),tugIdle,'Contract 103 must settle without frames, redraws, or worker messages');
-  assert.deepEqual(errors,[]);console.log('Browser viewport, interactions, bounds, WebGL, responsive layout and all three mission prototypes passed.');
+  // oracle_browser_persistence_and_idle_gate: identity and rating must
+  // survive a full document reload, not merely live in module state.
+  const beforeReload=await page.evaluate(()=>missionDiagnostics.profile());
+  assert.deepEqual(Object.keys(beforeReload.ranked).sort(),['101','102','103']);
+  await page.reload();
+  await page.waitForFunction(()=>!document.getElementById('add-node').disabled,null,{timeout:30000});
+  const afterReload=await page.evaluate(()=>missionDiagnostics.profile());
+  assert.equal(afterReload.publicId,beforeReload.publicId,'the license must survive a reload');
+  assert.deepEqual(afterReload.publicKey,beforeReload.publicKey);
+  assert.equal(afterReload.mnemonic,beforeReload.mnemonic);
+  assert.equal(afterReload.elo,beforeReload.elo,'Astro-Elo must survive a reload');
+  assert.deepEqual(afterReload.ranked,beforeReload.ranked);
+  assert.equal(await page.locator('#topbar-elo').textContent(),beforeReload.elo.toFixed(0));
+
+  // The profile dialog exposes the backup and restores from it.
+  await page.locator('#open-profile').click();
+  assert.equal(await page.locator('#profile-dialog').isVisible(),true);
+  assert.equal(await page.locator('#profile-public-id').textContent(),beforeReload.publicId);
+  await page.locator('#profile-reveal summary').click();
+  assert.equal(await page.locator('#copy-mnemonic-value').textContent(),beforeReload.mnemonic);
+  assert.equal(await page.locator('#copy-flight-key-value').textContent(),beforeReload.flightKey);
+  const download=page.waitForEvent('download');
+  await page.locator('#profile-download').click();
+  const backup=JSON.parse(await readFile(await (await download).path(),'utf8'));
+  assert.equal(backup.kind,'odderon-flight-license');
+  assert.equal(backup.publicId,beforeReload.publicId);
+  assert.equal(backup.mnemonic,beforeReload.mnemonic);
+  assert.equal(backup.elo,beforeReload.elo);
+  // Live validation must reject a corrupted mnemonic and accept the real one.
+  await page.locator('#profile-restore-input').fill('not twelve real words at all');
+  assert.equal(await page.locator('#profile-restore').isDisabled(),true);
+  await page.locator('#profile-restore-input').fill(backup.mnemonic);
+  assert.equal(await page.locator('#profile-restore').isEnabled(),true);
+  await page.locator('#profile-restore').click();
+  assert.match(await page.locator('#profile-restore-status').textContent(),/Restored ODD-ID-/);
+  assert.equal(await page.evaluate(()=>missionDiagnostics.profile().elo),beforeReload.elo,'restoring the same license must keep its rating');
+  await page.locator('#profile-callsign').fill('GATE-PILOT');
+  await page.locator('#profile-callsign-form button[type=submit]').click();
+  assert.equal(await page.evaluate(()=>missionDiagnostics.profile().callsign),'GATE-PILOT');
+  await page.locator('#profile-close').click();
+  assert.equal(await page.locator('#profile-dialog').isVisible(),false);
+  await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:10000});
+  const profileIdle=await page.evaluate(()=>({frames:testFrameCallbacks,messages:testWorkerMessages,draws:missionDiagnostics.draws}));
+  await page.waitForTimeout(2000);
+  assert.deepEqual(await page.evaluate(()=>({frames:testFrameCallbacks,messages:testWorkerMessages,draws:missionDiagnostics.draws})),profileIdle,'the profile dialog must settle to zero frames and zero worker messages');
+
+  // The official ranked certificate must stay retrievable after the reload:
+  // the rating is locked, so re-flying would only produce a practice record.
+  await page.locator('#open-profile').click();
+  const certificateDownload=page.waitForEvent('download');
+  await page.locator('.certificate-button[data-contract="101"]').first().click();
+  const certificate=JSON.parse(await readFile(await (await certificateDownload).path(),'utf8'));
+  assert.equal(certificate.attempt_mode,'Ranked','the stored certificate must be the ranked record');
+  assert.equal(certificate.contract_id,101);
+  assert.equal(certificate.public_id,beforeReload.publicId);
+  assert.equal(certificate.canonical_digest,rankedFdr.canonical_digest,'it must be the very document issued at certification');
+  await page.locator('.certificate-verify[data-contract="101"]').click();
+  await page.waitForFunction(()=>missionDiagnostics.verification()?.code===1,null,{timeout:180000});
+  assert.equal(await page.locator('#verify-verdict').textContent(),'\u2713 CRYPTOGRAPHICALLY & PHYSICALLY VERIFIED');
+  await page.locator('#verify-close').click();
+
+  // Replaying a certified contract must be practice and must not farm Elo.
+  assert.equal(await page.evaluate(()=>missionDiagnostics.isRanked('101')),true);
+  assert.equal(await page.locator('#attempt-mode').inputValue(),'practice');
+  assert.equal(await page.locator('#attempt-mode option[value=ranked]').isDisabled(),true);
+  await page.locator('#example').click();
+  await page.locator('#prefill').click();
+  await page.locator('#execute').click();
+  await page.waitForFunction(()=>!document.getElementById('debrief').hidden||(missionDiagnostics.locked&&!missionDiagnostics.pending),null,{timeout:120000});
+  assert.equal(await page.locator('#debrief').isHidden(),false,`practice replay error: ${await page.locator('#execute-status').textContent()}`);
+  assert.match(await page.locator('#elo-result').textContent(),/Practice flight — Astro-Elo unchanged/);
+  const afterPractice=await page.evaluate(()=>missionDiagnostics.profile());
+  assert.equal(afterPractice.elo,beforeReload.elo,'a replayed contract must not change Astro-Elo');
+  assert.equal(afterPractice.flights,beforeReload.flights+1);
+  assert.deepEqual(afterPractice.ranked,beforeReload.ranked,'the certified certificate must stay locked');
+  // oracle_tamper_proof_fdr_verification and
+  // oracle_odd_report_deterministic_dossier, in the browser.
+  const practice=await page.evaluate(()=>missionDiagnostics.recorder());
+  assert.ok(practice,'the practice flight must also produce a signed recorder');
+  assert.equal(practice.document.attempt_mode,'Practice');
+  assert.equal(practice.document.elo_before,practice.document.elo_after,'a practice record must show no rating change');
+  await page.locator('#verify-flight').click();
+  await page.waitForFunction(()=>missionDiagnostics.verification()!==null,null,{timeout:180000});
+  const verified=await page.evaluate(()=>missionDiagnostics.verification());
+  assert.equal(verified.code,1,`verification failed: ${verified.verdict}`);
+  assert.equal(verified.verdict,'\u2713 CRYPTOGRAPHICALLY & PHYSICALLY VERIFIED');
+  assert.equal(await page.locator('#verify-verdict').textContent(),'\u2713 CRYPTOGRAPHICALLY & PHYSICALLY VERIFIED');
+  assert.ok(verified.dossier.includes('id="section-4"'));
+  assert.ok(verified.dossier.includes('id="coalition-table"'));
+  const dossierDownload=page.waitForEvent('download');
+  await page.locator('#verify-download').click();
+  const dossierText=await readFile(await (await dossierDownload).path(),'utf8');
+  assert.equal(dossierText,verified.dossier,'the downloaded dossier must be the verified one');
+  // The PDF path prints the verified document itself at its own page geometry.
+  await page.locator('#verify-print').click();
+  await page.waitForFunction(()=>document.getElementById('dossier-print-frame')?.srcdoc?.includes('id="section-4"'),null,{timeout:30000});
+  assert.equal(await page.evaluate(()=>document.getElementById('dossier-print-frame').srcdoc),verified.dossier);
+
+  // The printed QR must decode to a payload that itself verifies.
+  const qrPayload=decodeQrFromSvg(dossierText);
+  assert.ok(qrPayload.startsWith('#verify='));
+  assert.equal(qrPayload,practice.payload,'the QR must carry this flight’s payload');
+  await page.locator('#verify-input').fill(qrPayload);
+  await page.locator('#verify-run').click();
+  await page.waitForFunction(()=>missionDiagnostics.verification()?.code===1&&missionDiagnostics.verification()?.dossier,null,{timeout:180000});
+  assert.equal(await page.evaluate(()=>missionDiagnostics.verification().code),1,'the decoded QR payload must verify');
+
+  // A single edited bit must be rejected with SignatureMismatch.
+  const tampered=structuredClone(practice.document);
+  tampered.metrics[1]=nextUlp(tampered.metrics[1]);
+  assert.notEqual(tampered.metrics[1],practice.document.metrics[1]);
+  await page.locator('#verify-input').fill(JSON.stringify(tampered));
+  await page.locator('#verify-run').click();
+  await page.waitForFunction(()=>missionDiagnostics.verification()?.code===-1,null,{timeout:60000});
+  assert.match(await page.locator('#verify-verdict').textContent(),/SignatureMismatch/);
+  // One microsecond of command timing is equally fatal.
+  const shifted=structuredClone(practice.document);
+  shifted.command_timeline[0].time_us+=1;
+  await page.locator('#verify-input').fill(JSON.stringify(shifted));
+  await page.locator('#verify-run').click();
+  await page.waitForFunction(()=>missionDiagnostics.verification()?.code===-1,null,{timeout:60000});
+  assert.match(await page.locator('#verify-verdict').textContent(),/SignatureMismatch/);
+
+  // A forger with a license of their own can re-sign a false metric. The
+  // signature then passes and the physics replay must catch it.
+  const forged=await page.evaluate(async ulp=>{
+    const recorder=await import('./recorder.js');
+    const current=missionDiagnostics.recorder();
+    const {fields,callsign}=recorder.fieldsFromJson(current.document);
+    // Locate the first metric in the flat transport layout.
+    const metricsAt=recorder.HEADER+current.document.command_timeline.length*recorder.COMMAND_STRIDE;
+    fields[metricsAt+1]=ulp;
+    const {fields:forgedFields,callsign:forgedCallsign}=recorder.fieldsFromJson(recorder.sign(missionDiagnostics.wasm(),fields,callsign).document);
+    return {fields:forgedFields,callsign:forgedCallsign};
+  },nextUlp(practice.document.metrics[1]));
+  await page.evaluate(async inputs=>{
+    const verify=await import('./verify.js');
+    verify.verifyFields(inputs.fields,inputs.callsign);
+  },forged);
+  await page.waitForFunction(()=>missionDiagnostics.verification()?.code===-2,null,{timeout:180000});
+  assert.match(await page.locator('#verify-verdict').textContent(),/PhysicsReplayMismatch/);
+  assert.equal(await page.evaluate(()=>missionDiagnostics.verification().mismatchIndex),1);
+  await page.locator('#verify-close').click();
+  await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:10000});
+  const verifyIdle=await page.evaluate(()=>({frames:testFrameCallbacks,messages:testWorkerMessages,draws:missionDiagnostics.draws}));
+  await page.waitForTimeout(2000);
+  assert.deepEqual(await page.evaluate(()=>({frames:testFrameCallbacks,messages:testWorkerMessages,draws:missionDiagnostics.draws})),verifyIdle,'verification must return to zero frames and zero worker messages');
+
+  // A shared #verify= link must verify on load with no account and no server.
+  await page.goto(`http://127.0.0.1:${server.address().port}/mission.html${practice.payload}`);
+  await page.waitForFunction(()=>missionDiagnostics.verification()?.code===1,null,{timeout:180000});
+  assert.equal(await page.locator('#verify-dialog').isVisible(),true);
+  assert.equal(await page.locator('#verify-verdict').textContent(),'\u2713 CRYPTOGRAPHICALLY & PHYSICALLY VERIFIED');
+  // A damaged storage record must degrade to defaults, not brick the page.
+  // These are the shapes a truncated write or a hand-edited record produces.
+  const damaged=[
+    ['null rating',{elo:null}],
+    ['null flights',{flights:null}],
+    ['null certificate',{ranked:{101:null}}],
+    ['object callsign',{callsign:{unexpected:true}}],
+  ];
+  for(const [label,patch] of damaged){
+    const probe=await browser.newPage({viewport:{width:1280,height:900}});
+    const probeErrors=[];probe.on('pageerror',e=>probeErrors.push(String(e).split('\n')[0]));
+    await probe.addInitScript(value=>{localStorage.setItem('odderon.flightLicense.v1',JSON.stringify(value));},{schema:1,entropyHex:'00112233445566778899aabbccddeeff',callsign:'KEEP ME',elo:1234.5,...patch});
+    await probe.goto(`http://127.0.0.1:${server.address().port}/mission.html`);
+    await probe.waitForFunction(()=>window.missionDiagnostics?.profile?.()!==null,null,{timeout:30000});
+    const repaired=await probe.evaluate(()=>missionDiagnostics.profile());
+    // Repair must never discard a usable secret: the identity is the account.
+    assert.equal(repaired.flightKey,'ODD-0011-2233-4455-6677-8899-AABB-CCDD-EEFF',`${label}: identity must survive repair`);
+    assert.equal(repaired.elo,label==='null rating'?1200:1234.5,`${label}: rating`);
+    await probe.locator('#open-profile').click();
+    assert.ok((await probe.locator('#profile-elo').textContent()).length>0,label);
+    assert.deepEqual(probeErrors,[],`${label} must not raise a page error`);
+    await probe.close();
+  }
+  // Switching identity must not destroy the identity being left. Erasing its
+  // certificates would also let the same contract be certified twice, so this
+  // is an integrity check, not only a convenience one.
+  {
+    const probe=await browser.newPage({viewport:{width:1280,height:900}});
+    const probeErrors=[];probe.on('pageerror',e=>probeErrors.push(String(e).split('\n')[0]));
+    await probe.addInitScript(()=>{localStorage.setItem('odderon.flightLicense.v1',JSON.stringify({
+      schema:1,entropyHex:'00112233445566778899aabbccddeeff',callsign:'PILOT A',elo:1337.5,
+      missionElo:{101:812.5},ranked:{101:{score:0.9,elo:1337.5,delta:17.5,at:1}},flights:[{contractId:'101'}]
+    }));});
+    await probe.goto(`http://127.0.0.1:${server.address().port}/mission.html`);
+    await probe.waitForFunction(()=>window.missionDiagnostics?.profile?.(),null,{timeout:30000});
+    const first=await probe.evaluate(()=>missionDiagnostics.profile());
+    assert.equal(first.elo,1337.5);
+    await probe.locator('#open-profile').click();
+    // A seven-group key must be refused with a useful message.
+    await probe.locator('#profile-restore-input').fill('ODD-FEED-DCBA-0099-8877-6655-4433-2211');
+    assert.equal(await probe.locator('#profile-restore').isDisabled(),true);
+    assert.match(await probe.locator('#profile-restore-status').textContent(),/eight 4-character hex groups/);
+    await probe.locator('#profile-restore-input').fill('ODD-FEED-DCBA-0099-8877-6655-4433-2211-0123');
+    assert.equal(await probe.locator('#profile-restore').isEnabled(),true);
+    await probe.locator('#profile-restore').click();
+    const second=await probe.evaluate(()=>missionDiagnostics.profile());
+    assert.notEqual(second.publicId,first.publicId,'a different key must switch identity');
+    assert.equal(second.elo,1200,'a new identity starts at the base rating');
+    assert.deepEqual(second.ranked,{},'a new identity has no certificates');
+    assert.equal(await probe.locator('#topbar-elo').textContent(),'1200');
+    // Returning with the original twelve words must resume, not reset.
+    await probe.locator('#profile-restore-input').fill(first.mnemonic);
+    await probe.locator('#profile-restore').click();
+    const resumed=await probe.evaluate(()=>missionDiagnostics.profile());
+    assert.equal(resumed.publicId,first.publicId);
+    assert.equal(resumed.elo,1337.5,'switching back must not erase the rating');
+    assert.equal(resumed.callsign,'PILOT A');
+    assert.deepEqual(Object.keys(resumed.ranked),['101'],'the certificate must survive the round trip');
+    assert.equal(await probe.evaluate(()=>missionDiagnostics.isRanked('101')),true,'a certified contract must stay certified after a switch');
+    assert.deepEqual(probeErrors,[]);
+    await probe.close();
+  }
+  assert.deepEqual(errors,[]);console.log('Browser viewport, interactions, bounds, WebGL, responsive layout, three mission prototypes, license persistence, signed-dossier verification, damaged-storage repair and identity switching passed.');
 } finally{if(browser)await browser.close();await new Promise(r=>server.close(r));}

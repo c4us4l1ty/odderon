@@ -64,7 +64,11 @@ pub struct BurnLoss {
     pub identity_residual_m_s: f64,
     /// Total powered time, s.
     pub burn_duration_s: f64,
-    /// Total swept central angle over all burns, rad (sum of absolute turns).
+    /// Total swept central angle over all burns, rad, evaluated as the exact
+    /// integral `∫ |r × v| / |r|² dt` (the instantaneous rate of the polar
+    /// angle about the focus). Summed as absolute turn, so a reversal adds
+    /// rather than cancels. This is the arc actually flown, not the change in
+    /// osculating true anomaly: thrust also rotates the apsidal line.
     pub sweep_rad: f64,
 }
 
@@ -143,15 +147,7 @@ pub fn measure_burn(
         if hi <= lo {
             continue;
         }
-        let p0 = trajectory
-            .sample(lo)
-            .map_err(|_| IntegrationError::NumericalRange)?
-            .position;
-        let p1 = trajectory
-            .sample(hi)
-            .map_err(|_| IntegrationError::NumericalRange)?
-            .position;
-        sweep += libm::fabs(libm::atan2(norm(cross(p0, p1)), dot(p0, p1)));
+        let mut segment_sweep = 0.0;
         let mid = lo + (hi - lo) * 0.5;
         let half = (hi - lo) * 0.5;
         for (node, weight) in NODES.iter().zip(WEIGHTS) {
@@ -172,7 +168,16 @@ pub fn measure_burn(
             let g = s.position.map(|x| -mu * x / (radius * radius * radius));
             steering += half * weight * thrust_accel * (1.0 - dot(u, vhat));
             gravity += half * weight * -dot(g, vhat);
+            // Exact polar-angle rate |h|/r² = |r × v| / |r|², sampled at the
+            // same quadrature nodes as the loss integrals. Integrating the
+            // rate instead of summing endpoint chord angles keeps the arc
+            // accurate however far apart the cached keyframes happen to be.
+            segment_sweep +=
+                half * weight * norm(cross(s.position, s.velocity)) / (radius * radius);
         }
+        // Absolute turn per segment: a genuine reversal adds, while the
+        // integrand itself is non-negative so quadrature noise cannot cancel.
+        sweep += libm::fabs(segment_sweep);
     }
     let speed_gain = norm(end_state.velocity) - norm(start_state.velocity);
     let deficit = ideal - speed_gain;
@@ -194,8 +199,7 @@ pub fn measure_burns(
     mu: f64,
 ) -> Result<BurnLoss, IntegrationError> {
     let mut total = BurnLoss::default();
-    for burn in burns {
-        let part = measure_burn(trajectory, burn, mu)?;
+    for part in measure_burns_each(trajectory, burns, mu)? {
         total.ideal_delta_v_m_s += part.ideal_delta_v_m_s;
         total.steering_loss_m_s += part.steering_loss_m_s;
         total.gravity_loss_m_s += part.gravity_loss_m_s;
@@ -205,6 +209,22 @@ pub fn measure_burns(
         total.sweep_rad += part.sweep_rad;
     }
     Ok(total)
+}
+
+/// Per-burn measurements, in command order.
+///
+/// `measure_burns` sums exactly these, so a schedule printed from them cannot
+/// disagree with the reported total. Each swept angle is the same exact
+/// substep integral, restricted to one burn.
+pub fn measure_burns_each(
+    trajectory: &TrajectorySpline,
+    burns: &[Burn],
+    mu: f64,
+) -> Result<Vec<BurnLoss>, IntegrationError> {
+    burns
+        .iter()
+        .map(|burn| measure_burn(trajectory, burn, mu))
+        .collect()
 }
 
 /// Run the plain two-body + finite-burn model and measure its exact losses.
