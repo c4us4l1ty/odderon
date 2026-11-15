@@ -39,9 +39,9 @@ Work Package 1.5 replaces the fixed engine card with a solved liquid engine:
 `crates/odd-propulsion` computes chamber properties, nozzle flow, Summerfield
 separation, Bartz throat heating and dry mass from a physical design, using
 only `f64` and `libm` so native and wasm results are bit-identical. The mission
-page exposes it as an Engine CAD & Schlieren lab — drag the throat, exit and
-bell length, sweep mixture ratio and test-stand altitude, and watch the flow
-separate and re-attach. The signed recorder stores the *design*, and
+page exposes it as an Engine CAD & Schlieren lab — drag the throat, exit, bell
+length, mixture ratio and chamber pressure on the cross-section itself, sweep
+test-stand altitude, and watch the flow separate and re-attach. The signed recorder stores the *design*, and
 `crates/odd-verify` recomputes thrust, specific impulse and engine mass from it
 before replaying the flight, so a client cannot claim performance its geometry
 cannot produce. See [propulsion notes](docs/propulsion.md) for the calibration

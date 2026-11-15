@@ -165,13 +165,29 @@ export function createLab({ wasm, onApply, onDiagnose, isLocked, annotate }) {
     raster = buffer;
   }
 
+  /// Mixture ratio is drawn as a slider riding the chamber roof: richer to
+  /// the left, leaner to the right, with the efficient band marked. Chamber
+  /// pressure is the injector-face handle, dragged vertically. Both act on
+  /// the cross-section itself, so the whole design is reachable by pointer.
+  function ofTrack() {
+    const band = BANDS[spec.propellant] ?? [1, 10];
+    const x0 = -solution.chamberLength;
+    const x1 = -0.35 * solution.nozzleLength;
+    const r = solution.chamberRadius * 1.55;
+    return { band, x0, x1, r };
+  }
   function handles() {
     if (!solution || !view) return [];
     const length = solution.nozzleLength;
+    const track = ofTrack();
+    const span = track.band[1] - track.band[0];
+    const frac = span > 0 ? (spec.of - track.band[0]) / span : 0;
     return [
       { key: 'throat', at: toScreen(0, solution.throatRadius), axis: 'r' },
       { key: 'exit', at: toScreen(length, solution.exitRadius), axis: 'r' },
       { key: 'length', at: toScreen(length, 0), axis: 'x' },
+      { key: 'of', at: toScreen(track.x0 + frac * (track.x1 - track.x0), track.r), axis: 'of' },
+      { key: 'pc', at: toScreen(-solution.chamberLength, 0), axis: 'pc' },
     ];
   }
 
@@ -286,6 +302,26 @@ export function createLab({ wasm, onApply, onDiagnose, isLocked, annotate }) {
       ctx.fillStyle = '#e2bc79'; ctx.font = '10px system-ui';
       ctx.fillText('Mach disk', ...toScreen(x, r * 1.08));
     }
+    // Mixture-ratio track above the chamber, with the efficient band shaded.
+    const track = ofTrack();
+    const optimum = OPTIMAL[spec.propellant];
+    ctx.strokeStyle = '#3d5a4e'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(...toScreen(track.x0, track.r));
+    ctx.lineTo(...toScreen(track.x1, track.r));
+    ctx.stroke();
+    if (optimum) {
+      const span = track.band[1] - track.band[0];
+      const a = track.x0 + (optimum[0] - track.band[0]) / span * (track.x1 - track.x0);
+      const b = track.x0 + (optimum[1] - track.band[0]) / span * (track.x1 - track.x0);
+      ctx.strokeStyle = '#80d9cb'; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.moveTo(...toScreen(a, track.r)); ctx.lineTo(...toScreen(b, track.r)); ctx.stroke();
+    }
+    ctx.fillStyle = '#849b90'; ctx.font = '10px system-ui';
+    const [olx, oly] = toScreen(track.x0, track.r);
+    ctx.fillText(`O/F ${spec.of.toFixed(2)} — drag along the track`, olx, oly - 10);
+    const [plx, ply] = toScreen(-solution.chamberLength, 0);
+    ctx.fillText(`Pc ${(spec.pc / 1e6).toFixed(2)} MPa — drag up/down`, plx + 10, ply - 8);
     // Draggable CAD handles.
     for (const handle of handles()) {
       ctx.beginPath(); ctx.arc(handle.at[0], handle.at[1], 6, 0, Math.PI * 2);
@@ -388,7 +424,10 @@ export function createLab({ wasm, onApply, onDiagnose, isLocked, annotate }) {
   canvas.addEventListener('pointerdown', event => {
     if (isLocked() || !solution || event.button !== 0 || !view) return;
     const point = pointer(event);
-    const hit = handles().find(h => Math.hypot(point[0] - h.at[0], point[1] - h.at[1]) < 12);
+    const hit = handles()
+      .map(h => ({ h, d: Math.hypot(point[0] - h.at[0], point[1] - h.at[1]) }))
+      .filter(x => x.d < 12)
+      .sort((a, b) => a.d - b.d)[0]?.h;
     if (!hit) return;
     drag = { pointer: event.pointerId, key: hit.key, axis: hit.axis, start: point, initial: { ...spec } };
     governor.begin();
@@ -397,7 +436,20 @@ export function createLab({ wasm, onApply, onDiagnose, isLocked, annotate }) {
   canvas.addEventListener('pointermove', event => {
     if (!drag || drag.pointer !== event.pointerId || !view) return;
     const point = pointer(event);
-    if (drag.axis === 'r') {
+    if (drag.axis === 'of') {
+      const track = ofTrack();
+      const [x] = toWorld(point[0], point[1]);
+      const frac = Math.min(1, Math.max(0, (x - track.x0) / (track.x1 - track.x0)));
+      const of = track.band[0] + frac * (track.band[1] - track.band[0]);
+      controls.of.value = String(+of.toFixed(3));
+    } else if (drag.axis === 'pc') {
+      // Logarithmic: pressure spans two decades, so a linear drag would make
+      // the low end unreachable. Anchored at the press so it does not jump.
+      const dy = drag.start[1] - point[1];
+      const decades = dy / 120;
+      const pc = drag.initial.pc * Math.pow(10, decades);
+      controls.pc.value = String(Math.max(0.2, Math.min(40, +(pc / 1e6).toFixed(3))));
+    } else if (drag.axis === 'r') {
       const [, radius] = toWorld(point[0], point[1]);
       const value = Math.abs(radius);
       if (drag.key === 'throat') {

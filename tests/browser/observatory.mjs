@@ -373,7 +373,7 @@ try{
     // so the handle coordinates are measured against the final layout.
     await page.mouse.move(4,4);
     await page.locator('#engine-canvas').scrollIntoViewIfNeeded();
-    await page.waitForFunction(()=>missionDiagnostics.engine?.handles.length===3&&!missionDiagnostics.engine.pending&&missionDiagnostics.lens===null,null,{timeout:30000});
+    await page.waitForFunction(()=>missionDiagnostics.engine?.handles.length===5&&!missionDiagnostics.engine.pending&&missionDiagnostics.lens===null,null,{timeout:30000});
     const labBox=await page.locator('#engine-canvas').boundingBox();
     const settled=await page.evaluate(()=>missionDiagnostics.engine);
     const exitHandle=settled.handles.find(h=>h.key==='exit');
@@ -386,6 +386,28 @@ try{
     assert.ok(widened.spec.exit>start.spec.exit,'dragging the exit handle must widen the bell');
     assert.ok(widened.draws>start.draws,'the cross-section must repaint');
     assert.ok(widened.solution.vacuumIsp!==start.solution.vacuumIsp,'a bigger bell must change vacuum Isp');
+    // The spec requires O/F and chamber pressure to be draggable on the
+    // cross-section itself, not only reachable through the numeric controls.
+    {
+      const dragHandle=async(key,dx,dy)=>{
+        await page.waitForFunction(()=>missionDiagnostics.engine?.handles.length===5&&!missionDiagnostics.engine.pending,null,{timeout:30000});
+        const box=await page.locator('#engine-canvas').boundingBox();
+        const h=await page.evaluate(k=>missionDiagnostics.engine.handles.find(x=>x.key===k),key);
+        assert.ok(h,`${key} must be a draggable handle on the cross-section`);
+        await page.mouse.move(box.x+h.at[0],box.y+h.at[1]);
+        await page.mouse.down();
+        await page.mouse.move(box.x+h.at[0]+dx,box.y+h.at[1]+dy,{steps:6});
+        await page.mouse.up();
+      };
+      const beforeOf=await page.evaluate(()=>missionDiagnostics.engine.spec.of);
+      await dragHandle('of',-40,0);
+      const afterOf=await page.evaluate(()=>missionDiagnostics.engine.spec.of);
+      assert.ok(afterOf<beforeOf,`dragging the mixture track left must richen it: ${beforeOf} -> ${afterOf}`);
+      const beforePc=await page.evaluate(()=>missionDiagnostics.engine.spec.pc);
+      await dragHandle('pc',0,-40);
+      const afterPc=await page.evaluate(()=>missionDiagnostics.engine.spec.pc);
+      assert.ok(afterPc>beforePc,`dragging the injector up must raise chamber pressure: ${beforePc} -> ${afterPc}`);
+    }
     // Mixture ratio: the efficiency peak is fuel-rich, the temperature peak
     // is not. Both come from the same solve the recorder will sign.
     await page.locator('#engine-propellant').selectOption('0');
