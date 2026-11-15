@@ -304,7 +304,9 @@ pub fn html(fdr: &Fdr, geometry: &Geometry, payload: &str) -> Result<String, &'s
 
     // Section 3.
     body.push_str("<section id=\"section-3\"><h2>3. Prediction versus realized flight and error attribution</h2>");
-    let propellant = fdr.initial_mass_kg - metric(0);
+    // The prediction baseline records propellant REMAINING above dry mass,
+    // matching the locked field, not propellant consumed.
+    let propellant = metric(0) - fdr.dry_mass_kg;
     let prediction_rows = vec![
         vec![
             "Commanded &#916;v".into(),
@@ -328,7 +330,7 @@ pub fn html(fdr: &Fdr, geometry: &Geometry, payload: &str) -> Result<String, &'s
             "km".into(),
         ],
         vec![
-            "Propellant consumed".into(),
+            "Remaining propellant".into(),
             number(fdr.prediction_baseline[3], 3),
             number(propellant, 3),
             signed(propellant - fdr.prediction_baseline[3], 3),

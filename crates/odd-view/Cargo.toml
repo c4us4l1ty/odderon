@@ -15,4 +15,5 @@ odd-sim = { path = "../odd-sim" }
 odd-contracts = { path = "../odd-contracts" }
 odd-app = { path = "../odd-app" }
 odd-identity = { path = "../odd-identity" }
+odd-report = { path = "../odd-report" }
 ed25519-compact = { version = "2.6.1", default-features = false }

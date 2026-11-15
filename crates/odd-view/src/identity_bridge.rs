@@ -339,6 +339,24 @@ pub extern "C" fn mission_word_byte(index: u32, position: u32) -> f64 {
         .map_or(f64::NAN, |b| *b as f64)
 }
 
+/// The byte channel as text, for bridges that need a callsign or a payload.
+pub(crate) fn input_text() -> String {
+    absorbed_text().unwrap_or_default()
+}
+
+/// The active license, so the recorder bridge can sign without the secret
+/// ever crossing the WASM boundary.
+pub(crate) fn active_license() -> Option<License> {
+    LICENSE.lock().unwrap().clone()
+}
+
+/// Install a license directly. Native tests use this instead of the entropy
+/// export so a test never has to move secret bytes through the boundary.
+#[cfg(test)]
+pub(crate) fn set_license_for_test(license: License) {
+    *LICENSE.lock().unwrap() = Some(license);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -77,7 +77,8 @@ pub struct Fdr {
     /// True when attribution measures node rotation instead of apoapsis.
     pub node_metric: bool,
     /// Locked prediction: delta-v, apoapsis altitude, periapsis altitude,
-    /// propellant, flight time, target miss distance. NaN where not predicted.
+    /// remaining propellant above dry mass, flight time, target miss
+    /// distance. NaN where not predicted.
     pub prediction_baseline: [f64; 6],
     pub commands: Vec<Command>,
     pub metrics: [f64; METRIC_COUNT],

@@ -37,9 +37,18 @@ struct Settings {
     guidance: Vec<Option<State>>,
     node_metric: bool,
 }
+#[derive(Clone)]
 struct Execution {
     trajectory: TrajectorySpline,
     report: [f64; REPORT_LEN],
+    final_state: Keyframe,
+    burn_epochs: Vec<(f64, f64)>,
+}
+struct Outcome {
+    trajectory: TrajectorySpline,
+    report: [f64; REPORT_LEN],
+    final_state: Keyframe,
+    burns: Vec<odd_astro::perturb::burn::Burn>,
 }
 static SETTINGS: Mutex<Option<Settings>> = Mutex::new(None);
 static PLAN: Mutex<Option<Plan>> = Mutex::new(None);
@@ -442,8 +451,31 @@ pub extern "C" fn mission_execute() -> i32 {
     let Some(eph) = EPHEMERIS.get_or_init(|| Ephemeris::bundled().ok()).as_ref() else {
         return 0;
     };
-    let Ok(burns) = plan.timeline.burns(&[s.engine]) else {
+    let Some(outcome) = compute(&s, &plan, locked.as_ref(), eph) else {
         return 0;
+    };
+    *EXECUTION.lock().unwrap() = Some(Execution {
+        trajectory: outcome.trajectory,
+        report: outcome.report,
+        final_state: outcome.final_state,
+        burn_epochs: outcome.burns.iter().map(|b| (b.start, b.end)).collect(),
+    });
+    1
+}
+
+/// The whole flight evaluation, free of module state.
+///
+/// Replay verification calls this same function with settings rebuilt from a
+/// signed recorder, so a verified flight is reproduced by the identical code
+/// path rather than a second implementation that could agree by accident.
+fn compute(
+    s: &Settings,
+    plan: &Plan,
+    locked: Option<&LockedMission>,
+    eph: &Ephemeris,
+) -> Option<Outcome> {
+    let Ok(burns) = plan.timeline.burns(&[s.engine]) else {
+        return None;
     };
     let contract = Contract::get(s.contract_id).unwrap_or_else(|| Contract::get(101).unwrap());
     let model = contract.force_model();
@@ -455,7 +487,7 @@ pub extern "C" fn mission_execute() -> i32 {
             environment(eph, s.epoch, t)
         })
     else {
-        return 0;
+        return None;
     };
     let impacted = integrated.stopped.is_some();
     let mut evaluation_s = if let Some(stop) = integrated.stopped {
@@ -470,7 +502,7 @@ pub extern "C" fn mission_execute() -> i32 {
         }
     }
     let Ok(final_state) = integrated.trajectory.sample(evaluation_s) else {
-        return 0;
+        return None;
     };
     let el = Elements::from_state(
         State {
@@ -533,7 +565,7 @@ pub extern "C" fn mission_execute() -> i32 {
         report[32] = enc.time_s;
         report[33] = enc.soi_radius_m;
     }
-    let mission_score = locked.as_ref().and_then(|lock| {
+    let mission_score = locked.and_then(|lock| {
         odd_contracts::score(
             &contract,
             final_state,
@@ -616,11 +648,12 @@ pub extern "C" fn mission_execute() -> i32 {
             report[41..57].copy_from_slice(&shapley.coalition_metrics);
         }
     }
-    *EXECUTION.lock().unwrap() = Some(Execution {
+    Some(Outcome {
         trajectory: integrated.trajectory,
         report,
-    });
-    1
+        final_state,
+        burns,
+    })
 }
 
 /// Number of registered acronyms. The browser builds its hover registry from
@@ -1018,12 +1051,372 @@ pub extern "C" fn mission_target_state(component: u32) -> f64 {
         .map_or(f64::NAN, |s| component_value(s, component))
 }
 
+// ---------------------------------------------------------------------------
+// Signed flight recorder support.
+//
+// These helpers expose the executed flight to fdr_bridge without letting the
+// recorder path touch module state: a replay builds its own Settings and calls
+// the same `compute` the live flight used.
+// ---------------------------------------------------------------------------
+
+/// Everything needed to re-run a flight, taken from a signed recorder.
+pub(crate) struct FlightSpec {
+    pub contract_id: u32,
+    pub epoch_s: i64,
+    pub duration_us: i64,
+    pub initial_mass_kg: f64,
+    pub dry_mass_kg: f64,
+    pub thrust_n: f64,
+    pub specific_impulse_s: f64,
+    pub initial_state: [f64; 6],
+    pub node_metric: bool,
+    pub prediction: [f64; 6],
+    /// (epoch in microseconds, TNW delta-v, optional guidance state)
+    pub commands: Vec<(i64, [f64; 3], Option<[f64; 6]>)>,
+}
+
+pub(crate) struct CapturedCommand {
+    pub epoch_us: i64,
+    pub tnw_m_s: [f64; 3],
+    pub guidance: Option<[f64; 6]>,
+}
+
+pub(crate) struct CapturedFlight {
+    pub contract_id: u32,
+    pub epoch_s: i64,
+    pub duration_us: i64,
+    pub initial: Keyframe,
+    pub dry_mass: f64,
+    pub thrust_n: f64,
+    pub specific_impulse_s: f64,
+    pub node_metric: bool,
+    pub prediction: [f64; 6],
+    pub commands: Vec<CapturedCommand>,
+    pub report: [f64; REPORT_LEN],
+    pub final_state: Keyframe,
+}
+
+pub(crate) struct ReplayOutcome {
+    pub report: [f64; REPORT_LEN],
+    pub final_state_hash: [u8; 32],
+    pub geometry: odd_report::dossier::Geometry,
+}
+
+/// Snapshot the executed flight for signing. Requires a completed execution.
+pub(crate) fn capture_flight() -> Option<CapturedFlight> {
+    let settings = SETTINGS.lock().unwrap().clone()?;
+    let execution = EXECUTION.lock().unwrap().clone()?;
+    let locked = LOCKED.lock().unwrap().clone();
+    let prediction = match locked.as_ref() {
+        Some(lock) => {
+            let p = lock.prediction();
+            [
+                p.delta_v_m_s,
+                p.apoapsis_altitude_m,
+                p.periapsis_altitude_m,
+                p.remaining_propellant_kg,
+                p.time_of_flight_s,
+                p.target_miss_distance_m.unwrap_or(f64::NAN),
+            ]
+        }
+        None => [f64::NAN; 6],
+    };
+    Some(CapturedFlight {
+        contract_id: settings.contract_id,
+        epoch_s: settings.epoch,
+        duration_us: settings.duration_us,
+        initial: settings.initial,
+        dry_mass: settings.dry_mass,
+        thrust_n: settings.engine.thrust_newtons,
+        specific_impulse_s: settings.engine.specific_impulse_seconds,
+        node_metric: settings.node_metric,
+        prediction,
+        commands: settings
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(index, node)| CapturedCommand {
+                epoch_us: node.epoch_us,
+                tnw_m_s: node.tnw_m_s,
+                guidance: settings
+                    .guidance
+                    .get(index)
+                    .copied()
+                    .flatten()
+                    .map(|state| {
+                        [
+                            state.position_m[0],
+                            state.position_m[1],
+                            state.position_m[2],
+                            state.velocity_m_s[0],
+                            state.velocity_m_s[1],
+                            state.velocity_m_s[2],
+                        ]
+                    }),
+            })
+            .collect(),
+        report: execution.report,
+        final_state: execution.final_state,
+    })
+}
+
+fn settings_from_spec(
+    spec: &FlightSpec,
+) -> Option<(Settings, Vec<ManeuverNode>, Vec<Option<State>>)> {
+    if spec.duration_us <= 0
+        || spec.commands.len() > 12
+        || !spec.initial_state.iter().all(|value| value.is_finite())
+        || !spec.initial_mass_kg.is_finite()
+        || !spec.dry_mass_kg.is_finite()
+        || spec.dry_mass_kg <= 0.0
+        || spec.initial_mass_kg < spec.dry_mass_kg
+        || !spec.thrust_n.is_finite()
+        || spec.thrust_n <= 0.0
+        || !spec.specific_impulse_s.is_finite()
+        || spec.specific_impulse_s <= 0.0
+    {
+        return None;
+    }
+    let mut nodes = Vec::with_capacity(spec.commands.len());
+    let mut guidance = Vec::with_capacity(spec.commands.len());
+    for (epoch_us, tnw, target) in &spec.commands {
+        if *epoch_us <= 0 || *epoch_us > spec.duration_us || !tnw.iter().all(|v| v.is_finite()) {
+            return None;
+        }
+        nodes.push(ManeuverNode {
+            epoch_us: *epoch_us,
+            tnw_m_s: *tnw,
+        });
+        guidance.push(target.map(|values| State {
+            position_m: [values[0], values[1], values[2]],
+            velocity_m_s: [values[3], values[4], values[5]],
+        }));
+    }
+    Some((
+        Settings {
+            contract_id: spec.contract_id,
+            epoch: spec.epoch_s,
+            initial: Keyframe {
+                time: 0.0,
+                position: [
+                    spec.initial_state[0],
+                    spec.initial_state[1],
+                    spec.initial_state[2],
+                ],
+                velocity: [
+                    spec.initial_state[3],
+                    spec.initial_state[4],
+                    spec.initial_state[5],
+                ],
+                mass: spec.initial_mass_kg,
+            },
+            duration_us: spec.duration_us,
+            dry_mass: spec.dry_mass_kg,
+            engine: Engine {
+                thrust_newtons: spec.thrust_n,
+                specific_impulse_seconds: spec.specific_impulse_s,
+                stage: 0,
+                engine: 0,
+            },
+            nodes: nodes.clone(),
+            guidance: guidance.clone(),
+            node_metric: spec.node_metric,
+        },
+        nodes,
+        guidance,
+    ))
+}
+
+/// Project a state onto the initial orbital plane. The basis is fixed by the
+/// initial position and angular momentum, so the figure is reproducible from
+/// the recorder alone and does not depend on a camera.
+fn plane_projection(initial: &Keyframe) -> (State, [f64; 3], [f64; 3]) {
+    let r = initial.position;
+    let v = initial.velocity;
+    let norm = |a: [f64; 3]| (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt().max(1e-12);
+    let cross = |a: [f64; 3], b: [f64; 3]| {
+        [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ]
+    };
+    let rn = norm(r);
+    let u = [r[0] / rn, r[1] / rn, r[2] / rn];
+    let h = cross(r, v);
+    let hn = norm(h);
+    let w = [h[0] / hn, h[1] / hn, h[2] / hn];
+    (
+        State {
+            position_m: r,
+            velocity_m_s: v,
+        },
+        u,
+        cross(w, u),
+    )
+}
+
+const FIGURE_SAMPLES: usize = 480;
+
+fn geometry_from(
+    initial: &Keyframe,
+    level1: &Plan,
+    outcome: &Outcome,
+    commands: &[(i64, [f64; 3])],
+) -> odd_report::dossier::Geometry {
+    let (_, u, v) = plane_projection(initial);
+    let project = |state: Keyframe| {
+        [
+            state.position[0] * u[0] + state.position[1] * u[1] + state.position[2] * u[2],
+            state.position[0] * v[0] + state.position[1] * v[1] + state.position[2] * v[2],
+        ]
+    };
+    let end = outcome.report[29];
+    let end = if end.is_finite() && end > 0.0 {
+        end
+    } else {
+        1.0
+    };
+    let mut level1_points = Vec::with_capacity(FIGURE_SAMPLES + 1);
+    let mut level3_points = Vec::with_capacity(FIGURE_SAMPLES + 1);
+    for index in 0..=FIGURE_SAMPLES {
+        let seconds = end * index as f64 / FIGURE_SAMPLES as f64;
+        let micros = (seconds * 1e6).round() as i64;
+        if let Ok(state) = level1.sample(micros) {
+            level1_points.push(project(state));
+        }
+        if let Ok(state) = outcome.trajectory.sample(seconds) {
+            level3_points.push(project(state));
+        }
+    }
+    let burns = outcome
+        .burns
+        .iter()
+        .enumerate()
+        .map(|(index, burn)| odd_report::dossier::BurnRow {
+            start_s: burn.start,
+            duration_s: burn.end - burn.start,
+            delta_v_tnw: commands
+                .get(index)
+                .map_or([f64::NAN; 3], |command| command.1),
+        })
+        .collect();
+    odd_report::dossier::Geometry {
+        level1: level1_points,
+        level3: level3_points,
+        burns,
+        earth_radius_m: EARTH,
+    }
+}
+
+/// Re-run a recorded flight. Returns the report, the terminal-state hash and
+/// the figure geometry, all from the same `compute` the live flight used.
+pub(crate) fn replay_flight(spec: &FlightSpec) -> Option<ReplayOutcome> {
+    let (settings, nodes, guidance) = settings_from_spec(spec)?;
+    let plan = Plan::compile_guided(
+        settings.initial,
+        MU,
+        settings.duration_us,
+        settings.dry_mass,
+        settings.engine,
+        &nodes,
+        &guidance,
+    )
+    .ok()?;
+    // A recorded prediction means the flight was locked; without one the
+    // score fields are undefined in both the record and the replay.
+    let locked = if spec.prediction[..5].iter().all(|value| value.is_finite()) {
+        let prediction = PredictionBaseline {
+            delta_v_m_s: spec.prediction[0],
+            apoapsis_altitude_m: spec.prediction[1],
+            periapsis_altitude_m: spec.prediction[2],
+            remaining_propellant_kg: spec.prediction[3],
+            time_of_flight_s: spec.prediction[4],
+            target_miss_distance_m: if spec.prediction[5].is_finite() && spec.prediction[5] >= 0.0 {
+                Some(spec.prediction[5])
+            } else {
+                None
+            },
+        };
+        Some(LockedMission::new(plan.clone(), prediction, settings.dry_mass).ok()?)
+    } else {
+        None
+    };
+    let eph = EPHEMERIS
+        .get_or_init(|| Ephemeris::bundled().ok())
+        .as_ref()?;
+    let outcome = compute(&settings, &plan, locked.as_ref(), eph)?;
+    let state = outcome.final_state;
+    let hash = odd_report::fdr::final_state_hash(
+        outcome.report[29],
+        &[
+            state.position[0],
+            state.position[1],
+            state.position[2],
+            state.velocity[0],
+            state.velocity[1],
+            state.velocity[2],
+        ],
+        state.mass,
+    );
+    let commands: Vec<(i64, [f64; 3])> = spec
+        .commands
+        .iter()
+        .map(|(epoch, tnw, _)| (*epoch, *tnw))
+        .collect();
+    let geometry = geometry_from(&settings.initial, &plan, &outcome, &commands);
+    Some(ReplayOutcome {
+        report: outcome.report,
+        final_state_hash: hash,
+        geometry,
+    })
+}
+
+/// Figure geometry for the flight currently on screen.
+pub(crate) fn dossier_geometry() -> Option<odd_report::dossier::Geometry> {
+    let settings = SETTINGS.lock().unwrap().clone()?;
+    let execution = EXECUTION.lock().unwrap().clone()?;
+    let locked = LOCKED.lock().unwrap().clone();
+    let plan = locked
+        .as_ref()
+        .map(|lock| lock.plan().clone())
+        .or_else(|| PLAN.lock().unwrap().clone())?;
+    let outcome = Outcome {
+        trajectory: execution.trajectory,
+        report: execution.report,
+        final_state: execution.final_state,
+        burns: execution
+            .burn_epochs
+            .iter()
+            .map(|(start, end)| odd_astro::perturb::burn::Burn {
+                start: *start,
+                end: *end,
+                force_newtons: [0.0; 3],
+                specific_impulse_seconds: settings.engine.specific_impulse_seconds,
+            })
+            .collect(),
+    };
+    let commands: Vec<(i64, [f64; 3])> = settings
+        .nodes
+        .iter()
+        .map(|node| (node.epoch_us, node.tnw_m_s))
+        .collect();
+    Some(geometry_from(&settings.initial, &plan, &outcome, &commands))
+}
+
+/// The recorder tests run real flights against the same process-wide statics,
+/// so they must share this lock with the mission tests.
+#[cfg(test)]
+pub(crate) fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+    tests::TEST_LOCK.lock().unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     // The scalar bridge owns process-wide statics; native tests must not
     // interleave setup/compile/lock calls the way separate workers would.
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    pub(super) static TEST_LOCK: Mutex<()> = Mutex::new(());
     #[test]
     fn preview_and_failed_setup_clear_stale_state() {
         let _guard = TEST_LOCK.lock().unwrap();

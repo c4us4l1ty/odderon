@@ -189,6 +189,7 @@ dependencies = [
  "odd-core",
  "odd-ephem",
  "odd-identity",
+ "odd-report",
  "odd-sim",
 ]
 
