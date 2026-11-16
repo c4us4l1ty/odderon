@@ -113,6 +113,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "odd-authority-wasm"
+version = "0.1.0"
+dependencies = [
+ "odd-report",
+ "odd-worker",
+]
+
+[[package]]
 name = "odd-contracts"
 version = "0.1.0"
 dependencies = [

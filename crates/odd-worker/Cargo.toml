@@ -12,7 +12,8 @@ crate-type = ["rlib"]
 default = []
 # The local durable adapter links the system libsqlite3 and serves HTTP from
 # std::net. It is what ./scripts/gate.sh exercises, with no cloud credentials.
-local = []
+wire = []
+local = ["wire"]
 
 [dependencies]
 odd-core = { path = "../odd-core" }

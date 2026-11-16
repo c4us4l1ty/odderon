@@ -7,8 +7,11 @@ import { resolve, extname } from 'node:path';
 import { chromium } from 'playwright-core';
 import bundledChromium from '@sparticuz/chromium';
 import { startAuthority } from './support/authority-server.mjs';
+import { startCloudAuthority } from './support/cloud-authority.mjs';
 
-const authority = await startAuthority();
+const cloud = process.env.ODDERON_AUTHORITY === 'cloudflare';
+const authority = await (cloud ? startCloudAuthority() : startAuthority());
+console.log(`Authority browser gate: ${cloud ? 'Cloudflare workerd / D1 / R2' : 'native HTTP / SQLite'}`);
 const { key } = authority;
 const root = resolve('web');
 const proxy = createServer(async (req, res) => {
@@ -35,8 +38,9 @@ try {
   const C = bundledChromium.default ?? bundledChromium;
   browser = await chromium.launch({ executablePath: process.env.CHROME_BIN || await C.executablePath(), headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage', '--no-proxy-server'] });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-  const errors = [];
+  const errors = [], submitBodies = [];
   page.on('pageerror', error => errors.push(String(error)));
+  page.on('request', request => { if (request.method() === 'POST' && request.url().endsWith('/api/v1/submit')) submitBodies.push(request.postData()); });
   await page.addInitScript(() => {
     window.authorityEvents = [];
     const fetchNative = window.fetch.bind(window);
@@ -180,6 +184,44 @@ try {
   assert.equal(await page.locator('.leaderboard-replay').count(), 1);
   await page.click('#leaderboard-close');
   console.log('PASS later committed flight forced to server-verified practice, not ranked');
+
+  // Identical later practice FDRs have the same content hash even though
+  // their server receipts have different attempt numbers. Retrying the
+  // earlier ticket must still return its original receipt.
+  const secondBody = submitBodies.at(-1);
+  await page.click('#unlock'); await page.click('#example'); await page.click('#prefill'); await page.click('#execute');
+  await page.waitForFunction(() => !document.getElementById('debrief').hidden && !missionDiagnostics.pending, null, { timeout: 180000 });
+  const third = await page.evaluate(() => missionDiagnostics.recorder().document);
+  assert.equal(third.server_receipt.attempt_num, 3);
+  assert.equal(third.canonical_digest, second.record.document.canonical_digest, 'identical practice flights share their content address');
+  const oldRetry = await fetch(`${base}/api/v1/submit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: secondBody });
+  assert.equal(oldRetry.status, 200, `old practice retry: ${await oldRetry.clone().text()}`);
+  assert.deepEqual((await oldRetry.json()).receipt, second.record.document.server_receipt);
+  console.log('PASS an older identical-practice retry keeps its original receipt');
+
+  // Exercise cross-target server replay for the remaining canonical contracts,
+  // including a genuinely delegated cryogenic tug. No numerical preview runs
+  // before these first ranked commitments.
+  await page.click('#unlock'); await page.selectOption('#mission-select', '102');
+  await page.click('#example'); await page.click('#prefill'); await page.click('#execute');
+  await page.waitForFunction(() => !document.getElementById('debrief').hidden && !missionDiagnostics.pending, null, { timeout: 180000 });
+  assert.equal(await page.locator('#certification-status').textContent(), '★ CERTIFIED SERVER-RANKED RECEIPT');
+  assert.equal(await page.evaluate(() => missionDiagnostics.recorder().document.server_receipt.contract_id), 102);
+  await page.click('#unlock'); await page.selectOption('#mission-select', '103');
+  await page.click('#delegate-1'); await page.click('#example');
+  assert.equal(await page.locator('#split-kick').isDisabled(), true);
+  assert.equal(await page.evaluate(() => missionDiagnostics.report), null);
+  await page.fill('#node-t', '700'); await page.click('#prefill'); await page.click('#execute');
+  await page.waitForFunction(() => !document.getElementById('debrief').hidden && !missionDiagnostics.pending, null, { timeout: 240000 });
+  assert.equal(await page.locator('#certification-status').textContent(), '★ CERTIFIED SERVER-RANKED RECEIPT');
+  const tug = await page.evaluate(() => ({ record: missionDiagnostics.recorder().document, boil: missionDiagnostics.boilOff }));
+  assert.equal(tug.record.server_receipt.contract_id, 103);
+  assert.equal(tug.record.delegation_mask, 2);
+  assert.ok(tug.record.thermal_specs.length > 0 && tug.boil && !tug.boil.inert);
+  await page.click('#verify-flight');
+  await page.waitForFunction(() => missionDiagnostics.verification()?.code === 1 && document.getElementById('verify-certification').textContent.includes('SERVER-RANKED'), null, { timeout: 180000 });
+  await page.click('#verify-close');
+  console.log('PASS contracts 102 and 103: server-ranked replay, including delegated cryogenic physics');
 
   // A failed commit must not start physics. If the submit response is lost
   // after the server has applied it, retry the *same* ticket and payload and

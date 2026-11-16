@@ -93,7 +93,7 @@ rm -f "$ROOT/.cargo/config.toml"
 rmdir "$ROOT/.cargo" 2>/dev/null || true
 
 # --------------------------------------------------------------------- node
-if [ -d node_modules/playwright-core ] && [ -d node_modules/@sparticuz/chromium ]; then
+if [ -d node_modules/playwright-core ] && [ -d node_modules/@sparticuz/chromium ] && [ -d node_modules/miniflare ]; then
   say "node modules already present"
 else
   say "Installing node dependencies"

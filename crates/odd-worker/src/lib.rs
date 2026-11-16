@@ -34,7 +34,7 @@ pub use receipt::{
 };
 pub use store::{Commitment, LeaderRow, MemoryStore, PlayerRow, Store, StoredFdr};
 
-#[cfg(feature = "local")]
+#[cfg(feature = "wire")]
 pub mod http;
 #[cfg(feature = "local")]
 pub mod sqlite;

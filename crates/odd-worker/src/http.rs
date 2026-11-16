@@ -2,7 +2,7 @@
 //!
 //! A dependency-free `std::net` HTTP/1.1 server. The router is a pure
 //! function of (method, path, body, clock) so the gate can drive it without
-//! a socket; [`serve`] wraps it in a blocking accept loop. JSON is the wire
+//! a socket; the `local` feature adds a blocking accept loop. JSON is the wire
 //! format the browser uses in Slice 3; byte arrays travel as lowercase hex.
 //!
 //! The adapter — not the engine — reads the wall clock and supplies `now_s`,
@@ -18,7 +18,9 @@ use crate::protocol::{
 use crate::receipt::{ReceiptPayload, ServerReceipt};
 use crate::store::Store;
 use std::collections::BTreeMap;
+#[cfg(feature = "local")]
 use std::io::{Read, Write};
+#[cfg(feature = "local")]
 use std::net::{TcpListener, TcpStream};
 
 pub mod json;
@@ -452,8 +454,10 @@ pub fn receipt_from_json(v: &Json) -> Option<ServerReceipt> {
 
 /// A bounded request is enough for a flight and its checkpoint chain.
 pub const MAX_BODY_BYTES: usize = 256 * 1024;
+#[cfg(feature = "local")]
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 
+#[cfg(feature = "local")]
 fn read_request(stream: &mut TcpStream) -> Result<(String, String, String), u16> {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 4096];
@@ -513,6 +517,7 @@ fn read_request(stream: &mut TcpStream) -> Result<(String, String, String), u16>
     Ok((method, path, String::from_utf8(body).map_err(|_| 400u16)?))
 }
 
+#[cfg(feature = "local")]
 fn write_response(stream: &mut TcpStream, resp: &Response) -> std::io::Result<()> {
     let reason = match resp.status {
         200 => "OK",
@@ -536,11 +541,13 @@ fn write_response(stream: &mut TcpStream, resp: &Response) -> std::io::Result<()
 /// Serve the authority on `addr` until the process is stopped. Single
 /// threaded: one request holds the engine exclusively, which is exactly the
 /// atomicity the storage port requires. The adapter reads the wall clock.
+#[cfg(feature = "local")]
 pub fn serve<S: Store>(addr: &str, engine: AuthorityEngine<S>) -> std::io::Result<()> {
     serve_listener(TcpListener::bind(addr)?, engine)
 }
 
 /// Serve on an already-bound listener (a test binds port 0 to discover it).
+#[cfg(feature = "local")]
 pub fn serve_listener<S: Store>(
     listener: TcpListener,
     mut engine: AuthorityEngine<S>,
