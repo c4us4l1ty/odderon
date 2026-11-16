@@ -84,8 +84,11 @@ fn oracle_server_first_attempt_only_ranked() {
         .unwrap()
         .is_certified_ranked(&engine.server_pk()));
 
+    let mut practice_fdr = fdr.clone();
+    practice_fdr.attempt_mode = odd_worker::AttemptMode::Practice;
+    practice_fdr.sign(&license).unwrap();
     let second = engine
-        .submit(submit_request(&fdr, ticket2), NOW)
+        .submit(submit_request(&practice_fdr, ticket2), NOW)
         .expect("second submit accepted");
     assert_eq!(second.mode, odd_worker::AttemptMode::Practice);
     assert_eq!(
@@ -226,4 +229,56 @@ fn oracle_devtools_localstorage_tamper_defeated() {
     let stored = engine.store().load_player(&license.public_key()).unwrap();
     assert_eq!(stored.elo.to_bits(), response.elo_after.to_bits());
     assert!(stored.elo < 2999.0);
+}
+
+#[test]
+fn retry_cannot_attach_the_old_receipt_to_a_different_record() {
+    let mut engine = engine();
+    let (fdr, license) = signed_rescue(prediction_a());
+    let ticket = commit_for(&mut engine, &fdr, &license);
+    let first = engine
+        .submit(submit_request(&fdr, ticket.clone()), NOW)
+        .unwrap();
+    let mut other = fdr.clone();
+    // Same design and prediction, different signed metadata; replay still
+    // succeeds, but it is not the record this attempt already certified.
+    other.callsign = "DIFFERENT".into();
+    other.sign(&license).unwrap();
+    assert!(odd_verify::verify_record(&other).is_ok());
+    assert_eq!(
+        engine
+            .submit(submit_request(&other, ticket.clone()), NOW)
+            .unwrap_err(),
+        ServerError::AttemptAlreadySubmitted
+    );
+    assert_eq!(
+        engine
+            .submit(submit_request(&fdr, ticket), NOW)
+            .unwrap()
+            .receipt,
+        first.receipt
+    );
+}
+
+#[test]
+fn ticket_must_be_stored_and_record_mode_must_match() {
+    let mut original = engine();
+    let (fdr, license) = signed_rescue(prediction_a());
+    let ticket = commit_for(&mut original, &fdr, &license);
+    let mut other = engine(); // same key, but no committed ticket in this database
+    assert_eq!(
+        other
+            .submit(submit_request(&fdr, ticket.clone()), NOW)
+            .unwrap_err(),
+        ServerError::CommitmentMissing
+    );
+    let mut wrong = fdr.clone();
+    wrong.attempt_mode = odd_worker::AttemptMode::Practice;
+    wrong.sign(&license).unwrap();
+    assert_eq!(
+        original
+            .submit(submit_request(&wrong, ticket), NOW)
+            .unwrap_err(),
+        ServerError::AttemptModeMismatch
+    );
 }

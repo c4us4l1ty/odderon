@@ -16,7 +16,8 @@
 
 use crate::commitment::{design_hash, prediction_hash};
 use crate::protocol::{
-    AttemptMode, CommitRequest, CommitTicket, ServerError, SubmitRequest, SubmitResponse,
+    AttemptMode, CallsignRequest, CommitRequest, CommitTicket, ServerError, SubmitRequest,
+    SubmitResponse,
 };
 use crate::receipt::{ReceiptPayload, ServerKey, ServerReceipt};
 use crate::segment::verify_chain;
@@ -46,11 +47,64 @@ impl<S: Store> AuthorityEngine<S> {
         &self.store
     }
 
+    /// Mutations must be all-or-nothing, including failure after a rating
+    /// update. SQLite uses BEGIN IMMEDIATE so separate server processes also
+    /// serialize the read/compute/write, not just threads in this process.
+    fn atomic<T>(
+        &mut self,
+        operation: impl FnOnce(&mut Self) -> Result<T, ServerError>,
+    ) -> Result<T, ServerError> {
+        self.store.begin()?;
+        match operation(self) {
+            Ok(value) => match self.store.commit() {
+                Ok(()) => Ok(value),
+                Err(error) => {
+                    let _ = self.store.rollback();
+                    Err(error)
+                }
+            },
+            Err(error) => {
+                let _ = self.store.rollback();
+                Err(error)
+            }
+        }
+    }
+
+    /// Claim a callsign with proof of possession of its public key. Names are
+    /// case-insensitive and cannot be stolen by changing their letter case.
+    pub fn register_callsign(&mut self, req: CallsignRequest) -> Result<String, ServerError> {
+        if req.name.len() > 24
+            || req.name.trim() != req.name
+            || req.name.is_empty()
+            || !req
+                .name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b' ' | b'-' | b'_'))
+        {
+            return Err(ServerError::InvalidCallsign);
+        }
+        odd_identity::verify(&req.pubkey, &req.canonical_bytes(), &req.signature)
+            .map_err(|_| ServerError::InvalidClientSignature)?;
+        let name = req.name.to_ascii_uppercase();
+        self.atomic(|engine| {
+            engine.store.register_callsign(&name, &req.pubkey)?;
+            Ok(name)
+        })
+    }
+
     /// `POST /api/v1/commit`: verify the pilot's signature, atomically take
     /// the next attempt number, store the commitment and return a signed
     /// ticket. Only attempt 1 is Ranked; every later commit — including a
     /// commit→refresh→commit — is forced to Practice.
     pub fn commit(&mut self, req: CommitRequest, now_s: i64) -> Result<CommitTicket, ServerError> {
+        self.atomic(|engine| engine.commit_inner(req, now_s))
+    }
+
+    fn commit_inner(
+        &mut self,
+        req: CommitRequest,
+        now_s: i64,
+    ) -> Result<CommitTicket, ServerError> {
         odd_identity::verify(&req.pubkey, &req.canonical_bytes(), &req.client_sig)
             .map_err(|_| ServerError::InvalidClientSignature)?;
         if Contract::get(req.contract_id).is_none() {
@@ -89,6 +143,14 @@ impl<S: Store> AuthorityEngine<S> {
         req: SubmitRequest,
         now_s: i64,
     ) -> Result<SubmitResponse, ServerError> {
+        self.atomic(|engine| engine.submit_inner(req, now_s))
+    }
+
+    fn submit_inner(
+        &mut self,
+        req: SubmitRequest,
+        now_s: i64,
+    ) -> Result<SubmitResponse, ServerError> {
         let ticket = &req.ticket;
         // The ticket must carry our own signature; a forged or edited ticket
         // (e.g. attempt_num changed to 1) fails here.
@@ -99,10 +161,29 @@ impl<S: Store> AuthorityEngine<S> {
         ) {
             return Err(ServerError::InvalidTicketSignature);
         }
+        if ticket.attempt_num == 0 || ticket.mode != CommitTicket::forced_mode(ticket.attempt_num) {
+            return Err(ServerError::AttemptModeMismatch);
+        }
+        let expected = Commitment {
+            design_hash: ticket.design_hash,
+            prediction_hash: ticket.prediction_hash,
+            mode: ticket.mode,
+            server_time_s: ticket.server_time_s,
+        };
+        if self
+            .store
+            .load_commitment(&ticket.pubkey, ticket.contract_id, ticket.attempt_num)?
+            != Some(expected)
+        {
+            return Err(ServerError::CommitmentMissing);
+        }
         let fdr = Fdr::from_verify_payload(&req.fdr_payload)
             .map_err(|e| ServerError::MalformedFdr(format!("{e:?}")))?;
         if fdr.public_key != ticket.pubkey || fdr.contract_id != ticket.contract_id {
             return Err(ServerError::TicketSubjectMismatch);
+        }
+        if fdr.attempt_mode != ticket.mode {
+            return Err(ServerError::AttemptModeMismatch);
         }
         let contract =
             Contract::get(fdr.contract_id).ok_or(ServerError::UnknownContract(fdr.contract_id))?;
@@ -134,6 +215,11 @@ impl<S: Store> AuthorityEngine<S> {
         // report[4] is the score the canonical replay computed from the
         // committed prediction — never a client claim.
         let score_s = outcome.report[4];
+        if !score_s.is_finite() || !(0.0..=1.0).contains(&score_s) {
+            return Err(ServerError::ReplayRejected(
+                "non-finite or out-of-range score".into(),
+            ));
+        }
         let mode = ticket.mode;
         let attempt_num = ticket.attempt_num;
         let fdr_hash = fdr.digest();
@@ -145,6 +231,9 @@ impl<S: Store> AuthorityEngine<S> {
                 .load_receipt(&ticket.pubkey, ticket.contract_id, attempt_num)?
         {
             let p = &receipt.payload;
+            if p.fdr_hash != fdr_hash {
+                return Err(ServerError::AttemptAlreadySubmitted);
+            }
             return Ok(SubmitResponse {
                 accepted: true,
                 mode: p.mode,
@@ -157,6 +246,14 @@ impl<S: Store> AuthorityEngine<S> {
                 receipt: Some(receipt),
                 error: None,
             });
+        }
+
+        // The FDR digest covers the canonical body, not the public key. Do
+        // not let a second key overwrite a public record with identical body.
+        if let Some(existing) = self.store.load_fdr(&fdr_hash)? {
+            if existing.pubkey != ticket.pubkey || existing.bytes != req.fdr_payload.as_bytes() {
+                return Err(ServerError::FdrHashCollision);
+            }
         }
 
         let mut player = self.store.load_player(&ticket.pubkey)?;

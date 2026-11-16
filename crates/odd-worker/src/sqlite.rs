@@ -292,6 +292,16 @@ fn mode_from_i64(v: i64) -> AttemptMode {
 }
 
 impl Store for SqliteStore {
+    fn begin(&mut self) -> Result<(), ServerError> {
+        self.exec("BEGIN IMMEDIATE;")
+    }
+    fn commit(&mut self) -> Result<(), ServerError> {
+        self.exec("COMMIT;")
+    }
+    fn rollback(&mut self) -> Result<(), ServerError> {
+        self.exec("ROLLBACK;")
+    }
+
     fn increment_attempt(&mut self, pubkey: &PubKey, contract_id: u32) -> Result<u32, ServerError> {
         // Atomic upsert-and-return: the counter lives in one row keyed by
         // (pubkey, contract), so concurrent commits serialize on it.
@@ -514,21 +524,32 @@ impl Store for SqliteStore {
         self.save_player(pubkey, &row)
     }
 
-    fn leaderboard(&self, contract_id: Option<u32>) -> Result<Vec<LeaderRow>, ServerError> {
+    fn leaderboard(
+        &self,
+        contract_id: Option<u32>,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<LeaderRow>, ServerError> {
         let stmt = match contract_id {
             Some(_) => self.prepare(
-                "SELECT f.pubkey, f.score, f.delegation_mask, f.hash, p.elo, p.callsign
+                "SELECT f.pubkey, f.score, f.delegation_mask, f.hash, COALESCE(p.elo, 1200), p.callsign
                  FROM fdrs f LEFT JOIN players p ON f.pubkey = p.pubkey
-                 WHERE f.contract=?1;",
+                 WHERE f.mode=0 AND f.contract=?1 ORDER BY f.score DESC, f.hash ASC LIMIT ?2 OFFSET ?3;",
             )?,
             None => self.prepare(
-                "SELECT f.pubkey, f.score, f.delegation_mask, f.hash, p.elo, p.callsign
-                 FROM fdrs f LEFT JOIN players p ON f.pubkey = p.pubkey;",
+                "SELECT f.pubkey, f.score, f.delegation_mask, f.hash, COALESCE(p.elo, 1200), p.callsign
+                 FROM fdrs f LEFT JOIN players p ON f.pubkey = p.pubkey
+                 WHERE f.mode=0 ORDER BY COALESCE(p.elo, 1200) DESC, f.hash ASC LIMIT ?1 OFFSET ?2;",
             )?,
         };
-        if let Some(id) = contract_id {
+        let (limit_pos, offset_pos) = if let Some(id) = contract_id {
             stmt.int(1, id as i64)?;
-        }
+            (2, 3)
+        } else {
+            (1, 2)
+        };
+        stmt.int(limit_pos, limit.min(100) as i64)?;
+        stmt.int(offset_pos, offset as i64)?;
         let mut rows = Vec::new();
         while stmt.row()? {
             let pk = stmt.col_blob(0);

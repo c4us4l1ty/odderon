@@ -125,7 +125,7 @@ fn the_engine_runs_a_ranked_flight_over_sqlite() {
     assert_eq!(stored.receipt.unwrap(), receipt);
 
     // The leaderboard reads the stored flight back.
-    let board = engine.store().leaderboard(Some(101)).unwrap();
+    let board = engine.store().leaderboard(Some(101), 0, 25).unwrap();
     assert_eq!(board.len(), 1);
     assert_eq!(board[0].fdr_hash, response.fdr_hash);
     assert_eq!(board[0].score_s.to_bits(), response.score_s.to_bits());
@@ -164,6 +164,58 @@ fn sqlite_state_survives_a_reopen() {
         assert_eq!(player.ranked_count, 2);
         assert_eq!(player.callsign.as_deref(), Some("DURABLE"));
     }
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(format!("{path_str}-wal"));
+    let _ = std::fs::remove_file(format!("{path_str}-shm"));
+}
+
+#[test]
+fn sqlite_rolls_back_rating_and_fdr_when_receipt_write_fails() {
+    use std::ffi::{c_char, c_int, c_void, CString};
+    use std::ptr;
+    #[link(name = ":libsqlite3.so.0", kind = "dylib")]
+    extern "C" {
+        fn sqlite3_open(path: *const c_char, db: *mut *mut c_void) -> c_int;
+        fn sqlite3_exec(
+            db: *mut c_void,
+            sql: *const c_char,
+            cb: *mut c_void,
+            arg: *mut c_void,
+            error: *mut *mut c_char,
+        ) -> c_int;
+        fn sqlite3_close(db: *mut c_void) -> c_int;
+    }
+    let path = std::env::temp_dir().join(format!("odderon-rollback-{}.sqlite", std::process::id()));
+    let path_str = path.to_str().unwrap();
+    let mut engine = AuthorityEngine::new(SqliteStore::open(path_str).unwrap(), server_key());
+    let (fdr, license) = signed_rescue(prediction_a());
+    let ticket = commit_for(&mut engine, &fdr, &license);
+    // A real database failure on the last write must not leave an Elo update
+    // or an orphaned record which a retry could charge for a second time.
+    unsafe {
+        let mut db = ptr::null_mut();
+        let path = CString::new(path_str).unwrap();
+        assert_eq!(sqlite3_open(path.as_ptr(), &mut db), 0);
+        let sql = CString::new("CREATE TRIGGER fail_receipt BEFORE INSERT ON receipts BEGIN SELECT RAISE(ABORT, 'injected failure'); END;").unwrap();
+        assert_eq!(
+            sqlite3_exec(
+                db,
+                sql.as_ptr(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut()
+            ),
+            0
+        );
+        assert_eq!(sqlite3_close(db), 0);
+    }
+    assert!(engine.submit(submit_request(&fdr, ticket), NOW).is_err());
+    let player = engine.store().load_player(&license.public_key()).unwrap();
+    assert_eq!(player.elo, 1200.0);
+    assert_eq!(player.ranked_count, 0);
+    assert_eq!(engine.store().load_mission_elo(101).unwrap(), 800.0);
+    assert!(engine.store().load_fdr(&fdr.digest()).unwrap().is_none());
+    drop(engine);
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{path_str}-wal"));
     let _ = std::fs::remove_file(format!("{path_str}-shm"));

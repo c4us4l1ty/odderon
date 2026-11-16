@@ -46,6 +46,26 @@ impl CommitRequest {
     }
 }
 
+/// A callsign claim signed by the owner of the public key. The signature
+/// covers the exact UTF-8 name as well as the key, with an explicit length.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CallsignRequest {
+    pub name: String,
+    pub pubkey: PubKey,
+    pub signature: Sig,
+}
+
+impl CallsignRequest {
+    pub fn canonical_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(CALLSIGN_DOMAIN);
+        out.extend_from_slice(&self.pubkey);
+        out.extend_from_slice(&(self.name.len() as u16).to_be_bytes());
+        out.extend_from_slice(self.name.as_bytes());
+        out
+    }
+}
+
 /// The server's signed response to a commit. `attempt_num` is the atomic
 /// per-`(pubkey, contract)` counter; only `attempt_num == 1` is Ranked.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -151,6 +171,14 @@ pub enum ServerError {
     /// A chunked segment did not reproduce its checkpoint, or the cumulative
     /// hash chain broke at this boundary.
     SegmentMismatch(usize),
+    /// The ticket does not correspond to a stored commitment.
+    CommitmentMissing,
+    /// The record or ticket mode does not match the forced attempt mode.
+    AttemptModeMismatch,
+    /// This attempt already certified a different record.
+    AttemptAlreadySubmitted,
+    /// A different pilot already stored this canonical content hash.
+    FdrHashCollision,
     /// The callsign is already owned by another public key.
     CallsignTaken,
     /// The callsign failed validation (length or character set).
@@ -174,6 +202,14 @@ impl core::fmt::Display for ServerError {
             Self::ReplayRejected(e) => write!(f, "physics replay rejected the record: {e}"),
             Self::ContractMismatch(e) => write!(f, "contract framing mismatch: {e}"),
             Self::SegmentMismatch(i) => write!(f, "segment {i} broke the verification chain"),
+            Self::CommitmentMissing => write!(f, "ticket has no matching stored commitment"),
+            Self::AttemptModeMismatch => write!(f, "record mode does not match the ticket"),
+            Self::AttemptAlreadySubmitted => {
+                write!(f, "attempt already submitted a different record")
+            }
+            Self::FdrHashCollision => {
+                write!(f, "record hash is already owned by a different record")
+            }
             Self::CallsignTaken => write!(f, "callsign is already registered to another key"),
             Self::InvalidCallsign => write!(f, "callsign is invalid"),
             Self::Storage(e) => write!(f, "storage backend failed: {e}"),

@@ -62,6 +62,19 @@ pub struct LeaderRow {
 
 /// The dumb CRUD port. Atomicity is the adapter's job, not the trait's.
 pub trait Store {
+    /// Enclose one engine mutation in a durable transaction. Adapters with
+    /// fallible writes must roll back *all* changes on failure; concurrent
+    /// engines sharing a database must serialize their read/modify/write.
+    fn begin(&mut self) -> Result<(), ServerError> {
+        Ok(())
+    }
+    fn commit(&mut self) -> Result<(), ServerError> {
+        Ok(())
+    }
+    fn rollback(&mut self) -> Result<(), ServerError> {
+        Ok(())
+    }
+
     /// Atomically bump and return the per-`(pubkey, contract)` attempt count.
     /// The first call returns 1; a commit→refresh→commit returns 2, which the
     /// engine forces to Practice.
@@ -115,9 +128,14 @@ pub trait Store {
     /// if another key already owns it; idempotent for the same key.
     fn register_callsign(&mut self, callsign: &str, pubkey: &PubKey) -> Result<(), ServerError>;
 
-    /// The stored flights for a contract (or all contracts when `None`),
-    /// newest first. The engine orders and truncates for the leaderboard.
-    fn leaderboard(&self, contract_id: Option<u32>) -> Result<Vec<LeaderRow>, ServerError>;
+    /// Ranked flights only. Contract boards sort by score, the global board
+    /// by current Elo; equal values are ordered by hash for stable pagination.
+    fn leaderboard(
+        &self,
+        contract_id: Option<u32>,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<LeaderRow>, ServerError>;
 }
 
 type AttemptKey = ([u8; 32], u32);
@@ -163,7 +181,9 @@ pub fn seeded_mission_elo(contract_id: u32) -> f64 {
 impl Store for MemoryStore {
     fn increment_attempt(&mut self, pubkey: &PubKey, contract_id: u32) -> Result<u32, ServerError> {
         let entry = self.attempts.entry((*pubkey, contract_id)).or_insert(0);
-        *entry += 1;
+        *entry = entry
+            .checked_add(1)
+            .ok_or_else(|| ServerError::Storage("attempt counter overflow".into()))?;
         Ok(*entry)
     }
 
@@ -258,9 +278,17 @@ impl Store for MemoryStore {
         }
     }
 
-    fn leaderboard(&self, contract_id: Option<u32>) -> Result<Vec<LeaderRow>, ServerError> {
+    fn leaderboard(
+        &self,
+        contract_id: Option<u32>,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<LeaderRow>, ServerError> {
         let mut rows = Vec::new();
         for (hash, fdr) in &self.fdrs {
+            if fdr.mode != AttemptMode::Ranked {
+                continue;
+            }
             if let Some(id) = contract_id {
                 if fdr.contract_id != id {
                     continue;
@@ -276,6 +304,20 @@ impl Store for MemoryStore {
                 fdr_hash: *hash,
             });
         }
-        Ok(rows)
+        rows.sort_by(|a, b| {
+            let (left, right) = if contract_id.is_some() {
+                (a.score_s, b.score_s)
+            } else {
+                (a.elo, b.elo)
+            };
+            right
+                .total_cmp(&left)
+                .then_with(|| a.fdr_hash.cmp(&b.fdr_hash))
+        });
+        Ok(rows
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit.min(100) as usize)
+            .collect())
     }
 }

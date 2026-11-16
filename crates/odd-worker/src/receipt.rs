@@ -154,7 +154,20 @@ impl ServerReceipt {
     /// what the browser and the public verify page run; it needs no trust in
     /// the transport that delivered the receipt.
     pub fn verify(&self, server_pk: &PubKey) -> bool {
-        verify_server_sig(server_pk, &self.payload.canonical_bytes(), &self.server_sig)
+        self.payload.schema_v3 == RECEIPT_SCHEMA_V3
+            && self.payload.attempt_num > 0
+            && self.payload.mode
+                == crate::protocol::CommitTicket::forced_mode(self.payload.attempt_num)
+            && [
+                self.payload.score_s(),
+                self.payload.elo_before(),
+                self.payload.elo_after(),
+                self.payload.mission_elo_after(),
+            ]
+            .iter()
+            .all(|v| v.is_finite())
+            && (0.0..=1.0).contains(&self.payload.score_s())
+            && verify_server_sig(server_pk, &self.payload.canonical_bytes(), &self.server_sig)
     }
 
     /// True only when the signature is valid *and* the attempt was ranked.
@@ -187,6 +200,9 @@ impl ServerReceipt {
             s
         };
         let schema_v3 = u16::from_be_bytes(take(&mut p, 2).try_into().ok()?);
+        if schema_v3 != RECEIPT_SCHEMA_V3 {
+            return None;
+        }
         let fdr_hash: Hash = take(&mut p, 32).try_into().ok()?;
         let pubkey: PubKey = take(&mut p, 32).try_into().ok()?;
         let contract_id = u32::from_be_bytes(take(&mut p, 4).try_into().ok()?);

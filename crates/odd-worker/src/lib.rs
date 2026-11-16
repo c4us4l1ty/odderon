@@ -26,8 +26,8 @@ pub mod store;
 
 pub use engine::AuthorityEngine;
 pub use protocol::{
-    AttemptMode, CommitRequest, CommitTicket, SegmentCheckpoint, ServerError, SubmitRequest,
-    SubmitResponse,
+    AttemptMode, CallsignRequest, CommitRequest, CommitTicket, SegmentCheckpoint, ServerError,
+    SubmitRequest, SubmitResponse,
 };
 pub use receipt::{
     certification_label, verify_server_sig, ReceiptPayload, ServerKey, ServerReceipt,
