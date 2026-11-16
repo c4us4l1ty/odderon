@@ -26,6 +26,10 @@ cargo test --locked --offline -p odd-verify --test v4_trade_study \
     oracle_v4_fitted_mass_trade_study
 cargo test --locked --offline -p odd-verify --test v4_tank_volume \
     oracle_tank_volume_zero_discrepancy
+cargo test --locked --offline -p odd-systems --test v4_resumption \
+    oracle_true_single_segment_resumption_cost
+cargo test --locked --offline -p odd-worker --test v4_resumable_segment \
+    oracle_true_single_segment_resumption_cost
 cargo test --locked --offline -p odd-verify --test fixtures_v1_v2_v3 \
     oracle_v1_v2_v3_backward_compatibility
 

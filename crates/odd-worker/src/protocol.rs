@@ -105,10 +105,17 @@ impl CommitTicket {
     }
 }
 
-/// One checkpoint in a hash chain checked after a full authoritative replay.
+/// One checkpoint in a hash chain.
+///
 /// The state vector is `[x, y, z, vx, vy, vz, mass]`; `cum_hash` chains every
 /// prior checkpoint so a tampered intermediate breaks the chain at its own
 /// boundary rather than only at the end.
+///
+/// A **v1–v3** checkpoint is checked after a full authoritative replay and
+/// leaves the v4 fields `None`. A **v4** checkpoint is resumable: it carries
+/// everything the coupled propagator needs to start at `t_us` without
+/// replaying anything before it, so the authority's cost is the segment's
+/// length rather than the flight's.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SegmentCheckpoint {
     pub t_us: i64,
@@ -116,6 +123,45 @@ pub struct SegmentCheckpoint {
     pub prop_kg: f64,
     pub tank_temps: [f64; 2],
     pub cum_hash: Hash,
+    /// v4: the hash of the segment link that precedes this one. `None` at the
+    /// start of a chain, `Some` for every later segment, which is what lets a
+    /// verifier confirm the chain it is continuing is the one it issued.
+    pub prev_seg_hash: Option<Hash>,
+    /// v4: per-tank `[temperature_k, liquid_kg, vented_kg]`, oxidizer first.
+    /// These are the coupled ODE's own columns, not derived summaries.
+    pub tank_states: Option<[[f64; 3]; 2]>,
+    /// v4: cumulative cryocooler electrical draw over the flight, J.
+    pub cooler_joules: f64,
+    /// v4: relieve-valve openings so far. Reset only by a new flight.
+    pub vent_count: u32,
+}
+
+impl SegmentCheckpoint {
+    /// A v1–v3 checkpoint: chain-verifiable after a full replay, not resumable.
+    pub fn legacy(
+        t_us: i64,
+        state_vector: [f64; 7],
+        prop_kg: f64,
+        tank_temps: [f64; 2],
+        cum_hash: Hash,
+    ) -> Self {
+        Self {
+            t_us,
+            state_vector,
+            prop_kg,
+            tank_temps,
+            cum_hash,
+            prev_seg_hash: None,
+            tank_states: None,
+            cooler_joules: 0.0,
+            vent_count: 0,
+        }
+    }
+
+    /// True when this checkpoint carries the state a segment can resume from.
+    pub fn is_resumable(&self) -> bool {
+        self.tank_states.is_some() && self.state_vector.iter().all(|v| v.is_finite())
+    }
 }
 
 /// `POST /api/v1/submit` body. `fdr_payload` is the signed FDR in the same
@@ -173,6 +219,12 @@ pub enum ServerError {
     SegmentMismatch(usize),
     /// The current checkpoint verifier cannot authenticate cryogenic tank temperatures.
     ThermalSegmentsUnsupported,
+    /// A segment claims to be resumable but omits the state it would resume from.
+    SegmentNotResumable,
+    /// The segment body exceeded the 32 KiB cap.
+    SegmentTooLarge,
+    /// The caller has spent its submission budget for this window.
+    RateLimited,
     /// The ticket does not correspond to a stored commitment.
     CommitmentMissing,
     /// The record or ticket mode does not match the forced attempt mode.
@@ -205,6 +257,9 @@ impl core::fmt::Display for ServerError {
             Self::ContractMismatch(e) => write!(f, "contract framing mismatch: {e}"),
             Self::SegmentMismatch(i) => write!(f, "segment {i} broke the verification chain"),
             Self::ThermalSegmentsUnsupported => write!(f, "cryogenic checkpoint temperatures are not yet verifiable; submit the complete flight instead"),
+            Self::SegmentNotResumable => write!(f, "segment omits the state it resumes from"),
+            Self::SegmentTooLarge => write!(f, "segment body exceeds the 32 KiB cap"),
+            Self::RateLimited => write!(f, "submission rate limit exceeded for this window"),
             Self::CommitmentMissing => write!(f, "ticket has no matching stored commitment"),
             Self::AttemptModeMismatch => write!(f, "record mode does not match the ticket"),
             Self::AttemptAlreadySubmitted => {

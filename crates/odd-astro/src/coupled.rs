@@ -195,7 +195,10 @@ where
     }
     let _ = initial.mass;
 
-    let mut live = *pool;
+    // The pool is part of the resumable state. Restarting it from the launch
+    // value would silently fly the resumed leg with propellant the previous
+    // segment already burned and vented.
+    let mut live = resumed.map_or(*pool, |c| c.pool);
     let mut t = start_s;
     let mut position = resumed.map_or(initial.position, |c| c.position);
     let mut velocity = resumed.map_or(initial.velocity, |c| c.velocity);
