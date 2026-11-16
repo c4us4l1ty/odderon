@@ -61,6 +61,9 @@ self.onmessage=async ({data})=>{
       }));
       self.postMessage({nodes});return;
     }
+    // No unlocked modeled-flight preview: ranked must commit before this
+    // worker is launched, and local practice must also lock a prediction.
+    if(!Array.isArray(data.locked)||data.locked.length!==6)throw Error('Lock a prediction before running a flight.');
     if(data.contract){if(!w.mission_contract(data.contract))throw Error('Unknown contract.');}
     else if(!w.mission_setup(...data.setup))throw Error('Invalid spacecraft or mission parameters.');
     // The assembly (delegation margins and cryogenic fit-out) changes the dry
@@ -86,7 +89,7 @@ self.onmessage=async ({data})=>{
       index++;
     }
     if(!w.mission_compile())throw Error('Maneuvers overlap, exceed the fuel budget, or fall outside the mission.');
-    if(data.locked&&!w.mission_lock(...data.locked))throw Error('Invalid locked prediction.');
+    if(!w.mission_lock(...data.locked))throw Error('Invalid locked prediction.');
     const computeStart=performance.now();
     if(!w.mission_execute())throw Error('Flight could not be evaluated.');
     const computeMs=performance.now()-computeStart;

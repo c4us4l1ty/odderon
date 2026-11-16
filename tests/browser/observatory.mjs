@@ -585,6 +585,7 @@ try{
   await page.locator('#execute').click();
   await page.waitForFunction(()=>(!document.getElementById('debrief').hidden||missionDiagnostics.locked)&&!missionDiagnostics.pending,null,{timeout:180000});
   assert.equal(await page.locator('#debrief').isHidden(),false,`mission error: ${await page.locator('#execute-status').textContent()}, page errors: ${errors}`);
+  assert.match(await page.locator('#certification-status').textContent(),/CERTIFIED SERVER-RANKED RECEIPT/);
   const sso=await page.locator('#debrief-content').textContent();
   const ssoScore=Number(sso.match(/([0-9.]+)%Mission score/)?.[1]);
   assert.ok(ssoScore>80,`sun-synchronous score: ${ssoScore}; ${sso}`);
@@ -595,35 +596,47 @@ try{
   assert.ok(Math.abs(ssoReport[17])<1e-9);
   assert.deepEqual(await page.evaluate(()=>missionDiagnostics.acronymViolations),[]);
   await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:10000});
-  // Contract 103: demonstrate the single-burn trap, then use the numerical
-  // perigee splitter, lock a prediction, and verify a surviving apoapsis and
-  // finite-burn-dominated sensitivity. The patched lunar preview is optional
-  // for this epoch; a radius target is not itself a lunar encounter.
+  // Contract 103: fly a fresh delegated cryogenic design through the
+  // authority without running the numerical splitter as a ranked preview.
+  // Then exercise that numerical teaching aid explicitly in local practice.
   await page.locator('#unlock').click();
   await page.locator('#mission-select').selectOption('103');
+  await page.locator('#delegate-1').click();
   await page.locator('#example').click();
-  await page.waitForFunction(()=>!missionDiagnostics.pending&&missionDiagnostics.report?.[30]===1,null,{timeout:180000});
-  assert.match(await page.locator('#causal-text').textContent(),/Impact/);
-  await page.locator('#split-kick').click();
-  await page.waitForFunction(()=>missionDiagnostics.nodes.length===3&&!missionDiagnostics.pending&&missionDiagnostics.report?.[30]===0,null,{timeout:240000});
-  const tugNodes=await page.evaluate(()=>missionDiagnostics.nodes);
-  assert.ok(tugNodes[1].guidance&&tugNodes[2].guidance,'later kicks must carry numerical guidance');
-  // The tug now flies a physically derived engine (18.087 kN, 449.91 s) rather
-  // than the card's rounded 18 kN / 450 s, so its burns are slightly shorter
-  // and the targeted periapsis lands a couple of seconds later.
-  assert.ok(Math.abs(tugNodes[1].time-10303.134747)<2,`second kick epoch ${tugNodes[1].time}`);
+  assert.equal(await page.locator('#split-kick').isDisabled(),true,'numerical targeting is not a ranked preview');
+  assert.equal(await page.evaluate(()=>missionDiagnostics.report),null,'the ranked planner has not run a modeled flight');
+  await page.locator('#node-t').fill('700');
   await page.locator('#prefill').click();
-  // Predict the achieved apoapsis radius convention in altitude fields.
-  const tugReport=await page.evaluate(()=>missionDiagnostics.report);
-  await page.locator('#predict-apo').fill(String(tugReport[1]/1000));
-  await page.locator('#predict-peri').fill(String(tugReport[2]/1000));
-  await page.locator('#predict-time').fill(String(tugReport[29]));
   await page.locator('#execute').click();
   await page.waitForFunction(()=>(!document.getElementById('debrief').hidden||missionDiagnostics.locked)&&!missionDiagnostics.pending,null,{timeout:240000});
-  assert.equal(await page.locator('#debrief').isHidden(),false,`mission error: ${await page.locator('#execute-status').textContent()}, page errors: ${errors}`);
+  assert.equal(await page.locator('#debrief').isHidden(),false,`ranked tug error: ${await page.locator('#execute-status').textContent()}`);
+  assert.match(await page.locator('#certification-status').textContent(),/CERTIFIED SERVER-RANKED RECEIPT/);
+  const rankedTug=await page.evaluate(()=>({record:missionDiagnostics.recorder().document,thermal:missionDiagnostics.boilOff}));
+  assert.equal(rankedTug.record.delegation_mask,2);
+  assert.equal(rankedTug.record.server_receipt.contract_id,103);
+  assert.ok(rankedTug.record.thermal_specs.length>0 && rankedTug.thermal && !rankedTug.thermal.inert,'server replay includes delegated cryogenic physics');
+  console.log('Portable replay: server-certified delegated cryogenic Contract 103.');
+
+  await page.locator('#unlock').click();
+  await page.locator('#delegate-1').click();
+  await page.locator('#attempt-mode').selectOption('practice');
+  await page.locator('#example').click();
+  assert.equal(await page.evaluate(()=>missionDiagnostics.report),null);
+  await page.locator('#split-kick').click();
+  await page.waitForFunction(()=>missionDiagnostics.nodes.length===3&&!missionDiagnostics.pending,null,{timeout:240000});
+  assert.equal(await page.locator('#attempt-mode option[value=ranked]').isDisabled(),true,'a numerical practice cannot be reused as a ranked preview in this page session');
+  const tugNodes=await page.evaluate(()=>missionDiagnostics.nodes);
+  assert.ok(tugNodes[1].guidance&&tugNodes[2].guidance,'later kicks must carry numerical guidance');
+  assert.ok(Math.abs(tugNodes[1].time-10303.134747)<2,`second kick epoch ${tugNodes[1].time}`);
+  await page.locator('#prefill').click();
+  await page.locator('#execute').click();
+  await page.waitForFunction(()=>(!document.getElementById('debrief').hidden||missionDiagnostics.locked)&&!missionDiagnostics.pending,null,{timeout:240000});
+  assert.equal(await page.locator('#debrief').isHidden(),false,`practice tug error: ${await page.locator('#execute-status').textContent()}`);
   const tug=await page.locator('#debrief-content').textContent();
   const tugScore=Number(tug.match(/([0-9.]+)%Mission score/)?.[1]);
-  assert.ok(tugScore>80,`tug score: ${tugScore}; ${tug}`);
+  // The honest ideal prediction deliberately does not peek at the modeled
+  // result. The former >80 gate used the unlocked actual as the prediction.
+  assert.ok(tugScore>60,`tug score: ${tugScore}; ${tug}`);
   const tugFinite=Number(tug.match(/Finite-burn arc: ([0-9.]+)%/)?.[1]);
   assert.ok(tugFinite>70,`finite-burn apoapsis Shapley attribution: ${tug}`);
   const finalTug=await page.evaluate(()=>missionDiagnostics.report);

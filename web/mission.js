@@ -22,7 +22,10 @@ const clampNodeTime=t=>{const [lo,hi]=nodeTimeRange();return Math.max(lo,Math.mi
 let setup=[820497600,DURATION,1200,DRY,2400,310,INITIAL,0,0,0,Math.sqrt(MU/INITIAL),0];
 const canvas=$('plan-canvas'),ctx=canvas.getContext('2d');
 const lensCanvas=$('lens-canvas'),lensCtx=lensCanvas.getContext('2d');
-let wasm,nodes=[],compiledOrder=[],selected=-1,preview=[],lunarPreview=[],actual=null,lastReport=null,lastLunarInfo=null,worker=null,timer=null,locked=null,drag=null,draws=0,messages=0,sequence=0;
+let wasm,nodes=[],compiledOrder=[],selected=-1,preview=[],lunarPreview=[],actual=null,lastReport=null,lastLunarInfo=null,worker=null,locked=null,drag=null,draws=0,messages=0,sequence=0;
+// A local, best-effort guard against using numerical practice as a ranked
+// planning preview. The server cannot inspect or trust a user's browser.
+const practiceSimulated=new Set();
 let activeLens=null,activeTerm=null,lensPhase=0,lensDraws=0,lastComputeMs=null,lastCapture=null,lastRecorder=null,engineLab=null,authorityPending=0;
 // The design the stage actually flies. The lab can be mid-edit without this
 // changing: only "Fit this engine to the stage" commits it. mission_contract()
@@ -153,12 +156,12 @@ function syncFields(){
   if(n){fields.time.value=String(Math.round(n.time));fields.t.value=String(+n.dv[0].toFixed(2));fields.n.value=String(+n.dv[1].toFixed(2));fields.w.value=String(+n.dv[2].toFixed(2));}
   $('add-node').disabled=!wasm||!!locked||nodes.length>=12;$('example').disabled=!wasm||!!locked;$('mission-select').disabled=!wasm||!!locked;$('split-kick').disabled=!!locked;
 }
-function updatePreview(schedule=true){
+function updatePreview(){
   if(!wasm)return;
   cancelFlight();sequence++;syncFields();actual=null;lastReport=null;lastLunarInfo=null;lunarPreview=[];
   if(!configure(wasm,nodes)){$('plan-status').textContent='Unable to compile: check timing, overlapping burns, or available propellant.';$('plan-status').classList.add('failure');preview=[];$('prefill').disabled=true;$('execute').disabled=true;
   updateAttemptMode();updateCausal();draw();cancelFlight();return;}
-  $('plan-status').classList.remove('failure');$('plan-status').textContent='Ideal orbit ready. The modeled flight calculates in the background.';
+  $('plan-status').classList.remove('failure');$('plan-status').textContent='Ideal orbit ready. The modeled flight runs only after the prediction is locked.';
   preview=Array.from({length:481},(_,i)=>({time:DURATION*i/480,state:readState(wasm,DURATION*i/480)}));
   if(scenario==='103'){
     const valid=wasm.mission_lunar_info(0);
@@ -167,30 +170,29 @@ function updatePreview(schedule=true){
   }
   if(preview.some(p=>p.state.some(x=>!Number.isFinite(x)))){preview=[];$('plan-status').textContent='The ideal orbit could not be sampled.';cancelFlight();draw();return;}
   $('prefill').disabled=false;$('execute').disabled=nodes.length===0||!!locked;
-  syncFields();updateCausal();draw();annotateAcronyms($('plan-status'));if(schedule)scheduleFlight();
+  syncFields();updateCausal();draw();annotateAcronyms($('plan-status'));
 }
 function readStatePatched(w,t){return Array.from({length:7},(_,i)=>w.mission_lunar_preview(t,i));}
-function cancelFlight(){if(timer!==null){clearTimeout(timer);timer=null;}if(worker){worker.terminate();worker=null;}}
-function scheduleFlight(){cancelFlight();const version=++sequence;timer=setTimeout(()=>{timer=null;startFlight(false,version);},350);}
-function workerPayload(isLocked){
+function cancelFlight(){if(worker){worker.terminate();worker=null;}}
+function workerPayload(){
   const snapshot=nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));
   const payload={contract:contractId,setup,nodes:snapshot,metric:scenario==='102'?1:0,callsign:identity.profile()?.callsign??''};
   // Send the committed physical design, not the performance it produces and
   // not whatever the lab is currently previewing.
   if(appliedEngine)payload.engine={...appliedEngine};
   if(assemblyDesign)payload.assembly={...assemblyDesign};
-  if(isLocked){const p=locked.prediction;payload.locked=[p.dv,p.apo*1000,p.peri*1000,p.fuel,p.time,Number.isFinite(p.miss)?p.miss:NaN];}
+  const p=locked.prediction;payload.locked=[p.dv,p.apo*1000,p.peri*1000,p.fuel,p.time,Number.isFinite(p.miss)?p.miss:NaN];
   return payload;
 }
-function startFlight(isLocked,version=++sequence,flightContext=null){
+function startFlight(version,flightContext){
   cancelFlight();worker=new Worker('./mission-worker.js',{type:'module'});const current=worker;
   current.onmessage=({data})=>{messages++;if(worker!==current||version!==sequence)return;current.terminate();worker=null;
-    if(data.error){$('plan-status').textContent=data.error;$('plan-status').classList.add('failure');if(isLocked)$('execute-status').textContent=data.error;return;}
+    if(data.error){$('plan-status').textContent=data.error;$('plan-status').classList.add('failure');$('execute-status').textContent=data.error;return;}
     actual=data.points;lastReport=data.report;lastCapture=data.capture??null;lastBoilOff=data.boilOff??null;lastDelegationMask=data.delegationMask??0;lastRecorder=null;lastComputeMs=Number.isFinite(data.computeMs)?data.computeMs:null;lastLunarInfo=data.lunarInfo?.[0]?data.lunarInfo:null;if(data.lunar?.length)lunarPreview=data.lunar;updateCausal();draw();$('plan-status').textContent='Flight model ready. No simulation runs while idle.';annotateAcronyms($('plan-status'));
-    if(isLocked)showDebrief(data.report,flightContext,version);
+    showDebrief(data.report,flightContext,version);
   };
-  current.onerror=()=>{if(worker!==current)return;worker.terminate();worker=null;$('plan-status').textContent='Flight worker failed.';if(isLocked)$('execute-status').textContent='Flight worker failed.';};
-  const payload=workerPayload(isLocked);
+  current.onerror=()=>{if(worker!==current)return;worker.terminate();worker=null;$('plan-status').textContent='Flight worker failed.';$('execute-status').textContent='Flight worker failed.';};
+  const payload=workerPayload();
   if(flightContext){payload.attemptMode=flightContext.ticket?.mode??1;payload.callsign=flightContext.callsign;}
   messages++;current.postMessage(payload);
 }
@@ -392,19 +394,22 @@ function updateCausal(){
     if((warning===4||warning===6)&&nodes[selected]?.dv[0]>0&&!locked)$('split-kick').hidden=false;
   }
   if(scenario==='103'&&nodes.length===1&&nodes[0].dv[0]>2500&&!locked)$('split-kick').hidden=false;
+  if(scenario==='103'){$('split-kick').disabled=!!locked||$('attempt-mode').value==='ranked';$('split-kick').title=$('attempt-mode').value==='ranked'?'Numerical targeting runs the flight model and is available only in practice.':'';}
   if(scenario==='103'&&lastLunarInfo){const row=document.createElement('div');row.className='cause-chain';row.textContent=`Lunar sphere-of-influence entry: ideal patched preview enters at ${Math.round(lastLunarInfo[0])} s. The ${Math.round(lastLunarInfo[1]/1000)} km boundary is a preview aid, not a gravity discontinuity; the gold path keeps continuous third-body gravity.`;target.append(row);}
   if(!target.childNodes.length)target.textContent='No rule currently triggered. This is a limited check, not a safety certification.';
   annotateAcronyms(target);
 }
 $('split-kick').addEventListener('click',()=>{
   if(scenario==='103'){
+    if($('attempt-mode').value==='ranked'){$('plan-status').textContent='Numerical targeting is available in practice only.';return;}
+    practiceSimulated.add(contractId);updateAttemptMode();
     const total=nodes.reduce((a,n)=>a+Math.hypot(...n.dv),0)||3240;
     const first=nodes[0]?.time||1600;
     cancelFlight();const version=++sequence;worker=new Worker('./mission-worker.js',{type:'module'});const current=worker;
     $('plan-status').textContent='Targeting numerical periapses in the background…';$('split-kick').disabled=true;
     current.onmessage=({data})=>{messages++;if(worker!==current||version!==sequence)return;current.terminate();worker=null;
       if(data.error){$('plan-status').textContent=data.error;$('split-kick').disabled=!!locked;return;}
-      nodes=data.nodes;selected=nodes.length-1;updatePreview();$('plan-status').textContent='Three equal kicks placed at numerically propagated periapses. Check the gold path and the apoapsis radius.';annotateAcronyms($('plan-status'));
+      nodes=data.nodes;selected=nodes.length-1;updatePreview();$('plan-status').textContent='Three equal kicks placed at numerically propagated periapses. Lock a prediction and fly to see the modeled path.';annotateAcronyms($('plan-status'));
     };
     current.onerror=()=>{if(worker!==current)return;worker.terminate();worker=null;$('plan-status').textContent='Targeting worker failed.';$('split-kick').disabled=!!locked;};
     messages++;current.postMessage({action:'split',kicks:3,total,first,engine:appliedEngine?{...appliedEngine}:null,assembly:assemblyDesign?{...assemblyDesign}:null});return;
@@ -567,22 +572,26 @@ $('example').addEventListener('click',()=>{
   else{const v1=Math.sqrt(MU/INITIAL),v2=Math.sqrt(MU/TARGET);nodes=[{time:200,dv:[v1*(Math.sqrt(TARGET/a)-1),0,0]},{time:200+coast,dv:[v2*(1-Math.sqrt(INITIAL/a)),0,0]}];}
   selected=0;updatePreview();prefill();
 });
-// Only the authority decides whether a commit is attempt 1. A local cache
-// never unlocks or blocks ranked eligibility; deliberately chosen practice
-// does not consume the first ranked attempt.
+// Only the authority decides whether a commit is attempt 1. We also avoid
+// presenting a ranked launch in this page session after numerical practice
+// on the same contract; this UX guard is not a security boundary.
 function updateAttemptMode(reset=false){
   const select=$('attempt-mode');if(!select)return;
-  const available=authority.configured();
-  select.querySelector('option[value="ranked"]').disabled=!available;
-  if(!available)select.value='practice';else if(reset&&!locked)select.value='ranked';
+  const available=authority.configured(), practiced=practiceSimulated.has(contractId);
+  select.querySelector('option[value="ranked"]').disabled=!available||practiced;
+  if(!available||practiced)select.value='practice';else if(reset&&!locked)select.value='ranked';
   select.disabled=!!locked;
   const note=$('attempt-mode-note');
-  if(note)note.textContent=available?'Ranked launch commits the design and prediction before the locked flight. The server forces later attempts to verified practice.':'No trusted server key is configured. Local practice and replay are available, but no rating or certification is awarded.';
+  if(note)note.textContent=!available?'No trusted server key is configured. Local practice and replay are available, but no rating or certification is awarded.'
+    :practiced?'Numerical practice was used on this contract in this page session. Ranked is disabled here; offline practice does not consume a server attempt.'
+    :'Ranked launch commits the design and prediction before the modeled flight. The server forces later attempts to verified practice. Numerical tug targeting is practice-only.';
+  const split=$('split-kick');
+  if(split){split.disabled=!!locked||(scenario==='103'&&select.value==='ranked');split.title=scenario==='103'&&select.value==='ranked'?'Numerical targeting runs the flight model and is available only in practice.':'';}
 }
 identity.onChange(()=>updateAttemptMode());
+$('attempt-mode').addEventListener('change',()=>{updateAttemptMode();});
 $('mission-select').addEventListener('change',()=>{
-  updateAttemptMode(true);
-  if(locked)return;scenario=$('mission-select').value;contractId=Number(scenario);cancelFlight();sequence++;nodes=[];selected=-1;actual=null;lastReport=null;lastLunarInfo=null;lunarPreview=[];
+  if(locked)return;scenario=$('mission-select').value;contractId=Number(scenario);updateAttemptMode(true);cancelFlight();sequence++;nodes=[];selected=-1;actual=null;lastReport=null;lastLunarInfo=null;lunarPreview=[];
   if(scenario==='102'){
     INITIAL=R+250000;TARGET=R+800000;DURATION=432000;plane=[Math.cos(96*Math.PI/180),Math.sin(96*Math.PI/180)];const a=(INITIAL+TARGET)/2,v=Math.sqrt(MU*(2/INITIAL-1/a));setup=[820497600,DURATION,1200,DRY,2400,310,INITIAL,0,0,0,v*plane[0],v*plane[1]];
     $('mission-rank').textContent='CONTRACT 102 / FLIGHT DYNAMICS OFFICER · 1250';$('mission-title').textContent='Follow the sunlight';$('mission-description').textContent='Circularize at 800 km and tilt the orbit so its crossing of the equator turns by about 4.93° in five days. Engine and spacecraft mass use the rescue assumptions.';$('example').textContent='Show circularization example';
@@ -624,13 +633,14 @@ async function launchLocked(){
       const current=identity.profile().publicKey.map(b=>b.toString(16).padStart(2,'0')).join('');
       if(current!==pubkey)throw Error('The active license changed; the committed attempt was not flown.');
       $('execute-status').textContent=context.ticket.mode===0?'Commit accepted. Simulating the ranked flight…':'This is a later attempt; the server requires practice. Simulating…';
-      startFlight(true,version,context);
+      startFlight(version,context);
     }catch(error){
       if(version===sequence)$('execute-status').textContent=`Ranked launch stopped: ${String(error.message||error)}. No locked flight ran. If a response was lost, the attempt may have been consumed; retry may be practice.`;
     }finally{authorityPending--;}
   }else{
+    practiceSimulated.add(contractId);updateAttemptMode();
     $('execute-status').textContent='Local practice: simulating the locked flight without a server rating…';
-    startFlight(true,version,context);
+    startFlight(version,context);
   }
 }
 $('unlock').addEventListener('click',()=>{locked=null;cancelFlight();sequence++;engineLab?.setLocked();assembly?.setLocked();updateAttemptMode();$('unlock').hidden=true;$('debrief').hidden=true;$('execute-status').textContent='';for(const id of ['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time','predict-miss'])$(id).disabled=false;updatePreview();});
@@ -644,12 +654,12 @@ canvas.addEventListener('pointermove',e=>{
     if(!locked&&preview.length&&nodes[selected]){const p=mousePoint(e),state=readState(wasm,nodes[selected].time),center=toCanvas(state);const h=handles(center,state).find(h=>distance(p,h.end)<12);if(h)startLens(h.key);else if(activeLens&&!e.target.closest?.('.term'))stopLens();}
     return;
   }
-  const p=mousePoint(e),node=nodes[selected];if(drag.key==='time'){const near=nearestPath(p);if(near)node.time=clampNodeTime(near.time);}else{const i={t:0,n:1,w:2}[drag.key];node.dv[i]=drag.initial+2*((p[0]-drag.start[0])*drag.dir[0]+(p[1]-drag.start[1])*drag.dir[1]);}delete node.guidance;updatePreview(false);
+  const p=mousePoint(e),node=nodes[selected];if(drag.key==='time'){const near=nearestPath(p);if(near)node.time=clampNodeTime(near.time);}else{const i={t:0,n:1,w:2}[drag.key];node.dv[i]=drag.initial+2*((p[0]-drag.start[0])*drag.dir[0]+(p[1]-drag.start[1])*drag.dir[1]);}delete node.guidance;updatePreview();
 });
-function endDrag(e){if(drag&&drag.pointer===e.pointerId){drag=null;stopLens();scheduleFlight();}}
+function endDrag(e){if(drag&&drag.pointer===e.pointerId){drag=null;stopLens();}}
 canvas.addEventListener('pointerup',endDrag);canvas.addEventListener('pointercancel',endDrag);canvas.addEventListener('lostpointercapture',endDrag);canvas.addEventListener('pointerleave',e=>{if(!drag&&!intoLens(e))stopLens();});
 new ResizeObserver(draw).observe(canvas.parentElement);
-window.missionDiagnostics=Object.freeze({wasm:()=>wasm,recorder:()=>lastRecorder,verification:()=>verificationResult(),openVerify,profile:()=>identity.profile(),isRanked:id=>identity.isRanked(id),openProfile,get nodeTimeRange(){return nodeTimeRange();},clampNodeTime,get nodeMarker(){const n=nodes[selected];if(!n||!wasm)return null;const s=readState(wasm,n.time);return s.some(x=>!Number.isFinite(x))?null:toCanvas(s);},get pathEnds(){return preview.length?[toCanvas(preview[0].state),toCanvas(preview[preview.length-1].state)]:null;},get nodes(){return nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));},get pending(){return !!worker||timer!==null||authorityPending>0;},get draws(){return draws;},get messages(){return messages;},get locked(){return !!locked;},get report(){return lastReport?[...lastReport]:null;},get computeMs(){return lastComputeMs;},get lunarInfo(){return lastLunarInfo?[...lastLunarInfo]:null;},get lens(){return activeLens;},get lensDraws(){return lensDraws;},get lensPending(){return lensGovernor.frame!==null;},get engine(){return engineLab?engineLab.diagnostics():null;},get appliedEngine(){return appliedEngine?{...appliedEngine}:null;},get assembly(){return assembly?assembly.diagnostics():null;},get boilOff(){return lastBoilOff;},get flownDelegationMask(){return lastDelegationMask;},get causalValid(){return wasm?wasm.mission_causal_valid()===1&&wasm.mission_engine_causal_valid()===1:false;},get acronymViolations(){return acronymViolations();},get handles(){if(selected<0||!wasm)return [];const state=readState(wasm,nodes[selected].time);return handles(toCanvas(state),state).map(h=>({key:h.key,end:h.end}));}});
+window.missionDiagnostics=Object.freeze({wasm:()=>wasm,recorder:()=>lastRecorder,verification:()=>verificationResult(),openVerify,profile:()=>identity.profile(),isRanked:id=>identity.isRanked(id),openProfile,get nodeTimeRange(){return nodeTimeRange();},clampNodeTime,get nodeMarker(){const n=nodes[selected];if(!n||!wasm)return null;const s=readState(wasm,n.time);return s.some(x=>!Number.isFinite(x))?null:toCanvas(s);},get pathEnds(){return preview.length?[toCanvas(preview[0].state),toCanvas(preview[preview.length-1].state)]:null;},get nodes(){return nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));},get pending(){return !!worker||authorityPending>0;},get draws(){return draws;},get messages(){return messages;},get locked(){return !!locked;},get report(){return lastReport?[...lastReport]:null;},get computeMs(){return lastComputeMs;},get lunarInfo(){return lastLunarInfo?[...lastLunarInfo]:null;},get lens(){return activeLens;},get lensDraws(){return lensDraws;},get lensPending(){return lensGovernor.frame!==null;},get engine(){return engineLab?engineLab.diagnostics():null;},get appliedEngine(){return appliedEngine?{...appliedEngine}:null;},get assembly(){return assembly?assembly.diagnostics():null;},get boilOff(){return lastBoilOff;},get flownDelegationMask(){return lastDelegationMask;},get causalValid(){return wasm?wasm.mission_causal_valid()===1&&wasm.mission_engine_causal_valid()===1:false;},get acronymViolations(){return acronymViolations();},get handles(){if(selected<0||!wasm)return [];const state=readState(wasm,nodes[selected].time);return handles(toCanvas(state),state).map(h=>({key:h.key,end:h.end}));}});
 try{const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error('The physics module is not available. Build it first.');({instance:{exports:wasm}}=await WebAssembly.instantiate(await response.arrayBuffer(),{}));identity.init(wasm);initProfile();initVerify(wasm);initLeaderboard();updateAttemptMode(true);loadGlossary(wasm);
 // The lab reads canonical stage numbers back after a redesign so the planner,
 // the worker payload and the signed recorder cannot disagree about the engine.
