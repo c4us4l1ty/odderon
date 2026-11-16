@@ -97,6 +97,21 @@ correctness. No production deployment is implied.
   applied as thrust in the chemical contracts. Scoring still compares its fuel
   threshold and prediction against the catalog baseline dry mass rather than
   the fitted stage; re-baselining scoring is a separate versioned change.
+- **Practical consequence of coupling:** commands are delta-v setpoints flown
+  as fixed burn *durations* sized from the design mass at compile time. Venting
+  mass during the coast therefore makes the same commanded burn impart less
+  delta-v than planned, and a stage whose load shrinks also converts the impulse
+  it does receive into more orbital energy. On Contract 103's un-cooled airframe
+  the reference 3,240 m/s three-kick split vented 558.357 kg and reached
+  +33,547 km past the 380,000 km goal, where the frozen v3 law — which let the
+  vented mass ride along for free — reached +14,031 km on the identical plan.
+  That is a physics re-baseline, not a scoring change: the objective term moved
+  from 0.813 to 0.358. The prediction term is ~0 either way, because the
+  Level-1 ideal conic cannot represent a numerically guided split at all
+  (it predicts a 71,900 km apoapsis for a plan that delivers 407,169 km), so
+  making the predictor boil-off-aware would not close this gap. Fitting the
+  recommended card cuts the vent to 3.84 kg and puts the same budget back inside
+  the window in both hand-sized and delegated modes.
 - **Identity:** the license is browser-local with export/restore, not an
   account, revocation, Sybil prevention or custody system. A private server
   seed, static key pin and explicit rotation strategy are operator duties.
