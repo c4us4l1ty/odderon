@@ -30,3 +30,8 @@ libm = "0.2"
 odd-sim = { path = "../odd-sim" }
 odd-propulsion = { path = "../odd-propulsion" }
 odd-systems = { path = "../odd-systems" }
+
+[[bin]]
+name = "odderon-authority"
+path = "src/bin/authority.rs"
+required-features = ["local"]

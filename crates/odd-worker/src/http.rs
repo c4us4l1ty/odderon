@@ -12,7 +12,8 @@
 
 use crate::engine::AuthorityEngine;
 use crate::protocol::{
-    CommitRequest, CommitTicket, SegmentCheckpoint, ServerError, SubmitRequest, SubmitResponse,
+    CallsignRequest, CommitRequest, CommitTicket, SegmentCheckpoint, ServerError, SubmitRequest,
+    SubmitResponse,
 };
 use crate::receipt::{ReceiptPayload, ServerReceipt};
 use crate::store::Store;
@@ -75,8 +76,12 @@ pub fn route<S: Store>(
     body: &str,
     now_s: i64,
 ) -> Response {
+    if body.len() > MAX_BODY_BYTES {
+        return Response::json(413, &Json::Str("request body too large".into()));
+    }
+    let (pathname, query) = path.split_once('?').unwrap_or((path, ""));
     let parsed = Json::parse(body);
-    match (method, path) {
+    match (method, pathname) {
         ("POST", "/api/v1/commit") => {
             let Some(req) = parsed.as_ref().and_then(commit_from_json) else {
                 return Response::json(400, &Json::Str("bad commit body".into()));
@@ -95,8 +100,147 @@ pub fn route<S: Store>(
                 Err(e) => Response::error(&e),
             }
         }
+        ("POST", "/api/v1/callsign") => {
+            let Some(req) = parsed.as_ref().and_then(callsign_from_json) else {
+                return Response::json(400, &Json::Str("bad callsign body".into()));
+            };
+            match engine.register_callsign(req) {
+                Ok(name) => {
+                    let mut o = BTreeMap::new();
+                    o.insert("ok".into(), Json::Bool(true));
+                    o.insert("name".into(), Json::Str(name));
+                    Response::json(200, &Json::Obj(o))
+                }
+                Err(e) => Response::error(&e),
+            }
+        }
+        ("GET", "/api/v1/leaderboard") => leaderboard(engine, query),
+        ("GET", p) if p.starts_with("/api/v1/verify/") => {
+            let hash = &p["/api/v1/verify/".len()..];
+            let Some(hash) = parse_hash(hash) else {
+                return Response::json(400, &Json::Str("bad hash".into()));
+            };
+            match engine.store().load_fdr(&hash) {
+                Ok(Some(fdr)) => {
+                    let Some(receipt) = fdr.receipt.as_ref() else {
+                        return Response::json(404, &Json::Str("receipt not found".into()));
+                    };
+                    if !receipt.verify(&engine.server_pk())
+                        || receipt.payload.fdr_hash != hash
+                        || receipt.payload.pubkey != fdr.pubkey
+                    {
+                        return Response::json(500, &Json::Str("stored receipt is invalid".into()));
+                    }
+                    let Ok(payload) = String::from_utf8(fdr.bytes) else {
+                        return Response::json(500, &Json::Str("stored record is invalid".into()));
+                    };
+                    let mut o = BTreeMap::new();
+                    o.insert("fdr_payload".into(), Json::Str(payload));
+                    o.insert("receipt".into(), receipt_to_json(receipt));
+                    Response::json(200, &Json::Obj(o))
+                }
+                Ok(None) => Response::json(404, &Json::Str("not found".into())),
+                Err(e) => Response::error(&e),
+            }
+        }
+        ("GET", p) if p.starts_with("/api/v1/player/") => {
+            let pk = &p["/api/v1/player/".len()..];
+            let Some(pk) = parse_hash(pk) else {
+                return Response::json(400, &Json::Str("bad public key".into()));
+            };
+            match engine.store().load_player(&pk) {
+                Ok(player) => {
+                    let mut o = BTreeMap::new();
+                    o.insert("pubkey".into(), hex(&pk));
+                    o.insert("elo".into(), Json::Num(player.elo));
+                    o.insert("ranked_count".into(), Json::Num(player.ranked_count as f64));
+                    o.insert(
+                        "callsign".into(),
+                        player.callsign.map(Json::Str).unwrap_or(Json::Null),
+                    );
+                    Response::json(200, &Json::Obj(o))
+                }
+                Err(e) => Response::error(&e),
+            }
+        }
         _ => Response::json(404, &Json::Str("not found".into())),
     }
+}
+
+/// The public board never contains practice flights. Pagination is bounded so
+/// neither a query nor a large database requires an unbounded response.
+fn leaderboard<S: Store>(engine: &AuthorityEngine<S>, query: &str) -> Response {
+    let (mut contract, mut page) = (None, 1u32);
+    let (mut seen_contract, mut seen_page) = (false, false);
+    for part in query.split('&').filter(|s| !s.is_empty()) {
+        let Some((key, value)) = part.split_once('=') else {
+            return Response::json(400, &Json::Str("bad query".into()));
+        };
+        match key {
+            "contract" if !seen_contract => {
+                seen_contract = true;
+                let Ok(id) = value.parse::<u32>() else {
+                    return Response::json(400, &Json::Str("bad contract".into()));
+                };
+                if odd_contracts::Contract::get(id).is_none() {
+                    return Response::json(400, &Json::Str("unknown contract".into()));
+                }
+                contract = Some(id);
+            }
+            "page" if !seen_page => {
+                seen_page = true;
+                let Ok(n) = value.parse::<u32>() else {
+                    return Response::json(400, &Json::Str("bad page".into()));
+                };
+                if !(1..=10_000).contains(&n) {
+                    return Response::json(400, &Json::Str("bad page".into()));
+                }
+                page = n;
+            }
+            _ => return Response::json(400, &Json::Str("bad query".into())),
+        }
+    }
+    match engine.store().leaderboard(contract, (page - 1) * 25, 25) {
+        Ok(rows) => Response::json(
+            200,
+            &Json::Arr(
+                rows.into_iter()
+                    .map(|row| {
+                        let mut o = BTreeMap::new();
+                        o.insert(
+                            "callsign".into(),
+                            row.callsign.map(Json::Str).unwrap_or(Json::Null),
+                        );
+                        o.insert("pubkey".into(), hex(&row.pubkey));
+                        o.insert("elo".into(), Json::Num(row.elo));
+                        o.insert("score_s".into(), Json::Num(row.score_s));
+                        o.insert(
+                            "delegation_mask".into(),
+                            Json::Num(row.delegation_mask as f64),
+                        );
+                        o.insert("fdr_hash".into(), hex(&row.fdr_hash));
+                        Json::Obj(o)
+                    })
+                    .collect(),
+            ),
+        ),
+        Err(e) => Response::error(&e),
+    }
+}
+
+fn parse_hash(value: &str) -> Option<[u8; 32]> {
+    odd_report::hex::decode(value)?.try_into().ok()
+}
+
+fn callsign_from_json(v: &Json) -> Option<CallsignRequest> {
+    let Json::Str(name) = v.get("name")? else {
+        return None;
+    };
+    Some(CallsignRequest {
+        name: name.clone(),
+        pubkey: array32(v.get("pubkey"))?,
+        signature: array64(v.get("sig"))?,
+    })
 }
 
 // --- protocol ↔ JSON -------------------------------------------------------
@@ -176,7 +320,7 @@ pub fn ticket_from_json(v: &Json) -> Option<CommitTicket> {
         contract_id: v.get("contract_id")?.as_u32()?,
         pubkey: array32(v.get("pubkey"))?,
         attempt_num: v.get("attempt_num")?.as_u32()?,
-        mode: crate::protocol::AttemptMode::from_u8(v.get("mode")?.as_u32()? as u8)?,
+        mode: crate::protocol::AttemptMode::from_u8(u8::try_from(v.get("mode")?.as_u32()?).ok()?)?,
         design_hash: array32(v.get("design_hash"))?,
         prediction_hash: array32(v.get("prediction_hash"))?,
         server_time_s: v.get("server_time_s")?.as_i64()?,
@@ -284,12 +428,14 @@ fn response_to_json(r: &SubmitResponse) -> Json {
 /// equivalent). Exposed so the round-trip is testable.
 pub fn receipt_from_json(v: &Json) -> Option<ServerReceipt> {
     let payload = ReceiptPayload {
-        schema_v3: v.get("schema_v3")?.as_u32()? as u16,
+        schema_v3: u16::try_from(v.get("schema_v3")?.as_u32()?)
+            .ok()
+            .filter(|v| *v == crate::receipt::RECEIPT_SCHEMA_V3)?,
         fdr_hash: array32(v.get("fdr_hash"))?,
         pubkey: array32(v.get("pubkey"))?,
         contract_id: v.get("contract_id")?.as_u32()?,
         attempt_num: v.get("attempt_num")?.as_u32()?,
-        mode: crate::protocol::AttemptMode::from_u8(v.get("mode")?.as_u32()? as u8)?,
+        mode: crate::protocol::AttemptMode::from_u8(u8::try_from(v.get("mode")?.as_u32()?).ok()?)?,
         score_s_bits: v.get("score_s")?.as_f64()?.to_bits(),
         elo_before_bits: v.get("elo_before")?.as_f64()?.to_bits(),
         elo_after_bits: v.get("elo_after")?.as_f64()?.to_bits(),
@@ -304,49 +450,67 @@ pub fn receipt_from_json(v: &Json) -> Option<ServerReceipt> {
 
 // --- blocking TCP server ---------------------------------------------------
 
-fn read_request(stream: &mut TcpStream) -> Option<(String, String, String)> {
+/// A bounded request is enough for a flight and its checkpoint chain.
+pub const MAX_BODY_BYTES: usize = 256 * 1024;
+const MAX_HEADER_BYTES: usize = 16 * 1024;
+
+fn read_request(stream: &mut TcpStream) -> Result<(String, String, String), u16> {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 4096];
-    // Read until the header terminator, then read the declared body length.
     let header_end = loop {
-        let n = stream.read(&mut chunk).ok()?;
+        let n = stream.read(&mut chunk).map_err(|_| 400u16)?;
         if n == 0 {
-            return None;
+            return Err(400);
         }
         buf.extend_from_slice(&chunk[..n]);
         if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+            if pos > MAX_HEADER_BYTES {
+                return Err(413);
+            }
             break pos;
         }
-        if buf.len() > 1_048_576 {
-            return None;
+        if buf.len() > MAX_HEADER_BYTES {
+            return Err(413);
         }
     };
-    let header = String::from_utf8_lossy(&buf[..header_end]).into_owned();
+    let header = std::str::from_utf8(&buf[..header_end]).map_err(|_| 400u16)?;
     let mut lines = header.split("\r\n");
-    let request_line = lines.next()?;
-    let mut parts = request_line.split_whitespace();
-    let method = parts.next()?.to_string();
-    let path = parts.next()?.to_string();
-    let content_length = lines
-        .find_map(|l| {
-            let (name, value) = l.split_once(':')?;
-            if name.eq_ignore_ascii_case("content-length") {
-                value.trim().parse::<usize>().ok()
-            } else {
-                None
+    let mut parts = lines.next().ok_or(400u16)?.split_whitespace();
+    let method = parts.next().ok_or(400u16)?.to_string();
+    let path = parts.next().ok_or(400u16)?.to_string();
+    if parts.next().is_none() || parts.next().is_some() {
+        return Err(400);
+    }
+    let mut content_length = None;
+    for line in lines {
+        let (name, value) = line.split_once(':').ok_or(400u16)?;
+        if name.eq_ignore_ascii_case("transfer-encoding") {
+            return Err(400);
+        }
+        if name.eq_ignore_ascii_case("content-length") {
+            if content_length.is_some() {
+                return Err(400);
             }
-        })
-        .unwrap_or(0);
+            content_length = Some(value.trim().parse::<usize>().map_err(|_| 400u16)?);
+        }
+    }
+    if method == "POST" && content_length.is_none() {
+        return Err(400);
+    }
+    let length = content_length.unwrap_or(0);
+    if length > MAX_BODY_BYTES {
+        return Err(413);
+    }
     let mut body = buf[header_end + 4..].to_vec();
-    while body.len() < content_length {
-        let n = stream.read(&mut chunk).ok()?;
+    while body.len() < length {
+        let n = stream.read(&mut chunk).map_err(|_| 400u16)?;
         if n == 0 {
-            break;
+            return Err(400);
         }
         body.extend_from_slice(&chunk[..n]);
     }
-    body.truncate(content_length);
-    Some((method, path, String::from_utf8_lossy(&body).into_owned()))
+    body.truncate(length);
+    Ok((method, path, String::from_utf8(body).map_err(|_| 400u16)?))
 }
 
 fn write_response(stream: &mut TcpStream, resp: &Response) -> std::io::Result<()> {
@@ -354,6 +518,8 @@ fn write_response(stream: &mut TcpStream, resp: &Response) -> std::io::Result<()
         200 => "OK",
         400 => "Bad Request",
         404 => "Not Found",
+        413 => "Payload Too Large",
+        500 => "Internal Server Error",
         _ => "Error",
     };
     let head = format!(
@@ -381,8 +547,16 @@ pub fn serve_listener<S: Store>(
 ) -> std::io::Result<()> {
     for stream in listener.incoming() {
         let Ok(mut stream) = stream else { continue };
-        let Some((method, path, body)) = read_request(&mut stream) else {
-            continue;
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+        let (method, path, body) = match read_request(&mut stream) {
+            Ok(request) => request,
+            Err(status) => {
+                let _ = write_response(
+                    &mut stream,
+                    &Response::json(status, &Json::Str("invalid request".into())),
+                );
+                continue;
+            }
         };
         let now_s = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

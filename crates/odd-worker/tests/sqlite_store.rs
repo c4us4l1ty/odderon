@@ -220,3 +220,60 @@ fn sqlite_rolls_back_rating_and_fdr_when_receipt_write_fails() {
     let _ = std::fs::remove_file(format!("{path_str}-wal"));
     let _ = std::fs::remove_file(format!("{path_str}-shm"));
 }
+
+#[test]
+fn leaderboards_match_memory_for_order_filter_and_pagination() {
+    fn populate<S: Store>(store: &mut S) {
+        for i in 0..60u8 {
+            let pk = [i; 32];
+            store
+                .save_player(
+                    &pk,
+                    &odd_worker::PlayerRow {
+                        elo: 1200.0 + f64::from(i),
+                        ranked_count: 1,
+                        callsign: Some(format!("P{i}")),
+                    },
+                )
+                .unwrap();
+            store
+                .save_fdr(
+                    &[i; 32],
+                    &odd_worker::StoredFdr {
+                        bytes: vec![],
+                        pubkey: pk,
+                        contract_id: if i % 2 == 0 { 101 } else { 102 },
+                        attempt_num: if i == 59 { 2 } else { 1 },
+                        mode: if i == 59 {
+                            AttemptMode::Practice
+                        } else {
+                            AttemptMode::Ranked
+                        },
+                        score_s: f64::from(i) / 100.0,
+                        delegation_mask: 0,
+                        receipt: None,
+                    },
+                )
+                .unwrap();
+        }
+    }
+    let mut memory = odd_worker::MemoryStore::new();
+    let mut sqlite = SqliteStore::open(":memory:").unwrap();
+    populate(&mut memory);
+    populate(&mut sqlite);
+    for contract in [None, Some(101), Some(102)] {
+        for offset in [0, 25, 50] {
+            assert_eq!(
+                memory.leaderboard(contract, offset, 25).unwrap(),
+                sqlite.leaderboard(contract, offset, 25).unwrap()
+            );
+        }
+    }
+    let first = sqlite.leaderboard(None, 0, 25).unwrap();
+    assert_eq!(first.len(), 25);
+    assert_eq!(first[0].pubkey, [58; 32], "practice result must not rank");
+    assert_eq!(
+        sqlite.leaderboard(Some(101), 0, 25).unwrap()[0].score_s,
+        0.58
+    );
+}

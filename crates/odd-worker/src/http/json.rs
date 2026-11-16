@@ -54,7 +54,11 @@ impl Json {
 
     pub fn parse(text: &str) -> Option<Json> {
         let bytes = text.as_bytes();
-        let mut p = Parser { bytes, pos: 0 };
+        let mut p = Parser {
+            bytes,
+            pos: 0,
+            depth: 0,
+        };
         p.skip_ws();
         let value = p.value()?;
         p.skip_ws();
@@ -129,6 +133,7 @@ fn write_string(f: &mut std::fmt::Formatter<'_>, s: &str) -> std::fmt::Result {
 struct Parser<'a> {
     bytes: &'a [u8],
     pos: usize,
+    depth: u8,
 }
 
 impl<'a> Parser<'a> {
@@ -146,7 +151,11 @@ impl<'a> Parser<'a> {
     }
     fn value(&mut self) -> Option<Json> {
         self.skip_ws();
-        match self.peek()? {
+        if self.depth >= 32 {
+            return None;
+        }
+        self.depth += 1;
+        let result = match self.peek()? {
             b'{' => self.object(),
             b'[' => self.array(),
             b'"' => self.string().map(Json::Str),
@@ -154,7 +163,9 @@ impl<'a> Parser<'a> {
             b'f' => self.literal("false", Json::Bool(false)),
             b'n' => self.literal("null", Json::Null),
             _ => self.number(),
-        }
+        };
+        self.depth -= 1;
+        result
     }
     fn literal(&mut self, word: &str, value: Json) -> Option<Json> {
         if self.bytes[self.pos..].starts_with(word.as_bytes()) {
@@ -248,6 +259,7 @@ impl<'a> Parser<'a> {
                         _ => return None,
                     }
                 }
+                0..=31 => return None,
                 _ => {
                     // Collect one UTF-8 scalar (the input is a &str, so
                     // continuation bytes are valid).
@@ -274,7 +286,10 @@ impl<'a> Parser<'a> {
             }
         }
         let text = std::str::from_utf8(&self.bytes[start..self.pos]).ok()?;
-        text.parse::<f64>().ok().map(Json::Num)
+        text.parse::<f64>()
+            .ok()
+            .filter(|n| n.is_finite())
+            .map(Json::Num)
     }
 }
 
