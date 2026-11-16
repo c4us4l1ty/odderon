@@ -60,6 +60,7 @@ fn rescue_settings(design: &ThermalDesign) -> FlightSettings {
         engine: vehicle.engine,
         node_metric: false,
         delegation: DelegationMask::MANUAL,
+        revision: odd_core::PhysicsRevision::CoupledFitted,
         thermal: Some(odd_verify::ThermalInputs {
             engine_spec: vehicle.effective.engine,
             design: vehicle.effective.thermal,
@@ -95,6 +96,7 @@ fn tug_trade(design: &ThermalDesign) -> Trade {
         engine: vehicle.engine,
         node_metric: false,
         delegation: DelegationMask::MANUAL,
+        revision: odd_core::PhysicsRevision::CoupledFitted,
         thermal: Some(odd_verify::ThermalInputs {
             engine_spec: vehicle.effective.engine,
             design: vehicle.effective.thermal,
@@ -175,7 +177,11 @@ fn oracle_v4_fitted_mass_trade_study() {
     println!(
         "tug trade: bare vented {:.3} kg (dry {:.1}), card vented {:.3} kg (dry {:.1}), \
          maximal vented {:.3} kg (dry {:.1})",
-        bare.vented_kg, bare.dry_mass_kg, card.vented_kg, card.dry_mass_kg, maximal.vented_kg,
+        bare.vented_kg,
+        bare.dry_mass_kg,
+        card.vented_kg,
+        card.dry_mass_kg,
+        maximal.vented_kg,
         maximal.dry_mass_kg
     );
 

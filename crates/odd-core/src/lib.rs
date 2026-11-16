@@ -9,5 +9,7 @@ pub mod epoch;
 pub mod fmt;
 pub mod frames;
 pub mod physics_revision;
+
+pub use physics_revision::PhysicsRevision;
 pub mod units;
 pub mod utc;

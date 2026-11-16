@@ -89,14 +89,14 @@ correctness. No production deployment is implied.
 - **Not incremental:** checkpoint submission replays the full flight first,
   then checks storable checkpoint metadata against it. Cryogenic checkpoints
   are rejected; there is no per-segment CPU budget or free-tier guarantee.
-- **Thermal coupling is one-way:** boil-off is integrated and reported but
-  not deducted from orbital mass or the burn fuel budget. Electric-propulsion
-  surplus is calculated but not applied as thrust in the chemical contracts.
-  The score's fuel-failure threshold and fuel prediction use catalog baseline
-  dry mass, which can differ from the fitted stage and the debrief's displayed
-  remaining propellant. A lighter fitted stage can score a fuel failure even
-  with fuel remaining. Changing these frozen replay behaviors requires a
-  versioned migration.
+- **Thermal coupling (v4):** boil-off is drawn from the same propellant pool
+  the engine burns, so venting reduces both the remaining fuel and the mass
+  every acceleration divides by; a pool emptied by boil-off truncates thrust
+  and is signed as a flameout. v1–v3 records keep the old one-way behaviour and
+  still replay bit-for-bit. Electric-propulsion surplus is calculated but not
+  applied as thrust in the chemical contracts. Scoring still compares its fuel
+  threshold and prediction against the catalog baseline dry mass rather than
+  the fitted stage; re-baselining scoring is a separate versioned change.
 - **Identity:** the license is browser-local with export/restore, not an
   account, revocation, Sybil prevention or custody system. A private server
   seed, static key pin and explicit rotation strategy are operator duties.

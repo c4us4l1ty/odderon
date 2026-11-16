@@ -77,6 +77,7 @@ fn signed_stage(design: &ThermalDesign, mask: DelegationMask) -> (Fdr, License) 
         engine: vehicle.engine,
         node_metric: false,
         delegation: mask,
+        revision: odd_core::PhysicsRevision::CoupledFitted,
         thermal: Some(ThermalInputs {
             engine_spec: vehicle.effective.engine,
             design: vehicle.effective.thermal,

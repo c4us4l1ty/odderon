@@ -54,6 +54,7 @@ fn rescore_rescue(schema: u16) -> Fdr {
     let spec = odd_verify::FlightSpec {
         thermal: None,
         delegation: odd_contracts::DelegationMask::MANUAL,
+        revision: odd_core::PhysicsRevision::CoupledFitted,
         contract_id: contract.id,
         epoch_s: EPOCH,
         duration_us: contract.duration_us,
@@ -136,6 +137,7 @@ fn cryogenic_tug(schema: u16, design: &ThermalDesign) -> Fdr {
     let spec = odd_verify::FlightSpec {
         thermal: Some(inputs),
         delegation: odd_contracts::DelegationMask::MANUAL,
+        revision: odd_core::PhysicsRevision::CoupledFitted,
         contract_id: tug.id,
         epoch_s: EPOCH,
         duration_us: tug.duration_us,
@@ -243,7 +245,7 @@ fn fixture_dir() -> std::path::PathBuf {
 /// The gate. Every checked-in historical record must verify, on the signature
 /// and on a full replay, exactly as it did when it was issued.
 #[test]
-fn oracle_v1_v2_v3_records_still_verify() {
+fn oracle_v1_v2_v3_backward_compatibility() {
     let dir = fixture_dir();
     let mut checked = 0;
     for (name, _) in fixtures() {

@@ -74,6 +74,9 @@ impl Settings {
     fn flight(&self) -> FlightSettings {
         FlightSettings {
             delegation: self.delegation,
+            // The live designer draws and signs v4 records, so a new flight is
+            // computed under the coupled, fitted-mass physics.
+            revision: odd_core::PhysicsRevision::CoupledFitted,
             thermal: self.thermal_inputs(),
             contract_id: self.contract_id,
             epoch: self.epoch,

@@ -72,6 +72,7 @@ pub fn settings(contract: &Contract) -> FlightSettings {
         node_metric: false,
         thermal: None,
         delegation: odd_contracts::DelegationMask::MANUAL,
+        revision: odd_core::PhysicsRevision::CoupledFitted,
     }
 }
 

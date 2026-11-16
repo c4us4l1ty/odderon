@@ -60,6 +60,9 @@ pub struct FlightSettings {
     pub thermal: Option<ThermalInputs>,
     /// Which disciplines the Chief-AI sized. Caps Seff at 0.65 when non-zero.
     pub delegation: odd_contracts::DelegationMask,
+    /// The physics this flight is computed under. New flights use
+    /// `CoupledFitted`; a replay passes the revision its record declares.
+    pub revision: odd_core::PhysicsRevision,
 }
 
 /// The physical inputs the tank model needs, all of them design choices.
@@ -215,7 +218,7 @@ pub fn compute(
     // Boil-off is integrated along the *flown* spline with the same adaptive
     // stepper and the same ephemeris, so replay reproduces the vent history.
     let thermal = match s.thermal {
-        Some(inputs) => odd_contracts::thermal::evaluate(
+        Some(inputs) => odd_contracts::thermal::evaluate_at(
             odd_contracts::thermal::ThermalStage {
                 contract: &contract,
                 spec: &inputs.engine_spec,
@@ -233,6 +236,7 @@ pub fn compute(
             },
             eph,
             s.epoch,
+            s.revision,
         )
         // An integration/validation failure is not an inert tank. Reject
         // the flight rather than certifying zero loss on a model failure.
@@ -391,6 +395,8 @@ pub struct FlightSpec {
     pub thermal: Option<ThermalInputs>,
     /// Signed delegation provenance, so a replay applies the same Seff cap.
     pub delegation: odd_contracts::DelegationMask,
+    /// The physics the record declares. Replay uses it to pick tank geometry.
+    pub revision: odd_core::PhysicsRevision,
 }
 
 pub struct ReplayOutcome {
@@ -445,6 +451,7 @@ fn settings_from_spec(
             // boil-off so their certificates remain valid.
             thermal: spec.thermal,
             delegation: spec.delegation,
+            revision: spec.revision,
             contract_id: spec.contract_id,
             epoch: spec.epoch_s,
             initial: Keyframe {
@@ -699,9 +706,14 @@ pub fn certify_thermal(fdr: &Fdr) -> Result<(), FdrError> {
     let contract =
         Contract::get(fdr.contract_id).ok_or(FdrError::Malformed("unknown thermal contract"))?;
     let inputs = thermal_inputs_from_record(fdr).ok_or(FdrError::Malformed("thermal inputs"))?;
+    // Certify under the revision the record itself declares: a v3 certificate
+    // was signed against the frozen per-tank 5% geometry, so replaying it with
+    // v4's shared airframe would reject a genuine historical record.
+    let revision = odd_core::PhysicsRevision::for_schema(fdr.schema_version)
+        .ok_or(FdrError::Malformed("unknown physics revision"))?;
     let stage = inputs
         .design
-        .stage(&contract, &engine, inputs.load_kg)
+        .stage_at(&contract, &engine, inputs.load_kg, revision)
         .ok_or(FdrError::Malformed("invalid cryogenic tank"))?;
     stage
         .oxidizer
@@ -855,6 +867,10 @@ pub fn spec_from_record(fdr: &Fdr) -> FlightSpec {
     FlightSpec {
         thermal: thermal_inputs_from_record(fdr),
         delegation: odd_contracts::DelegationMask(fdr.delegation_mask),
+        // The record's own schema selects the physics. A v3 certificate keeps
+        // the geometry and mass rules it was signed under.
+        revision: odd_core::PhysicsRevision::for_schema(fdr.schema_version)
+            .unwrap_or(odd_core::PhysicsRevision::FrozenUncoupled),
         contract_id: fdr.contract_id,
         epoch_s: fdr.epoch_s,
         duration_us: fdr.duration_us,

@@ -39,6 +39,7 @@ fn custom() -> (EngineSpec, FlightSpec) {
                 load_kg: vehicle.initial_mass_kg - vehicle.dry_mass_kg,
             }),
             delegation: odd_contracts::DelegationMask::MANUAL,
+            revision: odd_core::PhysicsRevision::CoupledFitted,
             contract_id: 101,
             epoch_s: odd_contracts::START_EPOCH,
             duration_us: contract.duration_us,

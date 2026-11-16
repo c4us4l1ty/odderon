@@ -17,6 +17,18 @@ cargo clippy --locked --offline --workspace --all-targets -- -D warnings
 step "workspace tests (lib + integration)"
 cargo test --locked --offline --workspace --lib --tests --no-fail-fast
 
+step "v4 oracles: boil-off coupling, fitted-mass trade, versioned compatibility"
+# Named gates from the v4 plan, run explicitly so a renamed or deleted oracle
+# fails the sweep instead of silently reducing coverage.
+cargo test --locked --offline -p odd-systems --test v4_coupling \
+    oracle_v4_boiloff_couples_to_mass_and_flameout
+cargo test --locked --offline -p odd-verify --test v4_trade_study \
+    oracle_v4_fitted_mass_trade_study
+cargo test --locked --offline -p odd-verify --test v4_tank_volume \
+    oracle_tank_volume_zero_discrepancy
+cargo test --locked --offline -p odd-verify --test fixtures_v1_v2_v3 \
+    oracle_v1_v2_v3_backward_compatibility
+
 step "server authority: local HTTP/SQLite adapter + anti-cheat oracles (no cloud credentials)"
 cargo clippy --locked --offline -p odd-worker --all-targets --features local -- -D warnings
 cargo test --locked --offline -p odd-worker --features local --lib --tests

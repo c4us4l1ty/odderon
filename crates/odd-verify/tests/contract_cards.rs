@@ -39,6 +39,7 @@ fn fly(
         engine: vehicle.engine,
         node_metric: contract.id == 102,
         delegation: mask,
+        revision: odd_core::PhysicsRevision::CoupledFitted,
         thermal: Some(ThermalInputs {
             engine_spec: flown.engine,
             design: flown.thermal,
@@ -252,6 +253,7 @@ fn baseline_targeted_cooled_tug_preserves_thermal_physics_pin() {
         engine: vehicle.engine,
         node_metric: false,
         delegation: DelegationMask::MANUAL,
+        revision: odd_core::PhysicsRevision::CoupledFitted,
         thermal: Some(ThermalInputs {
             engine_spec: vehicle.effective.engine,
             design: vehicle.effective.thermal,
@@ -259,14 +261,14 @@ fn baseline_targeted_cooled_tug_preserves_thermal_physics_pin() {
         }),
     };
     let result = compute(&settings, &plan, None, &eph).unwrap();
-    // The tank geometry is now derived from the load: 40.475496 m3 of airframe
-    // instead of the typed 38.6 m3 envelope, with the 3% ullage the tank model
-    // already assumed. The cooled loss and the cooler draw both moved by a few
-    // parts per million as a result. Pinned to the derived numbers so a silent
-    // rebaseline still fails this test.
-    assert_eq!(format!("{:.6}", result.thermal.lost_kg), "3.843971");
+    // The tank geometry is now derived once: 39.740301 m3 of airframe with the
+    // shared 3% ullage, instead of 38.6 m3 of airframe carrying two 5%-padded
+    // tanks. The cooled loss falls 0.003 kg (the blanket covers less area) and
+    // the cooler draw falls 8.07 MJ (less heat to lift). Pinned to the derived
+    // numbers so a silent rebaseline still fails this test.
+    assert_eq!(format!("{:.6}", result.thermal.lost_kg), "3.841022");
     assert_eq!(
         format!("{:.6}", result.thermal.cooler_energy_j / 1e6),
-        "4209.825991"
+        "4201.757718"
     );
 }

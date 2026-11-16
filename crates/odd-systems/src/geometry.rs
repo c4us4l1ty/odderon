@@ -2,16 +2,18 @@
 //!
 //! The catalog used to carry one hand-typed `tank_volume_m3` per contract
 //! while the thermal model derived its own volumes from the load, the mixture
-//! ratio and a per-tank ullage allowance. The two disagreed by 5 %: the tug's
-//! two signed tank volumes summed to **40.475496 m³** against a catalog
-//! envelope of **38.6 m³**. Either the tanks broke the airframe or part of the
-//! load had nowhere to live, and the dossier had to disclose the gap.
+//! ratio and a per-tank 5 % pad. Those were two different quantities wearing
+//! one name: the tug's typed **38.6 m³** was its *usable* propellant volume
+//! (38.548 m³ plus rounding), which the thermal model read as the whole
+//! airframe — and then padded each of its two tanks by 5 %, growing the stage
+//! to **40.475496 m³** of tank inside a **38.6 m³** airframe. The dossier had
+//! to disclose a gap that was really a units-of-meaning error.
 //!
 //! There is now exactly one derivation. A stage's *usable* propellant volume
 //! follows from its load and bulk density; the airframe volume adds a fixed
 //! ullage fraction; and the two tank volumes split that airframe volume by
-//! each fluid's share of the liquid. Mass, geometry and the signed thermal
-//! spec all read this module, so they cannot drift apart again.
+//! each fluid's share of the liquid. Mass, geometry, the contract card and the
+//! signed thermal spec all read this module, so they cannot drift apart again.
 //!
 //! ```text
 //! bulk   ρ = (1 + O/F) / (O/F / ρ_ox + 1 / ρ_fuel)     harmonic mixture

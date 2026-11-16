@@ -130,6 +130,21 @@ const STORABLE_PLACEHOLDER: Engine = Engine {
     engine: 0,
 };
 
+/// The tank geometry a contract's baseline mixture ratio implies for a load.
+///
+/// One function, so the catalog volume, the signed thermal spec and the oracle
+/// all read the same derivation.
+pub fn derived_geometry(contract: &Contract, load_kg: f64) -> Option<odd_systems::TankGeometry> {
+    let (oxidizer, fuel) = odd_systems::Fluid::pair(contract.engine_spec.propellant);
+    odd_systems::geometry::TankGeometry::derive(
+        oxidizer,
+        fuel,
+        contract.engine_spec.of_ratio,
+        load_kg,
+        odd_systems::DEFAULT_ULLAGE_FRACTION,
+    )
+}
+
 impl Contract {
     /// The insulation and active-cooling card this contract is designed
     /// around, derived from the heat its own reference flight integrates.
@@ -279,17 +294,17 @@ impl Contract {
         self
     }
 
-    /// Airframe volume for the structural propellant budget: liquid volume at
-    /// the baseline engine's bulk density, plus the shared ullage allowance.
+    /// Airframe volume for the structural propellant budget, from the one tank
+    /// geometry the thermal model also signs: per-fluid liquid volume at the
+    /// baseline mixture ratio, plus the shared ullage allowance.
     ///
     /// This is the single derivation `docs/thermal.md` and the tank model both
     /// read. `Contract::tank_volume_m3` is always this value for a contract
     /// that has passed through `with_baseline_engine`.
     pub fn derived_tank_volume_m3(&self) -> f64 {
-        let density =
-            odd_propulsion::bulk_density(self.engine_spec.propellant, self.engine_spec.of_ratio);
-        let liquid_m3 = self.propellant_budget_kg / density;
-        liquid_m3 / (1.0 - odd_systems::DEFAULT_ULLAGE_FRACTION)
+        crate::derived_geometry(self, self.propellant_budget_kg)
+            .map(|geometry| geometry.airframe_volume_m3)
+            .unwrap_or(0.0)
     }
 
     /// Design the stage around a player's engine. Thrust, specific impulse,
