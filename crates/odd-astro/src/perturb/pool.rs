@@ -24,7 +24,7 @@
 //! A vent is subtracted from the tank it came out of, so an oxidizer boil-off
 //! cannot quietly eat the fuel the last burn needs.
 
-use crate::perturb::burn::{Burn, G0};
+use crate::perturb::burn::Burn;
 
 /// Why the pool is dry, which is what a debrief has to explain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,7 +65,7 @@ impl PropellantPool {
         }
         let fuel_kg = load_kg / (1.0 + of_ratio);
         let oxidizer_kg = load_kg - fuel_kg;
-        if !(fuel_kg > 0.0) || !(oxidizer_kg > 0.0) {
+        if fuel_kg <= 0.0 || oxidizer_kg <= 0.0 {
             return None;
         }
         Some(Self {
@@ -85,6 +85,17 @@ impl PropellantPool {
     /// Usable propellant still aboard: what drag, SRP and thrust divide by.
     pub fn remaining_kg(&self) -> f64 {
         self.remaining_kg[0] + self.remaining_kg[1]
+    }
+
+    /// The mixture ratio the engines are sized for.
+    pub fn of_ratio(&self) -> f64 {
+        self.of_ratio
+    }
+
+    /// Oxidizer or fuel still aboard, kg. Index 0 is oxidizer, 1 is fuel, the
+    /// same order the vent events and the signed tank spec use.
+    pub fn remaining_kg_for(&self, tank: usize) -> f64 {
+        self.remaining_kg.get(tank).copied().unwrap_or(0.0)
     }
 
     pub fn vented_kg(&self) -> [f64; 2] {
@@ -188,6 +199,7 @@ impl PropellantPool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::perturb::burn::G0;
 
     fn burn(force: f64, isp: f64) -> Burn {
         Burn {

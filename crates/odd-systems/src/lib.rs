@@ -22,6 +22,7 @@
 
 pub mod bus;
 pub mod coupled;
+pub mod coupled_stage;
 pub mod environment;
 pub mod geometry;
 pub mod fluid;
@@ -30,6 +31,7 @@ pub mod thermal;
 
 pub use bus::{BusSpec, PowerBudget};
 pub use coupled::{allocate_bus, integrate_pair, BusAllocation, TankPair};
+pub use coupled_stage::StageTankModel;
 pub use environment::ThermalEnvironment;
 pub use geometry::{TankGeometry, DEFAULT_ULLAGE_FRACTION};
 pub use fluid::{Fluid, FluidProperties};
