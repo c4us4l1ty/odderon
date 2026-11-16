@@ -1,7 +1,16 @@
 Odderon Pre-Coding Blueprint
 Repository Structure, Rust/Wasm Boundary, Data Contracts, Cryptographic Identity & Proof-of-Trajectory
 
-The identity update changes the architecture in one very good way: the physics kernel and the anti-cheat verifier are now the same Rust crate, compiled to the same .wasm binary, running in two places (the player's browser and a Cloudflare Worker). That single decision is what makes Astro-Elo trustworthy at $0/month.
+> **Historical proposal, not an implementation or deployment record.** Many
+> technology choices, example types, costs and milestones below are aspirational.
+> For the current architecture and limitations see [software design](docs/software-design.md),
+> [server authority](docs/server-authority.md), and [thermal](docs/thermal.md).
+> In particular, the browser and authority build different WASM modules from
+> shared Rust replay code; workerd tests and a dry-run do not establish a live
+> deployment, free-tier CPU fit or protection from prior external simulation.
+
+The architecture aims to share the physics kernel and verifier across the
+browser and authority so a signed flight can be independently replayed.
 
 Below is everything an AI coding agent needs before writing the first line: the workspace layout, which code runs where, the exact data contracts (Rust type signatures — these are contracts, not implementations), the identity/verification pipeline, and the paste-ready task card for Work Package 0.1.
 Part 1: "As Much Rust As Possible" — The Final Stack Decision
@@ -316,12 +325,12 @@ Cheat attempted in Chrome DevTools	Why it fails
 Edit isp = 9999 mid-flight	Verifier recomputes engine performance from geometry/thermo (No-Magic-Lookup Law); replay runs out of fuel; claimed.state_hash ≠ recomputed → rejected
 Add fuel mass in memory	Tank mass is derived from tank geometry × propellant density in the design; replay diverges
 Edit the contract (easier target)	contract_id resolves to the server-canonical Contract; client copy is ignored
-Write predictions after seeing results	Prediction hash was committed at LOCK & LAUNCH before any physics ran (6.3)
+Change the prediction after a ticket	The prediction hash is bound by the ticket; prior simulation in another client or before commitment cannot be detected (6.3)
 Submit a friend's FDR	Signature won't verify against submitter's pubkey
 Replay a 3-year mission with a tampered integrator tolerance	IntegratorConfig is part of the contract, not the FDR
 Hand-craft an impossible timeline	Timeline is just inputs; physics decides the outcome
 Time-warp / pause to think	Not a cheat — simulation time is virtual. Only design + commands matter
-6.3 The Four Endpoints (odd-worker, Cloudflare Workers, Rust)
+6.3 Proposed endpoints (historical; current routes are in docs/server-authority.md)
 
 text
 
@@ -331,17 +340,26 @@ POST /submit     { fdr }                                     → { verdict, scor
 GET  /verify/{fdr_hash}                                      → { fdr (from R2), verdict, receipt }  (public, QR target)
 GET  /leaderboard?contract=402&page=1                        → [ { callsign, elo, score, fdr_hash } ]
 
-Ranked vs. practice (Certified Engineer Mode): the first /submit per (pubkey, contract_id) updates Elo. Subsequent attempts are stored and replayable but unranked — exactly how Lichess puzzle ratings work. No "revert and retry for free" on ranked missions.
-6.4 Honest Note on Free-Tier CPU Limits (And the $0 Solution)
+Ranked vs. practice: the first **commit** per (pubkey, contract_id) is Ranked; later committed attempts are Practice. A lost commit response can consume that first attempt. The browser's local practice does not contact the authority, and cannot establish that a user has never simulated before committing.
+6.4 Checkpoints and CPU limits — current implementation
 
-Cloudflare Workers' free tier allows ~10 ms CPU per request. A cislunar mission replays in < 5 ms, but a 3-year low-thrust Jupiter mission may need 50–200 ms. Two options, both already accommodated by the schema:
+The proposed per-segment executor was not implemented. `/api/v1/submit-segment`
+performs a **complete replay**, then checks the supplied storable checkpoint
+chain against the resulting trajectory. Cryogenic checkpoints are rejected.
+There is no `?seg=i` resume API, CPU-budget reduction, measured free-tier
+fit or $0 guarantee. Full cryogenic submissions still replay their thermal
+history. See [server authority](docs/server-authority.md).
 
-    $0 path — Chunked Hash-Chain Verification: the FDR carries segments (state hash every ~30 sim-days). The client calls /submit once per segment (?seg=i); the worker replays only segment i from checkpoint i−1 to i (≤ 8 ms), stores the intermediate verdict in D1, and the final call aggregates. Any tampered segment breaks the chain.
-    $5/month path: Workers Paid raises the limit to 30 s CPU per request; single-call verification. Flip one config flag.
+6.5 Verifiable credentials — current implementation
 
-6.5 Verifiable Credentials (The QR Code on the PDF)
+A verified ranked dossier carries the server receipt and a QR ending in
+`mission.html#flight=<fdr_hash>`; the same-origin public API returns the FDR
+and receipt for local signature checking and replay. Practice/local dossiers
+use a self-contained `#verify=` fragment. The browser trusts only the static
+server public-key pin. The viewer is plain browser JS and Rust/WASM, not the
+proposed Leptos page, and the URL uses the serving origin rather than a fixed
+production hostname.
 
-odd-report embeds https://odderon.space/v/<fdr_hash> as a QR. That page is a static Leptos page that loads the same odd-sim wasm, fetches the FDR from R2, re-runs the replay in the recruiter's own browser, checks the Ed25519 signature and the server receipt, and renders the interactive trajectory + nozzle schematic. The recruiter doesn't need to trust Odderon's server at all — the math is checkable locally.
 6.6 Elo Mechanics (As You Specified, Formalized)
 
     Player expected score: E=11+10(Rm−Rp)/400E=1+10(Rm​−Rp​)/4001​
@@ -361,10 +379,10 @@ WP	Crate(s)	Oracle Gate
 1.3	odd-app/lens	No unexplained acronym renders without hover projection (snapshot test)
 1.4	odd-astro/attribution, odd-app/debrief	Finite-burn loss isolated within 1%
 1.5	odd-propulsion	RS-25: Isp_vac 452 ± 8 s, Isp_sl 366 ± 10 s — SHIPPED, see docs/propulsion.md
-1.6	odd-systems	Known LH₂ tank: boil-off rate vs. published MLI heat-leak data within 15% — SHIPPED, see docs/thermal.md (card's 1.5%/day, 60-min orbit and COP 0.1 corrected; all 3 oracles pass)
-1.7	odd-contracts/chief_ai	Delegated sizing reproduces textbook margins deterministically — SHIPPED and WIRED: per-discipline toggle in the assembly, margin charged to the flown dry mass, +30% cost, chief badges, Seff cap 0.65 on real scores, mask signed and recomputed on replay (docs/audit-2026-11-14.md)
+1.6	odd-systems	Known LH₂ tank: boil-off rate vs. published MLI heat-leak data within 15% — SHIPPED, see docs/thermal.md (card's 1.5%/day, 60-min orbit and COP 0.1 corrected; instantaneous two-tank bus priority in a coupled integrator, radiator environmental load + approach floor kill the free-cooling collapse; oracle_instantaneous_cryo_bus_priority and the multi-day solvability gate pass)
+1.7	odd-contracts/chief_ai	Delegated sizing reproduces textbook margins deterministically — SHIPPED and WIRED: a set bit SUBSTITUTES the chief's textbook hardware (oracle_chief_hardware_substitution), locked read-only sliders show the chief's values, margin charged to the flown dry mass, +30% cost, Seff cap 0.65, mask signed and the deviation rejected on replay; the thermal chief now cools a cryogenic coast competently (docs/thermal.md)
 1.8	odd-contracts, odd-report	Elo update matches hand calculation; PDF opens & QR decodes
-1.9 (new)	odd-sim/verify, odd-worker	Tampered FDR (one throttle bit flipped) rejected; clean FDR accepted; same verdict native/wasm/worker
+1.9 (new)	odd-verify, odd-worker, odd-authority-wasm	Server-authoritative Astro-Elo, signed callsigns, leaderboard, public replay and receipt dossiers are implemented. Native SQLite and workerd D1/R2 are locally tested; no production deployment or incremental CPU-budgeted replay is claimed. Commitments bind the plan and prediction but cannot prevent prior external simulation. See docs/server-authority.md.
 Part 8: Paste-Ready Task Card — Work Package 0.1
 
 Save this as WORK_PACKAGES/WP-0.1.md and give the agent only this file plus ARCHITECTURE_LAWS.md.

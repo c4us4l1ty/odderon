@@ -84,10 +84,10 @@ fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     ]
 }
 fn norm(v: [f64; 3]) -> f64 {
-    v[0].hypot(v[1]).hypot(v[2])
+    libm::hypot(libm::hypot(v[0], v[1]), v[2])
 }
 fn signed_angle(a: [f64; 3], b: [f64; 3], normal: [f64; 3]) -> f64 {
-    dot(cross(a, b), normal).atan2(dot(a, b))
+    libm::atan2(dot(cross(a, b), normal), dot(a, b))
 }
 fn valid_mu(mu: f64) -> bool {
     mu.is_finite() && mu > 0.0
@@ -267,9 +267,9 @@ impl Elements {
         }
         let node = [-hhat[1], hhat[0], 0.0];
         let nmag = norm(node);
-        let inclination = nmag.atan2(hhat[2]);
+        let inclination = libm::atan2(nmag, hhat[2]);
         let raan = if nmag > 0.0 {
-            node[1].atan2(node[0]).rem_euclid(TAU)
+            libm::atan2(node[1], node[0]).rem_euclid(TAU)
         } else {
             0.0
         };
@@ -501,7 +501,7 @@ impl ModifiedEquinoctialElements {
         let p = (angular_mag / mu) * angular_mag;
         let f = dot(eccentricity, fhat);
         let g = dot(eccentricity, ghat);
-        let l = dot(r, ghat).atan2(dot(r, fhat));
+        let l = libm::atan2(dot(r, ghat), dot(r, fhat));
         if ![p, f, g, h, k, l].iter().all(|x| x.is_finite()) || p <= 0.0 {
             return Err(ElementsError::NumericalRange);
         }
@@ -544,7 +544,7 @@ impl ModifiedEquinoctialElements {
         // Match the classical chart's convention for the exact binary64 π
         // parabolic asymptote, without subtracting angles at large L.
         if eccentricity == 1.0 && self.l.abs() <= 2.0 * TAU {
-            let nu = self.l - self.g.atan2(self.f);
+            let nu = self.l - libm::atan2(self.g, self.f);
             if (nu % TAU).abs() == PI {
                 w = 0.0;
             }

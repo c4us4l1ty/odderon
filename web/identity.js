@@ -1,3 +1,4 @@
+import { verifyReceipt } from './authority-crypto.js';
 // Persistent player identity and ranked Astro-Elo.
 //
 // The Flight License secret lives in localStorage so a reload never resets
@@ -15,6 +16,7 @@ const MAX_PROFILES = 8;
 
 let wasm = null;
 let state = null;
+let ratingSource = 'unverified';
 const listeners = new Set();
 
 export const eloK = ranked => (ranked < 20 ? 40 : 20);
@@ -90,6 +92,32 @@ function repairProfile(source) {
   };
 }
 
+/// Treat every cached number and old local certificate as untrusted. Only a
+/// valid server receipt bound to the active key and record survives a reload.
+function sanitizeActive() {
+  const pubkey = hexOf(identityFields().publicKey);
+  const verified = {};
+  const missionElo = {};
+  let latest = null;
+  for (const [id, record] of Object.entries(state.ranked)) {
+    try {
+      if (typeof record.recorder !== 'string') continue;
+      const document = JSON.parse(record.recorder);
+      const receipt = document.server_receipt;
+      if (String(receipt?.contract_id) !== id || receipt.pubkey !== pubkey || receipt.mode !== 0
+          || !verifyReceipt(wasm, receipt, document)) continue;
+      verified[id] = { score: receipt.score_s, elo: receipt.elo_after,
+        delta: receipt.elo_after - receipt.elo_before, at: receipt.timestamp_s * 1000, recorder: record.recorder };
+      missionElo[id] = receipt.mission_elo_after;
+      if (!latest || receipt.timestamp_s >= latest.timestamp_s) latest = receipt;
+    } catch { /* malformed local cache is not authority */ }
+  }
+  state.ranked = verified;
+  state.missionElo = missionElo;
+  state.elo = latest?.elo_after ?? START_ELO;
+  ratingSource = latest ? 'receipt' : 'unverified';
+}
+
 /// Keep the most recently written identities. Insertion order is the recency
 /// order because a switch re-inserts the profile it is leaving.
 function trimProfiles(profiles) {
@@ -156,6 +184,8 @@ export function init(module) {
   state = read();
   if (state && loadIntoWasm(state.entropyHex)) {
     if (!state.callsign) state.callsign = identityFields().publicId.slice(7, 13);
+    sanitizeActive();
+    persist();
     notify();
     return profile();
   }
@@ -165,6 +195,7 @@ export function init(module) {
   const hex = Array.from(entropy, b => b.toString(16).padStart(2, '0')).join('');
   if (!loadIntoWasm(hex)) throw Error('could not create a flight license');
   state = { ...defaults(), entropyHex: hex, callsign: identityFields().publicId.slice(7, 13) };
+  ratingSource = 'unverified';
   persist();
   notify();
   return profile();
@@ -177,6 +208,7 @@ export function profile() {
     ...identity,
     callsign: state.callsign,
     elo: state.elo,
+    ratingSource,
     missionElo: { ...state.missionElo },
     ranked: { ...state.ranked },
     flights: state.flights.length,
@@ -247,6 +279,7 @@ export function restore(text) {
     callsign: resumed?.callsign || identity.publicId.slice(7, 13),
     profiles: trimProfiles(profiles),
   };
+  sanitizeActive();
   persist();
   notify();
   return { ok: true, publicId: identity.publicId, resumed: Boolean(resumed) };
@@ -291,76 +324,67 @@ export function importBackup(text) {
   if (Number.isFinite(parsed.elo)) {
     state.elo = parsed.elo;
     if (parsed.missionElo && typeof parsed.missionElo === 'object') state.missionElo = { ...parsed.missionElo };
-    if (parsed.ranked && typeof parsed.ranked === 'object') state.ranked = { ...parsed.ranked };
+    if (parsed.ranked && typeof parsed.ranked === 'object') state.ranked = repairProfile(parsed).ranked;
+    sanitizeActive();
     persist();
     notify();
   }
   return result;
 }
 
-/// Attach the signed recorder to a ranked certificate.
-///
-/// The certificate is issued once, so it has to stay retrievable: without the
-/// stored document a reload would leave the rating locked but the official
-/// record unrecoverable except by flying again, which would be practice.
-/// Only ranked certificates are kept, and the size is bounded so a hostile or
-/// malformed document cannot exhaust the storage quota.
-export function attachCertificate(contractId, recorderJson) {
-  const record = state?.ranked?.[String(contractId)];
-  if (!record || typeof recorderJson !== 'string' || recorderJson.length > 65536) return false;
-  let document;
-  try {
-    document = JSON.parse(recorderJson);
-  } catch {
-    return false;
-  }
-  if (document?.attempt_mode !== 'Ranked' || String(document.contract_id) !== String(contractId)) return false;
-  if (document.public_key !== hexOf(profile().publicKey)) return false;
-  record.recorder = recorderJson;
-  persist();
-  notify();
-  return true;
-}
-
 function hexOf(bytes) {
   return bytes.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-/// The stored signed certificate for a contract, or null.
+/// A ranked certificate is kept only after the receipt and its FDR binding
+/// have been checked against the pinned server key.
+export function recordReceipt(recorderJson) {
+  if (typeof recorderJson !== 'string' || recorderJson.length > 262144) return false;
+  try {
+    const document = JSON.parse(recorderJson), receipt = document.server_receipt;
+    if (receipt?.pubkey !== hexOf(identityFields().publicKey) || !verifyReceipt(wasm, receipt, document)) return false;
+    state.elo = receipt.elo_after;
+    state.missionElo[String(receipt.contract_id)] = receipt.mission_elo_after;
+    if (receipt.mode === 0) {
+      state.ranked[String(receipt.contract_id)] = {
+        score: receipt.score_s, elo: receipt.elo_after, delta: receipt.elo_after - receipt.elo_before,
+        at: receipt.timestamp_s * 1000, recorder: recorderJson,
+      };
+    }
+    ratingSource = 'receipt';
+    persist(); notify();
+    return true;
+  } catch { return false; }
+}
+
+/// Accept the same-origin authority's current player state, but only for the
+/// still-active key: a delayed response after switching licenses is ignored.
+export function syncPlayer(player) {
+  if (!state || player?.pubkey !== hexOf(identityFields().publicKey)
+      || !Number.isFinite(player.elo) || !Number.isInteger(player.ranked_count) || player.ranked_count < 0) return false;
+  state.elo = player.elo;
+  if (typeof player.callsign === 'string' && /^[\w \-]{1,24}$/.test(player.callsign)) state.callsign = player.callsign;
+  ratingSource = 'server';
+  persist(); notify();
+  return true;
+}
+
 export function certificate(contractId) {
   return state?.ranked?.[String(contractId)]?.recorder ?? null;
 }
-
-/// Whether this contract already has a certified ranked certificate.
 export function isRanked(contractId) {
-  if (!state) return false;
-  return Object.prototype.hasOwnProperty.call(state.ranked, String(contractId));
+  return Boolean(state && Object.prototype.hasOwnProperty.call(state.ranked, String(contractId)));
 }
 
-/// Record a completed flight. Only the first ranked execution of a contract
-/// moves the persistent rating; later runs are practice and cannot farm Elo.
-export function recordFlight({ contractId, score, mode, missionRating }) {
+/// Local flights do not mint Elo or certificates. The authority alone may
+/// update the rating after it replays the signed recorder.
+export function recordFlight({ contractId, score }) {
   if (!state) throw Error('flight license is not initialised');
-  const id = String(contractId);
-  const already = isRanked(id);
-  const ranked = mode === 'ranked' && !already;
-  const rating = Number.isFinite(missionRating) ? missionRating : (state.missionElo[id] ?? 1200);
   const before = state.elo;
-  const k = eloK(state.flights.length);
-  let after = before;
-  let missionAfter = rating;
-  if (ranked) {
-    after = wasm.mission_elo(before, rating, score, k, 0);
-    missionAfter = wasm.mission_elo(before, rating, score, k, 1);
-    state.elo = after;
-    state.missionElo[id] = missionAfter;
-    state.ranked[id] = { score, elo: after, delta: after - before, at: Date.now() };
-  }
-  state.flights.push({ contractId: id, score, mode: ranked ? 'ranked' : 'practice', at: Date.now() });
+  state.flights.push({ contractId: String(contractId), score, mode: 'local', at: Date.now() });
   if (state.flights.length > 200) state.flights = state.flights.slice(-200);
-  persist();
-  notify();
-  return { ranked, alreadyRanked: already, before, after, delta: after - before, missionBefore: rating, missionAfter, k };
+  persist(); notify();
+  return { ranked: false, before, after: before, delta: 0 };
 }
 
 /// Sign arbitrary bytes with the active license; returns 64 raw bytes.
@@ -380,5 +404,6 @@ export function reset() {
     // Storage may be unavailable; clearing the in-memory state is enough.
   }
   state = null;
+  ratingSource = 'unverified';
   wasm.mission_identity_clear();
 }

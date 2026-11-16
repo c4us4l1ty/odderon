@@ -47,6 +47,7 @@ static FIELDS: Mutex<Vec<f64>> = Mutex::new(Vec::new());
 static RECORDER: Mutex<Option<Fdr>> = Mutex::new(None);
 static JSON: Mutex<String> = Mutex::new(String::new());
 static DOSSIER: Mutex<String> = Mutex::new(String::new());
+static SERVER_RECEIPT: Mutex<Option<odd_report::dossier::ReceiptAnnex>> = Mutex::new(None);
 /// The deployment page URL, supplied by the browser. A QR code has to carry
 /// an absolute URL to be scannable by a phone; the module cannot know the
 /// origin it is served from, so the page states it.
@@ -90,13 +91,41 @@ fn integer(value: f64) -> Option<i64> {
 /// channel. Returns 1 on success, 0 when the layout is impossible.
 #[no_mangle]
 pub extern "C" fn mission_fdr_parse() -> i32 {
+    *SERVER_RECEIPT.lock().unwrap() = None;
+    *VERDICT.lock().unwrap() = None;
+    *GEOMETRY.lock().unwrap() = None;
     *RECORDER.lock().unwrap() = None;
     let fields = FIELDS.lock().unwrap().clone();
     let Some(fdr) = parse_fields(&fields, &identity_bridge::input_text()) else {
         return 0;
     };
+    *JSON.lock().unwrap() = fdr.to_json();
     *RECORDER.lock().unwrap() = Some(fdr);
     1
+}
+
+/// Check the pilot's signature without running the expensive replay.
+#[no_mangle]
+pub extern "C" fn mission_fdr_signature_valid() -> i32 {
+    i32::from(
+        RECORDER
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|fdr| fdr.verify_signature().is_ok()),
+    )
+}
+
+/// The digest is recomputed from parsed fields, never taken from a mutable
+/// JSON `canonical_digest` property supplied by the browser.
+#[no_mangle]
+pub extern "C" fn mission_fdr_digest_byte(index: u32) -> f64 {
+    RECORDER
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|fdr| fdr.digest().get(index as usize).copied())
+        .map_or(f64::NAN, f64::from)
 }
 
 /// Read the signed engine design out of the transport header. A legacy
@@ -286,11 +315,34 @@ pub extern "C" fn mission_fdr_capture(mode: u32, elo_before: f64, elo_after: f64
     if odd_contracts::Contract::get(captured.contract_id).is_none() {
         return 0;
     }
-    let fdr = Fdr {
+    let fdr = record_from_capture(
+        captured,
+        mode,
+        elo_before,
+        elo_after,
+        identity_bridge::input_text(),
+    );
+    if fdr.validate_shape().is_err() {
+        return 0;
+    }
+    *RECORDER.lock().unwrap() = Some(fdr);
+    1
+}
+
+/// The common constructor is used both before and after flight, preventing
+/// the commitment from drifting away from the design the recorder captures.
+fn record_from_capture(
+    captured: bridge::CapturedFlight,
+    mode: AttemptMode,
+    elo_before: f64,
+    elo_after: f64,
+    callsign: String,
+) -> Fdr {
+    Fdr {
         schema_version: SCHEMA_VERSION,
         contract_id: captured.contract_id,
         attempt_mode: mode,
-        callsign: identity_bridge::input_text(),
+        callsign,
         epoch_s: captured.epoch_s,
         duration_us: captured.duration_us,
         initial_mass_kg: captured.initial.mass,
@@ -373,12 +425,32 @@ pub extern "C" fn mission_fdr_capture(mode: u32, elo_before: f64, elo_after: f64
             .collect(),
         public_key: [0; 32],
         signature: [0; 64],
-    };
-    if fdr.validate_shape().is_err() {
-        return 0;
     }
-    *RECORDER.lock().unwrap() = Some(fdr);
+}
+
+static COMMIT_HASHES: Mutex<[u8; 64]> = Mutex::new([0; 64]);
+
+/// Hash the locked prediction and effective design before any execution. A
+/// failure must stop the ranked launch rather than issue a mismatched ticket.
+#[no_mangle]
+pub extern "C" fn mission_commit_prepare() -> i32 {
+    let Some(captured) = bridge::capture_preflight() else {
+        return 0;
+    };
+    let fdr = record_from_capture(captured, AttemptMode::Practice, 0.0, 0.0, String::new());
+    let mut hashes = COMMIT_HASHES.lock().unwrap();
+    hashes[..32].copy_from_slice(&odd_worker::commitment::design_hash(&fdr));
+    hashes[32..].copy_from_slice(&odd_worker::commitment::prediction_hash(&fdr));
     1
+}
+
+#[no_mangle]
+pub extern "C" fn mission_commit_hash_byte(index: u32) -> f64 {
+    COMMIT_HASHES
+        .lock()
+        .unwrap()
+        .get(index as usize)
+        .map_or(f64::NAN, |v| f64::from(*v))
 }
 
 /// Sign the captured recorder with the active flight license.
@@ -403,6 +475,7 @@ pub extern "C" fn mission_fdr_sign() -> i32 {
 /// -1 SignatureMismatch, -2 metric replay mismatch, -3 terminal-state mismatch.
 #[no_mangle]
 pub extern "C" fn mission_fdr_verify() -> i32 {
+    *SERVER_RECEIPT.lock().unwrap() = None;
     *REPLAYED.lock().unwrap() = None;
     *GEOMETRY.lock().unwrap() = None;
     let Some(fdr) = RECORDER.lock().unwrap().clone() else {
@@ -463,6 +536,52 @@ fn verdict_text() -> String {
     }
 }
 
+/// Load a server key followed by the canonical receipt and signature from the
+/// byte channel. Only a valid receipt for the already-replayed record reaches
+/// the report. A failed load clears a previously accepted receipt.
+#[no_mangle]
+pub extern "C" fn mission_fdr_receipt_load() -> i32 {
+    *SERVER_RECEIPT.lock().unwrap() = None;
+    if !matches!(*VERDICT.lock().unwrap(), Some(Ok(()))) {
+        return 0;
+    }
+    let bytes = identity_bridge::input_bytes();
+    let Some(key_bytes) = bytes.get(..32) else {
+        return 0;
+    };
+    let Ok(key) = <[u8; 32]>::try_from(key_bytes) else {
+        return 0;
+    };
+    let Some(receipt) = odd_worker::ServerReceipt::from_bytes(&bytes[32..]) else {
+        return 0;
+    };
+    let Some(fdr) = RECORDER.lock().unwrap().clone() else {
+        return 0;
+    };
+    let p = &receipt.payload;
+    if !receipt.verify(&key)
+        || p.fdr_hash != fdr.digest()
+        || p.pubkey != fdr.public_key
+        || p.contract_id != fdr.contract_id
+        || p.mode != fdr.attempt_mode
+        || p.score_s_bits != fdr.metrics[4].to_bits()
+    {
+        return 0;
+    }
+    *SERVER_RECEIPT.lock().unwrap() = Some(odd_report::dossier::ReceiptAnnex {
+        server_public_key: key,
+        receipt_bytes: receipt.to_bytes(),
+        attempt_num: p.attempt_num,
+        mode: p.mode,
+        score_s: p.score_s(),
+        elo_before: p.elo_before(),
+        elo_after: p.elo_after(),
+        mission_elo_after: p.mission_elo_after(),
+        timestamp_s: p.timestamp_s,
+    });
+    1
+}
+
 /// Build the printable dossier for the parsed (or captured) recorder.
 #[no_mangle]
 pub extern "C" fn mission_fdr_dossier() -> i32 {
@@ -473,7 +592,7 @@ pub extern "C" fn mission_fdr_dossier() -> i32 {
     let Some(geometry) = bridge::dossier_geometry() else {
         return 0;
     };
-    let payload = dossier_payload(&fdr);
+    let payload = dossier_payload(&fdr, None);
     let Ok(document) = odd_report::dossier::html(&fdr, &geometry, &payload) else {
         return 0;
     };
@@ -494,8 +613,11 @@ pub extern "C" fn mission_fdr_dossier_from_record() -> i32 {
     let Some(geometry) = GEOMETRY.lock().unwrap().clone() else {
         return 0;
     };
-    let payload = dossier_payload(&fdr);
-    let Ok(document) = odd_report::dossier::html(&fdr, &geometry, &payload) else {
+    let receipt = SERVER_RECEIPT.lock().unwrap();
+    let payload = dossier_payload(&fdr, receipt.as_ref());
+    let Ok(document) =
+        odd_report::dossier::html_with_receipt(&fdr, &geometry, &payload, receipt.as_ref())
+    else {
         return 0;
     };
     *DOSSIER.lock().unwrap() = document;
@@ -505,6 +627,9 @@ pub extern "C" fn mission_fdr_dossier_from_record() -> i32 {
 /// Load a recorder from a `#verify=` payload in the byte channel.
 #[no_mangle]
 pub extern "C" fn mission_fdr_from_payload() -> i32 {
+    *SERVER_RECEIPT.lock().unwrap() = None;
+    *VERDICT.lock().unwrap() = None;
+    *GEOMETRY.lock().unwrap() = None;
     *RECORDER.lock().unwrap() = None;
     JSON.lock().unwrap().clear();
     DOSSIER.lock().unwrap().clear();
@@ -650,11 +775,16 @@ pub extern "C" fn mission_fdr_field_at(index: u32) -> f64 {
         .unwrap_or(f64::NAN)
 }
 
-/// The QR text: an absolute URL when the page told us where it is served,
-/// otherwise the bare fragment (which the dossier labels as relative rather
-/// than inventing a host).
-fn dossier_payload(fdr: &Fdr) -> String {
-    let fragment = fdr.verify_payload();
+/// A verified ranked receipt gets a public content-addressed link, so a
+/// scanner can retrieve both the record and its server certificate. Local
+/// and practice dossiers retain the self-contained, offline-verifiable FDR.
+/// The caller may pass only a receipt already verified and bound to `fdr`.
+fn dossier_payload(fdr: &Fdr, receipt: Option<&odd_report::dossier::ReceiptAnnex>) -> String {
+    let fragment = if receipt.is_some_and(|r| r.mode == AttemptMode::Ranked) {
+        format!("#flight={}", odd_report::hex::encode(&fdr.digest()))
+    } else {
+        fdr.verify_payload()
+    };
     let origin = ORIGIN.lock().unwrap().clone();
     if origin.is_empty() {
         return fragment;
@@ -721,12 +851,12 @@ mod tests {
             assert_eq!(mission_fdr_origin_byte(f64::from(byte)), 1);
         }
         assert_eq!(mission_fdr_origin_commit(), 1);
-        let payload = dossier_payload(&fdr);
+        let payload = dossier_payload(&fdr, None);
         assert!(payload.starts_with(url));
         assert!(payload.ends_with(&fdr.verify_payload()));
         assert_eq!(payload, format!("{url}{}", fdr.verify_payload()));
         mission_fdr_origin_reset();
-        assert_eq!(dossier_payload(&fdr), fdr.verify_payload());
+        assert_eq!(dossier_payload(&fdr, None), fdr.verify_payload());
     }
 
     /// A hostile or malformed origin must never reach the printed page.
@@ -850,7 +980,18 @@ mod tests {
             bridge::mission_lock(180.0, 550_000.0, 260_000.0, 120.0, 10_800.0, f64::NAN),
             1
         );
+        assert_eq!(
+            mission_commit_prepare(),
+            1,
+            "preflight commitment must be available before flight"
+        );
+        let hashes = *COMMIT_HASHES.lock().unwrap();
         assert_eq!(bridge::mission_execute(), 1);
+        assert_eq!(
+            mission_commit_prepare(),
+            0,
+            "preflight commitment must not be created after execution"
+        );
         identity_bridge::set_license_for_test(odd_identity::License::from_entropy([21u8; 16]));
         identity_bridge::mission_input_reset();
         for byte in b"GATE PILOT" {
@@ -858,7 +999,13 @@ mod tests {
         }
         assert_eq!(mission_fdr_capture(0, 1200.0, 1204.0), 1);
         assert_eq!(mission_fdr_sign(), 1);
-        RECORDER.lock().unwrap().clone().unwrap()
+        let fdr = RECORDER.lock().unwrap().clone().unwrap();
+        assert_eq!(&hashes[..32], &odd_worker::commitment::design_hash(&fdr));
+        assert_eq!(
+            &hashes[32..],
+            &odd_worker::commitment::prediction_hash(&fdr)
+        );
+        fdr
     }
 
     #[test]
@@ -973,6 +1120,60 @@ mod tests {
             "per-burn sweeps {parts} must sum to report[57] {}",
             fdr.metrics[57]
         );
+    }
+
+    #[test]
+    fn flown_dossier_accepts_only_a_valid_bound_server_receipt() {
+        let _guard = bridge::test_lock();
+        let fdr = flown_recorder();
+        *RECORDER.lock().unwrap() = Some(fdr.clone());
+        assert_eq!(mission_fdr_verify(), 1);
+        let key = odd_worker::ServerKey::from_seed([0x5e; 32]);
+        let receipt = odd_worker::ServerReceipt::issue(
+            odd_worker::ReceiptPayload::new(
+                fdr.digest(),
+                fdr.public_key,
+                fdr.contract_id,
+                1,
+                AttemptMode::Ranked,
+                fdr.metrics[4],
+                1200.0,
+                1205.0,
+                799.0,
+                1_700_000_000,
+            ),
+            &key,
+        );
+        let load = |r: &odd_worker::ServerReceipt| {
+            identity_bridge::mission_input_reset();
+            for byte in key.public_key().iter().chain(r.to_bytes().iter()) {
+                assert_eq!(identity_bridge::mission_input_absorb(f64::from(*byte)), 1);
+            }
+            mission_fdr_receipt_load()
+        };
+        assert_eq!(load(&receipt), 1);
+        assert_eq!(mission_fdr_dossier_from_record(), 1);
+        let html = DOSSIER.lock().unwrap().clone();
+        assert!(html.contains("id=\"annex-d\""));
+        assert!(html.contains("CERTIFIED SERVER-RANKED RECEIPT"));
+        assert!(html.contains(&odd_report::hex::encode(&receipt.to_bytes())));
+        let target = format!("#flight={}", odd_report::hex::encode(&fdr.digest()));
+        assert!(
+            html.contains(&target),
+            "ranked QR must resolve to the receipt"
+        );
+        let mut forged = receipt.clone();
+        forged.payload.elo_after_bits = 2999.0f64.to_bits();
+        assert_eq!(load(&forged), 0);
+        assert_eq!(mission_fdr_dossier_from_record(), 1);
+        let unverified = DOSSIER.lock().unwrap().clone();
+        assert!(unverified.contains("UNVERIFIED LOCAL / PRACTICE"));
+        assert!(unverified.contains("#verify="));
+        assert!(!unverified.contains("#flight="));
+        // Even a valid signature cannot certify a different record's digest.
+        let mut other = receipt.payload.clone();
+        other.fdr_hash[0] ^= 1;
+        assert_eq!(load(&odd_worker::ServerReceipt::issue(other, &key)), 0);
     }
 
     #[test]

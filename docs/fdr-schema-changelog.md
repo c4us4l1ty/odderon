@@ -101,9 +101,10 @@ record carrying a thermal block.
 
 ### Backward compatibility
 
-Schema 1 and 2 records still parse and verify. They carry no thermal block, so
-their replay produces no vent events and no boil-off, and steps 6–7 are
-skipped. No existing certificate was invalidated by this freeze.
+Schema 1 and 2 records still parse and replay offline. They carry no thermal
+block, so their replay produces no vent events or boil-off, and steps 6–7 are
+skipped. New server submissions require schema 3 in both Ranked and Practice
+modes; this is an authority rule, not a schema change.
 
 ### Verification-rule addendum (2026-11-14, no schema change)
 
@@ -125,6 +126,21 @@ recomputed with `ThermalDesign::baseline()`, which is also unchanged.
 
 Guard: `crates/odd-verify/tests/thermal_fitout_anti_cheat.rs`
 (`oracle_cooling_cannot_be_claimed_without_its_mass`).
+
+A subsequent fail-closed verification rule requires one stage-0 thermal
+block for a v3 cryogenic engine, with the same propellant and bit-exact
+volumes derived from the engine and load; storables must have no block.
+Invalid tank ranges, bus powers or thermal integration fail the replay rather
+than becoming zero loss. This deliberately rejects previously accepted
+malformed v3 records, even if the pilot signed them. The frozen byte layout
+and valid historical v1/v2 offline replay are unchanged. See
+`resigned_cryogenic_records_cannot_omit_or_invalidate_the_tank_model`.
+
+The launch commitment now uses `odderon-design-hash-v2`, adding the ordered
+maneuver plan and guidance to the committed vehicle. It does not alter FDR
+canonical bytes; v1 launch tickets cannot be used for a new submission or retry
+under the new rule. See [server authority](server-authority.md) for the
+upgrade and hindsight limits.
 
 ---
 

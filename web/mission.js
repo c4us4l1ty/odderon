@@ -7,6 +7,9 @@ import * as identity from './identity.js';
 import { initProfile, openProfile } from './profile.js';
 import * as recorder from './recorder.js';
 import { initVerify, openVerify, verifyFields, result as verificationResult } from './verify.js';
+import * as authority from './authority.js';
+import { verifyReceipt } from './authority-crypto.js';
+import { initLeaderboard } from './leaderboard.js';
 const $=id=>document.getElementById(id);
 const MU=3.986004418e14,R=6378137,G0=9.80665;
 let INITIAL=R+260000,TARGET=R+550000,DURATION=10800,DRY=1020,plane=[1,0],scenario='101',contractId=101;
@@ -19,8 +22,11 @@ const clampNodeTime=t=>{const [lo,hi]=nodeTimeRange();return Math.max(lo,Math.mi
 let setup=[820497600,DURATION,1200,DRY,2400,310,INITIAL,0,0,0,Math.sqrt(MU/INITIAL),0];
 const canvas=$('plan-canvas'),ctx=canvas.getContext('2d');
 const lensCanvas=$('lens-canvas'),lensCtx=lensCanvas.getContext('2d');
-let wasm,nodes=[],compiledOrder=[],selected=-1,preview=[],lunarPreview=[],actual=null,lastReport=null,lastLunarInfo=null,worker=null,timer=null,locked=null,drag=null,draws=0,messages=0,sequence=0;
-let activeLens=null,activeTerm=null,lensPhase=0,lensDraws=0,lastComputeMs=null,lastCapture=null,lastRecorder=null,engineLab=null;
+let wasm,nodes=[],compiledOrder=[],selected=-1,preview=[],lunarPreview=[],actual=null,lastReport=null,lastLunarInfo=null,worker=null,locked=null,drag=null,draws=0,messages=0,sequence=0;
+// A local, best-effort guard against using numerical practice as a ranked
+// planning preview. The server cannot inspect or trust a user's browser.
+const practiceSimulated=new Set();
+let activeLens=null,activeTerm=null,lensPhase=0,lensDraws=0,lastComputeMs=null,lastCapture=null,lastRecorder=null,engineLab=null,authorityPending=0;
 // The design the stage actually flies. The lab can be mid-edit without this
 // changing: only "Fit this engine to the stage" commits it. mission_contract()
 // rebuilds the baseline, so every reconfigure must re-apply this afterwards or
@@ -57,11 +63,11 @@ const lens={
   tnw:'Three perpendicular push directions: along motion, sideways in the orbital plane, and out of the plane. Hover a colored handle to isolate one direction.',
   leo:'A close Earth parking orbit, here a few hundred kilometers up. The projection compares the parking circle with Earth’s surface.',
   dag:'A cause-and-effect chain with no loops. Each warning points from symptom to mechanism to cause to a one-click demonstration.',
-  pdr:'An engineering dossier comparing your locked prediction with modeled flight, signed error contributions and practice rating.',
+  pdr:'An engineering dossier comparing your locked prediction with modeled flight, signed error contributions and any verified server receipt.',
   mli:'Each film layer re-radiates heat to the next, so the leak falls as layers are added. The projection shows the outer skin running hot while only a small fraction reaches the liquid. Past about twenty layers the support struts, not the blanket, set the floor.',
   cop:'A cryocooler lifts heat from the cold tank and rejects it, plus the electricity it consumed, through a warm radiator. The projection compares heat lifted with power drawn: at 20 K against a 300 K sink the electricity is one to two orders of magnitude larger, and the Carnot ceiling caps the ratio.',
   gnc:'Guidance decides where to point, navigation decides where you are, and control moves the actuators. The projection shows the attitude hardware drawing from the same electrical bus that feeds the cooler and the propulsion.',
-  'boil-off':'Heat leaking into a cryogenic tank vaporizes liquid. Below the relief setting the tank self-pressurizes; at relief it vents and that propellant is lost to the mission. The projection shows the liquid level falling as heat arrives.',
+  'boil-off':'Heat leaking into a cryogenic tank vaporizes liquid. Below the relief setting the tank self-pressurizes; at relief it vents and the model reports the estimated loss. This version does not feed that loss back into orbital mass or the fuel budget. The projection shows the liquid level falling as heat arrives.',
   t:'A push along the direction of travel changes orbital energy. Near the closest point, a forward push raises the farthest point of the orbit; a backward push lowers it. The projection shows kinetic-energy gain or loss and the opposite side breathing outward or inward.',
   n:'This sideways push stays in the orbital plane and is perpendicular to the direction of travel. Near an apsis it points roughly inward or outward; away from one it is not exactly radial. The projection rotates the eccentricity vector.',
   w:'This push is perpendicular to the orbital plane. It changes the direction of the orbit’s angular momentum and tilts the plane about the line of nodes. The projection shows torque as radius crossed with force.',
@@ -150,12 +156,12 @@ function syncFields(){
   if(n){fields.time.value=String(Math.round(n.time));fields.t.value=String(+n.dv[0].toFixed(2));fields.n.value=String(+n.dv[1].toFixed(2));fields.w.value=String(+n.dv[2].toFixed(2));}
   $('add-node').disabled=!wasm||!!locked||nodes.length>=12;$('example').disabled=!wasm||!!locked;$('mission-select').disabled=!wasm||!!locked;$('split-kick').disabled=!!locked;
 }
-function updatePreview(schedule=true){
+function updatePreview(){
   if(!wasm)return;
   cancelFlight();sequence++;syncFields();actual=null;lastReport=null;lastLunarInfo=null;lunarPreview=[];
   if(!configure(wasm,nodes)){$('plan-status').textContent='Unable to compile: check timing, overlapping burns, or available propellant.';$('plan-status').classList.add('failure');preview=[];$('prefill').disabled=true;$('execute').disabled=true;
   updateAttemptMode();updateCausal();draw();cancelFlight();return;}
-  $('plan-status').classList.remove('failure');$('plan-status').textContent='Ideal orbit ready. The modeled flight calculates in the background.';
+  $('plan-status').classList.remove('failure');$('plan-status').textContent='Ideal orbit ready. The modeled flight runs only after the prediction is locked.';
   preview=Array.from({length:481},(_,i)=>({time:DURATION*i/480,state:readState(wasm,DURATION*i/480)}));
   if(scenario==='103'){
     const valid=wasm.mission_lunar_info(0);
@@ -164,30 +170,31 @@ function updatePreview(schedule=true){
   }
   if(preview.some(p=>p.state.some(x=>!Number.isFinite(x)))){preview=[];$('plan-status').textContent='The ideal orbit could not be sampled.';cancelFlight();draw();return;}
   $('prefill').disabled=false;$('execute').disabled=nodes.length===0||!!locked;
-  syncFields();updateCausal();draw();annotateAcronyms($('plan-status'));if(schedule)scheduleFlight();
+  syncFields();updateCausal();draw();annotateAcronyms($('plan-status'));
 }
 function readStatePatched(w,t){return Array.from({length:7},(_,i)=>w.mission_lunar_preview(t,i));}
-function cancelFlight(){if(timer!==null){clearTimeout(timer);timer=null;}if(worker){worker.terminate();worker=null;}}
-function scheduleFlight(){cancelFlight();const version=++sequence;timer=setTimeout(()=>{timer=null;startFlight(false,version);},350);}
-function workerPayload(isLocked){
+function cancelFlight(){if(worker){worker.terminate();worker=null;}}
+function workerPayload(){
   const snapshot=nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));
   const payload={contract:contractId,setup,nodes:snapshot,metric:scenario==='102'?1:0,callsign:identity.profile()?.callsign??''};
   // Send the committed physical design, not the performance it produces and
   // not whatever the lab is currently previewing.
   if(appliedEngine)payload.engine={...appliedEngine};
   if(assemblyDesign)payload.assembly={...assemblyDesign};
-  if(isLocked){const p=locked.prediction;payload.locked=[p.dv,p.apo*1000,p.peri*1000,p.fuel,p.time,Number.isFinite(p.miss)?p.miss:NaN];}
+  const p=locked.prediction;payload.locked=[p.dv,p.apo*1000,p.peri*1000,p.fuel,p.time,Number.isFinite(p.miss)?p.miss:NaN];
   return payload;
 }
-function startFlight(isLocked,version=++sequence){
+function startFlight(version,flightContext){
   cancelFlight();worker=new Worker('./mission-worker.js',{type:'module'});const current=worker;
   current.onmessage=({data})=>{messages++;if(worker!==current||version!==sequence)return;current.terminate();worker=null;
-    if(data.error){$('plan-status').textContent=data.error;$('plan-status').classList.add('failure');if(isLocked)$('execute-status').textContent=data.error;return;}
+    if(data.error){$('plan-status').textContent=data.error;$('plan-status').classList.add('failure');$('execute-status').textContent=data.error;return;}
     actual=data.points;lastReport=data.report;lastCapture=data.capture??null;lastBoilOff=data.boilOff??null;lastDelegationMask=data.delegationMask??0;lastRecorder=null;lastComputeMs=Number.isFinite(data.computeMs)?data.computeMs:null;lastLunarInfo=data.lunarInfo?.[0]?data.lunarInfo:null;if(data.lunar?.length)lunarPreview=data.lunar;updateCausal();draw();$('plan-status').textContent='Flight model ready. No simulation runs while idle.';annotateAcronyms($('plan-status'));
-    if(isLocked)showDebrief(data.report);
+    showDebrief(data.report,flightContext,version);
   };
-  current.onerror=()=>{if(worker!==current)return;worker.terminate();worker=null;$('plan-status').textContent='Flight worker failed.';if(isLocked)$('execute-status').textContent='Flight worker failed.';};
-  messages++;current.postMessage(workerPayload(isLocked));
+  current.onerror=()=>{if(worker!==current)return;worker.terminate();worker=null;$('plan-status').textContent='Flight worker failed.';$('execute-status').textContent='Flight worker failed.';};
+  const payload=workerPayload();
+  if(flightContext){payload.attemptMode=flightContext.ticket?.mode??1;payload.callsign=flightContext.callsign;}
+  messages++;current.postMessage(payload);
 }
 function prefill(){
   const state=readState(wasm,DURATION),metrics=orbitMetrics(state);if(!metrics){$('execute-status').textContent='The ideal orbit has no finite farthest point.';return false;}
@@ -195,7 +202,7 @@ function prefill(){
   $('predict-apo').value=metrics.apo.toFixed(3);$('predict-peri').value=metrics.peri.toFixed(3);
   $('predict-fuel').value=(state[6]-DRY).toFixed(3);$('predict-time').value=String(DURATION);$('predict-miss').value='';$('execute-status').textContent='';return true;
 }
-function showDebrief(report){
+function showDebrief(report,flightContext,version){
   const [mass,apo,peri,e,rescueScore,dv]=report,p=locked.prediction;
   const drift=report[28]*180/Math.PI,inclination=report[26]*180/Math.PI;
   const impacted=report[30]===1,entry=report[31],evaluation=report[29],attrEnd=report[18],truncated=report[19]===1;
@@ -250,40 +257,71 @@ function showDebrief(report){
     const note=document.createElement('div');note.className='attribution-note';note.textContent=`Signed contributions sum to the total error ${scenario==='102'?fmt(report[14]*180/Math.PI,3)+'°':fmt(report[14]/1000,2)+' km'}; efficiency residual ${fmt(report[17],9)}. Attribution epoch ${fmt(attrEnd,1)} s. Exact four-player Shapley uses 16 coalition propagations${lastComputeMs!==null?`; flight, loss isolation and attribution took ${fmt(lastComputeMs,1)} ms in this worker`:''}.`;list.append(note);
   }
   const elo=document.createElement('p');elo.className='elo-update';elo.id='elo-result';
-  const requested=$('attempt-mode')?.value??'ranked';
-  const missionRating=identity.profile()?.missionElo[String(contractId)]??CONTRACT_RATINGS[contractId]??1200;
-  const outcome=identity.recordFlight({contractId,score,mode:requested,missionRating});
-  if(outcome.ranked){
-    elo.textContent=`Ranked flight certified. Astro-Elo ${fmt(outcome.before,0)} → ${fmt(outcome.after,1)} (${outcome.delta>=0?'+':''}${fmt(outcome.delta,1)}, K=${outcome.k}); contract rating ${fmt(outcome.missionBefore,0)} → ${fmt(outcome.missionAfter,1)}. Contract ${contractId} now has a locked official certificate; further attempts are practice.`;
+  const signed=document.createElement('p');signed.className='profile-note';signed.id='recorder-status';
+  const cert=document.createElement('p');cert.className='verify-verdict';cert.id='certification-status';
+  cert.textContent='UNVERIFIED LOCAL / PRACTICE';
+  const active=identity.profile();
+  const activeKey=active.publicKey.map(b=>b.toString(16).padStart(2,'0')).join('');
+  if(activeKey===flightContext.pubkey){
+    const outcome=identity.recordFlight({contractId,score});
+    elo.textContent=`Practice / pending verification — no local Astro-Elo was awarded. Client-recorded value ${fmt(outcome.after,1)} is not authoritative.`;
+    if(lastCapture){
+      try{
+        const fields=recorder.stampOutcome(lastCapture,{ranked:flightContext.ticket?.mode===0,before:outcome.before,after:outcome.before});
+        lastRecorder=recorder.sign(wasm,fields,flightContext.callsign);
+        signed.textContent=`Flight recorder signed by ${lastRecorder.document.public_id}; digest ${lastRecorder.document.canonical_digest.slice(0,16)}…`;
+      }catch(error){signed.textContent=`Recorder could not be signed: ${String(error.message||error)}`;}
+    }else signed.textContent='No recorder was captured for this flight.';
   }else{
-    elo.textContent=`Practice flight — Astro-Elo unchanged at ${fmt(outcome.after,1)}. ${outcome.alreadyRanked?`Contract ${contractId} already has a certified ranked certificate, so this run cannot change the rating.`:'Practice mode was selected.'}`;
+    lastRecorder=null;
+    elo.textContent='The active license changed during flight; no record was signed or submitted.';
   }
   const actions=document.createElement('div');actions.className='button-row';
   const print=document.createElement('button');print.id='export-pdr';print.textContent='Print debrief (PDF)';print.title='Opens the browser print dialog; choose Save as PDF.';print.addEventListener('click',()=>window.print());actions.append(print);
-  // Sign the recorder now that the rating outcome is settled. Signing is cheap
-  // and stays on this thread so the license secret never enters a worker.
-  const signed=document.createElement('p');signed.className='profile-note';signed.id='recorder-status';
-  if(lastCapture){
-    try{
-      const fields=recorder.stampOutcome(lastCapture,{ranked:outcome.ranked,before:outcome.before,after:outcome.after});
-      lastRecorder=recorder.sign(wasm,fields,identity.profile().callsign);
-      // A ranked certificate is issued once, so keep the signed document with
-      // the certificate; a later reload must still be able to export it.
-      if(outcome.ranked)identity.attachCertificate(contractId,lastRecorder.json);
-      signed.textContent=`Flight recorder signed by ${lastRecorder.document.public_id}. ${outcome.ranked?'Ranked certificate':'Practice record'}; canonical digest ${lastRecorder.document.canonical_digest.slice(0,16)}…`;
-    }catch(error){signed.textContent=`Recorder could not be signed: ${String(error.message||error)}`;}
-  }else{signed.textContent='No recorder was captured for this flight.';}
   const exportButton=document.createElement('button');exportButton.id='export-fdr';exportButton.textContent='Export signed recorder (.odderon-fdr.json)';exportButton.disabled=!lastRecorder;
   exportButton.addEventListener('click',()=>{if(lastRecorder)recorder.download(`contract-${contractId}.odderon-fdr.json`,`${lastRecorder.json}\n`,'application/json');});
   const dossierButton=document.createElement('button');dossierButton.id='verify-flight';dossierButton.textContent='Verify / Replay Dossier';dossierButton.disabled=!lastCapture;
   dossierButton.addEventListener('click',()=>{
     if(!lastRecorder)return;
     const {fields,callsign}=recorder.fieldsFromJson(lastRecorder.document);
-    openVerify();verifyFields(fields,callsign);
+    openVerify();verifyFields(fields,callsign,lastRecorder.document.server_receipt??null);
   });
   actions.append(exportButton,dossierButton);
-  $('debrief-content').replaceChildren(table,cards,loss,heading,list,elo,signed,actions);
+  $('debrief-content').replaceChildren(table,cards,loss,heading,list,cert,elo,signed,actions);
   annotateAcronyms($('debrief-content'));$('debrief').hidden=false;$('execute-status').textContent=impacted?'Flight ended in impact. The prediction remains locked.':'Flight complete. The prediction remains locked.';annotateAcronyms($('execute-status'));
+  if(flightContext.ticket&&lastRecorder)void settleReceipt(lastRecorder,flightContext,version,cert,elo,actions);
+}
+
+async function settleReceipt(record,context,version,cert,elo,actions){
+  authorityPending++;
+  cert.textContent='Submitting the signed flight for server replay…';
+  try{
+    const response=await authority.submit(record.payload,context.ticket);
+    const r=response?.receipt;
+    if(response?.accepted!==true||r?.attempt_num!==context.ticket.attempt_num||r?.mode!==context.ticket.mode
+      ||response.fdr_hash!==r.fdr_hash||!verifyReceipt(wasm,r,record.document))throw Error('The authority returned an invalid or mismatched receipt.');
+    const accepted=recorder.withReceipt(record,r);
+    // Keep the receipt even if the debrief was closed while submission ran,
+    // but never attach it to a different active identity.
+    const saved=identity.recordReceipt(accepted.json);
+    if(version!==sequence)return;
+    lastRecorder=accepted;
+    cert.textContent=r.mode===0?'★ CERTIFIED SERVER-RANKED RECEIPT':'SERVER-VERIFIED PRACTICE';
+    cert.className=`verify-verdict ${r.mode===0?'is-verified':''}`;
+    elo.textContent=r.mode===0
+      ? `Server-ranked Astro-Elo ${r.elo_before.toFixed(1)} → ${r.elo_after.toFixed(1)} (${(r.elo_after-r.elo_before)>=0?'+':''}${(r.elo_after-r.elo_before).toFixed(1)}); mission rating ${r.mission_elo_after.toFixed(1)}.`
+      : `Server-verified practice — Astro-Elo unchanged at ${r.elo_after.toFixed(1)}.`;
+    if(!saved)elo.textContent+=' Switch back to the signing license to sync this result.';
+    actions.querySelector('#retry-submit')?.remove();
+  }catch(error){
+    if(version!==sequence)return;
+    cert.textContent='UNVERIFIED LOCAL / PRACTICE';
+    elo.textContent=`Authority did not certify this flight: ${String(error.message||error)}. No local rating was awarded.`;
+    if(!actions.querySelector('#retry-submit')){
+      const retry=document.createElement('button');retry.id='retry-submit';retry.textContent='Retry server submission';
+      retry.addEventListener('click',()=>{retry.remove();void settleReceipt(record,context,version,cert,elo,actions);});actions.append(retry);
+    }
+  }finally{authorityPending--;}
 }
 // Warning discriminants follow odd_app::causal::Warning declaration order.
 const CAUSAL_EVIDENCE=[
@@ -356,19 +394,22 @@ function updateCausal(){
     if((warning===4||warning===6)&&nodes[selected]?.dv[0]>0&&!locked)$('split-kick').hidden=false;
   }
   if(scenario==='103'&&nodes.length===1&&nodes[0].dv[0]>2500&&!locked)$('split-kick').hidden=false;
+  if(scenario==='103'){$('split-kick').disabled=!!locked||$('attempt-mode').value==='ranked';$('split-kick').title=$('attempt-mode').value==='ranked'?'Numerical targeting runs the flight model and is available only in practice.':'';}
   if(scenario==='103'&&lastLunarInfo){const row=document.createElement('div');row.className='cause-chain';row.textContent=`Lunar sphere-of-influence entry: ideal patched preview enters at ${Math.round(lastLunarInfo[0])} s. The ${Math.round(lastLunarInfo[1]/1000)} km boundary is a preview aid, not a gravity discontinuity; the gold path keeps continuous third-body gravity.`;target.append(row);}
   if(!target.childNodes.length)target.textContent='No rule currently triggered. This is a limited check, not a safety certification.';
   annotateAcronyms(target);
 }
 $('split-kick').addEventListener('click',()=>{
   if(scenario==='103'){
+    if($('attempt-mode').value==='ranked'){$('plan-status').textContent='Numerical targeting is available in practice only.';return;}
+    practiceSimulated.add(contractId);updateAttemptMode();
     const total=nodes.reduce((a,n)=>a+Math.hypot(...n.dv),0)||3240;
     const first=nodes[0]?.time||1600;
     cancelFlight();const version=++sequence;worker=new Worker('./mission-worker.js',{type:'module'});const current=worker;
     $('plan-status').textContent='Targeting numerical periapses in the background…';$('split-kick').disabled=true;
     current.onmessage=({data})=>{messages++;if(worker!==current||version!==sequence)return;current.terminate();worker=null;
       if(data.error){$('plan-status').textContent=data.error;$('split-kick').disabled=!!locked;return;}
-      nodes=data.nodes;selected=nodes.length-1;updatePreview();$('plan-status').textContent='Three equal kicks placed at numerically propagated periapses. Check the gold path and the apoapsis radius.';annotateAcronyms($('plan-status'));
+      nodes=data.nodes;selected=nodes.length-1;updatePreview();$('plan-status').textContent='Three equal kicks placed at numerically propagated periapses. Lock a prediction and fly to see the modeled path.';annotateAcronyms($('plan-status'));
     };
     current.onerror=()=>{if(worker!==current)return;worker.terminate();worker=null;$('plan-status').textContent='Targeting worker failed.';$('split-kick').disabled=!!locked;};
     messages++;current.postMessage({action:'split',kicks:3,total,first,engine:appliedEngine?{...appliedEngine}:null,assembly:assemblyDesign?{...assemblyDesign}:null});return;
@@ -482,7 +523,7 @@ function drawLens(){
     arrow(cx-70,cy-20,cx-34,cy-20,'#e1bc76');
     for(let i=0;i<3;i++){const y=cy-40-((lensPhase*18+i*12)%30);lensCtx.fillStyle='#edbc98';lensCtx.beginPath();lensCtx.arc(cx,y,2.5,0,Math.PI*2);lensCtx.fill();}
     lensCtx.fillText('Heat in vaporizes liquid; the relief valve vents it',10,14);
-    lensCtx.fillText('Vented propellant is gone from the mission',10,h-8);
+    lensCtx.fillText('Loss is reported, not fed back into orbital mass',10,h-8);
   }else if(key==='dag'){
     const labels=['Symptom','Mechanism','Cause','Demo'];for(let i=0;i<4;i++){const x=15+i*65;lensCtx.strokeStyle='#8ea98d';lensCtx.strokeRect(x,cy-12,52,24);lensCtx.fillStyle='#c7d3c4';lensCtx.fillText(labels[i],x+4,cy+4);if(i<3)arrow(x+52,cy,x+65,cy,'#e2bc79');}lensCtx.fillText('Deterministic cause chain',10,14);
   }else if(key==='pdr'){
@@ -531,22 +572,26 @@ $('example').addEventListener('click',()=>{
   else{const v1=Math.sqrt(MU/INITIAL),v2=Math.sqrt(MU/TARGET);nodes=[{time:200,dv:[v1*(Math.sqrt(TARGET/a)-1),0,0]},{time:200+coast,dv:[v2*(1-Math.sqrt(INITIAL/a)),0,0]}];}
   selected=0;updatePreview();prefill();
 });
-// Ranked eligibility belongs to the persistent license, so the control
-// reflects it instead of letting a player farm the same contract.
+// Only the authority decides whether a commit is attempt 1. We also avoid
+// presenting a ranked launch in this page session after numerical practice
+// on the same contract; this UX guard is not a security boundary.
 function updateAttemptMode(reset=false){
   const select=$('attempt-mode');if(!select)return;
-  const certified=identity.isRanked($('mission-select').value);
-  select.querySelector('option[value="ranked"]').disabled=certified;
-  // Switching contracts returns to the eligible default; a certification
-  // forces practice. Mid-planning refreshes leave a deliberate choice alone.
-  if(certified)select.value='practice';else if(reset)select.value='ranked';
+  const available=authority.configured(), practiced=practiceSimulated.has(contractId);
+  select.querySelector('option[value="ranked"]').disabled=!available||practiced;
+  if(!available||practiced)select.value='practice';else if(reset&&!locked)select.value='ranked';
+  select.disabled=!!locked;
   const note=$('attempt-mode-note');
-  if(note)note.textContent=certified?'This contract already has a certified ranked certificate. Further runs are practice and cannot change Astro-Elo.':'Your first execution of this contract is ranked and locks its official certificate.';
+  if(note)note.textContent=!available?'No trusted server key is configured. Local practice and replay are available, but no rating or certification is awarded.'
+    :practiced?'Numerical practice was used on this contract in this page session. Ranked is disabled here; offline practice does not consume a server attempt.'
+    :'Ranked launch commits the vehicle, maneuver plan and prediction before the modeled flight. The server forces later attempts to verified practice. Numerical tug targeting is practice-only.';
+  const split=$('split-kick');
+  if(split){split.disabled=!!locked||(scenario==='103'&&select.value==='ranked');split.title=scenario==='103'&&select.value==='ranked'?'Numerical targeting runs the flight model and is available only in practice.':'';}
 }
 identity.onChange(()=>updateAttemptMode());
+$('attempt-mode').addEventListener('change',()=>{updateAttemptMode();});
 $('mission-select').addEventListener('change',()=>{
-  updateAttemptMode(true);
-  if(locked)return;scenario=$('mission-select').value;contractId=Number(scenario);cancelFlight();sequence++;nodes=[];selected=-1;actual=null;lastReport=null;lastLunarInfo=null;lunarPreview=[];
+  if(locked)return;scenario=$('mission-select').value;contractId=Number(scenario);updateAttemptMode(true);cancelFlight();sequence++;nodes=[];selected=-1;actual=null;lastReport=null;lastLunarInfo=null;lunarPreview=[];
   if(scenario==='102'){
     INITIAL=R+250000;TARGET=R+800000;DURATION=432000;plane=[Math.cos(96*Math.PI/180),Math.sin(96*Math.PI/180)];const a=(INITIAL+TARGET)/2,v=Math.sqrt(MU*(2/INITIAL-1/a));setup=[820497600,DURATION,1200,DRY,2400,310,INITIAL,0,0,0,v*plane[0],v*plane[1]];
     $('mission-rank').textContent='CONTRACT 102 / FLIGHT DYNAMICS OFFICER · 1250';$('mission-title').textContent='Follow the sunlight';$('mission-description').textContent='Circularize at 800 km and tilt the orbit so its crossing of the equator turns by about 4.93° in five days. Engine and spacecraft mass use the rescue assumptions.';$('example').textContent='Show circularization example';
@@ -569,9 +614,36 @@ $('execute').addEventListener('click',()=>{
   if($('predict-miss').value.trim()!==''&&(!Number.isFinite(miss)||miss<0)){$('execute-status').textContent='Target miss distance must be non-negative.';return;}
   locked=Object.freeze({prediction:Object.freeze({dv:vals[0],apo:vals[1],peri:vals[2],fuel:vals[3],time:vals[4],miss})});
   for(const id of ['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time','predict-miss','prefill','execute'])$(id).disabled=true;
-  $('unlock').hidden=false;$('debrief').hidden=true;$('execute-status').textContent='Prediction locked. Simulating the flight and its comparisons…';engineLab?.setLocked();assembly?.setLocked();syncFields();startFlight(true);
+  $('unlock').hidden=false;$('debrief').hidden=true;engineLab?.setLocked();assembly?.setLocked();syncFields();updateAttemptMode();
+  void launchLocked();
 });
-$('unlock').addEventListener('click',()=>{locked=null;cancelFlight();sequence++;engineLab?.setLocked();assembly?.setLocked();$('unlock').hidden=true;$('debrief').hidden=true;$('execute-status').textContent='';for(const id of ['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time','predict-miss'])$(id).disabled=false;updatePreview();});
+async function launchLocked(){
+  cancelFlight();const version=++sequence;
+  lastReport=null;lastCapture=null;lastRecorder=null;
+  const profile=identity.profile(),pubkey=profile.publicKey.map(b=>b.toString(16).padStart(2,'0')).join('');
+  const context={pubkey,callsign:profile.callsign,ticket:null};
+  if($('attempt-mode').value==='ranked'){
+    authorityPending++;$('execute-status').textContent='Committing the locked vehicle, plan and prediction before flight…';
+    try{
+      if(!configure(wasm,nodes))throw Error('The locked design could not be compiled.');
+      const p=locked.prediction;
+      if(!wasm.mission_lock(p.dv,p.apo*1000,p.peri*1000,p.fuel,p.time,Number.isFinite(p.miss)?p.miss:NaN))throw Error('The locked prediction is invalid.');
+      context.ticket=await authority.commit(wasm,contractId);
+      if(version!==sequence||!locked)return;
+      const current=identity.profile().publicKey.map(b=>b.toString(16).padStart(2,'0')).join('');
+      if(current!==pubkey)throw Error('The active license changed; the committed attempt was not flown.');
+      $('execute-status').textContent=context.ticket.mode===0?'Commit accepted. Simulating the ranked flight…':'This is a later attempt; the server requires practice. Simulating…';
+      startFlight(version,context);
+    }catch(error){
+      if(version===sequence)$('execute-status').textContent=`Ranked launch stopped: ${String(error.message||error)}. No locked flight ran. If a response was lost, the attempt may have been consumed; retry may be practice.`;
+    }finally{authorityPending--;}
+  }else{
+    practiceSimulated.add(contractId);updateAttemptMode();
+    $('execute-status').textContent='Local practice: simulating the locked flight without a server rating…';
+    startFlight(version,context);
+  }
+}
+$('unlock').addEventListener('click',()=>{locked=null;cancelFlight();sequence++;engineLab?.setLocked();assembly?.setLocked();updateAttemptMode();$('unlock').hidden=true;$('debrief').hidden=true;$('execute-status').textContent='';for(const id of ['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time','predict-miss'])$(id).disabled=false;updatePreview();});
 canvas.addEventListener('pointerdown',e=>{
   if(locked||!preview.length||e.button!==0)return;const p=mousePoint(e),node=nodes[selected];
   if(node){const state=readState(wasm,node.time),center=toCanvas(state);for(const h of handles(center,state))if(distance(p,h.end)<12){drag={pointer:e.pointerId,key:h.key,start:p,initial:node.dv[{t:0,n:1,w:2}[h.key]],dir:h.dir};startLens(h.key);canvas.setPointerCapture(e.pointerId);return;}if(distance(p,center)<12){drag={pointer:e.pointerId,key:'time'};startLens('time');canvas.setPointerCapture(e.pointerId);return;}}
@@ -582,13 +654,13 @@ canvas.addEventListener('pointermove',e=>{
     if(!locked&&preview.length&&nodes[selected]){const p=mousePoint(e),state=readState(wasm,nodes[selected].time),center=toCanvas(state);const h=handles(center,state).find(h=>distance(p,h.end)<12);if(h)startLens(h.key);else if(activeLens&&!e.target.closest?.('.term'))stopLens();}
     return;
   }
-  const p=mousePoint(e),node=nodes[selected];if(drag.key==='time'){const near=nearestPath(p);if(near)node.time=clampNodeTime(near.time);}else{const i={t:0,n:1,w:2}[drag.key];node.dv[i]=drag.initial+2*((p[0]-drag.start[0])*drag.dir[0]+(p[1]-drag.start[1])*drag.dir[1]);}delete node.guidance;updatePreview(false);
+  const p=mousePoint(e),node=nodes[selected];if(drag.key==='time'){const near=nearestPath(p);if(near)node.time=clampNodeTime(near.time);}else{const i={t:0,n:1,w:2}[drag.key];node.dv[i]=drag.initial+2*((p[0]-drag.start[0])*drag.dir[0]+(p[1]-drag.start[1])*drag.dir[1]);}delete node.guidance;updatePreview();
 });
-function endDrag(e){if(drag&&drag.pointer===e.pointerId){drag=null;stopLens();scheduleFlight();}}
+function endDrag(e){if(drag&&drag.pointer===e.pointerId){drag=null;stopLens();}}
 canvas.addEventListener('pointerup',endDrag);canvas.addEventListener('pointercancel',endDrag);canvas.addEventListener('lostpointercapture',endDrag);canvas.addEventListener('pointerleave',e=>{if(!drag&&!intoLens(e))stopLens();});
 new ResizeObserver(draw).observe(canvas.parentElement);
-window.missionDiagnostics=Object.freeze({wasm:()=>wasm,recorder:()=>lastRecorder,verification:()=>verificationResult(),openVerify,profile:()=>identity.profile(),isRanked:id=>identity.isRanked(id),openProfile,get nodeTimeRange(){return nodeTimeRange();},clampNodeTime,get nodeMarker(){const n=nodes[selected];if(!n||!wasm)return null;const s=readState(wasm,n.time);return s.some(x=>!Number.isFinite(x))?null:toCanvas(s);},get pathEnds(){return preview.length?[toCanvas(preview[0].state),toCanvas(preview[preview.length-1].state)]:null;},get nodes(){return nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));},get pending(){return !!worker||timer!==null;},get draws(){return draws;},get messages(){return messages;},get locked(){return !!locked;},get report(){return lastReport?[...lastReport]:null;},get computeMs(){return lastComputeMs;},get lunarInfo(){return lastLunarInfo?[...lastLunarInfo]:null;},get lens(){return activeLens;},get lensDraws(){return lensDraws;},get lensPending(){return lensGovernor.frame!==null;},get engine(){return engineLab?engineLab.diagnostics():null;},get appliedEngine(){return appliedEngine?{...appliedEngine}:null;},get assembly(){return assembly?assembly.diagnostics():null;},get boilOff(){return lastBoilOff;},get flownDelegationMask(){return lastDelegationMask;},get causalValid(){return wasm?wasm.mission_causal_valid()===1&&wasm.mission_engine_causal_valid()===1:false;},get acronymViolations(){return acronymViolations();},get handles(){if(selected<0||!wasm)return [];const state=readState(wasm,nodes[selected].time);return handles(toCanvas(state),state).map(h=>({key:h.key,end:h.end}));}});
-try{const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error('The physics module is not available. Build it first.');({instance:{exports:wasm}}=await WebAssembly.instantiate(await response.arrayBuffer(),{}));identity.init(wasm);initProfile();initVerify(wasm);loadGlossary(wasm);
+window.missionDiagnostics=Object.freeze({wasm:()=>wasm,recorder:()=>lastRecorder,verification:()=>verificationResult(),openVerify,profile:()=>identity.profile(),isRanked:id=>identity.isRanked(id),openProfile,get nodeTimeRange(){return nodeTimeRange();},clampNodeTime,get nodeMarker(){const n=nodes[selected];if(!n||!wasm)return null;const s=readState(wasm,n.time);return s.some(x=>!Number.isFinite(x))?null:toCanvas(s);},get pathEnds(){return preview.length?[toCanvas(preview[0].state),toCanvas(preview[preview.length-1].state)]:null;},get nodes(){return nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));},get pending(){return !!worker||authorityPending>0;},get draws(){return draws;},get messages(){return messages;},get locked(){return !!locked;},get report(){return lastReport?[...lastReport]:null;},get computeMs(){return lastComputeMs;},get lunarInfo(){return lastLunarInfo?[...lastLunarInfo]:null;},get lens(){return activeLens;},get lensDraws(){return lensDraws;},get lensPending(){return lensGovernor.frame!==null;},get engine(){return engineLab?engineLab.diagnostics():null;},get appliedEngine(){return appliedEngine?{...appliedEngine}:null;},get assembly(){return assembly?assembly.diagnostics():null;},get boilOff(){return lastBoilOff;},get flownDelegationMask(){return lastDelegationMask;},get causalValid(){return wasm?wasm.mission_causal_valid()===1&&wasm.mission_engine_causal_valid()===1:false;},get acronymViolations(){return acronymViolations();},get handles(){if(selected<0||!wasm)return [];const state=readState(wasm,nodes[selected].time);return handles(toCanvas(state),state).map(h=>({key:h.key,end:h.end}));}});
+try{const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error('The physics module is not available. Build it first.');({instance:{exports:wasm}}=await WebAssembly.instantiate(await response.arrayBuffer(),{}));identity.init(wasm);initProfile();initVerify(wasm);initLeaderboard();updateAttemptMode(true);loadGlossary(wasm);
 // The lab reads canonical stage numbers back after a redesign so the planner,
 // the worker payload and the signed recorder cannot disagree about the engine.
 engineLab=createLab({wasm,isLocked:()=>!!locked,annotate:annotateAcronyms,onDiagnose:()=>renderEngineCausal(),onApply:baselineOnly=>{
@@ -596,12 +668,13 @@ engineLab=createLab({wasm,isLocked:()=>!!locked,annotate:annotateAcronyms,onDiag
   // later reconfigure and every worker payload uses exactly this one.
   appliedEngine=baselineOnly?null:{...engineLab.diagnostics().spec};
   if(assemblyDesign&&!applyAssembly(wasm,assemblyDesign))assemblyDesign=null;
+  assembly?.sync();engineLab?.setLocked();
   if(!baselineOnly){nodes=[];selected=-1;}
   if(!reapplyEngine(wasm))appliedEngine=null;
   DURATION=wasm.mission_parameter(1);DRY=wasm.mission_parameter(3);
   setup=Array.from({length:12},(_,i)=>wasm.mission_parameter(i));
   INITIAL=Math.hypot(setup[6],setup[7],setup[8]);
-  $('debrief').hidden=true;assembly?.sync();updatePreview();
+  $('debrief').hidden=true;assembly?.sync();engineLab?.setLocked();updatePreview();
 }});
 assembly=createAssembly({wasm,isLocked:()=>!!locked,annotate:annotateAcronyms,onChange:()=>{
   assemblyDesign=assemblyPayload(wasm);
@@ -611,7 +684,9 @@ assembly=createAssembly({wasm,isLocked:()=>!!locked,annotate:annotateAcronyms,on
   DURATION=wasm.mission_parameter(1);DRY=wasm.mission_parameter(3);
   setup=Array.from({length:12},(_,i)=>wasm.mission_parameter(i));
   INITIAL=Math.hypot(setup[6],setup[7],setup[8]);
-  $('debrief').hidden=true;updatePreview();
+  // Delegating Propulsion freezes the engine lab; handing it back unfreezes
+  // it. The lab must be told whenever the assembly changes.
+  $('debrief').hidden=true;engineLab?.setLocked();updatePreview();
 }});
 if(wasm.mission_contract(contractId)){engineLab.loadBaseline();engineLab.setLocked();assembly.sync();assembly.setLocked();}
 annotateAcronyms(document.querySelector('.mission-main'));syncFields();updatePreview();}catch(e){$('plan-status').classList.add('failure');$('plan-status').textContent=String(e.message||e);annotateAcronyms($('plan-status'));}

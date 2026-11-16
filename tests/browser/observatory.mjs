@@ -7,37 +7,10 @@ import { join } from 'node:path';
 import { resolve, extname } from 'node:path';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import jsQR from 'jsqr';
+import { decodeQrFromSvg } from './support/qr.mjs';
+import { startAuthority } from './support/authority-server.mjs';
+const authority = await startAuthority();
 const root=resolve('web');
-
-// Rebuild the QR matrix from the emitted vector rectangles and decode it with
-// an independent decoder. This proves the printed code carries a payload that
-// actually verifies, rather than trusting the encoder a second time.
-function decodeQrFromSvg(svg){
-  const size=Number(svg.match(/data-qr-size="(\d+)"/)[1]);
-  const quiet=Number(svg.match(/data-qr-quiet="(\d+)"/)[1]);
-  const outer=size+2*quiet;
-  const start=svg.indexOf('<g fill="#000000">');
-  assert.ok(start>=0,'the QR must emit a dark-module group');
-  // Close the group relative to its own start: the trajectory figure earlier
-  // in the document has groups too.
-  const group=svg.slice(start,svg.indexOf('</g>',start));
-  const grid=Array.from({length:outer},()=>Array(outer).fill(false));
-  for(const match of group.matchAll(/<rect x="(\d+)" y="(\d+)" width="(\d+)" height="1"\/>/g)){
-    const [,x,y,width]=match.map(Number);
-    for(let offset=0;offset<width;offset++)grid[y][x+offset]=true;
-  }
-  const scale=6,pixels=outer*scale;
-  const data=new Uint8ClampedArray(pixels*pixels*4);
-  for(let y=0;y<pixels;y++)for(let x=0;x<pixels;x++){
-    const dark=grid[Math.floor(y/scale)][Math.floor(x/scale)];
-    const at=(y*pixels+x)*4,value=dark?0:255;
-    data[at]=value;data[at+1]=value;data[at+2]=value;data[at+3]=255;
-  }
-  const decoded=jsQR(data,pixels,pixels);
-  assert.ok(decoded,'an independent decoder must read the emitted QR');
-  return decoded.data;
-}
 
 // One unit in the last place, computed on the raw IEEE-754 bits.
 function nextUlp(value){
@@ -47,7 +20,10 @@ function nextUlp(value){
   return view.getFloat64(0);
 }
 const server=createServer(async (req,res)=>{
-  const path=resolve(root,'.'+new URL(req.url,'http://test').pathname.replace(/\/$/,'/index.html'));
+  const url=new URL(req.url,'http://test');
+  if(url.pathname.startsWith('/api/v1/')){authority.handle(req,res);return;}
+  if(url.pathname==='/authority-config.js'){res.setHeader('Content-Type','text/javascript');res.end(`export const SERVER_PUBLIC_KEY = ${JSON.stringify(authority.key)};`);return;}
+  const path=resolve(root,'.'+url.pathname.replace(/\/$/,'/index.html'));
   if(!path.startsWith(root+'/')){res.writeHead(403).end();return;}
   try{const data=await readFile(path);res.setHeader('Content-Type',({'.html':'text/html','.js':'text/javascript','.css':'text/css','.wasm':'application/wasm'})[extname(path)]||'application/octet-stream');res.end(data);}catch{res.writeHead(404).end();}
 });
@@ -493,7 +469,7 @@ try{
   await page.locator('#node-t').fill('81.50942505');
   await page.locator('#prefill').click();
   await page.locator('#execute').click();
-  await page.waitForFunction(()=>!document.getElementById('debrief').hidden||(missionDiagnostics.locked&&!missionDiagnostics.pending),null,{timeout:120000});
+  await page.waitForFunction(()=>(!document.getElementById('debrief').hidden||missionDiagnostics.locked)&&!missionDiagnostics.pending,null,{timeout:120000});
   assert.equal(await page.locator('#debrief').isHidden(),false,`mission error: ${await page.locator('#execute-status').textContent()}, page errors: ${errors}`);
   const debrief=await page.locator('#debrief-content').textContent();
   const score=Number(debrief.match(/([0-9.]+)%Mission score/)?.[1]);
@@ -506,7 +482,8 @@ try{
   assert.notEqual(firstRated.elo,1200,'a ranked flight must move Astro-Elo off its start value');
   assert.equal(firstRated.elo,firstRated.ranked['101'].elo);
   assert.equal(firstRated.flights,1);
-  assert.match(await page.locator('#elo-result').textContent(),/Ranked flight certified/);
+  assert.match(await page.locator('#certification-status').textContent(),/CERTIFIED SERVER-RANKED RECEIPT/);
+  assert.match(await page.locator('#elo-result').textContent(),/Server-ranked Astro-Elo/);
   // The executed flight is signed as a ranked certificate.
   assert.match(await page.locator('#recorder-status').textContent(),/Flight recorder signed by ODD-ID-/);
   const rankedDownload=page.waitForEvent('download');
@@ -544,7 +521,8 @@ try{
   assert.equal(rankedFdr.metrics.length,58);
   assert.equal(rankedFdr.ed25519_signature.length,128);
   assert.equal(rankedFdr.final_state_hash.length,64);
-  assert.ok(rankedFdr.elo_after!==rankedFdr.elo_before,'the rating change must be inside the signed record');
+  assert.equal(rankedFdr.elo_after,rankedFdr.elo_before,'client rating fields are not authoritative');
+  assert.notEqual(rankedFdr.server_receipt.elo_after,rankedFdr.server_receipt.elo_before,'the server-signed receipt carries the rating change');
   assert.ok(rankedFdr.command_timeline.length>=1);
   assert.ok(Number.isInteger(rankedFdr.command_timeline[0].time_us));
   // The portability claim is only real if a process with no browser, no wasm
@@ -576,8 +554,9 @@ try{
   await page.locator('#example').click();
   assert.equal(await page.evaluate(()=>missionDiagnostics.nodes.length),1);
   await page.locator('#execute').click();
-  await page.waitForFunction(()=>!document.getElementById('debrief').hidden||(missionDiagnostics.locked&&!missionDiagnostics.pending),null,{timeout:180000});
+  await page.waitForFunction(()=>(!document.getElementById('debrief').hidden||missionDiagnostics.locked)&&!missionDiagnostics.pending,null,{timeout:180000});
   assert.equal(await page.locator('#debrief').isHidden(),false,`mission error: ${await page.locator('#execute-status').textContent()}, page errors: ${errors}`);
+  assert.match(await page.locator('#certification-status').textContent(),/CERTIFIED SERVER-RANKED RECEIPT/);
   const sso=await page.locator('#debrief-content').textContent();
   const ssoScore=Number(sso.match(/([0-9.]+)%Mission score/)?.[1]);
   assert.ok(ssoScore>80,`sun-synchronous score: ${ssoScore}; ${sso}`);
@@ -588,35 +567,47 @@ try{
   assert.ok(Math.abs(ssoReport[17])<1e-9);
   assert.deepEqual(await page.evaluate(()=>missionDiagnostics.acronymViolations),[]);
   await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:10000});
-  // Contract 103: demonstrate the single-burn trap, then use the numerical
-  // perigee splitter, lock a prediction, and verify a surviving apoapsis and
-  // finite-burn-dominated sensitivity. The patched lunar preview is optional
-  // for this epoch; a radius target is not itself a lunar encounter.
+  // Contract 103: fly a fresh delegated cryogenic design through the
+  // authority without running the numerical splitter as a ranked preview.
+  // Then exercise that numerical teaching aid explicitly in local practice.
   await page.locator('#unlock').click();
   await page.locator('#mission-select').selectOption('103');
+  await page.locator('#delegate-1').click();
   await page.locator('#example').click();
-  await page.waitForFunction(()=>!missionDiagnostics.pending&&missionDiagnostics.report?.[30]===1,null,{timeout:180000});
-  assert.match(await page.locator('#causal-text').textContent(),/Impact/);
+  assert.equal(await page.locator('#split-kick').isDisabled(),true,'numerical targeting is not a ranked preview');
+  assert.equal(await page.evaluate(()=>missionDiagnostics.report),null,'the ranked planner has not run a modeled flight');
+  await page.locator('#node-t').fill('700');
+  await page.locator('#prefill').click();
+  await page.locator('#execute').click();
+  await page.waitForFunction(()=>(!document.getElementById('debrief').hidden||missionDiagnostics.locked)&&!missionDiagnostics.pending,null,{timeout:240000});
+  assert.equal(await page.locator('#debrief').isHidden(),false,`ranked tug error: ${await page.locator('#execute-status').textContent()}`);
+  assert.match(await page.locator('#certification-status').textContent(),/CERTIFIED SERVER-RANKED RECEIPT/);
+  const rankedTug=await page.evaluate(()=>({record:missionDiagnostics.recorder().document,thermal:missionDiagnostics.boilOff}));
+  assert.equal(rankedTug.record.delegation_mask,2);
+  assert.equal(rankedTug.record.server_receipt.contract_id,103);
+  assert.ok(rankedTug.record.thermal_specs.length>0 && rankedTug.thermal && !rankedTug.thermal.inert,'server replay includes delegated cryogenic physics');
+  console.log('Portable replay: server-certified delegated cryogenic Contract 103.');
+
+  await page.locator('#unlock').click();
+  await page.locator('#delegate-1').click();
+  await page.locator('#attempt-mode').selectOption('practice');
+  await page.locator('#example').click();
+  assert.equal(await page.evaluate(()=>missionDiagnostics.report),null);
   await page.locator('#split-kick').click();
-  await page.waitForFunction(()=>missionDiagnostics.nodes.length===3&&!missionDiagnostics.pending&&missionDiagnostics.report?.[30]===0,null,{timeout:240000});
+  await page.waitForFunction(()=>missionDiagnostics.nodes.length===3&&!missionDiagnostics.pending,null,{timeout:240000});
+  assert.equal(await page.locator('#attempt-mode option[value=ranked]').isDisabled(),true,'a numerical practice cannot be reused as a ranked preview in this page session');
   const tugNodes=await page.evaluate(()=>missionDiagnostics.nodes);
   assert.ok(tugNodes[1].guidance&&tugNodes[2].guidance,'later kicks must carry numerical guidance');
-  // The tug now flies a physically derived engine (18.087 kN, 449.91 s) rather
-  // than the card's rounded 18 kN / 450 s, so its burns are slightly shorter
-  // and the targeted periapsis lands a couple of seconds later.
   assert.ok(Math.abs(tugNodes[1].time-10303.134747)<2,`second kick epoch ${tugNodes[1].time}`);
   await page.locator('#prefill').click();
-  // Predict the achieved apoapsis radius convention in altitude fields.
-  const tugReport=await page.evaluate(()=>missionDiagnostics.report);
-  await page.locator('#predict-apo').fill(String(tugReport[1]/1000));
-  await page.locator('#predict-peri').fill(String(tugReport[2]/1000));
-  await page.locator('#predict-time').fill(String(tugReport[29]));
   await page.locator('#execute').click();
-  await page.waitForFunction(()=>!document.getElementById('debrief').hidden||(missionDiagnostics.locked&&!missionDiagnostics.pending),null,{timeout:240000});
-  assert.equal(await page.locator('#debrief').isHidden(),false,`mission error: ${await page.locator('#execute-status').textContent()}, page errors: ${errors}`);
+  await page.waitForFunction(()=>(!document.getElementById('debrief').hidden||missionDiagnostics.locked)&&!missionDiagnostics.pending,null,{timeout:240000});
+  assert.equal(await page.locator('#debrief').isHidden(),false,`practice tug error: ${await page.locator('#execute-status').textContent()}`);
   const tug=await page.locator('#debrief-content').textContent();
   const tugScore=Number(tug.match(/([0-9.]+)%Mission score/)?.[1]);
-  assert.ok(tugScore>80,`tug score: ${tugScore}; ${tug}`);
+  // The honest ideal prediction deliberately does not peek at the modeled
+  // result. The former >80 gate used the unlocked actual as the prediction.
+  assert.ok(tugScore>60,`tug score: ${tugScore}; ${tug}`);
   const tugFinite=Number(tug.match(/Finite-burn arc: ([0-9.]+)%/)?.[1]);
   assert.ok(tugFinite>70,`finite-burn apoapsis Shapley attribution: ${tug}`);
   const finalTug=await page.evaluate(()=>missionDiagnostics.report);
@@ -636,7 +627,7 @@ try{
   const beforeReload=await page.evaluate(()=>missionDiagnostics.profile());
   assert.deepEqual(Object.keys(beforeReload.ranked).sort(),['101','102','103']);
   await page.reload();
-  await page.waitForFunction(()=>!document.getElementById('add-node').disabled,null,{timeout:30000});
+  await page.waitForFunction(()=>!document.getElementById('add-node').disabled&&missionDiagnostics.profile()?.ratingSource==='server',null,{timeout:30000});
   const afterReload=await page.evaluate(()=>missionDiagnostics.profile());
   assert.equal(afterReload.publicId,beforeReload.publicId,'the license must survive a reload');
   assert.deepEqual(afterReload.publicKey,beforeReload.publicKey);
@@ -669,6 +660,7 @@ try{
   assert.equal(await page.evaluate(()=>missionDiagnostics.profile().elo),beforeReload.elo,'restoring the same license must keep its rating');
   await page.locator('#profile-callsign').fill('GATE-PILOT');
   await page.locator('#profile-callsign-form button[type=submit]').click();
+  await page.waitForFunction(()=>missionDiagnostics.profile().callsign==='GATE-PILOT');
   assert.equal(await page.evaluate(()=>missionDiagnostics.profile().callsign),'GATE-PILOT');
   await page.locator('#profile-close').click();
   assert.equal(await page.locator('#profile-dialog').isVisible(),false);
@@ -694,14 +686,14 @@ try{
 
   // Replaying a certified contract must be practice and must not farm Elo.
   assert.equal(await page.evaluate(()=>missionDiagnostics.isRanked('101')),true);
-  assert.equal(await page.locator('#attempt-mode').inputValue(),'practice');
-  assert.equal(await page.locator('#attempt-mode option[value=ranked]').isDisabled(),true);
+  assert.equal(await page.locator('#attempt-mode').inputValue(),'ranked');
+  assert.equal(await page.locator('#attempt-mode option[value=ranked]').isDisabled(),false,'server decides eligibility, not local state');
   await page.locator('#example').click();
   await page.locator('#prefill').click();
   await page.locator('#execute').click();
-  await page.waitForFunction(()=>!document.getElementById('debrief').hidden||(missionDiagnostics.locked&&!missionDiagnostics.pending),null,{timeout:120000});
+  await page.waitForFunction(()=>(!document.getElementById('debrief').hidden||missionDiagnostics.locked)&&!missionDiagnostics.pending,null,{timeout:120000});
   assert.equal(await page.locator('#debrief').isHidden(),false,`practice replay error: ${await page.locator('#execute-status').textContent()}`);
-  assert.match(await page.locator('#elo-result').textContent(),/Practice flight — Astro-Elo unchanged/);
+  assert.match(await page.locator('#elo-result').textContent(),/Server-verified practice — Astro-Elo unchanged/);
   const afterPractice=await page.evaluate(()=>missionDiagnostics.profile());
   assert.equal(afterPractice.elo,beforeReload.elo,'a replayed contract must not change Astro-Elo');
   assert.equal(afterPractice.flights,beforeReload.flights+1);
@@ -823,7 +815,7 @@ try{
     const repaired=await probe.evaluate(()=>missionDiagnostics.profile());
     // Repair must never discard a usable secret: the identity is the account.
     assert.equal(repaired.flightKey,'ODD-0011-2233-4455-6677-8899-AABB-CCDD-EEFF',`${label}: identity must survive repair`);
-    assert.equal(repaired.elo,label==='null rating'?1200:1234.5,`${label}: rating`);
+    assert.equal(repaired.elo,1200,`${label}: an unsigned cached rating is never authoritative`);
     await probe.locator('#open-profile').click();
     assert.ok((await probe.locator('#profile-elo').textContent()).length>0,label);
     assert.deepEqual(probeErrors,[],`${label} must not raise a page error`);
@@ -842,7 +834,7 @@ try{
     await probe.goto(`http://127.0.0.1:${server.address().port}/mission.html`);
     await probe.waitForFunction(()=>window.missionDiagnostics?.profile?.(),null,{timeout:30000});
     const first=await probe.evaluate(()=>missionDiagnostics.profile());
-    assert.equal(first.elo,1337.5);
+    assert.equal(first.elo,1200,'an unsigned rating cannot be restored');
     await probe.locator('#open-profile').click();
     // A seven-group key must be refused with a useful message.
     await probe.locator('#profile-restore-input').fill('ODD-FEED-DCBA-0099-8877-6655-4433-2211');
@@ -855,18 +847,19 @@ try{
     assert.notEqual(second.publicId,first.publicId,'a different key must switch identity');
     assert.equal(second.elo,1200,'a new identity starts at the base rating');
     assert.deepEqual(second.ranked,{},'a new identity has no certificates');
+    await probe.waitForFunction(()=>missionDiagnostics.profile().ratingSource==='server');
     assert.equal(await probe.locator('#topbar-elo').textContent(),'1200');
     // Returning with the original twelve words must resume, not reset.
     await probe.locator('#profile-restore-input').fill(first.mnemonic);
     await probe.locator('#profile-restore').click();
     const resumed=await probe.evaluate(()=>missionDiagnostics.profile());
     assert.equal(resumed.publicId,first.publicId);
-    assert.equal(resumed.elo,1337.5,'switching back must not erase the rating');
+    assert.equal(resumed.elo,1200,'switching back cannot revive an unsigned rating');
     assert.equal(resumed.callsign,'PILOT A');
-    assert.deepEqual(Object.keys(resumed.ranked),['101'],'the certificate must survive the round trip');
-    assert.equal(await probe.evaluate(()=>missionDiagnostics.isRanked('101')),true,'a certified contract must stay certified after a switch');
+    assert.deepEqual(Object.keys(resumed.ranked),[],'an unsigned certificate is discarded');
+    assert.equal(await probe.evaluate(()=>missionDiagnostics.isRanked('101')),false,'a local cache cannot invent certification');
     assert.deepEqual(probeErrors,[]);
     await probe.close();
   }
   assert.deepEqual(errors,[]);console.log('Browser viewport, interactions, bounds, WebGL, responsive layout, three mission prototypes, license persistence, signed-dossier verification, damaged-storage repair and identity switching passed.');
-} finally{if(browser)await browser.close();await new Promise(r=>server.close(r));}
+} finally{if(browser)await browser.close();await new Promise(r=>server.close(r));await authority.close();}

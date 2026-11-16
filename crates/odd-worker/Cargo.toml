@@ -1,0 +1,43 @@
+[package]
+name = "odd-worker"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Server-authoritative Astro-Elo: commitment, replay, receipts and ranked rating (WP 1.9)."
+
+[lib]
+crate-type = ["rlib"]
+
+[features]
+default = []
+# The local durable adapter links the system libsqlite3 and serves HTTP from
+# std::net. It is what ./scripts/gate.sh exercises, with no cloud credentials.
+wire = []
+local = ["wire"]
+
+[dependencies]
+odd-core = { path = "../odd-core" }
+odd-astro = { path = "../odd-astro" }
+odd-contracts = { path = "../odd-contracts" }
+odd-report = { path = "../odd-report" }
+odd-verify = { path = "../odd-verify" }
+odd-identity = { path = "../odd-identity" }
+odd-ephem = { path = "../odd-ephem" }
+ed25519-compact = { version = "2.6.1", default-features = false }
+sha2 = "0.10"
+libm = "0.2"
+
+[dev-dependencies]
+odd-sim = { path = "../odd-sim" }
+odd-propulsion = { path = "../odd-propulsion" }
+odd-systems = { path = "../odd-systems" }
+
+[[bin]]
+name = "odderon-authority"
+path = "src/bin/authority.rs"
+required-features = ["local"]
+
+[[example]]
+name = "segment_chain"
+path = "examples/segment_chain.rs"
+required-features = ["wire"]

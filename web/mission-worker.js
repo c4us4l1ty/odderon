@@ -1,6 +1,7 @@
 // One-shot flight/targeting worker. Heavy propagation, perigee targeting and
 // counterfactuals stay off the UI thread. The main page terminates stale workers.
 import { applyAssembly } from './assembly.js';
+import { configured, serverKey, receiptBytes, verifyReceipt } from './authority-crypto.js';
 self.onmessage=async ({data})=>{
   try{
     const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error('Flight physics module unavailable.');
@@ -11,10 +12,20 @@ self.onmessage=async ({data})=>{
       w.mission_input_reset();
       for(const byte of new TextEncoder().encode(data.callsign))w.mission_input_absorb(byte);
       if(w.mission_fdr_parse()!==1)throw Error('The recorder layout is not valid.');
+      const read=field=>{const n=w.mission_fdr_string_len(field);return new TextDecoder().decode(Uint8Array.from({length:n},(_,i)=>w.mission_fdr_string_byte(field,i)));};
+      const document=JSON.parse(read(0));
+      // The receipt is independently checked against the pinned public key
+      // and the *recomputed* FDR digest. Replay is still required below.
+      const validReceipt=configured()&&verifyReceipt(w,data.receipt,document);
       const started=performance.now();
       const code=w.mission_fdr_verify();
-      const read=field=>{const n=w.mission_fdr_string_len(field);return new TextDecoder().decode(Uint8Array.from({length:n},(_,i)=>w.mission_fdr_string_byte(field,i)));};
       const verdict=read(2);
+      let certification='UNVERIFIED LOCAL / PRACTICE';
+      if(code===1&&validReceipt){
+        w.mission_input_reset();
+        for(const byte of [...serverKey(),...receiptBytes(data.receipt)])w.mission_input_absorb(byte);
+        if(w.mission_fdr_receipt_load()===1)certification=data.receipt.mode===0?'★ CERTIFIED SERVER-RANKED RECEIPT':'SERVER-VERIFIED PRACTICE';
+      }
       let dossier=null,dossierError=null;
       if(code===1){
         // Tell the module where this page is served so the printed QR is an
@@ -28,7 +39,8 @@ self.onmessage=async ({data})=>{
         if(w.mission_fdr_dossier_from_record()===1)dossier=read(1);
         else dossierError='The flight verified, but the dossier could not be rendered: the verification payload is too large for a QR code.';
       }
-      self.postMessage({verification:{code,verdict,mismatchIndex:w.mission_fdr_mismatch_index(),mismatchName:read(4),dossier,dossierError,json:read(0),computeMs:performance.now()-started}});
+      if(data.receipt)document.server_receipt=data.receipt;
+      self.postMessage({verification:{code,verdict,certification,mismatchIndex:w.mission_fdr_mismatch_index(),mismatchName:read(4),dossier,dossierError,json:JSON.stringify(document,null,2),computeMs:performance.now()-started}});
       return;
     }
     if(data.action==='split'){
@@ -49,6 +61,9 @@ self.onmessage=async ({data})=>{
       }));
       self.postMessage({nodes});return;
     }
+    // No unlocked modeled-flight preview: ranked must commit before this
+    // worker is launched, and local practice must also lock a prediction.
+    if(!Array.isArray(data.locked)||data.locked.length!==6)throw Error('Lock a prediction before running a flight.');
     if(data.contract){if(!w.mission_contract(data.contract))throw Error('Unknown contract.');}
     else if(!w.mission_setup(...data.setup))throw Error('Invalid spacecraft or mission parameters.');
     // The assembly (delegation margins and cryogenic fit-out) changes the dry
@@ -74,7 +89,7 @@ self.onmessage=async ({data})=>{
       index++;
     }
     if(!w.mission_compile())throw Error('Maneuvers overlap, exceed the fuel budget, or fall outside the mission.');
-    if(data.locked&&!w.mission_lock(...data.locked))throw Error('Invalid locked prediction.');
+    if(!w.mission_lock(...data.locked))throw Error('Invalid locked prediction.');
     const computeStart=performance.now();
     if(!w.mission_execute())throw Error('Flight could not be evaluated.');
     const computeMs=performance.now()-computeStart;
@@ -92,7 +107,7 @@ self.onmessage=async ({data})=>{
     let capture=null;
     w.mission_input_reset();
     for(const byte of new TextEncoder().encode(data.callsign??''))w.mission_input_absorb(byte);
-    if(w.mission_fdr_capture(1,0,0)===1){
+    if(w.mission_fdr_capture(data.attemptMode??1,0,0)===1){
       const count=w.mission_fdr_fields_from_record();
       capture=Array.from({length:count},(_,i)=>w.mission_fdr_field_at(i));
     }

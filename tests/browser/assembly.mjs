@@ -86,6 +86,22 @@ check('margin is real dry mass', delegated.margin > 0 && delegated.dryMass > man
 check('cost multiplier is 1.30', Math.abs(delegated.cost - 1.30) < 1e-12);
 check('efficiency cap is 0.65', Math.abs(delegated.cap - 0.65) < 1e-12);
 
+// --- 2b. Delegated disciplines lock their controls and show the chief's numbers.
+check('the engine lab is locked while Propulsion is delegated',
+  await page.locator('#engine-throat').isDisabled());
+check('the lab explains who owns the engine',
+  /AUTO-DELEGATED/.test(await page.locator('#engine-chief-note').innerText()));
+const choiceText = await page.locator('#delegation-badges').innerText();
+check('the assembly prints the chief chosen specification', /qualified reference engine/.test(choiceText));
+check('the assembly prints the chief array sizing', /Power chief sizes the array/.test(choiceText));
+// Handing Propulsion back unlocks the lab immediately.
+await page.click('#delegate-0');
+await page.waitForFunction(() => !window.missionDiagnostics.pending);
+check('switching Propulsion to MANUAL unlocks the lab',
+  !(await page.locator('#engine-throat').isDisabled()));
+await page.click('#delegate-0');
+await page.waitForFunction(() => !window.missionDiagnostics.pending);
+
 // --- 3. Badges name the chief and the kilograms. ---
 const badges = await page.locator('#delegation-badges').innerText();
 console.log('badges:\n' + badges);
@@ -155,6 +171,9 @@ check('the scan target carries the verify fragment', scanUrl.includes('#verify='
 check('the scan target points at this page', scanUrl.startsWith(`${new URL(page.url()).origin}/mission.html#verify=`));
 check('the dossier no longer prints a relative placeholder', !/relative to the serving origin/i.test(scanLine));
 check('the dossier prints the cryogenic annex', verified.dossier.includes('id="annex-c"'));
+check('the storable dossier discloses the baseline dry mass used for scoring',
+  /id="score-dry-mass-note"/.test(verified.dossier)
+  && /fuel threshold and prediction term use the catalog baseline dry mass/.test(verified.dossier));
 check('the dossier names the delegated disciplines', /Delegation bitmask/.test(verified.dossier)
   && /capped at 0.65/.test(verified.dossier));
 
@@ -186,6 +205,25 @@ await page.waitForFunction(() => !window.missionDiagnostics.pending);
 const tugCooled = await page.evaluate(() => window.missionDiagnostics.assembly);
 console.log('cooled tug', JSON.stringify(tugCooled));
 check('the cooler is fitted', Math.abs(tugCooled.coolerLift - 400) < 1e-9);
+// Thermal delegation must REPLACE the player's 40-layer/400 W design with the
+// chief's textbook hardware, lock the sliders, and be reversible.
+const playerStrut = await page.inputValue('#thermal-strut');
+await page.click('#delegate-1');
+await page.waitForFunction(() => !window.missionDiagnostics.pending);
+check('a delegated thermal slider is locked', await page.locator('#thermal-mli').isDisabled());
+const chiefStrut = await page.inputValue('#thermal-strut');
+check('the locked slider shows the chief value, not the player value',
+  Number(chiefStrut) !== Number(playerStrut) && Number(chiefStrut) === 1.2,
+  `player ${playerStrut} -> chief ${chiefStrut} W/K`);
+check('the chief substitutes its own textbook cooler',
+  (await page.evaluate(() => window.missionDiagnostics.assembly.coolerLift)) === 600);
+check('the array slider stays manual', !(await page.locator('#thermal-array').isDisabled()));
+await page.click('#delegate-1');
+await page.waitForFunction(() => !window.missionDiagnostics.pending);
+check('switching back to MANUAL restores the player design',
+  (await page.inputValue('#thermal-strut')) === playerStrut
+  && (await page.evaluate(() => window.missionDiagnostics.assembly.coolerLift)) === 400);
+check('the restored sliders are editable', !(await page.locator('#thermal-mli').isDisabled()));
 check('the fit-out costs real dry mass', tugCooled.fitoutMass > 100 && tugCooled.dryMass > tugManual.dryMass,
   `+${tugCooled.fitoutMass.toFixed(3)} kg`);
 
@@ -224,7 +262,7 @@ console.log('cooled tug flight', JSON.stringify(cryoFlight.boilOff));
 check('the cryogenic flight reports a thermal balance', cryoFlight.boilOff !== null && !cryoFlight.boilOff.inert);
 // The baseline 3 kW array is saturated by the oxidizer, so hydrogen still
 // boils. Size the array up and the same hardware must lose less.
-check('active cooling reduces boil-off', cryoFlight.boilOff.lost < 521.0, `${cryoFlight.boilOff.lost.toFixed(3)} kg`);
+check('active cooling reduces boil-off', cryoFlight.boilOff.lost < 200.0, `${cryoFlight.boilOff.lost.toFixed(3)} kg`);
 check('the debrief shows the cooler electricity', /Cryocooler electricity/i.test(cryoFlight.debrief));
 
 await page.click('#unlock');
@@ -267,8 +305,22 @@ check('the cooled cryogenic flight verifies', cryoVerified.code === 1, cryoVerif
 check('the dossier reports the fitted cooler', /Commanded cooler lift/.test(cryoVerified.dossier)
   && /400\.000/.test(cryoVerified.dossier));
 check('the dossier reports the array the player paid for', /16000\.0/.test(cryoVerified.dossier));
-check('the dossier reports the suppressed loss', /Total propellant lost<\/th><td>0\.000000 kg/.test(cryoVerified.dossier));
-check('the dossier reports the cooler electricity', /3460\.221041 MJ/.test(cryoVerified.dossier));
+check('the dossier discloses one-way thermal coupling', /id="thermal-coupling-note"/.test(cryoVerified.dossier)
+  && /does not subtract it from propagated mass/.test(cryoVerified.dossier));
+check('the cryogenic dossier discloses the baseline dry mass used for scoring',
+  /id="score-dry-mass-note"/.test(cryoVerified.dossier));
+const debriefDisclaimer = await page.locator('#debrief .disclaimer').textContent();
+check('the debrief discloses one-way thermal coupling', /not subtracted from orbital mass/.test(debriefDisclaimer));
+check('the debrief discloses the score fuel threshold',
+  /fuel threshold and prediction comparison use mass minus the catalog baseline dry mass/.test(debriefDisclaimer));
+// The practice targeter now follows the assembled stage, so this is a new
+// trajectory rather than the older baseline-targeted physics-pin fixture.
+// Compare the dossier to the actual worker output at printed precision; the
+// old input/output pin remains in baseline_targeted_cooled_tug_preserves_thermal_physics_pin.
+check('the dossier reports the suppressed loss', cryoVerified.dossier.includes(
+  `Total propellant lost</th><td>${wellCooled.lost.toFixed(6)} kg`));
+check('the dossier reports the cooler electricity', cryoVerified.dossier.includes(
+  `${(wellCooled.coolerJoules / 1e6).toFixed(6)} MJ`));
 const cryoRecord = await page.evaluate(() => JSON.parse(window.missionDiagnostics.recorder().json));
 check('the signed record carries the array sizing', cryoRecord.array_w_at_1au === 16000
   || cryoRecord.thermal_specs?.[0]?.array_w_at_1au === 16000, JSON.stringify(cryoRecord.thermal_specs?.[0] ?? {}).slice(0, 200));

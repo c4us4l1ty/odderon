@@ -30,6 +30,22 @@ pub struct PowerBudget {
 }
 
 impl BusSpec {
+    /// Every declared load is a physical, finite, non-negative power, even
+    /// when this chemical flight does not consume the EP nameplate demand.
+    pub fn validate(&self) -> Result<(), odd_astro::integrator::IntegrationError> {
+        if [
+            self.array_w_at_1au,
+            self.avionics_w,
+            self.electric_propulsion_w,
+        ]
+        .iter()
+        .any(|power| !power.is_finite() || *power < 0.0)
+        {
+            return Err(odd_astro::integrator::IntegrationError::InvalidInput);
+        }
+        Ok(())
+    }
+
     /// Resolve the bus for a given solar flux fraction and cooler draw.
     ///
     /// `illumination_flux_ratio` is `(1 AU / r)² × shadow`, i.e. exactly the

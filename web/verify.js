@@ -5,6 +5,7 @@
 // then a Level-3 replay that must reproduce all 58 fields and the terminal
 // state hash bit for bit. The banner is only shown when both agree.
 import * as recorder from './recorder.js';
+import { publicFlight } from './authority.js';
 
 const $ = id => document.getElementById(id);
 let wasm = null;
@@ -35,6 +36,9 @@ function show(result) {
   const banner = $('verify-verdict');
   banner.textContent = result.verdict;
   banner.className = `verify-verdict ${result.code === 1 ? 'is-verified' : 'is-rejected'}`;
+  const certification = result.code === 1 ? (result.certification ?? 'UNVERIFIED LOCAL / PRACTICE') : 'UNVERIFIED LOCAL / PRACTICE';
+  $('verify-certification').textContent = certification;
+  $('verify-certification').className = `verify-verdict ${certification.startsWith('★') ? 'is-verified' : ''}`;
   const detail = $('verify-detail');
   if (result.code === 1) {
     detail.textContent = `Signature valid and Level-3 replay reproduced every recorded field and the terminal-state hash${Number.isFinite(result.computeMs) ? ` in ${result.computeMs.toFixed(0)} ms` : ''}.${result.dossierError ? ` ${result.dossierError}` : ''}`;
@@ -63,6 +67,7 @@ function run(inputs) {
   $('verify-verdict').textContent = '';
   $('verify-verdict').className = 'verify-verdict';
   $('verify-detail').textContent = '';
+  $('verify-certification').textContent = '';
   $('verify-download').hidden = true;
   $('verify-print').hidden = true;
   $('verify-download-json').hidden = true;
@@ -104,9 +109,29 @@ export function verifyText(text) {
 }
 
 /// Verify already-captured fields (the flight that just ran).
-export function verifyFields(fields, callsign) {
+export function verifyFields(fields, callsign, receipt = null) {
   if (!dialog) build();
-  run({ fields, callsign });
+  run({ fields, callsign, receipt });
+}
+
+/// Public, content-addressed replay. The response is not trusted: its FDR,
+/// receipt, signature, hash and physics all go through the same worker.
+export async function openPublicFlight(hash) {
+  openVerify();
+  $('verify-busy').hidden = false;
+  $('verify-busy').textContent = 'Fetching the public flight…';
+  try {
+    const flight = await publicFlight(hash);
+    if (!dialog.open) return;
+    if (flight?.receipt?.fdr_hash !== hash.toLowerCase()) throw Error('The public response does not match the requested flight hash.');
+    const inputs = recorder.prepareVerification(wasm, flight.fdr_payload);
+    inputs.receipt = flight.receipt;
+    $('verify-input').value = flight.fdr_payload;
+    $('verify-busy').textContent = 'Replaying the flight…';
+    run(inputs);
+  } catch (error) {
+    if (dialog.open) show({ code: 0, verdict: `Public flight unavailable: ${String(error.message || error)}`, mismatchIndex: -1, mismatchName: '', dossier: null, json: '' });
+  }
 }
 
 function build() {
@@ -128,6 +153,7 @@ function build() {
     </div>
     <p id="verify-busy" class="profile-note" role="status" hidden>Replaying the flight…</p>
     <p id="verify-verdict" class="verify-verdict" role="status"></p>
+    <p id="verify-certification" class="verify-verdict" role="status"></p>
     <p id="verify-detail" class="profile-note"></p>
     <div class="profile-row">
       <button type="button" id="verify-download" hidden>Download dossier (HTML)</button>
@@ -138,6 +164,9 @@ function build() {
   $('verify-close').addEventListener('click', () => dialog.close());
   dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
   dialog.addEventListener('close', () => {
+    // The close event can be delivered after an immediate reopen. It must
+    // not cancel the new replay (e.g. leaderboard → verify → another file).
+    if (dialog.open) return;
     cancel();
     $('verify-busy').hidden = true;
     lastFocused?.focus();
@@ -184,7 +213,7 @@ function build() {
 export function openVerify(text) {
   if (!dialog) build();
   lastFocused = document.activeElement;
-  dialog.showModal();
+  if (!dialog.open) dialog.showModal();
   if (text) {
     $('verify-input').value = text;
     verifyText(text);
@@ -199,6 +228,7 @@ export function initVerify(module) {
   const handleHash = () => {
     const hash = location.hash;
     if (hash.startsWith('#verify=')) openVerify(hash);
+    else if (hash.startsWith('#flight=')) openPublicFlight(hash.slice(8));
   };
   window.addEventListener('hashchange', handleHash);
   handleHash();

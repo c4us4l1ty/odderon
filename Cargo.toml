@@ -1,3 +1,3 @@
 [workspace]
-members = ["crates/odd-core", "crates/odd-astro", "crates/odd-sim", "crates/odd-contracts", "crates/odd-app", "crates/odd-identity", "crates/odd-report", "crates/odd-verify", "crates/odd-propulsion", "crates/odd-systems", "tools/core-oracle", "crates/odd-ephem", "tools/pack-ephem", "crates/odd-view"]
+members = ["crates/odd-core", "crates/odd-astro", "crates/odd-sim", "crates/odd-contracts", "crates/odd-app", "crates/odd-identity", "crates/odd-report", "crates/odd-verify", "crates/odd-propulsion", "crates/odd-systems", "tools/core-oracle", "crates/odd-ephem", "tools/pack-ephem", "crates/odd-view", "crates/odd-worker", "crates/odd-authority-wasm"]
 resolver = "2"

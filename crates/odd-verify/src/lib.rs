@@ -2,7 +2,7 @@
 //!
 //! This crate is the single replay path. It has no `web-sys`, no
 //! `wasm-bindgen` and no browser globals: the browser bridge, a command-line
-//! verifier and a future edge worker all call `verify_record` here, so a
+//! verifier and the edge authority all call `verify_record` here, so a
 //! flight cannot be checked by one implementation and flown by another.
 //!
 //! It lives outside `odd-sim` because `odd-contracts` already depends on
@@ -226,7 +226,9 @@ pub fn compute(
             eph,
             s.epoch,
         )
-        .unwrap_or_else(|_| odd_contracts::ThermalOutcome::inert()),
+        // An integration/validation failure is not an inert tank. Reject
+        // the flight rather than certifying zero loss on a model failure.
+        .ok()?,
         None => odd_contracts::ThermalOutcome::inert(),
     };
     let mut report = [f64::NAN; REPORT_LEN];
@@ -382,6 +384,9 @@ pub struct FlightSpec {
 pub struct ReplayOutcome {
     pub report: [f64; REPORT_LEN],
     pub final_state_hash: [u8; 32],
+    /// The flown path, so a chunked verifier can sample each checkpoint
+    /// against the authoritative trajectory rather than trusting it.
+    pub trajectory: odd_astro::spline::TrajectorySpline,
     pub geometry: Geometry,
     /// Recomputed relief-valve openings, for comparison with the signed list.
     pub vent_events: Vec<odd_report::VentEvent>,
@@ -599,6 +604,7 @@ pub fn replay_flight(spec: &FlightSpec) -> Option<ReplayOutcome> {
     Some(ReplayOutcome {
         report: outcome.report,
         final_state_hash: hash,
+        trajectory: outcome.trajectory,
         geometry,
         boil_off_kg: outcome.thermal.tank_lost_kg,
         cryocooler_energy_j: outcome.thermal.cooler_energy_j,
@@ -628,8 +634,10 @@ pub fn verify_record(fdr: &Fdr) -> Result<ReplayOutcome, FdrError> {
     // performance. Only then does the replay run, and it runs on the derived
     // numbers rather than on anything the client typed.
     certify_engine(fdr)?;
-    let outcome = replay_flight(&spec_from_record(fdr))
-        .ok_or(FdrError::Malformed("the command timeline does not compile"))?;
+    certify_thermal(fdr)?;
+    let outcome = replay_flight(&spec_from_record(fdr)).ok_or(FdrError::Malformed(
+        "the flight or thermal model could not be replayed",
+    ))?;
     fdr.compare_metrics(&outcome.report)?;
     fdr.compare_final_state(&outcome.final_state_hash)?;
     // Gate three (v3): the signed vent history must be what the signed
@@ -638,6 +646,57 @@ pub fn verify_record(fdr: &Fdr) -> Result<ReplayOutcome, FdrError> {
     fdr.compare_vent_events(&outcome.vent_events)?;
     fdr.compare_boil_off(outcome.boil_off_kg, outcome.cryocooler_energy_j)?;
     Ok(outcome)
+}
+
+/// Check that a v3 thermal block describes exactly the single flown stage.
+/// Legacy v1/v2 records remain replayable as historical records, but the
+/// server does not issue new ratings or receipts for those old schemas.
+pub fn certify_thermal(fdr: &Fdr) -> Result<(), FdrError> {
+    if fdr.schema_version < odd_report::SCHEMA_VERSION {
+        return Ok(());
+    }
+    let engine = fdr
+        .engine
+        .ok_or(FdrError::Malformed("engine design missing"))?;
+    if !odd_systems::needs_thermal_model(engine.propellant) {
+        return if fdr.thermal_specs.is_empty() {
+            Ok(())
+        } else {
+            Err(FdrError::Malformed("storable stage carries thermal specs"))
+        };
+    }
+    if fdr.thermal_specs.len() != 1 {
+        return Err(FdrError::Malformed("cryogenic thermal spec count"));
+    }
+    let spec = &fdr.thermal_specs[0];
+    if spec.stage != 0 || spec.propellant_id != engine.propellant as u8 {
+        return Err(FdrError::Malformed("thermal stage or propellant"));
+    }
+    let contract =
+        Contract::get(fdr.contract_id).ok_or(FdrError::Malformed("unknown thermal contract"))?;
+    let inputs = thermal_inputs_from_record(fdr).ok_or(FdrError::Malformed("thermal inputs"))?;
+    let stage = inputs
+        .design
+        .stage(&contract, &engine, inputs.load_kg)
+        .ok_or(FdrError::Malformed("invalid cryogenic tank"))?;
+    stage
+        .oxidizer
+        .validate()
+        .map_err(|_| FdrError::Malformed("invalid oxidizer tank"))?;
+    stage
+        .fuel
+        .validate()
+        .map_err(|_| FdrError::Malformed("invalid fuel tank"))?;
+    for (claimed, actual) in spec
+        .tank_volumes_m3
+        .iter()
+        .zip([stage.oxidizer.volume_m3, stage.fuel.volume_m3])
+    {
+        if claimed.to_bits() != actual.to_bits() {
+            return Err(FdrError::Malformed("thermal tank volume"));
+        }
+    }
+    Ok(())
 }
 
 /// Recompute the engine a record signs and compare it with the record's
@@ -721,6 +780,18 @@ pub fn certify_engine(fdr: &Fdr) -> Result<Option<EngineSolution>, FdrError> {
         let design = thermal_inputs_from_record(fdr)
             .map(|inputs| inputs.design)
             .unwrap_or_else(odd_contracts::ThermalDesign::baseline);
+        // A delegated discipline must carry the chief's textbook hardware.
+        // Claiming the delegation bit while flying hand-optimised hardware
+        // would buy the badge without paying the chief's mass.
+        if let Some(department) = odd_contracts::chief_ai::delegation_deviation(
+            &contract,
+            *spec,
+            &design,
+            odd_contracts::DelegationMask(fdr.delegation_mask),
+            !fdr.thermal_specs.is_empty(),
+        ) {
+            return Err(FdrError::DelegationSpecMismatch(department));
+        }
         let vehicle = contract
             .vehicle_delegated(
                 *spec,

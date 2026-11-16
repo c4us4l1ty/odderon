@@ -20,7 +20,7 @@
 //! margins and the same badge text.
 
 use crate::thermal::ThermalDesign;
-use odd_systems::{BusSpec, ShellMaterial};
+use odd_systems::ShellMaterial;
 
 /// Mass margin a chief adds to the hardware it sizes.
 pub const MASS_MARGIN: f64 = 0.35;
@@ -274,31 +274,196 @@ pub fn apply(
     }
 }
 
-/// The Thermal Chief's rule of thumb: over-blanket, mount on the lowest
-/// conductivity shell in the catalogue, and never fit a cooler the player
-/// has not asked to pay for. Deterministic, and deliberately heavy.
-pub fn thermal_choice() -> ThermalDesign {
+/// The hardware a chief actually flies, after substitution.
+///
+/// Delegation is not "the player's sliders plus a margin": the chief
+/// **replaces** the delegated discipline's specification with its own
+/// textbook choice. That is what makes the choice beatable — a player who
+/// works the problem can pick lighter hardware than the rule of thumb — and
+/// what makes it verifiable, because a delegated discipline's signed spec is
+/// a pure function of the contract rather than of anything the client typed.
+#[derive(Clone, Copy, Debug)]
+pub struct ChiefDesign {
+    pub engine: odd_propulsion::EngineSpec,
+    pub thermal: ThermalDesign,
+}
+
+/// The Propulsion Chief buys the flight-qualified reference engine for the
+/// contract instead of optimising one. It is guaranteed flight-ready, and it
+/// is rarely the lightest engine that would do the job.
+pub fn propulsion_choice(contract: &crate::Contract) -> odd_propulsion::EngineSpec {
+    contract.engine_spec
+}
+
+/// The GNC Chief buys a rad-hard computer with margin rather than sizing the
+/// avionics to the mission's actual guidance duty cycle.
+pub fn gnc_choice(contract: &crate::Contract) -> f64 {
+    let _ = contract;
+    ThermalDesign::baseline().bus.avionics_w * (1.0 + MASS_MARGIN)
+}
+
+/// The Power Chief's rule of thumb: size the array for the worst case with
+/// margin, rather than integrating the actual eclipse duty cycle.
+///
+/// It must cover the *effective* thermal design's cooler, so it is computed
+/// after thermal substitution. The array never shrinks below the contract
+/// baseline: a chief buys margin, it does not quietly delete hardware.
+pub fn power_choice(contract: &crate::Contract, thermal: &ThermalDesign) -> f64 {
+    let _ = contract;
+    let baseline = ThermalDesign::baseline().bus.array_w_at_1au;
+    // Worst-case compressor draw for the lift this design commands, at the
+    // Carnot fraction it claims against a 300 K rejection temperature.
+    let cold = 20.0_f64;
+    let span = (300.0 - cold).max(1.0);
+    let cop = (thermal.cryocooler_carnot_fraction * cold / span).max(1e-6);
+    let cooler_bus_w = thermal.cryocooler_lift_w / cop;
+    let worst_case = thermal.bus.avionics_w + thermal.bus.electric_propulsion_w + cooler_bus_w;
+    libm::fmax(baseline, worst_case) * (1.0 + MASS_MARGIN)
+}
+
+/// Substitute every delegated discipline's textbook specification.
+///
+/// The order is frozen: Propulsion, GNC, Thermal, Power. Power runs last
+/// because the array must cover the avionics and cooler the earlier chiefs
+/// chose. Manual disciplines keep exactly what the player signed.
+pub fn substitute(
+    contract: &crate::Contract,
+    player_engine: odd_propulsion::EngineSpec,
+    player_thermal: &ThermalDesign,
+    mask: DelegationMask,
+) -> ChiefDesign {
+    let mut engine = player_engine;
+    let mut thermal = *player_thermal;
+    if mask.contains(Department::Propulsion) {
+        engine = propulsion_choice(contract);
+    }
+    if mask.contains(Department::Gnc) {
+        thermal.bus.avionics_w = gnc_choice(contract);
+    }
+    if mask.contains(Department::Thermal) {
+        let choice = thermal_choice(contract);
+        // Thermal owns the blanket, shell, mounts, radiator and cooler. The
+        // bus belongs to Power and GNC, so it survives this substitution.
+        thermal.mli_layers = choice.mli_layers;
+        thermal.epsilon_eff = choice.epsilon_eff;
+        thermal.shell = choice.shell;
+        thermal.absorptivity = choice.absorptivity;
+        thermal.outer_epsilon = choice.outer_epsilon;
+        thermal.strut_conductance_w_k = choice.strut_conductance_w_k;
+        thermal.relief_pressure_pa = choice.relief_pressure_pa;
+        thermal.radiator_area_m2 = choice.radiator_area_m2;
+        thermal.radiator_epsilon = choice.radiator_epsilon;
+        thermal.cryocooler_lift_w = choice.cryocooler_lift_w;
+        thermal.cryocooler_carnot_fraction = choice.cryocooler_carnot_fraction;
+        thermal.structure_temperature_k = choice.structure_temperature_k;
+        thermal.sink_temperature_k = choice.sink_temperature_k;
+    }
+    if mask.contains(Department::Power) {
+        thermal.bus.array_w_at_1au = power_choice(contract, &thermal);
+    }
+    ChiefDesign { engine, thermal }
+}
+
+/// First delegated discipline whose signed specification deviates from the
+/// chief's textbook choice, or `None` when the record is honest.
+///
+/// This is the enforcement half of substitution: a record may not claim it
+/// handed a discipline to a chief and then carry hand-optimised hardware for
+/// that discipline. Field ownership mirrors `substitute` exactly, so the two
+/// cannot drift apart.
+/// `thermal_signed` is false for a storable stage, whose record legitimately
+/// carries no thermal block. Those disciplines have no signed fields to
+/// compare, and nothing to forge either: their substituted hardware is a pure
+/// function of the contract, so the verifier's mass recomputation already
+/// pins it.
+pub fn delegation_deviation(
+    contract: &crate::Contract,
+    engine: odd_propulsion::EngineSpec,
+    thermal: &ThermalDesign,
+    mask: DelegationMask,
+    thermal_signed: bool,
+) -> Option<&'static str> {
+    let expected = substitute(contract, engine, thermal, mask);
+    let same = |a: f64, b: f64| a.to_bits() == b.to_bits();
+    if mask.contains(Department::Propulsion) {
+        let (a, b) = (engine, expected.engine);
+        if a.propellant != b.propellant
+            || !same(a.of_ratio, b.of_ratio)
+            || !same(a.p_c_pa, b.p_c_pa)
+            || !same(a.r_throat_m, b.r_throat_m)
+            || !same(a.r_exit_m, b.r_exit_m)
+            || !same(a.length_fraction, b.length_fraction)
+        {
+            return Some("propulsion");
+        }
+    }
+    if thermal_signed
+        && mask.contains(Department::Gnc)
+        && !same(thermal.bus.avionics_w, expected.thermal.bus.avionics_w)
+    {
+        return Some("gnc");
+    }
+    if thermal_signed && mask.contains(Department::Thermal) {
+        let (a, b) = (thermal, &expected.thermal);
+        if a.mli_layers != b.mli_layers
+            || a.shell != b.shell
+            || !same(a.epsilon_eff, b.epsilon_eff)
+            || !same(a.absorptivity, b.absorptivity)
+            || !same(a.outer_epsilon, b.outer_epsilon)
+            || !same(a.strut_conductance_w_k, b.strut_conductance_w_k)
+            || !same(a.relief_pressure_pa, b.relief_pressure_pa)
+            || !same(a.radiator_area_m2, b.radiator_area_m2)
+            || !same(a.radiator_epsilon, b.radiator_epsilon)
+            || !same(a.cryocooler_lift_w, b.cryocooler_lift_w)
+            || !same(a.cryocooler_carnot_fraction, b.cryocooler_carnot_fraction)
+            || !same(a.structure_temperature_k, b.structure_temperature_k)
+            || !same(a.sink_temperature_k, b.sink_temperature_k)
+        {
+            return Some("thermal");
+        }
+    }
+    if thermal_signed
+        && mask.contains(Department::Power)
+        && !same(
+            thermal.bus.array_w_at_1au,
+            expected.thermal.bus.array_w_at_1au,
+        )
+    {
+        return Some("power");
+    }
+    None
+}
+
+/// The Thermal Chief's rule of thumb: over-blanket, buy the weldable
+/// flight-proven metal shell rather than trust a composite overwrap's
+/// qualification, oversize the struts for strength, and never fit a cooler
+/// the player has not asked to pay for.
+///
+/// Stainless 304 is the conservative choice a rule of thumb reaches for: low
+/// conductivity, weldable, flown for decades — and roughly four times the
+/// shell mass of the aluminium a worked solution would pick. That is the
+/// point. Delegation must never be a way to get *lighter* hardware.
+pub fn thermal_choice(contract: &crate::Contract) -> ThermalDesign {
+    let _ = contract;
     let mut design = ThermalDesign::baseline();
     // Twice the flight-proven layer count: a chief cannot see the seam
     // quality, so it buys layers instead of understanding them.
     design.mli_layers = 40;
     design.epsilon_eff = odd_systems::ideal_epsilon_for_layers(40) * 6.0;
-    design.shell = ShellMaterial::CompositeOverwrap as u8;
+    design.shell = ShellMaterial::Stainless304 as u8;
     // Oversized struts: a rule of thumb picks for strength, not heat leak.
     design.strut_conductance_w_k = 1.2;
-    design
-}
-
-/// The Power Chief's rule of thumb: size the array for the worst case with
-/// margin, rather than integrating the actual eclipse duty cycle.
-pub fn power_choice(avionics_w: f64, electric_propulsion_w: f64) -> BusSpec {
-    BusSpec {
-        // 1.35 over the sum of the loads, ignoring that they never all peak
-        // at once — exactly the conservatism the mass penalty represents.
-        array_w_at_1au: (avionics_w + electric_propulsion_w) * (1.0 + MASS_MARGIN),
-        avionics_w,
-        electric_propulsion_w,
+    // A week-long LH2 coast is zero-boil-off territory, so the chief does
+    // specify active cooling — but conservatively. It over-sizes the cold
+    // tip and the rejection panel rather than tuning them to the integrated
+    // load, the same buy-margin instinct as the blanket and the struts. The
+    // player beats this by right-sizing: thinner mounts, a smaller cooler,
+    // less radiator mass, more delta-v.
+    if odd_systems::needs_thermal_model(contract.engine_spec.propellant) {
+        design.cryocooler_lift_w = 600.0;
+        design.radiator_area_m2 = 30.0;
     }
+    design
 }
 
 /// Cap the efficiency component and recompute the weighted score. Called by
@@ -416,13 +581,24 @@ mod tests {
 
     #[test]
     fn the_thermal_chief_is_conservative_and_deterministic() {
-        let a = thermal_choice();
-        let b = thermal_choice();
+        let contract = crate::Contract::get(103).unwrap();
+        let a = thermal_choice(&contract);
+        let b = thermal_choice(&contract);
         assert_eq!(a, b);
         assert!(a.mli_layers > ThermalDesign::baseline().mli_layers);
         assert!(a.strut_conductance_w_k > ThermalDesign::baseline().strut_conductance_w_k);
-        let bus = power_choice(300.0, 1_000.0);
-        assert!((bus.array_w_at_1au - 1_755.0).abs() < 1e-9);
+        // The chief specifies active cooling for the cryogenic coast, so the
+        // array is sized for that cooler's worst-case draw with margin, and
+        // never shrinks below the qualified baseline floor.
+        assert!(a.cryocooler_lift_w > 0.0);
+        let array = power_choice(&contract, &a);
+        assert!(array >= 3_000.0 * 1.35);
+        let mut hotter = a;
+        hotter.cryocooler_lift_w = a.cryocooler_lift_w * 2.0;
+        assert!(power_choice(&contract, &hotter) > array);
+        let mut passive = a;
+        passive.cryocooler_lift_w = 0.0;
+        assert!(power_choice(&contract, &passive) < array);
     }
 
     #[test]

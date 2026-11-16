@@ -1,0 +1,21 @@
+name = "odderon-authority"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+[build]
+command = "cargo build --locked --release -p odd-authority-wasm --target wasm32-unknown-unknown && cp target/wasm32-unknown-unknown/release/odd_authority_wasm.wasm crates/odd-worker-cloudflare/src/authority.wasm"
+cwd = "."
+
+[[d1_databases]]
+binding = "DB"
+database_name = "odderon"
+database_id = "REPLACE_WITH_YOUR_D1_ID"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "FDRS"
+bucket_name = "odderon-fdrs"
+
+# Configure the private 32-byte hex seed out of band:
+#   wrangler secret put SERVER_SEED --config crates/odd-worker-cloudflare/wrangler.toml
+# Pin the matching public key in web/authority-config.js, never the seed.

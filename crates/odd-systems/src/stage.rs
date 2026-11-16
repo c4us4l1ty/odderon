@@ -9,8 +9,7 @@ use crate::bus::BusSpec;
 use crate::environment::ThermalEnvironment;
 use crate::fluid::Fluid;
 use crate::thermal::{
-    integrate_tank, ShellMaterial, TankHistory, TankSpec, TankState, ThermalClock, ThermalContext,
-    VentEvent,
+    ShellMaterial, TankHistory, TankSpec, TankState, ThermalClock, ThermalContext, VentEvent,
 };
 use odd_astro::integrator::IntegrationError;
 use odd_propulsion::{EngineSpec, Propellant};
@@ -38,6 +37,9 @@ pub struct StageThermalHistory {
     pub lost_kg: f64,
     /// Total cryocooler electrical energy, J.
     pub cooler_energy_j: f64,
+    /// The bus split the integrator applied at every accepted step. The
+    /// priority rule is checkable from this rather than asserted.
+    pub bus_trend: Vec<crate::coupled::BusAllocation>,
 }
 
 impl StageThermalHistory {
@@ -149,38 +151,26 @@ impl StageThermal {
         F: FnMut(f64) -> Result<ThermalEnvironment, IntegrationError>,
     {
         let (ox_initial, fuel_initial) = self.initial_states(engine, load_kg);
-        // Cooling is shared: the oxidizer is served first, then the fuel gets
-        // what the bus has left. Both draws are bounded by real generation.
+        // Both tanks advance in one state vector so the fuel's allowance is
+        // the exact instantaneous remainder of the bus, not the oxidizer's
+        // end-of-flight peak subtracted from a constant.
         let context = ThermalContext {
             structure_temperature_k: self.structure_temperature_k,
             sink_temperature_k: self.sink_temperature_k,
+            // Superseded inside the coupled integrator by the trajectory's
+            // own sunlight; kept in the struct for the single-tank API.
             bus_w: self.bus.discretionary_capacity(),
         };
-        let oxidizer = integrate_tank(
-            &self.oxidizer,
-            0,
-            ox_initial,
+        let (oxidizer, fuel, bus_trend) = crate::coupled::integrate_pair(
+            &crate::coupled::TankPair {
+                oxidizer: self.oxidizer,
+                fuel: self.fuel,
+                oxidizer_initial: ox_initial,
+                fuel_initial,
+            },
+            &self.bus,
             clock,
             context,
-            &mut environment,
-        )?;
-        let ox_peak = crate::thermal::cryocooler_point(
-            &self.oxidizer,
-            oxidizer.state.temperature_k,
-            self.oxidizer.cryocooler_lift_w,
-            self.bus.discretionary_capacity(),
-        )
-        .power_w;
-        let fuel_bus = libm::fmax(0.0, self.bus.discretionary_capacity() - ox_peak);
-        let fuel = integrate_tank(
-            &self.fuel,
-            1,
-            fuel_initial,
-            clock,
-            ThermalContext {
-                bus_w: fuel_bus,
-                ..context
-            },
             &mut environment,
         )?;
         let mut vents = oxidizer.vents.clone();
@@ -192,6 +182,7 @@ impl StageThermal {
             oxidizer,
             fuel,
             vents,
+            bus_trend,
         })
     }
 }
@@ -283,6 +274,42 @@ mod tests {
         assert!(fraction < 0.15, "lost {:.3} of the load", fraction);
         assert!(history.remaining_kg() < 12_800.0);
         assert!(!history.vents.is_empty());
+    }
+
+    #[test]
+    fn invalid_bus_or_thermal_context_cannot_be_integrated() {
+        let clock = ThermalClock {
+            start_s: 0.0,
+            end_s: 1.0,
+            options: options(),
+        };
+        let base = StageThermal::new(&engine(), 12_800.0, 20).unwrap();
+        for field in [
+            "ep negative",
+            "ep nan",
+            "array",
+            "avionics",
+            "structure",
+            "sink",
+        ] {
+            let mut stage = base;
+            match field {
+                "ep negative" => stage.bus.electric_propulsion_w = -1.0,
+                "ep nan" => stage.bus.electric_propulsion_w = f64::NAN,
+                "array" => stage.bus.array_w_at_1au = f64::INFINITY,
+                "avionics" => stage.bus.avionics_w = -1.0,
+                "structure" => stage.structure_temperature_k = f64::NAN,
+                "sink" => stage.sink_temperature_k = 0.0,
+                _ => unreachable!(),
+            }
+            assert!(
+                matches!(
+                    stage.integrate(&engine(), 12_800.0, clock, |_| Ok(sun())),
+                    Err(IntegrationError::InvalidInput)
+                ),
+                "invalid {field} must fail closed"
+            );
+        }
     }
 
     #[test]

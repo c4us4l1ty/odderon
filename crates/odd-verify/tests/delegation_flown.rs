@@ -135,9 +135,13 @@ fn delegation_adds_real_dry_mass_to_the_vehicle() {
         all.delegation_cost_multiplier
     );
     assert!(all.delegation_margin_kg > 0.0);
+    // Substitution changes the hardware, so the mass difference is the
+    // chief's fit-out plus its margin — both must be carried.
     assert!(
-        (all.dry_mass_kg - manual.dry_mass_kg - all.delegation_margin_kg).abs() < 1e-9,
-        "the margin must actually enter the dry mass"
+        (all.dry_mass_kg - manual.dry_mass_kg - all.thermal_fitout_kg - all.delegation_margin_kg)
+            .abs()
+            < 1e-9,
+        "the substituted fit-out and the margin must both enter the dry mass"
     );
     assert!(all.initial_mass_kg > manual.initial_mass_kg);
     assert!((all.delegation_cost_multiplier - 1.30).abs() < 1e-12);

@@ -423,11 +423,26 @@ export function createLab({ wasm, onApply, onDiagnose, isLocked, annotate }) {
     return solve();
   }
 
+  // When the Propulsion chief owns the engine, the lab still previews the
+  // player's geometry but cannot commit it: the stage flies the chief's
+  // qualified reference until the discipline is switched back to MANUAL.
+  const chiefOwnsEngine = () => typeof wasm.mission_delegation_mask === 'function'
+    && (wasm.mission_delegation_mask() & 1) !== 0;
+
   function setLocked() {
-    for (const control of Object.values(controls)) control.disabled = isLocked();
-    $('engine-reset').disabled = isLocked();
-    $('engine-apply').disabled = isLocked() || !solution || solution.flightReady !== 1;
-    canvas.style.cursor = isLocked() ? 'default' : 'crosshair';
+    const frozen = isLocked() || chiefOwnsEngine();
+    for (const control of Object.values(controls)) control.disabled = frozen;
+    $('engine-reset').disabled = frozen;
+    $('engine-apply').disabled = frozen || !solution || solution.flightReady !== 1;
+    canvas.style.cursor = frozen ? 'default' : 'crosshair';
+    const note = $('engine-chief-note');
+    if (note) {
+      note.hidden = !chiefOwnsEngine();
+      note.textContent = chiefOwnsEngine()
+        ? `AUTO-DELEGATED: the Propulsion Chief flies the qualified reference engine (${wasm.mission_engine_effective(0).toFixed(1)} N, ${wasm.mission_engine_effective(1).toFixed(2)} s specific impulse). Switch Propulsion to MANUAL in the assembly to fly your own design.`
+        : '';
+      annotate?.(note);
+    }
   }
 
   for (const [key, control] of Object.entries(controls)) {

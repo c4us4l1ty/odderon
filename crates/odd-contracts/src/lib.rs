@@ -1,5 +1,5 @@
-//! Three playable Block-1 contracts and an explicit local scoring rule.
-//! Challenge ratings are catalog labels; the ranked ladder is local.
+//! Three playable Block-1 contracts and an explicit mission-scoring rule.
+//! Challenge ratings are catalog labels; the authority applies ranked Elo.
 //! SI units internally; the browser performs display conversions only.
 //!
 //! Each contract owns a *stage*, not an engine lookup: a fixed airframe mass,
@@ -8,6 +8,7 @@
 //! dry mass are derived from it by `odd-propulsion`. A player may redesign
 //! the engine before locking a prediction; the recorder signs the design.
 pub mod chief_ai;
+pub mod elo;
 pub mod thermal;
 pub use chief_ai::{DelegationMask, Department};
 pub use thermal::{ThermalDesign, ThermalOutcome};
@@ -86,6 +87,9 @@ pub struct Vehicle {
     pub delegation_margin_kg: f64,
     /// Stack cost multiplier from delegation. 1.0 when manual.
     pub delegation_cost_multiplier: f64,
+    /// The specification actually flown after chief substitution. When a
+    /// discipline is delegated this differs from what the player typed.
+    pub effective: chief_ai::ChiefDesign,
     /// Kilograms of cryogenic fit-out beyond the contract baseline:
     /// blanket, radiator panels and the solar array that runs the cooler.
     /// Negative when the player chose lighter hardware than the baseline.
@@ -124,6 +128,37 @@ const STORABLE_PLACEHOLDER: Engine = Engine {
 };
 
 impl Contract {
+    /// The insulation and active-cooling card this contract is designed
+    /// around, derived from the heat its own reference flight integrates.
+    ///
+    /// Storables have nothing to insulate and return the neutral design. For
+    /// the cislunar tug the numbers are sized, not guessed: the baseline
+    /// blanket (10 MLI layers, 0.4 W/K of strut) integrated over the
+    /// reference 6.94-day flight loses ~120 kg of LH2 — about 0.9 % of the
+    /// load, but it arrives hot and costs the player the margin the card
+    /// promises. 40 layers, a 0.15 W/K mounting and a 2 kW cold-tip cooler
+    /// with 40 m² of radiator cut the loss below 0.1 % and are affordable:
+    /// the fit-out is charged as real dry mass, so the card is a purchase,
+    /// never a free upgrade. `thermal_fitout_kg` is the price.
+    pub fn thermal_card(&self) -> ThermalDesign {
+        if !odd_systems::needs_thermal_model(self.engine_spec.propellant) {
+            return ThermalDesign::baseline();
+        }
+        ThermalDesign {
+            mli_layers: 40,
+            epsilon_eff: 6.0 * odd_systems::thermal::ideal_epsilon_for_layers(40),
+            cryocooler_lift_w: 2_000.0,
+            radiator_area_m2: 40.0,
+            strut_conductance_w_k: 0.15,
+            bus: odd_systems::BusSpec {
+                array_w_at_1au: 12_000.0,
+                avionics_w: 300.0,
+                electric_propulsion_w: 0.0,
+            },
+            ..ThermalDesign::baseline()
+        }
+    }
+
     pub fn get(id: u32) -> Option<Self> {
         match id {
             101 => Some(Self::rescue()),
@@ -252,6 +287,13 @@ impl Contract {
         delegation: DelegationMask,
         design: &ThermalDesign,
     ) -> Result<Vehicle, PropulsionError> {
+        // A delegated discipline is REPLACED by the chief's textbook choice,
+        // not merely padded. Everything below masses the hardware that
+        // actually flies, and the verifier recomputes the same substitution
+        // from the signed mask.
+        let effective = chief_ai::substitute(self, spec, design, delegation);
+        let spec = effective.engine;
+        let design = &effective.thermal;
         // Orbital contracts fly in vacuum. Ambient performance belongs to the
         // test stand, not to the flight.
         let solution = solve_engine(&spec, 0.0)?;
@@ -341,6 +383,7 @@ impl Contract {
             volume_limited: capacity < self.propellant_budget_kg,
             delegation_margin_kg: outcome.mass_penalty_kg,
             delegation_cost_multiplier: outcome.cost_multiplier,
+            effective,
             thermal_fitout_kg,
         })
     }
@@ -447,10 +490,10 @@ fn elements(state: Keyframe) -> Result<Elements, IntegrationError> {
     .map_err(|_| IntegrationError::ForceFailure)
 }
 
-/// Local, transparent score: 50% objective quality, 25% locked-prediction
+/// Transparent mission score: 50% objective quality, 25% locked-prediction
 /// closeness, 25% delta-v efficiency against the contract's reference geometry.
-/// This is not the later Pareto/Elo system. Hard impact, fuel or deadline
-/// failures score zero. Sensitivity shares never enter the score.
+/// The authority replays this score before applying Elo. Hard impact, fuel or
+/// deadline failures score zero. Sensitivity shares never enter the score.
 pub fn score(
     contract: &Contract,
     state: Keyframe,
@@ -473,6 +516,11 @@ pub fn score(
 /// As `score`, but applying the Chief-AI efficiency cap. Any delegated
 /// discipline caps Seff at 0.65, so an auto-sized stack can complete a
 /// contract but cannot out-score a hand-worked one on efficiency.
+///
+/// For frozen replay compatibility, the fuel-failure threshold and the
+/// prediction's remaining-propellant term both use the catalog baseline dry
+/// mass, even if the flown stage was redesigned. Changing this requires a
+/// versioned scoring migration.
 pub fn score_delegated(
     contract: &Contract,
     state: Keyframe,
@@ -568,16 +616,38 @@ pub struct SplitPlan {
 /// Build an equal-delta-v perigee-kick sequence by forward numerical targeting.
 /// `kicks` must be 2 or 3. Each later node is centered on the periapsis found
 /// by propagating the preceding commanded burns with the full contract model.
-/// This is the playable splitter; it is not a global optimizer.
+/// This baseline-stage helper is also a fixed-input physics regression. The
+/// playable splitter uses `split_tug_for_stage` with the assembled vehicle.
+/// Neither helper is a global optimizer.
 pub fn split_tug(
     kicks: usize,
     total_delta_v_m_s: f64,
     first_node_s: f64,
     eph: &odd_ephem::Ephemeris,
 ) -> Result<SplitPlan, odd_sim::targeting::TargetError> {
+    split_tug_for_stage(
+        &Contract::tug(),
+        kicks,
+        total_delta_v_m_s,
+        first_node_s,
+        eph,
+    )
+}
+
+/// Target the same practice-only numerical kicks using the actual stage's
+/// initial mass, dry mass and engine instead of the baseline catalog stage.
+/// This matters when cryogenic equipment or delegated margins change the
+/// burn durations and shift subsequent periapses.
+pub fn split_tug_for_stage(
+    contract: &Contract,
+    kicks: usize,
+    total_delta_v_m_s: f64,
+    first_node_s: f64,
+    eph: &odd_ephem::Ephemeris,
+) -> Result<SplitPlan, odd_sim::targeting::TargetError> {
     use odd_sim::{planner::Plan, targeting::next_radial_turn};
-    let contract = Contract::tug();
-    if !(2..=3).contains(&kicks)
+    if contract.id != 103
+        || !(2..=3).contains(&kicks)
         || !total_delta_v_m_s.is_finite()
         || total_delta_v_m_s <= 0.0
         || !first_node_s.is_finite()

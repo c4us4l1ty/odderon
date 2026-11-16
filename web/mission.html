@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="./style.css"><link rel="stylesheet" href="./mission.css">
 </head>
 <body><div class="app">
-  <header class="topbar"><a class="brand" href="./"><span class="brand-mark">◒</span><span>ODDERON<small>SPACE ENGINEERING, MADE TANGIBLE</small></span></a><div class="topbar-right"><button type="button" id="open-verify" class="profile-button" aria-haspopup="dialog"><span class="profile-button-label">VERIFY / REPLAY</span></button><button type="button" id="open-profile" class="profile-button" aria-haspopup="dialog"><span class="profile-button-label">FLIGHT LICENSE</span><strong id="topbar-callsign">—</strong><span class="profile-elo-chip">ELO <b id="topbar-elo">—</b></span></button><a class="back" href="./">← Earth–Moon observatory</a></div></header>
+  <header class="topbar"><a class="brand" href="./"><span class="brand-mark">◒</span><span>ODDERON<small>SPACE ENGINEERING, MADE TANGIBLE</small></span></a><div class="topbar-right"><button type="button" id="open-leaderboard" class="profile-button" aria-haspopup="dialog"><span class="profile-button-label">LEADERBOARD</span></button><button type="button" id="open-verify" class="profile-button" aria-haspopup="dialog"><span class="profile-button-label">VERIFY / REPLAY</span></button><button type="button" id="open-profile" class="profile-button" aria-haspopup="dialog"><span class="profile-button-label">FLIGHT LICENSE</span><strong id="topbar-callsign">—</strong><span class="profile-elo-chip">ELO <b id="topbar-elo">—</b></span></button><a class="back" href="./">← Earth–Moon observatory</a></div></header>
   <main class="mission-main">
     <div class="intro"><div><div class="eyebrow">MISSION PLANNING / WORK PACKAGES 1.3–1.5</div><h1>Give an orbit <em>new life.</em></h1><p>Design maneuvers, lock a prediction, and see what changes when burns take time. Hover any underlined term or handle for a live physics projection.</p></div></div>
     <div class="mission-grid">
@@ -29,7 +29,7 @@
         <label for="node-n">In-plane sideways <small>meters per second</small></label><input id="node-n" type="number" step="1" value="0" disabled>
         <label for="node-w">Out of orbital plane <small>meters per second</small></label><input id="node-w" type="number" step="1" value="0" disabled>
         <button id="remove-node" class="quiet" disabled>Remove maneuver</button>
-        <div class="lens" aria-live="polite"><div class="section-label">PHYSICS LENS</div><canvas id="lens-canvas" width="280" height="150" aria-label="Live physics projection for the hovered term or handle"></canvas><p id="lens-text">A maneuver is a change in velocity. Hover a TNW handle or any underlined term such as TWR, ISP, RAAN, AOP or SOI for a live projection.</p><p id="lens-projection" class="lens-projection" hidden></p><button id="lens-close" class="quiet" hidden>Close projection</button></div>
+        <div class="lens" aria-live="polite"><div class="section-label">PHYSICS LENS</div><canvas id="lens-canvas" width="280" height="150" aria-label="Live physics projection for the hovered term or handle"></canvas><p id="lens-text">A maneuver is a change in velocity. Hover a TNW handle or any underlined term such as TWR, ISP, RAAN, AOP or SOI for a live projection.</p><p id="lens-projection" class="lens-projection" hidden></p><div class="lens-close-slot"><button id="lens-close" class="quiet" hidden>Close projection</button></div></div>
         <div class="causal" aria-live="polite"><div class="section-label">CAUSE &amp; EFFECT CHECK</div><div id="causal-text">The checks update as you design and simulate a plan.</div><button id="split-kick" class="quiet" hidden>Split into perigee kicks</button></div>
       </aside>
     </div>
@@ -47,6 +47,7 @@
           <label for="engine-length">Bell length fraction <small>of a 15° cone</small></label><input id="engine-length" type="range" min="0.4" max="1.2" step="0.01" value="0.8">
           <label for="engine-altitude">Test-stand altitude <small id="engine-ambient">—</small></label><input id="engine-altitude" type="range" min="0" max="100" step="0.5" value="100">
           <div class="button-row"><button id="engine-apply" class="primary">Fit this engine to the stage</button><button id="engine-reset" class="quiet">Restore contract baseline</button></div>
+          <p id="engine-chief-note" class="chief-choice" role="status" hidden></p>
           <p id="engine-status" role="status">Loading engine physics…</p>
         </div>
       </div>
@@ -71,6 +72,7 @@
           <label for="thermal-radiator">Radiator area <small>m²</small></label><input id="thermal-radiator" type="number" min="0" max="400" step="0.5" value="0">
           <label for="thermal-cooler">Cryocooler lift <small>W at the tank</small></label><input id="thermal-cooler" type="number" min="0" max="4000" step="10" value="0">
           <label for="thermal-array">Solar array output <small>W at 1 AU</small></label><input id="thermal-array" type="number" min="300" max="40000" step="100" value="3000">
+          <button type="button" id="thermal-apply-card">Fit recommended thermal design</button>
           <p id="thermal-status" role="status">Passive tanks.</p>
         </div>
       </div>
@@ -82,7 +84,7 @@
       <div class="attempt-row"><label class="field-label" for="attempt-mode">Attempt mode</label><select id="attempt-mode"><option value="ranked">Ranked — certifies this contract</option><option value="practice">Practice — no rating change</option></select><p id="attempt-mode-note" class="profile-note"></p></div>
       <div class="button-row"><button id="prefill" disabled>Use ideal prediction</button><button id="execute" class="primary" disabled>Lock &amp; execute mission</button><button id="unlock" class="quiet" hidden>Change plan</button></div><p id="execute-status" role="status"></p>
     </section>
-    <section class="debrief" id="debrief" hidden aria-live="polite"><div class="section-label">04 / MISSION DEBRIEF</div><h2>The prediction meets <em>reality.</em></h2><div id="debrief-content"></div><p class="disclaimer">“Reality” here is a simplified model, not a flight-operations prediction. Exact Shapley shares use absolute contributions; signed contributions reconstruct the full-minus-ideal metric error. Cryogenic boil-off is integrated along the flown trajectory with real sun, planet and eclipse geometry; the vented mass and cooler draw are signed into the recorder and recomputed on verification.</p></section>
+    <section class="debrief" id="debrief" hidden aria-live="polite"><div class="section-label">04 / MISSION DEBRIEF</div><h2>The prediction meets <em>reality.</em></h2><div id="debrief-content"></div><p class="disclaimer">“Reality” here is a simplified model, not a flight-operations prediction. Exact Shapley shares use absolute contributions; signed contributions reconstruct the full-minus-ideal metric error. Cryogenic boil-off is integrated along the flown trajectory with sun, planet and eclipse geometry; the vented mass and cooler draw are signed and recomputed on verification. Vented mass is not subtracted from orbital mass or the burn fuel budget in this model. For frozen replay compatibility, the score's fuel threshold and prediction comparison use mass minus the catalog baseline dry mass, which can differ from the fitted stage.</p></section>
     <footer><span>ODDERON / MISSION PLANNING PROTOTYPE</span><span>THREE EXPERIMENTAL CONTRACTS · NOT FLIGHT OPERATIONS</span></footer>
   </main>
 </div><script type="module" src="./mission.js"></script></body></html>
