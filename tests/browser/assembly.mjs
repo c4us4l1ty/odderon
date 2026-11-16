@@ -151,7 +151,7 @@ const rec = await page.evaluate(() => {
 check('recorder captured', rec !== null);
 if (rec?.json) {
   const parsed = JSON.parse(rec.json);
-  check('signed schema is v3', parsed.schema_version === 3, String(parsed.schema_version));
+  check('signed schema is v4', parsed.schema_version === 4, String(parsed.schema_version));
   check('signed mask is the flown mask', parsed.delegation_mask === 0b1111, String(parsed.delegation_mask));
 }
 
@@ -327,17 +327,19 @@ check('the cooled cryogenic flight verifies', cryoVerified.code === 1, cryoVerif
 check('the dossier reports the fitted cooler', /Commanded cooler lift/.test(cryoVerified.dossier)
   && /400\.000/.test(cryoVerified.dossier));
 check('the dossier reports the array the player paid for', /16000\.0/.test(cryoVerified.dossier));
-check('the dossier discloses one-way thermal coupling', /id="thermal-coupling-note"/.test(cryoVerified.dossier)
-  && /does not subtract it from propagated mass/.test(cryoVerified.dossier));
-check('the dossier discloses the tank volume and ullage gap', /id="tank-volume-note"/.test(cryoVerified.dossier)
-  && /not a physical tank-fit proof/.test(cryoVerified.dossier));
+check('the dossier states v4 couples venting into the flight', /id="thermal-coupling-note"/.test(cryoVerified.dossier)
+  && /drawn from the same propellant pool the engine burns/.test(cryoVerified.dossier));
+check('the dossier states the tanks fit the airframe they were sized for', /id="tank-volume-note"/.test(cryoVerified.dossier)
+  && /fits the vehicle it describes/.test(cryoVerified.dossier));
 check('the cryogenic dossier discloses the baseline dry mass used for scoring',
   /id="score-dry-mass-note"/.test(cryoVerified.dossier));
 const debriefDisclaimer = await page.locator('#debrief .disclaimer').textContent();
-check('the debrief discloses one-way thermal coupling', /not subtracted from orbital mass/.test(debriefDisclaimer));
-check('the debrief discloses the tank volume and ullage gap', /not a physical tank-fit proof/.test(debriefDisclaimer));
+check('the debrief states venting reduces mass and fuel', /reduces both the remaining fuel and the mass/.test(debriefDisclaimer));
+check('the debrief states the tanks fit the airframe', /fits the airframe it was sized for/.test(debriefDisclaimer));
+// Scoring still compares against the catalog dry mass; that re-baseline is a
+// separate versioned change, so the debrief must keep saying so.
 check('the debrief discloses the score fuel threshold',
-  /fuel threshold and prediction comparison use mass minus the catalog baseline dry mass/.test(debriefDisclaimer));
+  /fuel threshold still compares against the catalog baseline dry mass/.test(debriefDisclaimer));
 // The practice targeter now follows the assembled stage, so this is a new
 // trajectory rather than the older baseline-targeted physics-pin fixture.
 // Compare the dossier to the actual worker output at printed precision; the

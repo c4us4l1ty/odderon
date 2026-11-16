@@ -150,8 +150,11 @@ impl Object<'_> {
 
     /// Burn windows as pairs: `[[start_s, end_s], ...]`. A window always has
     /// exactly two entries, so the reader needs no stride to decode it.
+    /// Array of `[start, end]` pairs. The outer brackets belong to the array,
+    /// not to the first element: an empty list must still emit `[]`.
     pub fn burn_windows(&mut self, name: &str, windows: &[(f64, f64)]) {
         self.key(name);
+        self.out.push('[');
         for (index, (start, end)) in windows.iter().enumerate() {
             if index > 0 {
                 self.out.push(',');

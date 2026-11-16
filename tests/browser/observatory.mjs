@@ -477,6 +477,9 @@ try{
   assert.equal(await page.evaluate(()=>missionDiagnostics.locked),true);
   // oracle_browser_persistence_and_idle_gate: the first execution of a
   // contract is ranked, moves Astro-Elo, and locks its certificate.
+  // Settle the signed receipt before reading the profile: the debrief opens
+  // before the authority answers, so the certificate and Elo appear later.
+  await page.waitForFunction(()=>missionDiagnostics.isRanked('101'),null,{timeout:120000});
   const firstRated=await page.evaluate(()=>missionDiagnostics.profile());
   assert.ok(firstRated.ranked['101'],'contract 101 must hold a ranked certificate');
   assert.notEqual(firstRated.elo,1200,'a ranked flight must move Astro-Elo off its start value');
@@ -489,10 +492,11 @@ try{
   const rankedDownload=page.waitForEvent('download');
   await page.locator('#export-fdr').click();
   const rankedFdr=JSON.parse(await readFile(await (await rankedDownload).path(),'utf8'));
-  assert.equal(rankedFdr.schema_version,3);
-  // FDR v3 is frozen: the delegation bitmask and the tank block travel in
-  // the signed bytes. Contract 101 flies storables, so it has no tank model
-  // and no vent events — but the fields must still be present and typed.
+  assert.equal(rankedFdr.schema_version,4);
+  // FDR v4 extends the v3 layout: the delegation bitmask and tank block still
+  // travel in the signed bytes. Contract 101 flies storables, so it has no
+  // tank model and no vent events — but the fields must still be present and
+  // typed, and the new v4 fields must be present as well.
   assert.equal(rankedFdr.delegation_mask,0,'a hand-flown stack is fully manual');
   assert.ok(Array.isArray(rankedFdr.thermal_specs),'thermal_specs must be an array');
   assert.ok(Array.isArray(rankedFdr.vent_events),'vent_events must be an array');
@@ -500,6 +504,13 @@ try{
   assert.equal(rankedFdr.vent_events.length,0,'storables do not vent');
   assert.deepEqual(rankedFdr.boil_off_kg,[0,0]);
   assert.equal(rankedFdr.cryocooler_energy_j,0);
+  // v4 signed the burns that were actually flown and the propellant aboard.
+  assert.ok(Array.isArray(rankedFdr.flown_burn_windows),'v4 must sign flown burn windows');
+  assert.equal(rankedFdr.flown_burn_windows.length,2,'the rescue flies two burns');
+  for(const [start,end] of rankedFdr.flown_burn_windows)assert.ok(end>start,`window ${start}-${end}`);
+  assert.ok(Number.isFinite(rankedFdr.propellant_remaining_kg)&&rankedFdr.propellant_remaining_kg>0,
+    'v4 must sign the propellant still aboard');
+  assert.equal(rankedFdr.flameout_time_s,null,'a completed rescue does not flame out');
   // oracle_fdr_engine_recomputation_anti_cheat (browser half): the signed
   // record carries the physical design, never a client thrust/Isp claim.
   assert.equal(typeof rankedFdr.engine_propellant,'string');

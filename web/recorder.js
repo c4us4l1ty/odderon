@@ -26,7 +26,7 @@ function hexBytes(hex, count) {
 /// Build the transport array from a parsed recorder JSON document.
 export function fieldsFromJson(document) {
   const schema = document?.schema_version;
-  if (schema !== 1 && schema !== 2 && schema !== 3) throw Error('unsupported recorder schema');
+  if (schema !== 1 && schema !== 2 && schema !== 3 && schema !== 4) throw Error('unsupported recorder schema');
   const mode = document.attempt_mode === 'Ranked' ? 0 : document.attempt_mode === 'Practice' ? 1 : null;
   if (mode === null) throw Error('unknown attempt mode');
   const commands = document.command_timeline;
@@ -129,6 +129,26 @@ export function fieldsFromJson(document) {
       if (!Number.isInteger(vent.time_us)) throw Error('vent time must be integer microseconds');
       fields.push(vent.time_us, vent.tank, vent.pressure_pa, vent.temperature_k);
     }
+  }
+  if (schema >= 4) {
+    // FDR v4 trailer: the windows actually flown, the flameout instant and the
+    // propellant still aboard. Same one-field-per-entry layout the Rust bridge
+    // writes, so the stride does not depend on how many burns were flown.
+    const windows = document.flown_burn_windows ?? [];
+    if (!Array.isArray(windows)) throw Error('flown burn windows must be an array');
+    fields.push(windows.length);
+    for (const window of windows) {
+      if (!Array.isArray(window) || window.length !== 2) throw Error('a burn window is a start/end pair');
+      fields.push(Number(window[0]), Number(window[1]));
+    }
+    // Count, then windows, then the two flagged scalars: the order
+    // `mission_fdr_fields_from_record` and `parse_fields` agree on.
+    const flameout = document.flameout_time_s;
+    if (flameout === null || flameout === undefined) fields.push(0, NaN);
+    else fields.push(1, Number(flameout));
+    const remaining = document.propellant_remaining_kg;
+    if (remaining === null || remaining === undefined) fields.push(0, NaN);
+    else fields.push(1, Number(remaining));
   }
   return { fields, callsign: String(document.callsign ?? '') };
 }

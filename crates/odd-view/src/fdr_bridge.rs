@@ -848,7 +848,14 @@ pub extern "C" fn mission_fdr_fields_from_record() -> u32 {
         }
     }
     if fdr.schema_version >= V4_SCHEMA_VERSION {
+        // Count first, then the windows at a variable stride, then the two
+        // flagged scalars — exactly what `parse_fields` reads back. Emitting
+        // them in a different order still produced a plausible field count,
+        // which is why the browser signer must follow this layout too.
         fields.push(fdr.flown_burn_windows.len() as f64);
+        for (start, end) in &fdr.flown_burn_windows {
+            fields.extend_from_slice(&[*start, *end]);
+        }
         match fdr.flameout_time_s {
             Some(time) => fields.extend_from_slice(&[1.0, time]),
             None => fields.extend_from_slice(&[0.0, 0.0]),
@@ -856,9 +863,6 @@ pub extern "C" fn mission_fdr_fields_from_record() -> u32 {
         match fdr.propellant_remaining_kg {
             Some(kg) => fields.extend_from_slice(&[1.0, kg]),
             None => fields.extend_from_slice(&[0.0, 0.0]),
-        }
-        for (start, end) in &fdr.flown_burn_windows {
-            fields.extend_from_slice(&[*start, *end]);
         }
     }
     let count = fields.len() as u32;
@@ -995,19 +999,29 @@ mod tests {
         let count = mission_fdr_fields_from_record();
         assert!(count > 0);
         let fields = FIELDS.lock().unwrap().clone();
-        match parse_fields(&fields, &fdr.callsign) {
-            Some(f) => f,
-            None => panic!(
-                "layout must round trip: {} fields, schema {}",
-                fields.len(),
-                fdr.schema_version
-            ),
-        }
+        parse_fields(&fields, &fdr.callsign).expect("layout must round trip")
     }
 
+    /// The v4 block's *order* matters, not just its width: the writer and the
+    /// reader disagreed once and the round-trip test passed anyway because the
+    /// fixture had no windows and two empty flags.
     #[test]
-    fn transport_layout_round_trips_every_field() {
-        let license = odd_identity::License::from_entropy([3u8; 16]);
+    fn the_v4_block_round_trips_a_non_empty_flight() {
+        let license = odd_identity::License::from_entropy([5u8; 16]);
+        let mut fdr = transport_fixture(&license);
+        // 101's window is 10,800 s, so a window past it must be rejected —
+        // and one inside it must survive the round trip.
+        fdr.flown_burn_windows = vec![(61.0, 160.0), (2_995.0, 2_995.82)];
+        fdr.flameout_time_s = Some(2_995.82);
+        fdr.propellant_remaining_kg = Some(120.0);
+        fdr.sign(&license).expect("the fixture signs");
+        let back = roundtrip_fields(&fdr);
+        assert_eq!(back.flown_burn_windows, fdr.flown_burn_windows);
+        assert_eq!(back.flameout_time_s, fdr.flameout_time_s);
+        assert_eq!(back.propellant_remaining_kg, fdr.propellant_remaining_kg);
+    }
+
+    fn transport_fixture(license: &odd_identity::License) -> Fdr {
         let mut fdr = Fdr {
             schema_version: SCHEMA_VERSION,
             thermal_specs: Vec::new(),
@@ -1051,7 +1065,14 @@ mod tests {
             signature: [0; 64],
         };
         fdr.metrics[0] = 1080.0;
-        fdr.sign(&license).unwrap();
+        fdr.sign(license).unwrap();
+        fdr
+    }
+
+    #[test]
+    fn transport_layout_round_trips_every_field() {
+        let license = odd_identity::License::from_entropy([3u8; 16]);
+        let fdr = transport_fixture(&license);
         let parsed = roundtrip_fields(&fdr);
         assert_eq!(parsed.canonical_bytes(), fdr.canonical_bytes());
         assert_eq!(parsed.public_key, fdr.public_key);
