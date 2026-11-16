@@ -133,7 +133,8 @@ mod tests {
             // One rounding in the two-part sum, so a few ULP — not the 5 %
             // discrepancy the catalog used to carry.
             assert!(
-                (tank_sum - g.airframe_volume_m3).abs() <= 4.0 * f64::EPSILON * g.airframe_volume_m3,
+                (tank_sum - g.airframe_volume_m3).abs()
+                    <= 4.0 * f64::EPSILON * g.airframe_volume_m3,
                 "tank volumes must fill the airframe: {tank_sum} vs {}",
                 g.airframe_volume_m3
             );
@@ -152,7 +153,10 @@ mod tests {
             // The split follows each fluid's share of the liquid.
             let sum_mass = g.tank_masses_kg[0] + g.tank_masses_kg[1];
             assert!((sum_mass - load).abs() <= 1e-9 * load);
-            assert!(g.tank_volumes_m3[1] > g.tank_volumes_m3[0], "LH2 is bulkier");
+            assert!(
+                g.tank_volumes_m3[1] > g.tank_volumes_m3[0],
+                "LH2 is bulkier"
+            );
         }
     }
 

@@ -137,6 +137,9 @@ fn signed_tug(design: &ThermalDesign) -> (Fdr, odd_verify::FlightOutcome) {
                 temperature_k: event.temperature_k,
             })
             .collect(),
+        flown_burn_windows: vec![],
+        flameout_time_s: None,
+        propellant_remaining_kg: None,
         public_key: [0; 32],
         signature: [0; 64],
     };
@@ -148,7 +151,9 @@ fn signed_tug(design: &ThermalDesign) -> (Fdr, odd_verify::FlightOutcome) {
 fn oracle_fdr_v3_anti_tamper() {
     let design = ThermalDesign::baseline();
     let (honest, outcome) = signed_tug(&design);
-    assert_eq!(honest.schema_version, 3);
+    // This build issues the newest schema; the frozen v3 layout is still
+    // covered by the checked-in fixtures, not by constructing a new one here.
+    assert_eq!(honest.schema_version, SCHEMA_VERSION);
     assert_eq!(honest.thermal_specs.len(), 1);
     assert!(!honest.vent_events.is_empty(), "the tug must vent");
     println!(
@@ -309,13 +314,15 @@ fn v3_survives_canonical_and_json_transport() {
     verify_record(&parsed).expect("the parsed record replays");
 
     let json = honest.to_json();
-    assert!(json.contains("\"schema_version\":3"));
+    assert!(json.contains(&format!("\"schema_version\":{SCHEMA_VERSION}")));
     assert!(json.contains("\"thermal_specs\":["));
     assert!(json.contains("\"mli_layers\":20"));
     assert!(json.contains("\"vent_events\":["));
     assert!(json.contains("\"delegation_mask\":0"));
-    // A pre-v3 parser must not silently accept a v3 domain.
-    assert!(bytes.starts_with(b"odderon-flight-data-recorder-v3\0"));
+    // The signed bytes carry the domain of their own schema, so a parser that
+    // only knows an older one cannot silently re-interpret the layout.
+    assert!(bytes.starts_with(honest.sign_domain()));
+    assert_eq!(honest.sign_domain(), odd_report::COUPLED_SIGN_DOMAIN);
 }
 
 /// Malformed v3 blocks are rejected by name, before any expensive replay.

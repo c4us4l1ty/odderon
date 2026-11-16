@@ -67,6 +67,9 @@ fn flight() -> Fdr {
         ),
         elo_before: 1200.0,
         elo_after: 1203.5,
+        flown_burn_windows: vec![],
+        flameout_time_s: None,
+        propellant_remaining_kg: None,
         public_key: [0; 32],
         signature: [0; 64],
     }
@@ -327,7 +330,9 @@ fn malformed_and_future_documents_are_rejected_by_name() {
 fn canonical_form_is_independent_of_json_formatting() {
     let (fdr, _) = signed();
     let json = fdr.to_json();
-    assert!(json.contains("\"schema_version\":3"));
+    // The build issues the current schema; the frozen v3 layout lives on in
+    // the fixtures rather than in this construction.
+    assert!(json.contains(&format!("\"schema_version\":{SCHEMA_VERSION}")));
     assert!(json.contains("\"engine_propellant\":\"NTO / MMH\""));
     assert!(json.contains("\"attempt_mode\":\"Ranked\""));
     assert!(json.contains("\"command_timeline\":["));

@@ -151,6 +151,9 @@ fn signed_stage(mask: DelegationMask, player: &ThermalDesign) -> (Fdr, License) 
                 temperature_k: event.temperature_k,
             })
             .collect(),
+        flown_burn_windows: vec![],
+        flameout_time_s: None,
+        propellant_remaining_kg: None,
         public_key: [0; 32],
         signature: [0; 64],
     };

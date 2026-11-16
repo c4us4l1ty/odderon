@@ -135,6 +135,9 @@ fn record(spec: EngineSpec, flight: &FlightSpec) -> Fdr {
         final_state_hash: outcome.final_state_hash,
         elo_before: 1200.0,
         elo_after: 1203.0,
+        flown_burn_windows: vec![],
+        flameout_time_s: None,
+        propellant_remaining_kg: None,
         public_key: [0; 32],
         signature: [0; 64],
     };

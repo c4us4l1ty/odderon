@@ -95,34 +95,25 @@ fn bare_tank(fluid: Fluid, volume_m3: f64) -> TankSpec {
 
 /// Sunlit coast between 400 km and 2,000 km altitude: full sun for the whole
 /// window, which is the worst case for boil-off.
-fn sunlit_environment(
-    time_s: f64,
-) -> Result<ThermalEnvironment, IntegrationError> {
+fn sunlit_environment(_time_s: f64) -> Result<ThermalEnvironment, IntegrationError> {
     let radius = EARTH + 800_000.0;
     Ok(ThermalEnvironment {
         sun: [1.495_978_7e11, 0.0, 0.0],
         earth: [0.0, 0.0, -radius],
         moon: [4.0e8, 0.0, 0.0],
     })
-    .map(|env| {
-        let _ = time_s;
-        env
-    })
 }
 
-fn stage(
-    of_ratio: f64,
-    oxidizer_volume: f64,
-    fuel_volume: f64,
-    bus: BusSpec,
-) -> Result<
+/// Both tanks oversized, so the tank volume never limits what the pool can
+/// hold: these oracles test venting and burning, not tank sizing.
+fn stage() -> Result<
     StageTankModel<impl FnMut(f64) -> Result<ThermalEnvironment, IntegrationError>>,
     IntegrationError,
 > {
     StageTankModel::new(
-        bare_tank(Fluid::Lox, oxidizer_volume),
-        bare_tank(Fluid::Lh2, fuel_volume),
-        bus,
+        bare_tank(Fluid::Lox, 20.0),
+        bare_tank(Fluid::Lh2, 20.0),
+        no_bus(),
         ThermalContext {
             structure_temperature_k: 293.0,
             sink_temperature_k: 3.0,
@@ -130,10 +121,6 @@ fn stage(
         },
         sunlit_environment,
     )
-    .map(|model| {
-        let _ = of_ratio;
-        model
-    })
 }
 
 fn no_bus() -> BusSpec {
@@ -166,12 +153,9 @@ fn burns(coast_end: f64) -> Vec<Burn> {
 
 const COAST_S: f64 = 4.0 * 86_400.0;
 
-fn fly_coupled(
-    pool: PropellantPool,
-    dry_mass_kg: f64,
-) -> odd_astro::coupled::CoupledOutcome {
+fn fly_coupled(pool: PropellantPool, dry_mass_kg: f64) -> odd_astro::coupled::CoupledOutcome {
     let initial = parking();
-    let mut tanks = stage(5.2, 20.0, 20.0, no_bus()).expect("a valid cryogenic stage");
+    let mut tanks = stage().expect("a valid cryogenic stage");
     let accelerate = |t: f64, r: [f64; 3], v: [f64; 3], mass: f64| {
         // Gravity plus nothing else: the model's own drag/SRP are zero, so the
         // only mass dependence here is the thrust the coupled loop adds.
@@ -222,8 +206,16 @@ fn fly_coupled(
         burns: &burns(COAST_S),
         options: options(),
     };
-    integrate_coupled(&setup, initial, 0.0, COAST_S + 400.0, field, &mut tanks, None)
-        .expect("the coupled flight must propagate")
+    integrate_coupled(
+        &setup,
+        initial,
+        0.0,
+        COAST_S + 400.0,
+        field,
+        &mut tanks,
+        None,
+    )
+    .expect("the coupled flight must propagate")
 }
 
 #[test]
@@ -295,33 +287,11 @@ fn oracle_v4_boiloff_couples_to_mass_and_flameout() {
     // --- 2. A tight reserve flames out during the second burn. ---
     // Size the pool so the first burn fits and the second cannot: the coast
     // vents the difference.
-    let first_burn_kg = 18_000.0 / (450.0 * 9.80665) * 100.0;
-    let second_burn_kg = 18_000.0 / (450.0 * 9.80665) * 300.0;
+    let flow = 18_000.0 / (450.0 * 9.80665);
+    let first_burn_kg = flow * 100.0;
+    let second_burn_kg = flow * 300.0;
     let tight_load = first_burn_kg + 0.35 * second_burn_kg;
     let tight = fly_coupled(PropellantPool::new(tight_load, 5.2).unwrap(), dry);
-    // --- 2. A tight reserve flames out during the second burn. ---
-    // Size the pool so the first burn fits and the second cannot: the coast
-    // vents the difference.
-    let first_burn_kg = 18_000.0 / (450.0 * 9.80665) * 100.0;
-    let second_burn_kg = 18_000.0 / (450.0 * 9.80665) * 300.0;
-    let tight_load = first_burn_kg + 0.35 * second_burn_kg;
-    let tight = fly_coupled(PropellantPool::new(tight_load, 5.2).unwrap(), dry);
-    println!(
-        "PROBE load {tight_load} vented {:?} remaining {} burned {} flameout {:?} flown {:?}",
-        tight.pool.vented_kg(),
-        tight.pool.remaining_kg(),
-        tight.pool.burned_kg(),
-        tight.flameout,
-        tight.flown_burns
-    );
-    println!(
-        "PROBE wide vented {:?} remaining {} burned {} flameout {:?} flown {:?}",
-        coupled.pool.vented_kg(),
-        coupled.pool.remaining_kg(),
-        coupled.pool.burned_kg(),
-        coupled.flameout,
-        coupled.flown_burns
-    );
     assert!(
         tight.pool.vented_kg()[1] > 0.0,
         "the tight coast must still vent"
@@ -337,7 +307,8 @@ fn oracle_v4_boiloff_couples_to_mass_and_flameout() {
         tight.pool.remaining_kg() == 0.0 || !tight.pool.has_both_fluids(),
         "a flameout means the engine has no usable mixture left"
     );
-    // The flown window is shorter than the scheduled 300 s.
+    // The flown window is shorter than the scheduled 300 s and is reported,
+    // not silently dropped from the schedule.
     let (_, end) = tight
         .flown_burns
         .iter()
@@ -349,7 +320,7 @@ fn oracle_v4_boiloff_couples_to_mass_and_flameout() {
         "the second burn must be truncated, flew {} s",
         end - COAST_S
     );
-    // The first burn completed; everything burned after it was the truncated
+    // The first burn completed; whatever burned after it was the truncated
     // second burn.
     assert!(
         tight.pool.burned_kg() > first_burn_kg * 0.99,
@@ -358,10 +329,13 @@ fn oracle_v4_boiloff_couples_to_mass_and_flameout() {
     );
 }
 
-/// The last accepted keyframe, or a panic with the flight's own length: a
-/// spline always has at least the initial frame.
+/// The last accepted keyframe. A spline always carries at least its initial
+/// frame, so this cannot fail for a flight that propagated.
 fn last(spline: &odd_astro::spline::TrajectorySpline) -> Keyframe {
-    let index = spline.len().checked_sub(1).expect("a spline has an initial frame");
+    let index = spline
+        .len()
+        .checked_sub(1)
+        .expect("a spline has an initial frame");
     spline.keyframe(index).expect("index is in range")
 }
 

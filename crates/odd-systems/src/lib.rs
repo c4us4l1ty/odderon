@@ -24,8 +24,8 @@ pub mod bus;
 pub mod coupled;
 pub mod coupled_stage;
 pub mod environment;
-pub mod geometry;
 pub mod fluid;
+pub mod geometry;
 pub mod stage;
 pub mod thermal;
 
@@ -33,8 +33,8 @@ pub use bus::{BusSpec, PowerBudget};
 pub use coupled::{allocate_bus, integrate_pair, BusAllocation, TankPair};
 pub use coupled_stage::StageTankModel;
 pub use environment::ThermalEnvironment;
-pub use geometry::{TankGeometry, DEFAULT_ULLAGE_FRACTION};
 pub use fluid::{Fluid, FluidProperties};
+pub use geometry::{TankGeometry, DEFAULT_ULLAGE_FRACTION};
 pub use stage::{needs_thermal_model, StageThermal, StageThermalHistory};
 pub use thermal::{
     cryocooler_point, heat_balance, ideal_epsilon_for_layers, integrate_along, integrate_tank,

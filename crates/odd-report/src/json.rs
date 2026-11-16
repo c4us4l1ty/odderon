@@ -148,7 +148,23 @@ impl Object<'_> {
         self.out.push(']');
     }
 
-    /// Exact relief-valve openings.
+    /// Burn windows as pairs: `[[start_s, end_s], ...]`. A window always has
+    /// exactly two entries, so the reader needs no stride to decode it.
+    pub fn burn_windows(&mut self, name: &str, windows: &[(f64, f64)]) {
+        self.key(name);
+        for (index, (start, end)) in windows.iter().enumerate() {
+            if index > 0 {
+                self.out.push(',');
+            }
+            self.out.push('[');
+            self.raw_number(*start);
+            self.out.push(',');
+            self.raw_number(*end);
+            self.out.push(']');
+        }
+        self.out.push(']');
+    }
+
     pub fn vent_events(&mut self, name: &str, events: &[crate::fdr::VentEvent]) {
         self.key(name);
         self.out.push('[');

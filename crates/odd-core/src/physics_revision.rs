@@ -64,8 +64,14 @@ mod tests {
 
     #[test]
     fn every_issued_schema_maps_to_one_revision() {
-        assert_eq!(PhysicsRevision::for_schema(1), Some(PhysicsRevision::PreThermal));
-        assert_eq!(PhysicsRevision::for_schema(2), Some(PhysicsRevision::PreThermal));
+        assert_eq!(
+            PhysicsRevision::for_schema(1),
+            Some(PhysicsRevision::PreThermal)
+        );
+        assert_eq!(
+            PhysicsRevision::for_schema(2),
+            Some(PhysicsRevision::PreThermal)
+        );
         assert_eq!(
             PhysicsRevision::for_schema(3),
             Some(PhysicsRevision::FrozenUncoupled)
@@ -74,7 +80,10 @@ mod tests {
             PhysicsRevision::for_schema(4),
             Some(PhysicsRevision::CoupledFitted)
         );
-        assert_eq!(PhysicsRevision::for_schema(0), Some(PhysicsRevision::PreThermal));
+        assert_eq!(
+            PhysicsRevision::for_schema(0),
+            Some(PhysicsRevision::PreThermal)
+        );
         assert_eq!(PhysicsRevision::for_schema(5), None);
     }
 

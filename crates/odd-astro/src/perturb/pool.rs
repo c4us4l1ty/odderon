@@ -56,11 +56,7 @@ impl PropellantPool {
     /// non-finite or non-positive load or an impossible ratio, because a pool
     /// that cannot be built must never be mistaken for a dry one.
     pub fn new(load_kg: f64, of_ratio: f64) -> Option<Self> {
-        if !load_kg.is_finite()
-            || load_kg <= 0.0
-            || !of_ratio.is_finite()
-            || of_ratio <= 0.0
-        {
+        if !load_kg.is_finite() || load_kg <= 0.0 || !of_ratio.is_finite() || of_ratio <= 0.0 {
             return None;
         }
         let fuel_kg = load_kg / (1.0 + of_ratio);
@@ -243,7 +239,10 @@ mod tests {
         let oxidizer = 100.0 / (1.0 + 5.2) * 5.2;
         assert!((removed - oxidizer).abs() < 1e-9, "{removed} vs {oxidizer}");
         assert!((p.remaining_kg() - 100.0 / 6.2).abs() < 1e-9);
-        assert!(!p.has_both_fluids(), "a dry oxidizer tank starves the engine");
+        assert!(
+            !p.has_both_fluids(),
+            "a dry oxidizer tank starves the engine"
+        );
         assert!(p.is_empty());
     }
 

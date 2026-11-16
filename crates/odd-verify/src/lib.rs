@@ -81,6 +81,14 @@ pub struct FlightOutcome {
     pub burn_sweeps: Vec<f64>,
     /// Boil-off evaluated along the flown spline. Inert for storable stages.
     pub thermal: odd_contracts::ThermalOutcome,
+    /// Windows each scheduled burn actually flew, seconds. A v4 flameout
+    /// shortens one; under the frozen models every window is flown in full.
+    pub flown_burn_windows: Vec<(f64, f64)>,
+    /// Instant a tank emptied while a burn was still scheduled (v4 only).
+    pub flameout_time_s: Option<f64>,
+    /// Propellant still aboard at the scoring instant, kg, after burning and
+    /// venting (v4 only; `None` when the schema did not couple mass).
+    pub propellant_remaining_kg: Option<f64>,
 }
 
 /// Earth-relative Moon state at a mission time. Shared with the browser's
@@ -349,8 +357,12 @@ pub fn compute(
             report[41..57].copy_from_slice(&shapley.coalition_metrics);
         }
     }
+    let flown_burn_windows = burns.iter().map(|b| (b.start, b.end)).collect();
     Some(FlightOutcome {
         thermal,
+        flown_burn_windows,
+        flameout_time_s: None,
+        propellant_remaining_kg: None,
         trajectory: integrated.trajectory,
         report,
         final_state,
@@ -652,7 +664,8 @@ pub fn verify_record(fdr: &Fdr) -> Result<ReplayOutcome, FdrError> {
 /// Legacy v1/v2 records remain replayable as historical records, but the
 /// server does not issue new ratings or receipts for those old schemas.
 pub fn certify_thermal(fdr: &Fdr) -> Result<(), FdrError> {
-    if fdr.schema_version < odd_report::SCHEMA_VERSION {
+    // v3 and v4 both sign the tank block; v1/v2 predate it.
+    if fdr.schema_version < odd_report::FROZEN_V3_SCHEMA_VERSION {
         return Ok(());
     }
     let engine = fdr
@@ -883,7 +896,7 @@ pub fn hash_final_state(report: &[f64; REPORT_LEN], state: &Keyframe) -> [u8; 32
 /// A record with no thermal block (schema 1/2, or a storable stage) has no
 /// tank model, so its replay produces no vent events.
 pub fn thermal_inputs_from_record(fdr: &Fdr) -> Option<ThermalInputs> {
-    if fdr.schema_version < odd_report::SCHEMA_VERSION {
+    if fdr.schema_version < odd_report::FROZEN_V3_SCHEMA_VERSION {
         return None;
     }
     let spec = fdr.thermal_specs.first()?;

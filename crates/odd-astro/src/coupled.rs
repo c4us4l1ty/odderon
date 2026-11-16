@@ -254,10 +254,7 @@ where
         // The scheduled segment, whether or not the engine can still light.
         // A burn that cannot start at all is a flameout, not a missing burn, so
         // it stays in the schedule and reports a zero-length flown window.
-        let scheduled: Option<Burn> = burns
-            .iter()
-            .find(|b| t >= b.start && t < b.end)
-            .copied();
+        let scheduled: Option<Burn> = burns.iter().find(|b| t >= b.start && t < b.end).copied();
         // What actually thrusts. A dry lean tank means no thrust even though
         // the window is still open.
         let lit = scheduled.filter(|_| live.has_both_fluids());
@@ -291,12 +288,8 @@ where
                 // the step has already carried away.
                 let burned = flow * (time - t).max(0.0);
                 let stage_mass = (step_mass - burned - vented_so_far).max(dry_mass_kg);
-                let mut acceleration = accelerate(
-                    time,
-                    [z[0], z[1], z[2]],
-                    [z[3], z[4], z[5]],
-                    stage_mass,
-                )?;
+                let mut acceleration =
+                    accelerate(time, [z[0], z[1], z[2]], [z[3], z[4], z[5]], stage_mass)?;
                 if let Some(burn) = lit {
                     if time >= burn.start && time < burn.end {
                         let thrust = burn

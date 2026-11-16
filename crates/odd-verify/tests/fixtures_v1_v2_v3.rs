@@ -112,6 +112,9 @@ fn rescore_rescue(schema: u16) -> Fdr {
         vent_events: Vec::new(),
         boil_off_kg: [0.0; 2],
         cryocooler_energy_j: 0.0,
+        flown_burn_windows: vec![],
+        flameout_time_s: None,
+        propellant_remaining_kg: None,
         public_key: [0; 32],
         signature: [0; 64],
     }
@@ -199,6 +202,9 @@ fn cryogenic_tug(schema: u16, design: &ThermalDesign) -> Fdr {
         boil_off_kg: outcome.boil_off_kg,
         cryocooler_energy_j: outcome.cryocooler_energy_j,
         vent_events: outcome.vent_events.clone(),
+        flown_burn_windows: vec![],
+        flameout_time_s: None,
+        propellant_remaining_kg: None,
         public_key: [0; 32],
         signature: [0; 64],
     }
@@ -214,7 +220,10 @@ fn signed(mut fdr: Fdr) -> Fdr {
 /// rescue; schema 3 adds a cryogenic tug so the tank block is exercised too.
 fn fixtures() -> Vec<(&'static str, Fdr)> {
     vec![
-        ("v1-rescue.txt", signed(rescore_rescue(LEGACY_SCHEMA_VERSION))),
+        (
+            "v1-rescue.txt",
+            signed(rescore_rescue(LEGACY_SCHEMA_VERSION)),
+        ),
         (
             "v2-rescue.txt",
             signed(rescore_rescue(odd_report::ENGINE_SCHEMA_VERSION)),

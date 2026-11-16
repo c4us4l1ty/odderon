@@ -191,8 +191,7 @@ mod tests {
         }
     }
 
-    fn model() -> StageTankModel<impl FnMut(f64) -> Result<ThermalEnvironment, IntegrationError>>
-    {
+    fn model() -> StageTankModel<impl FnMut(f64) -> Result<ThermalEnvironment, IntegrationError>> {
         StageTankModel::new(
             TankSpec {
                 fluid: Fluid::Lox,
