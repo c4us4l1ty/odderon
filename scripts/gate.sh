@@ -37,6 +37,10 @@ step "server authority: local HTTP/SQLite adapter + anti-cheat oracles (no cloud
 cargo clippy --locked --offline -p odd-worker --all-targets --features local -- -D warnings
 cargo test --locked --offline -p odd-worker --features local --lib --tests
 cargo build --locked --offline -p odd-worker --features local --bin odderon-authority --example segment_chain
+# The browser gates replay a coupled v4 flight, so they use the optimized
+# authority: an unoptimized replay of a six-day cryogenic coast exceeds the
+# client's submission budget and would fail for the wrong reason.
+cargo build --locked --offline --release -p odd-worker --features local --bin odderon-authority
 
 step "Cloudflare authority wasm"
 cargo build --locked --offline --release -p odd-authority-wasm --target wasm32-unknown-unknown

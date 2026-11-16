@@ -485,6 +485,10 @@ try{
   assert.notEqual(firstRated.elo,1200,'a ranked flight must move Astro-Elo off its start value');
   assert.equal(firstRated.elo,firstRated.ranked['101'].elo);
   assert.equal(firstRated.flights,1);
+  // The receipt settles after the rating sync, so wait for the certificate
+  // itself rather than assuming the two arrive together.
+  await page.waitForFunction(()=>/CERTIFIED SERVER-RANKED RECEIPT/.test(
+    document.getElementById('certification-status').textContent),null,{timeout:120000});
   assert.match(await page.locator('#certification-status').textContent(),/CERTIFIED SERVER-RANKED RECEIPT/);
   assert.match(await page.locator('#elo-result').textContent(),/Server-ranked Astro-Elo/);
   // The executed flight is signed as a ranked certificate.
@@ -567,6 +571,10 @@ try{
   await page.locator('#execute').click();
   await page.waitForFunction(()=>(!document.getElementById('debrief').hidden||missionDiagnostics.locked)&&!missionDiagnostics.pending,null,{timeout:180000});
   assert.equal(await page.locator('#debrief').isHidden(),false,`mission error: ${await page.locator('#execute-status').textContent()}, page errors: ${errors}`);
+  // The receipt settles after the rating sync, so wait for the certificate
+  // itself rather than assuming the two arrive together.
+  await page.waitForFunction(()=>/CERTIFIED SERVER-RANKED RECEIPT/.test(
+    document.getElementById('certification-status').textContent),null,{timeout:120000});
   assert.match(await page.locator('#certification-status').textContent(),/CERTIFIED SERVER-RANKED RECEIPT/);
   const sso=await page.locator('#debrief-content').textContent();
   const ssoScore=Number(sso.match(/([0-9.]+)%Mission score/)?.[1]);
@@ -592,6 +600,10 @@ try{
   await page.locator('#execute').click();
   await page.waitForFunction(()=>(!document.getElementById('debrief').hidden||missionDiagnostics.locked)&&!missionDiagnostics.pending,null,{timeout:240000});
   assert.equal(await page.locator('#debrief').isHidden(),false,`ranked tug error: ${await page.locator('#execute-status').textContent()}`);
+  // The receipt settles after the rating sync, so wait for the certificate
+  // itself rather than assuming the two arrive together.
+  await page.waitForFunction(()=>/CERTIFIED SERVER-RANKED RECEIPT/.test(
+    document.getElementById('certification-status').textContent),null,{timeout:120000});
   assert.match(await page.locator('#certification-status').textContent(),/CERTIFIED SERVER-RANKED RECEIPT/);
   const rankedTug=await page.evaluate(()=>({record:missionDiagnostics.recorder().document,thermal:missionDiagnostics.boilOff}));
   assert.equal(rankedTug.record.delegation_mask,2);
@@ -616,13 +628,42 @@ try{
   assert.equal(await page.locator('#debrief').isHidden(),false,`practice tug error: ${await page.locator('#execute-status').textContent()}`);
   const tug=await page.locator('#debrief-content').textContent();
   const tugScore=Number(tug.match(/([0-9.]+)%Mission score/)?.[1]);
-  // The honest ideal prediction deliberately does not peek at the modeled
-  // result. The former >80 gate used the unlocked actual as the prediction.
-  assert.ok(tugScore>60,`tug score: ${tugScore}; ${tug}`);
   const tugFinite=Number(tug.match(/Finite-burn arc: ([0-9.]+)%/)?.[1]);
   assert.ok(tugFinite>70,`finite-burn apoapsis Shapley attribution: ${tug}`);
   const finalTug=await page.evaluate(()=>missionDiagnostics.report);
-  assert.equal(finalTug[30],0);assert.ok(Math.abs(finalTug[1]+6378137-380000000)<15000000);
+  const tugBoil=await page.evaluate(()=>missionDiagnostics.boilOff);
+  // oracle_v4_boiloff_couples_to_mass_and_flameout, browser leg: this practice
+  // stage is the MANUAL airframe on the baseline blanket (20 layers, no
+  // cryocooler), so it genuinely vents over half a tonne across the six-day
+  // coast, and under v4 that propellant really leaves the vehicle.
+  //
+  // The consequence is the whole point of the fitted-mass trade and it is a
+  // re-baseline, not a tolerance: the pre-v4 gate asserted the practice split
+  // landed inside the 380,000 km goal from a 3,240 m/s budget. It does not any
+  // more, and that is correct physics — 558 kg of propellant that used to ride
+  // along for free is gone by the last kick, so the same thrust over the same
+  // commanded burn duration accelerates a lighter vehicle and overshoots.
+  // Measured here: +33,547 km past the goal, versus +14,031 km under the
+  // frozen v3 law on the identical plan.
+  //
+  // Fitting the recommended thermal card removes the overshoot: it cuts the
+  // vent to 3.84 kg and puts the same budget back inside the window, which
+  // `contract_cards` proves natively in both hand-sized and delegated modes.
+  // This leg therefore asserts the coupled signature and the direction of the
+  // miss, and `v4_trade_study` carries the claim that cooling pays.
+  assert.ok(tugBoil&&!tugBoil.inert,`the practice tug must fly a live cryogenic tank model: ${JSON.stringify(tugBoil)}`);
+  assert.ok(Math.abs(tugBoil.lost-558.357)<0.1,`coupled vent must be the pinned 558.357 kg, got ${tugBoil.lost}`);
+  assert.ok(tugBoil.vents>=1,`the relief valve must actually open: ${tugBoil.vents}`);
+  assert.equal(finalTug[30],0,'the practice tug must still complete, not impact');
+  const tugRadiusError=finalTug[1]+6378137-380000000;
+  assert.ok(tugRadiusError>0,
+    `the un-cooled stage must overshoot 380,000 km, got ${tugRadiusError/1000} km`);
+  assert.ok(Math.abs(tugRadiusError-33547e3)<2000e3,
+    `re-baselined v4 overshoot is +33,547 km, got ${tugRadiusError/1000} km`);
+  // The score is dominated by that overshoot: objectives ~0.358, prediction
+  // ~0 and efficiency 1.0, i.e. ~42.9%. It is still scored, coherent and far
+  // from a zero; a regression that silently restored v3's 65% would show up.
+  assert.ok(tugScore>40&&tugScore<50,`tug score: ${tugScore}; ${tug}`);
   assert.ok(Math.abs(finalTug.slice(6,10).reduce((a,b)=>a+b,0)-1)<1e-9);
   assert.ok(Math.abs(finalTug[17])<1e-6);
   assert.ok(Math.abs(finalTug[24])<1e-4,`finite-burn identity residual ${finalTug[24]} m/s`);

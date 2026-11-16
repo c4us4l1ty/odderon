@@ -3,12 +3,21 @@
 import { spawn } from 'node:child_process';
 import { request } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 export async function startAuthority() {
   const temp = await mkdtemp(join(tmpdir(), 'odderon-authority-e2e-'));
-  const child = spawn(resolve('target/debug/odderon-authority'), [], {
+  // The v4 flight is coupled: the tanks ride the integrator, so a full replay
+  // costs roughly an order of magnitude more than v3's post-hoc integration.
+  // Run the optimized binary so the gate measures the shipped physics rather
+  // than an unoptimized build, and give it the CPU a deployment would have.
+  const binary = process.env.ODDERON_AUTHORITY_BIN
+    || (existsSync(resolve('target/release/odderon-authority'))
+      ? resolve('target/release/odderon-authority')
+      : resolve('target/debug/odderon-authority'));
+  const child = spawn(binary, [], {
     env: { ...process.env, ODDERON_SERVER_SEED: '5e'.repeat(32), ODDERON_DB: join(temp, 'authority.sqlite'), ODDERON_BIND: '127.0.0.1:0' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

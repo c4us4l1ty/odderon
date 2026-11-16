@@ -9,7 +9,7 @@
 
 use crate::bus::BusSpec;
 use crate::environment::{ThermalEnvironment, SOLAR_CONSTANT_W_M2};
-use crate::thermal::{heat_balance, TankSpec, ThermalContext};
+use crate::thermal::{heat_balance, TankSpec, ThermalContext, VentEvent};
 use odd_astro::coupled::{TankModel, TankRate, TANK_STRIDE};
 use odd_astro::integrator::IntegrationError;
 
@@ -29,12 +29,24 @@ pub struct StageTankModel<F> {
     environment: F,
     /// Temperatures at which each tank's relief valve is set.
     vent_temperature_k: [f64; 2],
+    /// True while each tank's valve is open, so a *opening* is recorded once
+    /// rather than every substep. The coupled loop is the only place that
+    /// knows the relief valve is open, so the signed vent history is built
+    /// here instead of being re-derived after the fact.
+    venting: [bool; 2],
+    /// Openings recorded so far, in flight order.
+    vents: Vec<VentEvent>,
 }
 
 impl<F> StageTankModel<F>
 where
     F: FnMut(f64) -> Result<ThermalEnvironment, IntegrationError>,
 {
+    /// The relief-valve openings recorded so far, in flight order.
+    pub fn vents(&self) -> &[VentEvent] {
+        &self.vents
+    }
+
     /// Build from the two validated tank specs and the bus they share.
     pub fn new(
         oxidizer: TankSpec,
@@ -54,6 +66,8 @@ where
             return Err(IntegrationError::NumericalRange);
         }
         Ok(Self {
+            venting: [false; 2],
+            vents: Vec::new(),
             oxidizer,
             fuel,
             bus,
@@ -145,6 +159,16 @@ where
             // every watt of net heat vaporizes liquid.
             let rate = libm::fmax(0.0, balance.net_w) / props.heat_of_vaporization_j_kg;
             let rate = libm::fmin(rate, liquid_kg.max(0.0) * 1e3);
+            let slot = index.min(1);
+            if rate > 0.0 && !self.venting[slot] {
+                self.venting[slot] = true;
+                self.vents.push(VentEvent {
+                    time_us: libm::round(time_s * 1e6) as i64,
+                    tank: slot as u8,
+                    pressure_pa: spec.relief_pressure_pa,
+                    temperature_k: vent_temperature,
+                });
+            }
             return Ok(TankRate {
                 temperature_k_s: 0.0,
                 liquid_kg_s: -rate,
@@ -153,6 +177,7 @@ where
             });
         }
         // Self-pressurization: the valve is shut and the liquid warms.
+        self.venting[index.min(1)] = false;
         let capacity = liquid_kg * props.liquid_specific_heat_j_kg_k;
         if capacity <= 0.0 {
             return Err(IntegrationError::NumericalRange);

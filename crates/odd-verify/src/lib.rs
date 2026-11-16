@@ -7,6 +7,8 @@
 //!
 //! It lives outside `odd-sim` because `odd-contracts` already depends on
 //! `odd-sim`; putting the replay there would close a dependency cycle.
+pub mod coupled_flight;
+
 use odd_astro::{
     elements::Elements,
     finite_burn::isolate_finite_burn,
@@ -157,12 +159,45 @@ pub fn compute(
     let options = contract.options();
     let limits = contract.limits();
     let end = s.duration_us as f64 / 1e6;
-    let Ok(integrated) =
-        model.propagate_with_limits(s.initial, end, options, &burns, limits, |t| {
-            environment(eph, s.epoch, t)
-        })
-    else {
-        return None;
+    // v4 flies one coupled system: the vents and the engine draw from the same
+    // pool, so the mass every acceleration divides by is already net of both.
+    // A storable stage has no tank model, so it keeps the plain propagator.
+    let coupled = if s.revision.couples_vented_mass() && s.thermal.is_some() {
+        crate::coupled_flight::fly_coupled(s, &contract, &burns, |t| environment(eph, s.epoch, t))
+    } else {
+        None
+    };
+    let (integrated, coupled_windows, coupled_flameout, coupled_remaining) = match &coupled {
+        Some(flight) => {
+            // The coupled loop reports impact as "the trajectory stops early";
+            // it has no central-body event detector of its own.
+            let stopped = flight.terminal().filter(|frame| frame.time < end);
+            (
+                odd_astro::integrator::Integrated {
+                    trajectory: flight.trajectory.clone(),
+                    events: Vec::new(),
+                    stopped: stopped.map(|frame| odd_astro::integrator::EventRecord {
+                        name: "impact",
+                        time: frame.time,
+                        state: frame,
+                    }),
+                },
+                flight.flown_burns.clone(),
+                flight.flameout_s,
+                Some(flight.remaining_kg),
+            )
+        }
+        None => {
+            let Ok(integrated) =
+                model.propagate_with_limits(s.initial, end, options, &burns, limits, |t| {
+                    environment(eph, s.epoch, t)
+                })
+            else {
+                return None;
+            };
+            let windows = burns.iter().map(|b| (b.start, b.end)).collect();
+            (integrated, windows, None, None)
+        }
     };
     let impacted = integrated.stopped.is_some();
     let mut evaluation_s = if let Some(stop) = integrated.stopped {
@@ -215,10 +250,24 @@ pub fn compute(
                 - std::f64::consts::PI,
         )
     };
-    // Boil-off is integrated along the *flown* spline with the same adaptive
-    // stepper and the same ephemeris, so replay reproduces the vent history.
-    let thermal = match s.thermal {
-        Some(inputs) => odd_contracts::thermal::evaluate_at(
+    // v1–v3 integrate boil-off along the *flown* spline after the fact, with
+    // the same adaptive stepper and the same ephemeris, so replay reproduces
+    // the vent history. v4 already integrated the tanks *inside* the flight:
+    // re-running them here would integrate the same vent twice and compare a
+    // signed loss against a number the vehicle never paid.
+    let coupled_thermal = coupled.as_ref().map(|flight| {
+        let outcome = &flight.outcome;
+        odd_contracts::ThermalOutcome {
+            lost_kg: outcome.vented_kg[0] + outcome.vented_kg[1],
+            tank_lost_kg: outcome.vented_kg,
+            cooler_energy_j: outcome.cooler_joules,
+            vents: flight.vents.clone(),
+            inert: false,
+        }
+    });
+    let thermal = match (coupled_thermal, s.thermal) {
+        (Some(outcome), _) => outcome,
+        (None, Some(inputs)) => odd_contracts::thermal::evaluate_at(
             odd_contracts::thermal::ThermalStage {
                 contract: &contract,
                 spec: &inputs.engine_spec,
@@ -241,7 +290,7 @@ pub fn compute(
         // An integration/validation failure is not an inert tank. Reject
         // the flight rather than certifying zero loss on a model failure.
         .ok()?,
-        None => odd_contracts::ThermalOutcome::inert(),
+        (None, None) => odd_contracts::ThermalOutcome::inert(),
     };
     let mut report = [f64::NAN; REPORT_LEN];
     report[0] = final_state.mass;
@@ -361,12 +410,14 @@ pub fn compute(
             report[41..57].copy_from_slice(&shapley.coalition_metrics);
         }
     }
-    let flown_burn_windows = burns.iter().map(|b| (b.start, b.end)).collect();
     Some(FlightOutcome {
         thermal,
-        flown_burn_windows,
-        flameout_time_s: None,
-        propellant_remaining_kg: None,
+        flown_burn_windows: coupled_windows,
+        flameout_time_s: coupled_flameout,
+        // The coupled flight reports the live pool; the uncoupled one only
+        // knows the propagated mass.
+        propellant_remaining_kg: coupled_remaining
+            .or_else(|| Some((final_state.mass - s.dry_mass).max(0.0))),
         trajectory: integrated.trajectory,
         report,
         final_state,

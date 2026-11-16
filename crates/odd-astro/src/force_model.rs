@@ -285,4 +285,85 @@ impl ForceModel {
             },
         )
     }
+
+    /// The gravitational and non-gravitational field alone: no thrust.
+    ///
+    /// This is the same body as the propagator's right-hand side above, so a
+    /// coupled integrator that supplies its own thrust cannot drift from the
+    /// force law the uncoupled path uses. `burns` is empty by construction
+    /// here, which is why the mass argument only reaches drag and SRP.
+    pub fn field<F>(
+        &self,
+        t: f64,
+        r: [f64; 3],
+        v: [f64; 3],
+        m: f64,
+        limits: Option<FlightLimits>,
+        environment: &mut F,
+    ) -> Result<[f64; 3], IntegrationError>
+    where
+        F: FnMut(f64) -> Result<Environment, IntegrationError>,
+    {
+        if !self.mu.is_finite() || self.mu <= 0.0 || !m.is_finite() || m <= 0.0 {
+            return Err(IntegrationError::InvalidInput);
+        }
+        let radius = libm::sqrt(r.iter().map(|x| x * x).sum::<f64>());
+        if !radius.is_finite() || radius <= 0.0 {
+            return Err(IntegrationError::ForceFailure);
+        }
+        let mut acceleration = r.map(|x| -(self.mu / radius / radius) * (x / radius));
+        let mut add = |a: [f64; 3]| {
+            for i in 0..3 {
+                acceleration[i] += a[i];
+            }
+        };
+        if let Some(z) = self.zonal {
+            add(j2::acceleration(r, z.pole, self.mu, z.radius, z.j2)
+                .map_err(|_| IntegrationError::ForceFailure)?);
+        }
+        if let Some(mut d) = self.drag {
+            d.mass = m;
+            let mut drag_r = r;
+            if let Some(l) = limits {
+                let surface =
+                    drag::surface_radius(r, l.pole, l.equatorial_radius_m, l.polar_radius_m)
+                        .map_err(|_| IntegrationError::ForceFailure)?;
+                if radius < surface {
+                    let scale = (surface + 1.0) / radius;
+                    drag_r = r.map(|x| x * scale);
+                }
+            }
+            add(drag::acceleration(drag_r, v, d).map_err(|_| IntegrationError::ForceFailure)?);
+        }
+        if self.third_body || self.radiation.is_some() {
+            let env = environment(t)?;
+            if self.third_body {
+                for body in [env.sun, env.companion] {
+                    add(third_body::acceleration(r, body.position, body.mu)
+                        .map_err(|_| IntegrationError::ForceFailure)?);
+                }
+            }
+            if let Some(s) = self.radiation {
+                let sun = std::array::from_fn(|i| env.sun.position[i] - r[i]);
+                let central = r.map(|x| -x);
+                let companion = std::array::from_fn(|i| env.companion.position[i] - r[i]);
+                let visible = if radius <= s.central_radius {
+                    0.0
+                } else {
+                    srp::illumination_two(
+                        sun,
+                        env.sun.radius,
+                        central,
+                        s.central_radius,
+                        companion,
+                        env.companion.radius,
+                    )
+                    .map_err(|_| IntegrationError::ForceFailure)?
+                };
+                add(srp::acceleration(sun, s.cr, s.area, m, visible)
+                    .map_err(|_| IntegrationError::ForceFailure)?);
+            }
+        }
+        Ok(acceleration)
+    }
 }
