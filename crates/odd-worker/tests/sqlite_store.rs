@@ -12,6 +12,42 @@ use odd_worker::receipt::{ReceiptPayload, ServerReceipt};
 use odd_worker::sqlite::SqliteStore;
 use odd_worker::{AttemptMode, AuthorityEngine, ServerKey, Store};
 
+/// Inject a real database fault from a separate connection, just as a failed
+/// migration or damaged persistent row would appear to the authority.
+fn exec_database(path: &std::path::Path, sql: &str) {
+    use std::ffi::{c_char, c_int, c_void, CString};
+    use std::ptr;
+    #[link(name = ":libsqlite3.so.0", kind = "dylib")]
+    extern "C" {
+        fn sqlite3_open(path: *const c_char, db: *mut *mut c_void) -> c_int;
+        fn sqlite3_exec(
+            db: *mut c_void,
+            sql: *const c_char,
+            cb: *mut c_void,
+            arg: *mut c_void,
+            error: *mut *mut c_char,
+        ) -> c_int;
+        fn sqlite3_close(db: *mut c_void) -> c_int;
+    }
+    unsafe {
+        let mut db = ptr::null_mut();
+        let path = CString::new(path.to_str().unwrap()).unwrap();
+        assert_eq!(sqlite3_open(path.as_ptr(), &mut db), 0);
+        let sql = CString::new(sql).unwrap();
+        assert_eq!(
+            sqlite3_exec(
+                db,
+                sql.as_ptr(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut()
+            ),
+            0
+        );
+        assert_eq!(sqlite3_close(db), 0);
+    }
+}
+
 #[test]
 fn sqlite_attempt_counter_is_atomic_and_monotonic() {
     let mut store = SqliteStore::open(":memory:").unwrap();
@@ -171,20 +207,6 @@ fn sqlite_state_survives_a_reopen() {
 
 #[test]
 fn sqlite_rolls_back_rating_and_fdr_when_receipt_write_fails() {
-    use std::ffi::{c_char, c_int, c_void, CString};
-    use std::ptr;
-    #[link(name = ":libsqlite3.so.0", kind = "dylib")]
-    extern "C" {
-        fn sqlite3_open(path: *const c_char, db: *mut *mut c_void) -> c_int;
-        fn sqlite3_exec(
-            db: *mut c_void,
-            sql: *const c_char,
-            cb: *mut c_void,
-            arg: *mut c_void,
-            error: *mut *mut c_char,
-        ) -> c_int;
-        fn sqlite3_close(db: *mut c_void) -> c_int;
-    }
     let path = std::env::temp_dir().join(format!("odderon-rollback-{}.sqlite", std::process::id()));
     let path_str = path.to_str().unwrap();
     let mut engine = AuthorityEngine::new(SqliteStore::open(path_str).unwrap(), server_key());
@@ -192,29 +214,250 @@ fn sqlite_rolls_back_rating_and_fdr_when_receipt_write_fails() {
     let ticket = commit_for(&mut engine, &fdr, &license);
     // A real database failure on the last write must not leave an Elo update
     // or an orphaned record which a retry could charge for a second time.
-    unsafe {
-        let mut db = ptr::null_mut();
-        let path = CString::new(path_str).unwrap();
-        assert_eq!(sqlite3_open(path.as_ptr(), &mut db), 0);
-        let sql = CString::new("CREATE TRIGGER fail_receipt BEFORE INSERT ON receipts BEGIN SELECT RAISE(ABORT, 'injected failure'); END;").unwrap();
-        assert_eq!(
-            sqlite3_exec(
-                db,
-                sql.as_ptr(),
-                ptr::null_mut(),
-                ptr::null_mut(),
-                ptr::null_mut()
-            ),
-            0
-        );
-        assert_eq!(sqlite3_close(db), 0);
-    }
+    exec_database(&path, "CREATE TRIGGER fail_receipt BEFORE INSERT ON receipts BEGIN SELECT RAISE(ABORT, 'injected failure'); END;");
     assert!(engine.submit(submit_request(&fdr, ticket), NOW).is_err());
     let player = engine.store().load_player(&license.public_key()).unwrap();
     assert_eq!(player.elo, 1200.0);
     assert_eq!(player.ranked_count, 0);
     assert_eq!(engine.store().load_mission_elo(101).unwrap(), 800.0);
     assert!(engine.store().load_fdr(&fdr.digest()).unwrap().is_none());
+    drop(engine);
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(format!("{path_str}-wal"));
+    let _ = std::fs::remove_file(format!("{path_str}-shm"));
+}
+
+#[test]
+fn corrupt_or_mismatched_receipts_cannot_rate_a_retry_twice() {
+    let path =
+        std::env::temp_dir().join(format!("odderon-bad-receipt-{}.sqlite", std::process::id()));
+    let path_str = path.to_str().unwrap();
+    let mut engine = AuthorityEngine::new(SqliteStore::open(path_str).unwrap(), server_key());
+    let (fdr, license) = signed_rescue(prediction_a());
+    let ticket = commit_for(&mut engine, &fdr, &license);
+    let first = engine
+        .submit(submit_request(&fdr, ticket.clone()), NOW)
+        .unwrap();
+    let receipt = first.receipt.unwrap();
+    let before = engine.store().load_player(&license.public_key()).unwrap();
+    let mission = engine.store().load_mission_elo(101).unwrap();
+    assert_eq!(before.ranked_count, 1);
+
+    let mut invalid_signature = receipt.clone();
+    invalid_signature.server_sig[0] ^= 1;
+    let mut other_subject = receipt.payload.clone();
+    other_subject.pubkey = [42; 32];
+    let wrong_binding = ServerReceipt::issue(other_subject, &server_key());
+    assert!(wrong_binding.verify(&engine.server_pk()));
+    // Simulate a divergent but genuinely signed same-attempt row, e.g. from
+    // inconsistent backup/restore. Both signatures and FDR bindings match,
+    // yet the retry and public index must not report different ratings.
+    let mut divergent_payload = receipt.payload.clone();
+    divergent_payload.elo_after_bits = (receipt.payload.elo_after() + 42.0).to_bits();
+    let divergent = ServerReceipt::issue(divergent_payload, &server_key());
+    assert!(divergent.verify(&engine.server_pk()));
+    assert_ne!(divergent, receipt);
+    let public_path = format!("/api/v1/verify/{}", odd_report::hex::encode(&fdr.digest()));
+    for bad in [
+        divergent.to_bytes(),
+        vec![0],
+        invalid_signature.to_bytes(),
+        wrong_binding.to_bytes(),
+    ] {
+        let bytes = odd_report::hex::encode(&bad);
+        exec_database(
+            &path,
+            &format!("UPDATE receipts SET receipt=X'{bytes}' WHERE contract=101 AND attempt=1;"),
+        );
+        let retry = engine.submit(submit_request(&fdr, ticket.clone()), NOW);
+        assert!(
+            matches!(retry, Err(odd_worker::ServerError::Storage(_))),
+            "bad stored receipt must fail closed: {retry:?}"
+        );
+        let public = odd_worker::http::route(&mut engine, "GET", &public_path, "", NOW);
+        assert_eq!(
+            public.status, 503,
+            "public replay must agree with its idempotency row"
+        );
+        let after = engine.store().load_player(&license.public_key()).unwrap();
+        assert_eq!(after.ranked_count, before.ranked_count);
+        assert_eq!(after.elo.to_bits(), before.elo.to_bits());
+        assert_eq!(
+            engine.store().load_mission_elo(101).unwrap().to_bits(),
+            mission.to_bits()
+        );
+    }
+    // The flight index still proves this exact attempt was submitted even if
+    // its separate idempotency row was lost. Do not score it again.
+    exec_database(
+        &path,
+        "DELETE FROM receipts WHERE contract=101 AND attempt=1;",
+    );
+    assert!(matches!(
+        engine.submit(submit_request(&fdr, ticket.clone()), NOW),
+        Err(odd_worker::ServerError::Storage(_))
+    ));
+    assert_eq!(
+        odd_worker::http::route(&mut engine, "GET", &public_path, "", NOW).status,
+        503
+    );
+    assert_eq!(
+        engine
+            .store()
+            .load_player(&license.public_key())
+            .unwrap()
+            .ranked_count,
+        1
+    );
+    let bytes = odd_report::hex::encode(&receipt.to_bytes());
+    exec_database(
+        &path,
+        &format!(
+            "INSERT INTO receipts(pubkey,contract,attempt,receipt) VALUES(X'{}',101,1,X'{bytes}');",
+            odd_report::hex::encode(&license.public_key())
+        ),
+    );
+    let retry = engine.submit(submit_request(&fdr, ticket), NOW).unwrap();
+    assert_eq!(retry.receipt, Some(receipt));
+    assert_eq!(
+        engine
+            .store()
+            .load_player(&license.public_key())
+            .unwrap()
+            .ranked_count,
+        1
+    );
+    drop(engine);
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(format!("{path_str}-wal"));
+    let _ = std::fs::remove_file(format!("{path_str}-shm"));
+}
+
+#[test]
+fn corrupt_commitment_cannot_be_coerced_into_a_valid_ticket_binding() {
+    let path = std::env::temp_dir().join(format!(
+        "odderon-bad-commitment-{}.sqlite",
+        std::process::id()
+    ));
+    let path_str = path.to_str().unwrap();
+    let mut engine = AuthorityEngine::new(SqliteStore::open(path_str).unwrap(), server_key());
+    let (fdr, license) = signed_rescue(prediction_a());
+    let ticket = commit_for(&mut engine, &fdr, &license);
+    // These invalid values previously wrapped, truncated, or coerced to the
+    // signed fields while reading the row. They must not authorize a flight.
+    let pk = odd_report::hex::encode(&license.public_key());
+    let design = odd_report::hex::encode(&ticket.design_hash);
+    let prediction = odd_report::hex::encode(&ticket.prediction_hash);
+    let timestamp = ticket.server_time_s;
+    let mutations = [
+        ("mode", "256".to_string(), "0".to_string()),
+        ("mode", "'0garbage'".to_string(), "0".to_string()),
+        (
+            "server_time",
+            format!("'{timestamp}garbage'"),
+            timestamp.to_string(),
+        ),
+        (
+            "design_hash",
+            "CAST(design_hash || X'00' AS BLOB)".to_string(),
+            format!("X'{design}'"),
+        ),
+        (
+            "prediction_hash",
+            "CAST(prediction_hash || X'00' AS BLOB)".to_string(),
+            format!("X'{prediction}'"),
+        ),
+    ];
+    for (column, bad, original) in mutations {
+        exec_database(&path, &format!("UPDATE commitments SET {column}={bad} WHERE pubkey=X'{pk}' AND contract=101 AND attempt=1;"));
+        let submitted = engine.submit(submit_request(&fdr, ticket.clone()), NOW);
+        assert!(
+            matches!(submitted, Err(odd_worker::ServerError::Storage(_))),
+            "invalid {column}={bad}: {submitted:?}"
+        );
+        let player = engine.store().load_player(&license.public_key()).unwrap();
+        assert_eq!(player.ranked_count, 0);
+        assert_eq!(player.elo, 1200.0);
+        assert!(engine.store().load_fdr(&fdr.digest()).unwrap().is_none());
+        exec_database(&path, &format!("UPDATE commitments SET {column}={original} WHERE pubkey=X'{pk}' AND contract=101 AND attempt=1;"));
+    }
+    assert!(
+        engine
+            .submit(submit_request(&fdr, ticket), NOW)
+            .unwrap()
+            .accepted
+    );
+    drop(engine);
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(format!("{path_str}-wal"));
+    let _ = std::fs::remove_file(format!("{path_str}-shm"));
+}
+
+#[test]
+fn corrupt_flight_index_cannot_be_truncated_into_a_valid_public_record() {
+    let path =
+        std::env::temp_dir().join(format!("odderon-bad-index-{}.sqlite", std::process::id()));
+    let path_str = path.to_str().unwrap();
+    let mut engine = AuthorityEngine::new(SqliteStore::open(path_str).unwrap(), server_key());
+    let (fdr, license) = signed_rescue(prediction_a());
+    let ticket = commit_for(&mut engine, &fdr, &license);
+    engine
+        .submit(submit_request(&fdr, ticket.clone()), NOW)
+        .unwrap();
+    let public_path = format!("/api/v1/verify/{}", odd_report::hex::encode(&fdr.digest()));
+    assert_eq!(
+        odd_worker::http::route(&mut engine, "GET", &public_path, "", NOW).status,
+        200
+    );
+    // SQLite's integer accessor accepts text and the old u8 cast wraps 256
+    // into Ranked (0), even though the persisted index is invalid. Check all
+    // index fields before and after restoring each row.
+    let hash = odd_report::hex::encode(&fdr.digest());
+    let pubkey = odd_report::hex::encode(&license.public_key());
+    let score = fdr.metrics[4].to_string();
+    let mutations = [
+        ("mode", "256".to_string(), "0".to_string()),
+        ("mode", "'0garbage'".to_string(), "0".to_string()),
+        ("contract", "4294967397".to_string(), "101".to_string()),
+        ("contract", "'101garbage'".to_string(), "101".to_string()),
+        ("attempt", "4294967297".to_string(), "1".to_string()),
+        ("attempt", "'1garbage'".to_string(), "1".to_string()),
+        ("delegation_mask", "256".to_string(), "0".to_string()),
+        ("delegation_mask", "'0garbage'".to_string(), "0".to_string()),
+        (
+            "pubkey",
+            "CAST(pubkey || X'00' AS BLOB)".to_string(),
+            format!("X'{pubkey}'"),
+        ),
+        ("score", format!("'{score}garbage'"), score),
+    ];
+    for (column, bad, original) in mutations {
+        exec_database(
+            &path,
+            &format!("UPDATE fdrs SET {column}={bad} WHERE hash=X'{hash}';"),
+        );
+        let public = odd_worker::http::route(&mut engine, "GET", &public_path, "", NOW);
+        assert_eq!(public.status, 503, "invalid {column}={bad} was accepted");
+        let retry = engine.submit(submit_request(&fdr, ticket.clone()), NOW);
+        assert!(
+            matches!(retry, Err(odd_worker::ServerError::Storage(_))),
+            "invalid {column}={bad}: {retry:?}"
+        );
+        exec_database(
+            &path,
+            &format!("UPDATE fdrs SET {column}={original} WHERE hash=X'{hash}';"),
+        );
+    }
+    assert_eq!(
+        odd_worker::http::route(&mut engine, "GET", &public_path, "", NOW).status,
+        200
+    );
+    assert!(
+        engine
+            .submit(submit_request(&fdr, ticket), NOW)
+            .unwrap()
+            .accepted
+    );
     drop(engine);
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{path_str}-wal"));

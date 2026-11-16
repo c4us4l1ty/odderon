@@ -2,6 +2,7 @@
 // counterfactuals stay off the UI thread. The main page terminates stale workers.
 import { applyAssembly } from './assembly.js';
 import { configured, serverKey, receiptBytes, verifyReceipt } from './authority-crypto.js';
+import { stringifySigned } from './recorder.js';
 self.onmessage=async ({data})=>{
   try{
     const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error('Flight physics module unavailable.');
@@ -40,7 +41,7 @@ self.onmessage=async ({data})=>{
         else dossierError='The flight verified, but the dossier could not be rendered: the verification payload is too large for a QR code.';
       }
       if(data.receipt)document.server_receipt=data.receipt;
-      self.postMessage({verification:{code,verdict,certification,mismatchIndex:w.mission_fdr_mismatch_index(),mismatchName:read(4),dossier,dossierError,json:JSON.stringify(document,null,2),computeMs:performance.now()-started}});
+      self.postMessage({verification:{code,verdict,certification,mismatchIndex:w.mission_fdr_mismatch_index(),mismatchName:read(4),dossier,dossierError,json:stringifySigned(document),computeMs:performance.now()-started}});
       return;
     }
     if(data.action==='split'){

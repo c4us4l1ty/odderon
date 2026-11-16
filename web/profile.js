@@ -8,13 +8,21 @@ const $ = id => document.getElementById(id);
 let dialog = null;
 let lastFocused = null;
 let syncKey = null;
+let syncRequest = 0;
 
+/// A player GET is a snapshot, not a live subscription. Ignore it if a newer
+/// sync or any profile mutation (notably a receipt or license switch) occurred
+/// while it was in flight. `null` means superseded, not authority unavailable.
 export async function syncProfile() {
   const profile = identity.profile();
   if (!profile || !authority.configured()) return false;
   const key = profile.publicKey.map(b => b.toString(16).padStart(2, '0')).join('');
-  try { return identity.syncPlayer(await authority.player(key)); }
-  catch { return false; }
+  const version = identity.profileRevision(), current = ++syncRequest;
+  const superseded = () => current !== syncRequest || version !== identity.profileRevision();
+  try {
+    const player = await authority.player(key);
+    return superseded() ? null : identity.syncPlayer(player);
+  } catch { return superseded() ? null : false; }
 }
 
 function text(tag, value, className) {
@@ -57,7 +65,7 @@ function render() {
   $('profile-callsign-value').textContent = profile.callsign;
   $('profile-public-id').textContent = profile.publicId;
   $('profile-elo').textContent = profile.ratingSource === 'unverified' ? '—' : profile.elo.toFixed(1);
-  $('profile-rating-source').textContent = profile.ratingSource === 'server' ? 'Synced from the authority.' : profile.ratingSource === 'receipt' ? 'Last verified receipt; sync for current rating.' : 'Unverified local state; no server rating.';
+  $('profile-rating-source').textContent = profile.ratingSource === 'server' ? 'Synced from the authority.' : profile.ratingSource === 'receipt' ? 'Cached verified receipt; sync for current rating.' : 'Unverified local state; no server rating.';
   $('profile-flights').textContent = String(profile.flights);
   $('profile-callsign').value = profile.callsign;
   const body = $('profile-secrets');
@@ -179,7 +187,7 @@ function build() {
   });
   $('profile-sync').addEventListener('click', async () => {
     $('profile-rating-source').textContent = 'Syncing…';
-    if (!await syncProfile()) $('profile-rating-source').textContent = 'Authority unavailable; cached values are not authoritative.';
+    if (await syncProfile() === false) $('profile-rating-source').textContent = 'Authority unavailable; cached values are not authoritative.';
   });
   $('profile-restore-input').addEventListener('input', () => {
     const result = identity.checkRestore($('profile-restore-input').value);

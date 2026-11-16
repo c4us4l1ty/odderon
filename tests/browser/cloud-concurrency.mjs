@@ -159,6 +159,35 @@ try {
   assert.equal(restored.status, 200);
   console.log('PASS corrupted R2 data fails closed and a restored public replay works');
 
+  // D1 uses a single receipt row for both public lookup and idempotency. A
+  // damaged or deleted row must fail both paths, not re-rate the same attempt.
+  const indexed = (await authority.query('SELECT pubkey,contract,attempt FROM fdrs WHERE hash=?1', hash)).results[0];
+  const receiptRow = (await authority.query('SELECT receipt FROM receipts WHERE pubkey=?1 AND contract=?2 AND attempt=?3',
+    indexed.pubkey, indexed.contract, indexed.attempt)).results[0];
+  const playerAtFault = (await authority.query('SELECT elo,ranked FROM players WHERE pubkey=?1', indexed.pubkey)).results[0];
+  try {
+    for (const bad of ['', '00', null]) {
+      if (bad === null) await authority.query('DELETE FROM receipts WHERE pubkey=?1 AND contract=?2 AND attempt=?3',
+        indexed.pubkey, indexed.contract, indexed.attempt);
+      else await authority.query('UPDATE receipts SET receipt=?1 WHERE pubkey=?2 AND contract=?3 AND attempt=?4',
+        bad, indexed.pubkey, indexed.contract, indexed.attempt);
+      const publicFault = await fetch(`${base}/api/v1/verify/${hash}`);
+      assert.equal(publicFault.status, 503, `receipt ${bad} public lookup`);
+      const retryFault = await fetch(`${base}/api/v1/submit`, { method:'POST', headers:{'content-type':'application/json'}, body:bodies[0] });
+      assert.equal(retryFault.status, 503, `receipt ${bad} retry`);
+      assert.deepEqual((await authority.query('SELECT elo,ranked FROM players WHERE pubkey=?1', indexed.pubkey)).results[0], playerAtFault);
+    }
+  } finally {
+    await authority.query(`INSERT INTO receipts(pubkey,contract,attempt,receipt) VALUES(?1,?2,?3,?4)
+      ON CONFLICT(pubkey,contract,attempt) DO UPDATE SET receipt=excluded.receipt`,
+      indexed.pubkey, indexed.contract, indexed.attempt, receiptRow.receipt);
+  }
+  assert.equal((await fetch(`${base}/api/v1/verify/${hash}`)).status, 200);
+  const retryRestored = await fetch(`${base}/api/v1/submit`, { method:'POST', headers:{'content-type':'application/json'}, body:bodies[0] });
+  assert.equal(retryRestored.status, 200);
+  assert.deepEqual((await retryRestored.json()).receipt, responses[0].body.receipt);
+  console.log('PASS corrupt or missing D1 receipts fail public lookup and retry without re-rating');
+
   // Upgrade a genuine legacy 0001 database and hash-only R2 object. This
   // intentionally tests the old data shape, not just a fresh two-migration
   // database. It cannot repair Elo that the old adapter may have raced.
@@ -179,8 +208,37 @@ try {
     assert.equal(restoredLegacy.fdr_payload, original);
     assert.deepEqual(restoredLegacy.receipt, responses[0].body.receipt);
     assert.equal((await legacy.query('SELECT revision FROM authority_revision WHERE id=1')).results[0].revision, 0);
+
+    // A missing counter is the only way to issue attempt 1. A corrupt row
+    // holding zero must not be confused with an absent row, even if its old
+    // commitment has also been lost. Exercise the real D1 snapshot bridge.
+    await legacy.query('INSERT INTO attempts(pubkey,contract,n) VALUES(?1,101,0)', pubkeys[0]);
+    for (const value of [0, -1, 4294967296, 1.5, 4294967295]) {
+      await legacy.query('UPDATE attempts SET n=?1 WHERE pubkey=?2 AND contract=101', value, pubkeys[0]);
+      const rejected = await legacy.fetch('/api/v1/commit', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: commitBody,
+      });
+      assert.equal(rejected.status, 503, `attempt counter ${value} must fail closed: ${await rejected.clone().text()}`);
+      assert.equal((await legacy.query('SELECT n FROM attempts WHERE pubkey=?1 AND contract=101', pubkeys[0])).results[0].n, value);
+      assert.equal((await legacy.query('SELECT COUNT(*) AS n FROM commitments WHERE pubkey=?1 AND contract=101', pubkeys[0])).results[0].n, 0);
+      assert.equal((await legacy.query('SELECT revision FROM authority_revision WHERE id=1')).results[0].revision, 0);
+    }
+    await legacy.query('UPDATE attempts SET n=4294967294 WHERE pubkey=?1 AND contract=101', pubkeys[0]);
+    const last = await legacy.fetch('/api/v1/commit', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: commitBody,
+    });
+    assert.equal(last.status, 200, await last.clone().text());
+    const lastTicket = await last.json();
+    assert.equal(lastTicket.attempt_num, 4294967295);
+    assert.equal(lastTicket.mode, 1);
+    const exhausted = await legacy.fetch('/api/v1/commit', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: commitBody,
+    });
+    assert.equal(exhausted.status, 503);
+    assert.equal((await legacy.query('SELECT n FROM attempts WHERE pubkey=?1 AND contract=101', pubkeys[0])).results[0].n, 4294967295);
   } finally { await legacy.close(); }
   console.log('PASS legacy D1 migration preserves signed hash-only R2 public replays');
+  console.log('PASS corrupt and exhausted D1 attempt counters fail closed');
 
   // A missing revision must never degrade into unguarded writes. Restore the
   // singleton after this fault so the rest of the gate uses the same DB.

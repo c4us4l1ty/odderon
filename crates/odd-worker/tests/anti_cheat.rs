@@ -136,6 +136,110 @@ fn oracle_server_first_attempt_only_ranked() {
 }
 
 #[test]
+fn ranked_counter_overflow_fails_without_rating_or_receipt() {
+    let (fdr, license) = signed_rescue(prediction_a());
+    let mut store = odd_worker::MemoryStore::new();
+    store
+        .save_player(
+            &license.public_key(),
+            &odd_worker::PlayerRow {
+                elo: 1200.0,
+                ranked_count: u32::MAX,
+                callsign: None,
+            },
+        )
+        .unwrap();
+    let mut engine = odd_worker::AuthorityEngine::new(store, server_key());
+    let ticket = commit_for(&mut engine, &fdr, &license);
+    assert!(matches!(
+        engine.submit(submit_request(&fdr, ticket), NOW),
+        Err(ServerError::Storage(_))
+    ));
+    let player = engine.store().load_player(&license.public_key()).unwrap();
+    assert_eq!(player.ranked_count, u32::MAX);
+    assert_eq!(player.elo, 1200.0);
+    assert!(engine.store().load_fdr(&fdr.digest()).unwrap().is_none());
+}
+
+#[test]
+fn non_finite_stored_ratings_never_mint_a_receipt() {
+    let (fdr, license) = signed_rescue(prediction_a());
+    for (player_elo, mission_elo) in [(f64::INFINITY, 800.0), (1200.0, f64::NEG_INFINITY)] {
+        let mut store = odd_worker::MemoryStore::new();
+        store
+            .save_player(
+                &license.public_key(),
+                &odd_worker::PlayerRow {
+                    elo: player_elo,
+                    ranked_count: 0,
+                    callsign: None,
+                },
+            )
+            .unwrap();
+        store.save_mission_elo(101, mission_elo).unwrap();
+        let mut engine = odd_worker::AuthorityEngine::new(store, server_key());
+        let ticket = commit_for(&mut engine, &fdr, &license);
+        assert!(matches!(
+            engine.submit(submit_request(&fdr, ticket), NOW),
+            Err(ServerError::Storage(_))
+        ));
+        assert_eq!(
+            engine
+                .store()
+                .load_player(&license.public_key())
+                .unwrap()
+                .ranked_count,
+            0
+        );
+        assert!(engine.store().load_fdr(&fdr.digest()).unwrap().is_none());
+    }
+}
+
+#[test]
+fn equivalent_payload_encodings_do_not_collide_but_other_keys_do() {
+    let mut engine = engine();
+    let (mut fdr, license) = signed_rescue(prediction_a());
+    // Consume the first ticket, then submit the same signed practice flight
+    // twice under different tickets. The parser accepts both a fragment and
+    // the bare base64url encoding of the same canonical bytes.
+    let _ = commit_for(&mut engine, &fdr, &license);
+    fdr.attempt_mode = odd_worker::AttemptMode::Practice;
+    fdr.sign(&license).unwrap();
+    let ticket2 = commit_for(&mut engine, &fdr, &license);
+    let first = engine
+        .submit(submit_request(&fdr, ticket2.clone()), NOW)
+        .unwrap();
+    let ticket3 = commit_for(&mut engine, &fdr, &license);
+    let mut alternate = submit_request(&fdr, ticket3);
+    alternate.fdr_payload = alternate
+        .fdr_payload
+        .trim_start_matches("#verify=")
+        .to_owned();
+    let second = engine
+        .submit(alternate, NOW)
+        .expect("equivalent encoding is not a hash collision");
+    assert_eq!(second.fdr_hash, first.fdr_hash);
+    assert_eq!(second.attempt_num, 3);
+    let old_retry = engine.submit(submit_request(&fdr, ticket2), NOW).unwrap();
+    assert_eq!(old_retry.receipt, first.receipt);
+
+    // The body hash does not include the public key. A different signer of
+    // the same body must never overwrite another pilot's public flight.
+    let other = odd_identity::License::from_entropy([22u8; 16]);
+    let mut copied = fdr.clone();
+    copied.sign(&other).unwrap();
+    assert_eq!(copied.digest(), fdr.digest());
+    let _ = commit_for(&mut engine, &copied, &other);
+    let other_ticket = commit_for(&mut engine, &copied, &other);
+    assert_eq!(
+        engine
+            .submit(submit_request(&copied, other_ticket), NOW)
+            .unwrap_err(),
+        ServerError::FdrHashCollision
+    );
+}
+
+#[test]
 fn oracle_chunked_segment_verification_parity() {
     let mut engine = engine();
     let contract = Contract::get(101).unwrap();
@@ -426,6 +530,63 @@ fn server_rejects_committed_forged_cryogenic_proofs() {
             0
         );
     }
+
+    // A signer can forge the thermal environment rather than the tank.
+    // Recompute every metric and vent event for a one-kelvin support; no
+    // cooling hardware, electrical draw or mass was added to obtain it.
+    for field in ["structure", "sink"] {
+        let mut cold_support = fdr.clone();
+        match field {
+            "structure" => cold_support.thermal_specs[0].structure_temperature_k = 1.0,
+            "sink" => cold_support.thermal_specs[0].sink_temperature_k = 1.0,
+            _ => unreachable!(),
+        }
+        let replay =
+            odd_verify::replay_flight(&odd_verify::spec_from_record(&cold_support)).unwrap();
+        cold_support.metrics = replay.report;
+        cold_support.final_state_hash = replay.final_state_hash;
+        cold_support.boil_off_kg = replay.boil_off_kg;
+        cold_support.cryocooler_energy_j = replay.cryocooler_energy_j;
+        cold_support.vent_events = replay.vent_events;
+        cold_support.sign(&license).unwrap();
+        assert_eq!(cold_support.verify_signature(), Ok(()));
+        if field == "structure" {
+            let loss = cold_support.boil_off_kg.iter().sum::<f64>();
+            let baseline = fdr.boil_off_kg.iter().sum::<f64>();
+            println!(
+                "forged 1 K support: loss {baseline:.6} -> {loss:.6} kg without added hardware"
+            );
+            assert!(
+                loss < baseline,
+                "the invented support must demonstrably reduce loss"
+            );
+        }
+        let mut authority = engine();
+        let ticket = commit_for(&mut authority, &cold_support, &license);
+        assert!(
+            matches!(
+                authority.submit(submit_request(&cold_support, ticket), NOW),
+                Err(ServerError::ReplayRejected(_))
+            ),
+            "replayed but invented {field} temperature must not earn a receipt"
+        );
+        assert_eq!(
+            authority
+                .store()
+                .load_player(&license.public_key())
+                .unwrap()
+                .ranked_count,
+            0
+        );
+    }
+
+    let mut supercritical = fdr.clone();
+    supercritical.thermal_specs[0].relief_pressure_pa = 5_000_000.0;
+    supercritical.sign(&license).unwrap();
+    assert!(
+        odd_verify::certify_thermal(&supercritical).is_err(),
+        "a relief isotherm above the liquid's critical temperature cannot be certified"
+    );
 }
 
 #[test]

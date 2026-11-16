@@ -23,6 +23,11 @@ pub fn encode_url(bytes: &[u8]) -> String {
 }
 
 pub fn decode_url(text: &str) -> Option<Vec<u8>> {
+    if text.len() % 4 == 1 {
+        // One sextet cannot encode even one byte, even when all six bits
+        // are zero. Accepting it creates a noncanonical duplicate encoding.
+        return None;
+    }
     if text.is_empty() {
         return Some(Vec::new());
     }
@@ -43,4 +48,21 @@ pub fn decode_url(text: &str) -> Option<Vec<u8>> {
         return None;
     }
     Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decode_url, encode_url};
+
+    #[test]
+    fn rejects_impossible_single_sextet_tails() {
+        for n in 0..12 {
+            let bytes: Vec<u8> = (0..n).collect();
+            assert_eq!(decode_url(&encode_url(&bytes)), Some(bytes));
+        }
+        assert_eq!(decode_url("A"), None);
+        assert_eq!(decode_url("AAAAA"), None);
+        assert_eq!(decode_url("AB"), None); // nonzero padding bits
+        assert_eq!(decode_url("AAB"), None);
+    }
 }

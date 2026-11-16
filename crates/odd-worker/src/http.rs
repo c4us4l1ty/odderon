@@ -41,9 +41,15 @@ impl Response {
     }
     fn error(err: &ServerError) -> Self {
         let mut obj = BTreeMap::new();
-        obj.insert("error".into(), Json::Str(format!("{err}")));
+        let storage_failure = matches!(err, ServerError::Storage(_));
+        let message = if storage_failure {
+            "authority storage failure".to_string()
+        } else {
+            format!("{err}")
+        };
+        obj.insert("error".into(), Json::Str(message));
         obj.insert("code".into(), Json::Str(error_code(err).into()));
-        Self::json(400, &Json::Obj(obj))
+        Self::json(if storage_failure { 503 } else { 400 }, &Json::Obj(obj))
     }
 }
 
@@ -128,17 +134,36 @@ pub fn route<S: Store>(
             };
             match engine.store().load_fdr(&hash) {
                 Ok(Some(fdr)) => {
+                    // Do not return a corrupt payload alongside a valid
+                    // receipt. Authenticate both envelopes and all index
+                    // bindings before making a public replay available.
+                    if let Err(error) = fdr.verified_record(&hash, &engine.server_pk()) {
+                        return Response::error(&error);
+                    }
                     let Some(receipt) = fdr.receipt.as_ref() else {
-                        return Response::json(404, &Json::Str("receipt not found".into()));
+                        return Response::error(&ServerError::Storage(
+                            "stored receipt is missing".into(),
+                        ));
                     };
-                    if !receipt.verify(&engine.server_pk())
-                        || receipt.payload.fdr_hash != hash
-                        || receipt.payload.pubkey != fdr.pubkey
+                    // Native SQLite keeps the public receipt and idempotency
+                    // receipt separately. Never serve conflicting copies (or
+                    // one whose attempt row disappeared) as a healthy flight.
+                    match engine
+                        .store()
+                        .load_receipt(&fdr.pubkey, fdr.contract_id, fdr.attempt_num)
                     {
-                        return Response::json(500, &Json::Str("stored receipt is invalid".into()));
+                        Ok(Some(indexed)) if indexed == *receipt => {}
+                        Ok(_) => {
+                            return Response::error(&ServerError::Storage(
+                                "stored receipt copies disagree".into(),
+                            ));
+                        }
+                        Err(error) => return Response::error(&error),
                     }
                     let Ok(payload) = String::from_utf8(fdr.bytes) else {
-                        return Response::json(500, &Json::Str("stored record is invalid".into()));
+                        return Response::error(&ServerError::Storage(
+                            "stored record is invalid".into(),
+                        ));
                     };
                     let mut o = BTreeMap::new();
                     o.insert("fdr_payload".into(), Json::Str(payload));
@@ -531,6 +556,7 @@ fn write_response(stream: &mut TcpStream, resp: &Response) -> std::io::Result<()
         404 => "Not Found",
         413 => "Payload Too Large",
         500 => "Internal Server Error",
+        503 => "Service Unavailable",
         _ => "Error",
     };
     let head = format!(

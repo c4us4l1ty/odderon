@@ -13,6 +13,9 @@ let worker = null;
 let dialog = null;
 let lastResult = null;
 let lastFocused = null;
+// Identifies the document the user most recently chose, including an input
+// that fails to parse before a worker can start.
+let generation = 0;
 const listeners = new Set();
 
 export function onVerification(listener) {
@@ -58,12 +61,13 @@ function show(result) {
   for (const listener of listeners) listener(result);
 }
 
-function run(inputs) {
+function invalidate() {
+  ++generation;
   cancel();
-  // A verdict belongs to one document. Clearing it here stops a stale result
-  // from being read as the answer for the run that just started.
+  // A verdict must never survive a different document, even if its input
+  // is only being edited or fails before a worker can start.
   lastResult = null;
-  $('verify-busy').hidden = false;
+  $('verify-busy').hidden = true;
   $('verify-verdict').textContent = '';
   $('verify-verdict').className = 'verify-verdict';
   $('verify-detail').textContent = '';
@@ -71,10 +75,20 @@ function run(inputs) {
   $('verify-download').hidden = true;
   $('verify-print').hidden = true;
   $('verify-download-json').hidden = true;
+}
+
+function begin(message = 'Replaying the flight…') {
+  invalidate();
+  $('verify-busy').hidden = false;
+  $('verify-busy').textContent = message;
+  return generation;
+}
+
+function run(inputs, operation) {
   worker = new Worker('./mission-worker.js', { type: 'module' });
   const current = worker;
   current.onmessage = ({ data }) => {
-    if (worker !== current) return;
+    if (worker !== current || operation !== generation) return;
     current.terminate();
     worker = null;
     if (data.error) {
@@ -84,7 +98,7 @@ function run(inputs) {
     show(data.verification);
   };
   current.onerror = () => {
-    if (worker !== current) return;
+    if (worker !== current || operation !== generation) return;
     cancel();
     show({ code: 0, verdict: 'The verification worker failed.', mismatchIndex: -1, mismatchName: '', dossier: null, json: '' });
   };
@@ -97,6 +111,8 @@ function run(inputs) {
 /// Verify a recorder JSON document or a #verify= payload.
 export function verifyText(text) {
   if (!dialog) build();
+  $('verify-input').value = String(text);
+  const operation = begin();
   let inputs;
   try {
     inputs = recorder.prepareVerification(wasm, text);
@@ -104,33 +120,35 @@ export function verifyText(text) {
     show({ code: 0, verdict: String(error.message || error), mismatchIndex: -1, mismatchName: '', dossier: null, json: '' });
     return false;
   }
-  run(inputs);
+  run(inputs, operation);
   return true;
 }
 
 /// Verify already-captured fields (the flight that just ran).
 export function verifyFields(fields, callsign, receipt = null) {
   if (!dialog) build();
-  run({ fields, callsign, receipt });
+  // The flat fields do not have an associated input string. Do not leave a
+  // previous document visible beside this new flight's verdict.
+  $('verify-input').value = '';
+  run({ fields, callsign, receipt }, begin());
 }
 
 /// Public, content-addressed replay. The response is not trusted: its FDR,
 /// receipt, signature, hash and physics all go through the same worker.
 export async function openPublicFlight(hash) {
   openVerify();
-  $('verify-busy').hidden = false;
-  $('verify-busy').textContent = 'Fetching the public flight…';
+  const operation = begin('Fetching the public flight…');
   try {
     const flight = await publicFlight(hash);
-    if (!dialog.open) return;
+    if (operation !== generation || !dialog.open) return;
     if (flight?.receipt?.fdr_hash !== hash.toLowerCase()) throw Error('The public response does not match the requested flight hash.');
     const inputs = recorder.prepareVerification(wasm, flight.fdr_payload);
     inputs.receipt = flight.receipt;
     $('verify-input').value = flight.fdr_payload;
     $('verify-busy').textContent = 'Replaying the flight…';
-    run(inputs);
+    run(inputs, operation);
   } catch (error) {
-    if (dialog.open) show({ code: 0, verdict: `Public flight unavailable: ${String(error.message || error)}`, mismatchIndex: -1, mismatchName: '', dossier: null, json: '' });
+    if (operation === generation && dialog.open) show({ code: 0, verdict: `Public flight unavailable: ${String(error.message || error)}`, mismatchIndex: -1, mismatchName: '', dossier: null, json: '' });
   }
 }
 
@@ -167,18 +185,23 @@ function build() {
     // The close event can be delivered after an immediate reopen. It must
     // not cancel the new replay (e.g. leaderboard → verify → another file).
     if (dialog.open) return;
-    cancel();
-    $('verify-busy').hidden = true;
+    invalidate();
     lastFocused?.focus();
   });
   $('verify-run').addEventListener('click', () => verifyText($('verify-input').value));
+  $('verify-input').addEventListener('input', invalidate);
   $('verify-import').addEventListener('change', async event => {
     const file = event.target.files?.[0];
     if (!file) return;
-    const text = await file.text();
-    $('verify-input').value = text;
-    verifyText(text);
-    event.target.value = '';
+    const operation = begin('Reading the recorder…');
+    try {
+      const text = await file.text();
+      if (operation !== generation || !dialog.open) return;
+      $('verify-input').value = text;
+      verifyText(text);
+    } catch (error) {
+      if (operation === generation && dialog.open) show({ code: 0, verdict: `Could not read the recorder: ${String(error.message || error)}`, mismatchIndex: -1, mismatchName: '', dossier: null, json: '' });
+    } finally { event.target.value = ''; }
   });
   $('verify-download').addEventListener('click', () => {
     if (lastResult?.dossier) {
@@ -213,7 +236,12 @@ function build() {
 export function openVerify(text) {
   if (!dialog) build();
   lastFocused = document.activeElement;
-  if (!dialog.open) dialog.showModal();
+  if (!dialog.open) {
+    // `close` events are queued. Invalidate an old fetch even if the dialog
+    // was closed and reopened before its close listener had a chance to run.
+    invalidate();
+    dialog.showModal();
+  }
   if (text) {
     $('verify-input').value = text;
     verifyText(text);

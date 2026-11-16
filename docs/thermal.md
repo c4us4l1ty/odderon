@@ -206,10 +206,30 @@ For new v3 certificates, storable stages have no thermal block; cryogenic
 stages must carry exactly one stage-0 block with the engine's propellant and
 recomputed tank volumes. The verifier checks finite, non-negative bus powers
 (including EP nameplate demand), valid tank ranges and emittance, and fails
-closed if construction or integration fails. It replays and compares per-tank
+closed if construction or integration fails. The structure and sink are fixed
+to 293 K and 3 K respectively: otherwise a client could sign an invented cold
+support without paying for refrigeration. A relief isotherm must be finite,
+positive and below the fluid's critical temperature. The constant-latent-heat
+Clausius–Clapeyron approximation remains approximate even below that bound; the
+check is not a high-pressure equation of state. It replays and compares per-tank
 loss, cooler energy and vent events. Schemas 1 and 2 remain replayable offline
 with no thermal history, but the authority refuses new submissions of them.
-This strengthens verification rules without changing the v3 byte layout.
+These rules change no v3 bytes but reject non-baseline or supercritical v3
+records that earlier verification accepted; see the schema changelog.
+
+### Unresolved v3 tank-volume/ullage inconsistency
+
+The catalog describes a fixed tank volume and also calls it *usable* volume;
+the load is limited by that number while each thermal tank adds a 5% volume
+allowance for ullage. For the baseline 12,800 kg contract 103 tug, the signed
+tank volumes total **40.475496 m³** against the catalog's **38.6 m³**. The
+hardware sizing calculation uses the latter. If 38.6 m³ is the total tank
+envelope the modeled tanks do not fit; if it is usable liquid volume, the
+additional envelope and its hardware mass are not accounted for consistently.
+`frozen_tug_geometry_discloses_the_ullage_capacity_gap` reproduces this, rather
+than asserting real-world feasibility. Fixing the definition, load and
+geometry changes masses, trajectories and signed results, so it needs a
+versioned physics/recorder migration; it is not silently rewritten in v3.
 
 The historical fixed-input 16 kW cooled-tug pin remains **3.843961 kg** and
 **4209.826545 MJ** on its original baseline-targeted maneuver plan. The UI now

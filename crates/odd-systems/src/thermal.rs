@@ -151,6 +151,17 @@ impl TankSpec {
         if !ok {
             return Err(IntegrationError::InvalidInput);
         }
+        // The liquid/vent model cannot operate above the fluid's critical
+        // point. At high pressures the constant-latent-heat approximation
+        // also eventually has a pole, so reject non-finite or negative
+        // isotherms instead of inventing a supercritical liquid tank.
+        let relief_temperature = self.saturation_temperature_k(self.relief_pressure_pa);
+        if !relief_temperature.is_finite()
+            || relief_temperature <= 0.0
+            || relief_temperature >= self.properties().critical_temperature_k
+        {
+            return Err(IntegrationError::InvalidInput);
+        }
         // A blanket cannot beat its own shield count.
         if self.epsilon_eff < ideal_epsilon_for_layers(self.mli_layers) * (1.0 - 1e-12) {
             return Err(IntegrationError::InvalidInput);
@@ -775,6 +786,34 @@ mod tests {
             times.windows(2).all(|w| w[0] == w[1]),
             "vent instant moved with step size: {times:?}"
         );
+    }
+
+    #[test]
+    fn a_supercritical_relief_point_is_not_a_liquid_tank() {
+        for fluid in [Fluid::Lh2, Fluid::Lox, Fluid::Lch4] {
+            let mut spec = lh2_tank();
+            spec.fluid = fluid;
+            let critical = spec.properties().critical_temperature_k;
+            let model_pressure = spec.saturation_pressure_pa(critical);
+            spec.relief_pressure_pa = model_pressure * 0.99;
+            assert!(
+                spec.validate().is_ok(),
+                "{fluid:?} below the model boundary"
+            );
+            spec.relief_pressure_pa = model_pressure * 1.01;
+            assert!(spec.saturation_temperature_k(spec.relief_pressure_pa) > critical);
+            assert_eq!(
+                spec.validate(),
+                Err(IntegrationError::InvalidInput),
+                "{fluid:?}"
+            );
+            spec.relief_pressure_pa = f64::MAX;
+            assert_eq!(
+                spec.validate(),
+                Err(IntegrationError::InvalidInput),
+                "{fluid:?} pole"
+            );
+        }
     }
 
     #[test]

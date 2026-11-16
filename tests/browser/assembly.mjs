@@ -188,6 +188,28 @@ check('the tug is cryogenic', tugManual.cryogenic === true);
 check('cryo knobs are live on the tug', !(await page.locator('#thermal-mli').isDisabled()));
 check('the tug starts hand-sized again', tugManual.mask === 0);
 
+// The worker reconstructs a fresh module from a main-thread snapshot. Relief
+// is a supported Rust control even though it has no visible slider; omitting
+// it silently flies a different tank and breaks the launch commitment.
+const pressureSnapshot = await page.evaluate(async () => {
+  const { assemblyPayload, applyAssembly } = await import('./assembly.js');
+  const w = missionDiagnostics.wasm(), previous = w.mission_thermal_get(5);
+  const changed = w.mission_thermal_set(5, 250000);
+  const snapshot = assemblyPayload(w), sourceDry = w.mission_parameter(3);
+  const bytes = await (await fetch('./odd_view.wasm')).arrayBuffer();
+  const { instance } = await WebAssembly.instantiate(bytes, {});
+  const fresh = instance.exports;
+  const selected = fresh.mission_contract(103), applied = applyAssembly(fresh, snapshot);
+  const result = { changed, selected, applied, relief: fresh.mission_thermal_get(5),
+    sourceDry, workerDry: fresh.mission_parameter(3) };
+  w.mission_thermal_set(5, previous);
+  return result;
+});
+check('worker snapshot carries the relief setting and fitted mass', pressureSnapshot.changed === 1
+  && pressureSnapshot.selected === 1 && pressureSnapshot.applied
+  && pressureSnapshot.relief === 250000 && pressureSnapshot.workerDry === pressureSnapshot.sourceDry,
+  JSON.stringify(pressureSnapshot));
+
 // A cooler without a radiator must be refused, not silently accepted.
 await page.fill('#thermal-cooler', '400');
 await page.dispatchEvent('#thermal-cooler', 'change');
@@ -307,10 +329,13 @@ check('the dossier reports the fitted cooler', /Commanded cooler lift/.test(cryo
 check('the dossier reports the array the player paid for', /16000\.0/.test(cryoVerified.dossier));
 check('the dossier discloses one-way thermal coupling', /id="thermal-coupling-note"/.test(cryoVerified.dossier)
   && /does not subtract it from propagated mass/.test(cryoVerified.dossier));
+check('the dossier discloses the tank volume and ullage gap', /id="tank-volume-note"/.test(cryoVerified.dossier)
+  && /not a physical tank-fit proof/.test(cryoVerified.dossier));
 check('the cryogenic dossier discloses the baseline dry mass used for scoring',
   /id="score-dry-mass-note"/.test(cryoVerified.dossier));
 const debriefDisclaimer = await page.locator('#debrief .disclaimer').textContent();
 check('the debrief discloses one-way thermal coupling', /not subtracted from orbital mass/.test(debriefDisclaimer));
+check('the debrief discloses the tank volume and ullage gap', /not a physical tank-fit proof/.test(debriefDisclaimer));
 check('the debrief discloses the score fuel threshold',
   /fuel threshold and prediction comparison use mass minus the catalog baseline dry mass/.test(debriefDisclaimer));
 // The practice targeter now follows the assembled stage, so this is a new

@@ -78,7 +78,11 @@ impl std::fmt::Display for Json {
                 if n.is_finite() {
                     // Integers print without a decimal tail; floats keep
                     // full round-trip precision.
-                    if n.fract() == 0.0 && n.abs() < 1e15 {
+                    if *n == 0.0 && n.is_sign_negative() {
+                        // Signed zeros are distinct in checkpoint hashes and
+                        // receipt signatures; an integer cast would erase it.
+                        f.write_str("-0")
+                    } else if n.fract() == 0.0 && n.abs() < 1e15 {
                         write!(f, "{}", *n as i64)
                     } else {
                         write!(f, "{n}")
@@ -302,5 +306,20 @@ fn utf8_len(first: u8) -> usize {
         3
     } else {
         4
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Json;
+
+    #[test]
+    fn signed_zero_survives_json_transport() {
+        let encoded = Json::Arr(vec![Json::Num(-0.0), Json::Num(0.0)]).to_string();
+        assert_eq!(encoded, "[-0,0]");
+        let parsed = Json::parse(&encoded).unwrap();
+        let values = parsed.as_array().unwrap();
+        assert_eq!(values[0].as_f64().unwrap().to_bits(), (-0.0_f64).to_bits());
+        assert_eq!(values[1].as_f64().unwrap().to_bits(), 0.0_f64.to_bits());
     }
 }

@@ -752,6 +752,7 @@ fn thermal_annex(fdr: &Fdr) -> String {
     ];
     if let Some(spec) = fdr.thermal_specs.first() {
         out.push_str("<p id=\"thermal-coupling-note\">The thermal model estimates vented mass along the flown trajectory; this version does not subtract it from propagated mass or the burn fuel budget.</p>");
+        out.push_str("<p id=\"tank-volume-note\">The combined tank volumes including ullage are not reconciled with the catalog volume and shell sizing. A verified replay is not a physical tank-fit proof.</p>");
         rows.extend([
             vec!["Insulation layers".into(), spec.mli_layers.to_string()],
             vec![

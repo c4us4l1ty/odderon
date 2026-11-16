@@ -287,10 +287,6 @@ impl Drop for Stmt {
     }
 }
 
-fn mode_from_i64(v: i64) -> AttemptMode {
-    AttemptMode::from_u8(v as u8).unwrap_or(AttemptMode::Practice)
-}
-
 impl Store for SqliteStore {
     fn begin(&mut self) -> Result<(), ServerError> {
         self.exec("BEGIN IMMEDIATE;")
@@ -303,19 +299,24 @@ impl Store for SqliteStore {
     }
 
     fn increment_attempt(&mut self, pubkey: &PubKey, contract_id: u32) -> Result<u32, ServerError> {
-        // Atomic upsert-and-return: the counter lives in one row keyed by
-        // (pubkey, contract), so concurrent commits serialize on it.
+        // Serialize the bump in SQLite and stop at the protocol's u32 limit.
+        // A truncating cast would eventually wrap to 1 and issue another
+        // ranked ticket. A malformed row also fails without mutating it.
         let stmt = self.prepare(
             "INSERT INTO attempts (pubkey, contract, n) VALUES (?1, ?2, 1)
              ON CONFLICT(pubkey, contract) DO UPDATE SET n = n + 1
+             WHERE typeof(n) = 'integer' AND n BETWEEN 1 AND 4294967294
              RETURNING n;",
         )?;
         stmt.blob(1, pubkey)?;
         stmt.int(2, contract_id as i64)?;
         if !stmt.row()? {
-            return Err(storage_err("attempt upsert returned no row"));
+            return Err(storage_err("attempt counter exhausted or invalid"));
         }
-        Ok(stmt.col_int(0) as u32)
+        u32::try_from(stmt.col_int(0))
+            .ok()
+            .filter(|attempt| *attempt != 0)
+            .ok_or_else(|| storage_err("attempt counter exhausted or invalid"))
     }
 
     fn save_commitment(
@@ -348,8 +349,8 @@ impl Store for SqliteStore {
         attempt_num: u32,
     ) -> Result<Option<Commitment>, ServerError> {
         let stmt = self.prepare(
-            "SELECT design_hash, prediction_hash, mode, server_time FROM commitments
-             WHERE pubkey=?1 AND contract=?2 AND attempt=?3;",
+            "SELECT design_hash, prediction_hash, mode, server_time, typeof(mode), typeof(server_time)
+             FROM commitments WHERE pubkey=?1 AND contract=?2 AND attempt=?3;",
         )?;
         stmt.blob(1, pubkey)?;
         stmt.int(2, contract_id as i64)?;
@@ -357,28 +358,50 @@ impl Store for SqliteStore {
         if !stmt.row()? {
             return Ok(None);
         }
+        let invalid = || storage_err("invalid stored commitment");
+        if stmt.col_text(4).as_deref() != Some("integer")
+            || stmt.col_text(5).as_deref() != Some("integer")
+        {
+            return Err(invalid());
+        }
         Ok(Some(Commitment {
-            design_hash: stmt.col_hash(0),
-            prediction_hash: stmt.col_hash(1),
-            mode: mode_from_i64(stmt.col_int(2)),
+            design_hash: stmt.col_blob(0).try_into().map_err(|_| invalid())?,
+            prediction_hash: stmt.col_blob(1).try_into().map_err(|_| invalid())?,
+            mode: u8::try_from(stmt.col_int(2))
+                .ok()
+                .and_then(AttemptMode::from_u8)
+                .ok_or_else(invalid)?,
             server_time_s: stmt.col_int(3),
         }))
     }
 
     fn load_player(&self, pubkey: &PubKey) -> Result<PlayerRow, ServerError> {
-        let stmt = self.prepare("SELECT elo, ranked, callsign FROM players WHERE pubkey=?1;")?;
+        let stmt = self.prepare(
+            "SELECT elo, ranked, callsign, typeof(ranked), typeof(elo) FROM players WHERE pubkey=?1;",
+        )?;
         stmt.blob(1, pubkey)?;
         if !stmt.row()? {
             return Ok(PlayerRow::default());
         }
+        if stmt.col_text(3).as_deref() != Some("integer") {
+            return Err(storage_err("invalid ranked counter"));
+        }
+        let elo = stmt.col_real(0);
+        if !matches!(stmt.col_text(4).as_deref(), Some("integer" | "real")) || !elo.is_finite() {
+            return Err(storage_err("invalid player rating"));
+        }
         Ok(PlayerRow {
-            elo: stmt.col_real(0),
-            ranked_count: stmt.col_int(1) as u32,
+            elo,
+            ranked_count: u32::try_from(stmt.col_int(1))
+                .map_err(|_| storage_err("invalid ranked counter"))?,
             callsign: stmt.col_text(2),
         })
     }
 
     fn save_player(&mut self, pubkey: &PubKey, row: &PlayerRow) -> Result<(), ServerError> {
+        if !row.elo.is_finite() {
+            return Err(storage_err("invalid player rating"));
+        }
         let stmt = self.prepare(
             "INSERT OR REPLACE INTO players (pubkey, elo, ranked, callsign) VALUES (?1, ?2, ?3, ?4);",
         )?;
@@ -394,15 +417,22 @@ impl Store for SqliteStore {
     }
 
     fn load_mission_elo(&self, contract_id: u32) -> Result<f64, ServerError> {
-        let stmt = self.prepare("SELECT elo FROM missions WHERE contract=?1;")?;
+        let stmt = self.prepare("SELECT elo, typeof(elo) FROM missions WHERE contract=?1;")?;
         stmt.int(1, contract_id as i64)?;
         if !stmt.row()? {
             return Ok(crate::store::seeded_mission_elo(contract_id));
         }
-        Ok(stmt.col_real(0))
+        let elo = stmt.col_real(0);
+        if !matches!(stmt.col_text(1).as_deref(), Some("integer" | "real")) || !elo.is_finite() {
+            return Err(storage_err("invalid mission rating"));
+        }
+        Ok(elo)
     }
 
     fn save_mission_elo(&mut self, contract_id: u32, elo: f64) -> Result<(), ServerError> {
+        if !elo.is_finite() {
+            return Err(storage_err("invalid mission rating"));
+        }
         let stmt =
             self.prepare("INSERT OR REPLACE INTO missions (contract, elo) VALUES (?1, ?2);")?;
         stmt.int(1, contract_id as i64)?;
@@ -437,32 +467,55 @@ impl Store for SqliteStore {
 
     fn load_fdr(&self, hash: &Hash) -> Result<Option<StoredFdr>, ServerError> {
         let stmt = self.prepare(
-            "SELECT payload, pubkey, contract, attempt, mode, score, receipt, delegation_mask
+            "SELECT payload, pubkey, contract, attempt, mode, score, receipt, delegation_mask,
+                    typeof(contract), typeof(attempt), typeof(mode), typeof(score), typeof(delegation_mask)
              FROM fdrs WHERE hash=?1;",
         )?;
         stmt.blob(1, hash)?;
         if !stmt.row()? {
             return Ok(None);
         }
+        // SQLite's column accessors coerce text to numbers and Rust's `as`
+        // casts truncate. Validate the original storage classes and ranges
+        // before comparing these index fields to a signed record.
+        if [8, 9, 10, 12]
+            .iter()
+            .any(|column| stmt.col_text(*column).as_deref() != Some("integer"))
+            || !matches!(stmt.col_text(11).as_deref(), Some("integer" | "real"))
+        {
+            return Err(storage_err("invalid stored flight index"));
+        }
+        let invalid = || storage_err("invalid stored flight index");
+        let pubkey = stmt.col_blob(1).try_into().map_err(|_| invalid())?;
+        let contract_id = u32::try_from(stmt.col_int(2)).map_err(|_| invalid())?;
+        let attempt_num = u32::try_from(stmt.col_int(3))
+            .ok()
+            .filter(|attempt| *attempt != 0)
+            .ok_or_else(invalid)?;
+        let mode = u8::try_from(stmt.col_int(4))
+            .ok()
+            .and_then(AttemptMode::from_u8)
+            .ok_or_else(invalid)?;
+        let score_s = stmt.col_real(5);
+        if !score_s.is_finite() || !(0.0..=1.0).contains(&score_s) {
+            return Err(invalid());
+        }
+        let delegation_mask = u8::try_from(stmt.col_int(7)).map_err(|_| invalid())?;
         let receipt_bytes = stmt.col_blob(6);
         let receipt = if receipt_bytes.is_empty() {
             None
         } else {
-            ServerReceipt::from_bytes(&receipt_bytes)
+            Some(ServerReceipt::from_bytes(&receipt_bytes).ok_or_else(invalid)?)
         };
-        let mut pubkey = [0u8; 32];
-        let pk = stmt.col_blob(1);
-        let n = pk.len().min(32);
-        pubkey[..n].copy_from_slice(&pk[..n]);
         Ok(Some(StoredFdr {
             bytes: stmt.col_blob(0),
             pubkey,
-            contract_id: stmt.col_int(2) as u32,
-            attempt_num: stmt.col_int(3) as u32,
-            mode: mode_from_i64(stmt.col_int(4)),
-            score_s: stmt.col_real(5),
+            contract_id,
+            attempt_num,
+            mode,
+            score_s,
             receipt,
-            delegation_mask: stmt.col_int(7) as u8,
+            delegation_mask,
         }))
     }
 
@@ -500,7 +553,11 @@ impl Store for SqliteStore {
         if !stmt.row()? {
             return Ok(None);
         }
-        Ok(ServerReceipt::from_bytes(&stmt.col_blob(0)))
+        // An existing but unreadable receipt is not a missing receipt: if
+        // treated as None, the same ranked attempt would be scored again.
+        ServerReceipt::from_bytes(&stmt.col_blob(0))
+            .map(Some)
+            .ok_or_else(|| storage_err("invalid stored receipt"))
     }
 
     fn register_callsign(&mut self, callsign: &str, pubkey: &PubKey) -> Result<(), ServerError> {
@@ -566,5 +623,79 @@ impl Store for SqliteStore {
             });
         }
         Ok(rows)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attempt_counter_fails_closed_at_u32_limit() {
+        let mut store = SqliteStore::open(":memory:").unwrap();
+        let pk = [3u8; 32];
+        store.exec("INSERT INTO attempts(pubkey,contract,n) VALUES (X'0303030303030303030303030303030303030303030303030303030303030303',101,4294967294);").unwrap();
+        assert_eq!(store.increment_attempt(&pk, 101).unwrap(), u32::MAX);
+        // No wrap to 0, then 1 (which would falsely authorize another ranked
+        // attempt); errors must leave the persistent counter unchanged.
+        assert!(store.increment_attempt(&pk, 101).is_err());
+        assert!(store.increment_attempt(&pk, 101).is_err());
+        let stmt = store
+            .prepare("SELECT n FROM attempts WHERE contract=101;")
+            .unwrap();
+        assert!(stmt.row().unwrap());
+        assert_eq!(stmt.col_int(0), i64::from(u32::MAX));
+        drop(stmt);
+
+        for invalid in ["0", "-1", "4294967296", "1.5"] {
+            store
+                .exec(&format!(
+                    "UPDATE attempts SET n={invalid} WHERE contract=101;"
+                ))
+                .unwrap();
+            assert!(
+                store.increment_attempt(&pk, 101).is_err(),
+                "invalid stored counter {invalid}"
+            );
+            // A failed increment must not repair the row by wrapping or
+            // silently converting a bad counter into a ranked attempt.
+            let stmt = store
+                .prepare("SELECT n FROM attempts WHERE contract=101;")
+                .unwrap();
+            assert!(stmt.row().unwrap());
+            assert_eq!(stmt.col_real(0), invalid.parse::<f64>().unwrap());
+        }
+    }
+
+    #[test]
+    fn non_numeric_or_non_finite_ratings_fail_closed() {
+        let mut store = SqliteStore::open(":memory:").unwrap();
+        let pk = [3u8; 32];
+        store.save_player(&pk, &PlayerRow::default()).unwrap();
+        store.save_mission_elo(101, 800.0).unwrap();
+        for invalid in ["'not a rating'", "1e999", "-1e999"] {
+            store
+                .exec(&format!("UPDATE players SET elo={invalid};"))
+                .unwrap();
+            assert!(store.load_player(&pk).is_err(), "player Elo {invalid}");
+            store
+                .exec(&format!("UPDATE missions SET elo={invalid};"))
+                .unwrap();
+            assert!(
+                store.load_mission_elo(101).is_err(),
+                "mission Elo {invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn ranked_counter_rejects_out_of_range_database_values() {
+        let store = SqliteStore::open(":memory:").unwrap();
+        store.exec("INSERT INTO players(pubkey,elo,ranked,callsign) VALUES (X'0303030303030303030303030303030303030303030303030303030303030303',1200,4294967296,NULL);").unwrap();
+        assert!(store.load_player(&[3u8; 32]).is_err());
+        store.exec("UPDATE players SET ranked=-1;").unwrap();
+        assert!(store.load_player(&[3u8; 32]).is_err());
+        store.exec("UPDATE players SET ranked=1.5;").unwrap();
+        assert!(store.load_player(&[3u8; 32]).is_err());
     }
 }

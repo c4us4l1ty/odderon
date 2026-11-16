@@ -50,7 +50,12 @@ function build() {
   document.body.append(dialog);
   $('leaderboard-close').addEventListener('click', () => dialog.close());
   dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
-  dialog.addEventListener('close', () => { token++; lastFocused?.focus(); });
+  dialog.addEventListener('close', () => {
+    // Close events are queued; a rapid reopen has already started a newer
+    // refresh and must not have it cancelled by the old close event.
+    if (dialog.open) return;
+    token++; lastFocused?.focus();
+  });
   $('leaderboard-contract').addEventListener('change', () => { page = 1; void refresh(); });
   $('leaderboard-prev').addEventListener('click', () => { page = Math.max(1, page - 1); void refresh(); });
   $('leaderboard-next').addEventListener('click', () => { page++; void refresh(); });

@@ -10,7 +10,7 @@ use common::*;
 use odd_worker::http::{
     self, commit_to_json, json::Json, receipt_from_json, route, submit_to_json, ticket_from_json,
 };
-use odd_worker::{AuthorityEngine, MemoryStore};
+use odd_worker::{AuthorityEngine, MemoryStore, Store};
 
 fn commit_json(
     engine: &mut AuthorityEngine<MemoryStore>,
@@ -59,6 +59,56 @@ fn a_ranked_flight_commits_and_submits_over_http_json() {
     assert!(receipt.is_certified_ranked(&engine.server_pk()));
     let elo_after = body.get("elo_after").unwrap().as_f64().unwrap();
     assert!(elo_after != 1200.0);
+}
+
+#[test]
+fn public_replay_rejects_corrupt_or_mismatched_flight_rows() {
+    let mut original = AuthorityEngine::new(MemoryStore::new(), server_key());
+    let (fdr, license) = signed_rescue(prediction_a());
+    let ticket = commit_for(&mut original, &fdr, &license);
+    original.submit(submit_request(&fdr, ticket), NOW).unwrap();
+    let hash = fdr.digest();
+    let stored = original.store().load_fdr(&hash).unwrap().unwrap();
+    let path = format!("/api/v1/verify/{}", odd_report::hex::encode(&hash));
+    assert_eq!(route(&mut original, "GET", &path, "", NOW).status, 200);
+
+    let mut other = fdr.clone();
+    other.callsign = "A DIFFERENT FLIGHT".into();
+    other.sign(&license).unwrap();
+    let mut bad_signature = fdr.clone();
+    bad_signature.signature[0] ^= 1;
+    let mut variants = Vec::new();
+    let mut invalid = stored.clone();
+    invalid.bytes = b"#verify=bad".to_vec();
+    variants.push(invalid);
+    let mut replaced = stored.clone();
+    replaced.bytes = other.verify_payload().into_bytes();
+    variants.push(replaced);
+    let mut forged = stored.clone();
+    forged.bytes = bad_signature.verify_payload().into_bytes();
+    variants.push(forged);
+    let mut wrong_attempt = stored.clone();
+    wrong_attempt.attempt_num += 1;
+    variants.push(wrong_attempt);
+    let mut wrong_score = stored.clone();
+    wrong_score.score_s = 0.1;
+    variants.push(wrong_score);
+    let mut missing_receipt = stored.clone();
+    missing_receipt.receipt = None;
+    variants.push(missing_receipt);
+
+    for bad in variants {
+        let mut store = MemoryStore::new();
+        store.save_fdr(&hash, &bad).unwrap();
+        let mut engine = AuthorityEngine::new(store, server_key());
+        let response = route(&mut engine, "GET", &path, "", NOW);
+        assert!(
+            response.status >= 500,
+            "corrupt public row must fail closed: {} {}",
+            response.status,
+            response.body
+        );
+    }
 }
 
 #[test]
