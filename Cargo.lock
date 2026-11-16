@@ -235,6 +235,7 @@ dependencies = [
  "odd-sim",
  "odd-systems",
  "odd-verify",
+ "odd-worker",
 ]
 
 [[package]]

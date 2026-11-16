@@ -915,9 +915,25 @@ pub(crate) struct CapturedFlight {
 
 /// Snapshot the executed flight for signing. Requires a completed execution.
 pub(crate) fn capture_flight() -> Option<CapturedFlight> {
+    capture(false)
+}
+
+/// Snapshot exactly the same design and prediction before execution. The
+/// outcome fields are placeholders and are never signed or submitted.
+pub(crate) fn capture_preflight() -> Option<CapturedFlight> {
+    capture(true)
+}
+
+fn capture(preflight: bool) -> Option<CapturedFlight> {
     let settings = SETTINGS.lock().unwrap().clone()?;
-    let execution = EXECUTION.lock().unwrap().clone()?;
+    let execution = EXECUTION.lock().unwrap().clone();
     let locked = LOCKED.lock().unwrap().clone();
+    if preflight && (locked.is_none() || execution.is_some()) {
+        return None;
+    }
+    if !preflight && execution.is_none() {
+        return None;
+    }
     let prediction = match locked.as_ref() {
         Some(lock) => {
             let p = lock.prediction();
@@ -933,6 +949,21 @@ pub(crate) fn capture_flight() -> Option<CapturedFlight> {
         None => [f64::NAN; 6],
     };
     let effective = settings.effective()?;
+    let load = settings.initial.mass - settings.dry_mass;
+    let contract = odd_contracts::Contract::get(settings.contract_id)?;
+    let stage = effective.thermal.stage(&contract, &effective.engine, load);
+    let volumes = stage
+        .as_ref()
+        .map(|stage| [stage.oxidizer.volume_m3, stage.fuel.volume_m3])
+        .unwrap_or([0.0, 0.0]);
+    let thermal = execution
+        .as_ref()
+        .map(|e| e.thermal.clone())
+        .unwrap_or_else(|| {
+            let mut placeholder = odd_contracts::ThermalOutcome::inert();
+            placeholder.inert = stage.is_none();
+            placeholder
+        });
     Some(CapturedFlight {
         contract_id: settings.contract_id,
         engine_spec: effective.engine,
@@ -944,15 +975,8 @@ pub(crate) fn capture_flight() -> Option<CapturedFlight> {
         specific_impulse_s: settings.engine.specific_impulse_seconds,
         node_metric: settings.node_metric,
         thermal_design: effective.thermal,
-        tank_volumes_m3: {
-            let load = settings.initial.mass - settings.dry_mass;
-            let contract = odd_contracts::Contract::get(settings.contract_id)?;
-            match effective.thermal.stage(&contract, &effective.engine, load) {
-                Some(stage) => [stage.oxidizer.volume_m3, stage.fuel.volume_m3],
-                None => [0.0, 0.0],
-            }
-        },
-        thermal: execution.thermal.clone(),
+        tank_volumes_m3: volumes,
+        thermal,
         delegation: settings.delegation,
         prediction,
         commands: settings
@@ -979,8 +1003,14 @@ pub(crate) fn capture_flight() -> Option<CapturedFlight> {
                     }),
             })
             .collect(),
-        report: execution.report,
-        final_state: execution.final_state,
+        report: execution
+            .as_ref()
+            .map(|e| e.report)
+            .unwrap_or([0.0; REPORT_LEN]),
+        final_state: execution
+            .as_ref()
+            .map(|e| e.final_state)
+            .unwrap_or(settings.initial),
     })
 }
 

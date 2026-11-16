@@ -95,8 +95,21 @@ pub extern "C" fn mission_fdr_parse() -> i32 {
     let Some(fdr) = parse_fields(&fields, &identity_bridge::input_text()) else {
         return 0;
     };
+    *JSON.lock().unwrap() = fdr.to_json();
     *RECORDER.lock().unwrap() = Some(fdr);
     1
+}
+
+/// The digest is recomputed from parsed fields, never taken from a mutable
+/// JSON `canonical_digest` property supplied by the browser.
+#[no_mangle]
+pub extern "C" fn mission_fdr_digest_byte(index: u32) -> f64 {
+    RECORDER
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|fdr| fdr.digest().get(index as usize).copied())
+        .map_or(f64::NAN, f64::from)
 }
 
 /// Read the signed engine design out of the transport header. A legacy
@@ -286,11 +299,34 @@ pub extern "C" fn mission_fdr_capture(mode: u32, elo_before: f64, elo_after: f64
     if odd_contracts::Contract::get(captured.contract_id).is_none() {
         return 0;
     }
-    let fdr = Fdr {
+    let fdr = record_from_capture(
+        captured,
+        mode,
+        elo_before,
+        elo_after,
+        identity_bridge::input_text(),
+    );
+    if fdr.validate_shape().is_err() {
+        return 0;
+    }
+    *RECORDER.lock().unwrap() = Some(fdr);
+    1
+}
+
+/// The common constructor is used both before and after flight, preventing
+/// the commitment from drifting away from the design the recorder captures.
+fn record_from_capture(
+    captured: bridge::CapturedFlight,
+    mode: AttemptMode,
+    elo_before: f64,
+    elo_after: f64,
+    callsign: String,
+) -> Fdr {
+    Fdr {
         schema_version: SCHEMA_VERSION,
         contract_id: captured.contract_id,
         attempt_mode: mode,
-        callsign: identity_bridge::input_text(),
+        callsign,
         epoch_s: captured.epoch_s,
         duration_us: captured.duration_us,
         initial_mass_kg: captured.initial.mass,
@@ -373,12 +409,32 @@ pub extern "C" fn mission_fdr_capture(mode: u32, elo_before: f64, elo_after: f64
             .collect(),
         public_key: [0; 32],
         signature: [0; 64],
-    };
-    if fdr.validate_shape().is_err() {
-        return 0;
     }
-    *RECORDER.lock().unwrap() = Some(fdr);
+}
+
+static COMMIT_HASHES: Mutex<[u8; 64]> = Mutex::new([0; 64]);
+
+/// Hash the locked prediction and effective design before any execution. A
+/// failure must stop the ranked launch rather than issue a mismatched ticket.
+#[no_mangle]
+pub extern "C" fn mission_commit_prepare() -> i32 {
+    let Some(captured) = bridge::capture_preflight() else {
+        return 0;
+    };
+    let fdr = record_from_capture(captured, AttemptMode::Practice, 0.0, 0.0, String::new());
+    let mut hashes = COMMIT_HASHES.lock().unwrap();
+    hashes[..32].copy_from_slice(&odd_worker::commitment::design_hash(&fdr));
+    hashes[32..].copy_from_slice(&odd_worker::commitment::prediction_hash(&fdr));
     1
+}
+
+#[no_mangle]
+pub extern "C" fn mission_commit_hash_byte(index: u32) -> f64 {
+    COMMIT_HASHES
+        .lock()
+        .unwrap()
+        .get(index as usize)
+        .map_or(f64::NAN, |v| f64::from(*v))
 }
 
 /// Sign the captured recorder with the active flight license.
@@ -850,7 +906,18 @@ mod tests {
             bridge::mission_lock(180.0, 550_000.0, 260_000.0, 120.0, 10_800.0, f64::NAN),
             1
         );
+        assert_eq!(
+            mission_commit_prepare(),
+            1,
+            "preflight commitment must be available before flight"
+        );
+        let hashes = *COMMIT_HASHES.lock().unwrap();
         assert_eq!(bridge::mission_execute(), 1);
+        assert_eq!(
+            mission_commit_prepare(),
+            0,
+            "preflight commitment must not be created after execution"
+        );
         identity_bridge::set_license_for_test(odd_identity::License::from_entropy([21u8; 16]));
         identity_bridge::mission_input_reset();
         for byte in b"GATE PILOT" {
@@ -858,7 +925,13 @@ mod tests {
         }
         assert_eq!(mission_fdr_capture(0, 1200.0, 1204.0), 1);
         assert_eq!(mission_fdr_sign(), 1);
-        RECORDER.lock().unwrap().clone().unwrap()
+        let fdr = RECORDER.lock().unwrap().clone().unwrap();
+        assert_eq!(&hashes[..32], &odd_worker::commitment::design_hash(&fdr));
+        assert_eq!(
+            &hashes[32..],
+            &odd_worker::commitment::prediction_hash(&fdr)
+        );
+        fdr
     }
 
     #[test]

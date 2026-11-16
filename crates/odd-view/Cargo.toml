@@ -17,6 +17,7 @@ odd-app = { path = "../odd-app" }
 odd-identity = { path = "../odd-identity" }
 odd-report = { path = "../odd-report" }
 odd-verify = { path = "../odd-verify" }
+odd-worker = { path = "../odd-worker" }
 odd-propulsion = { path = "../odd-propulsion" }
 odd-systems = { path = "../odd-systems" }
 libm = "0.2"
