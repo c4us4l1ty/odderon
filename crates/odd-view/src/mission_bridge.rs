@@ -74,6 +74,9 @@ impl Settings {
     fn flight(&self) -> FlightSettings {
         FlightSettings {
             delegation: self.delegation,
+            // The live designer draws and signs v4 records, so a new flight is
+            // computed under the coupled, fitted-mass physics.
+            revision: odd_core::PhysicsRevision::CoupledFitted,
             thermal: self.thermal_inputs(),
             contract_id: self.contract_id,
             epoch: self.epoch,
@@ -93,6 +96,10 @@ struct Execution {
     burn_epochs: Vec<(f64, f64)>,
     burn_sweeps: Vec<f64>,
     thermal: odd_contracts::ThermalOutcome,
+    /// v4: windows actually flown after any flameout, and where the engine
+    /// died. Empty/`None` until the coupled replay fills them.
+    flown_burn_windows: Vec<(f64, f64)>,
+    flameout_time_s: Option<f64>,
 }
 static SETTINGS: Mutex<Option<Settings>> = Mutex::new(None);
 static PLAN: Mutex<Option<Plan>> = Mutex::new(None);
@@ -478,6 +485,8 @@ pub extern "C" fn mission_execute() -> i32 {
         burn_epochs: outcome.burns.iter().map(|b| (b.start, b.end)).collect(),
         burn_sweeps: outcome.burn_sweeps,
         thermal: outcome.thermal,
+        flown_burn_windows: outcome.flown_burn_windows,
+        flameout_time_s: outcome.flameout_time_s,
     });
     1
 }
@@ -919,6 +928,10 @@ pub(crate) struct CapturedFlight {
     pub thermal: odd_contracts::ThermalOutcome,
     pub tank_volumes_m3: [f64; 2],
     pub delegation: odd_contracts::DelegationMask,
+    /// v4: the burn windows the coupled flight actually flew, after any
+    /// flameout truncated them, and where the engine died if it did.
+    pub flown_burn_windows: Vec<(f64, f64)>,
+    pub flameout_time_s: Option<f64>,
 }
 
 /// Snapshot the executed flight for signing. Requires a completed execution.
@@ -986,6 +999,11 @@ fn capture(preflight: bool) -> Option<CapturedFlight> {
         tank_volumes_m3: volumes,
         thermal,
         delegation: settings.delegation,
+        flown_burn_windows: execution
+            .as_ref()
+            .map(|e| e.flown_burn_windows.clone())
+            .unwrap_or_else(|| settings.nodes.iter().map(|_| (0.0, 0.0)).collect()),
+        flameout_time_s: execution.as_ref().and_then(|e| e.flameout_time_s),
         prediction,
         commands: settings
             .nodes
@@ -1089,6 +1107,9 @@ pub(crate) fn dossier_geometry() -> Option<odd_report::dossier::Geometry> {
             .collect(),
         burn_sweeps: execution.burn_sweeps,
         thermal: execution.thermal,
+        flown_burn_windows: execution.flown_burn_windows,
+        flameout_time_s: execution.flameout_time_s,
+        propellant_remaining_kg: None,
     };
     let commands: Vec<(i64, [f64; 3])> = settings
         .nodes

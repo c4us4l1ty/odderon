@@ -30,7 +30,7 @@ pub mod thermal_mass;
 pub mod thermochem;
 
 pub use nozzle::{FlowSeparation, NozzleGeometry, Station};
-pub use thermochem::{ChamberThermo, Propellant, G0, RU};
+pub use thermochem::{bulk_density, ChamberThermo, Propellant, G0, RU};
 
 /// A complete physical engine design. These six numbers are what the flight
 /// recorder signs; thrust and Isp are deliberately *not* inputs.

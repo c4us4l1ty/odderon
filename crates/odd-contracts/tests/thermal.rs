@@ -30,11 +30,12 @@ fn a_hot_throat_is_refused_by_name_not_as_a_numerical_failure() {
 }
 
 #[test]
-fn frozen_tug_geometry_discloses_the_ullage_capacity_gap() {
-    // This documents a v3 modeling gap, not a physical-fit assertion. The
-    // vehicle fills the contract's usable volume, then each tank independently
-    // adds a 5% ullage allowance. Reducing the load or changing the signed
-    // geometry here would change existing v3 trajectories and certificates.
+fn tug_geometry_matches_the_airframe_it_is_signed_into() {
+    // This used to document a v3 gap: the vehicle filled the contract's usable
+    // volume, then each tank independently added a 5% pad, so 38.6 m3 of
+    // airframe somehow held 40.475496 m3 of tank. v4 derives both numbers from
+    // one `TankGeometry`, so the gap is now closed by construction and this
+    // test is the proof rather than the disclosure.
     let contract = Contract::get(103).unwrap();
     let vehicle = contract.vehicle(contract.engine_spec).unwrap();
     let stage = ThermalDesign::baseline()
@@ -45,6 +46,10 @@ fn frozen_tug_geometry_discloses_the_ullage_capacity_gap() {
         "tug tank volumes including ullage: {total:.6} m³; contract volume: {:.6} m³",
         contract.tank_volume_m3
     );
-    assert!(total > contract.tank_volume_m3);
-    assert!((total - 40.475496).abs() < 1e-5);
+    assert!((total - contract.tank_volume_m3).abs() < 1e-9);
+    assert!((total - 39.740301).abs() < 1e-5);
+    // The usable volume really is the old typed 38.6 m3, which is why the
+    // catalog number looked right while describing the wrong quantity.
+    let usable = total * (1.0 - odd_systems::DEFAULT_ULLAGE_FRACTION);
+    assert!((usable - 38.548092).abs() < 1e-5, "{usable}");
 }

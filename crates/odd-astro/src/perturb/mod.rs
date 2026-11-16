@@ -2,6 +2,7 @@
 pub mod burn;
 pub mod drag;
 pub mod j2;
+pub mod pool;
 pub mod srp;
 pub mod third_body;
 

@@ -7,6 +7,7 @@
 
 pub mod anomaly;
 pub mod attribution;
+pub mod coupled;
 pub mod dp45;
 pub mod elements;
 pub mod finite_burn;

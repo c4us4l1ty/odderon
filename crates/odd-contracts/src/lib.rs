@@ -63,8 +63,11 @@ pub struct Contract {
     pub engine_spec: EngineSpec,
     /// Structure, tanks, avionics and payload. Excludes the engine.
     pub airframe_mass_kg: f64,
-    /// Usable propellant volume. A low-density pair cannot fill the mass
-    /// budget, which is the whole point of offering hydrolox.
+    /// Airframe internal volume, m³. **Derived**, never typed: a contract
+    /// literal carries a placeholder and `with_baseline_engine` replaces it
+    /// with `derived_tank_volume_m3`, so the catalog and the tank model cannot
+    /// disagree about how much the airframe holds. A low-density pair cannot
+    /// fill the mass budget, which is the whole point of offering hydrolox.
     pub tank_volume_m3: f64,
     /// Structural load limit on propellant mass.
     pub propellant_budget_kg: f64,
@@ -126,6 +129,21 @@ const STORABLE_PLACEHOLDER: Engine = Engine {
     stage: 0,
     engine: 0,
 };
+
+/// The tank geometry a contract's baseline mixture ratio implies for a load.
+///
+/// One function, so the catalog volume, the signed thermal spec and the oracle
+/// all read the same derivation.
+pub fn derived_geometry(contract: &Contract, load_kg: f64) -> Option<odd_systems::TankGeometry> {
+    let (oxidizer, fuel) = odd_systems::Fluid::pair(contract.engine_spec.propellant);
+    odd_systems::geometry::TankGeometry::derive(
+        oxidizer,
+        fuel,
+        contract.engine_spec.of_ratio,
+        load_kg,
+        odd_systems::DEFAULT_ULLAGE_FRACTION,
+    )
+}
 
 impl Contract {
     /// The insulation and active-cooling card this contract is designed
@@ -191,7 +209,8 @@ impl Contract {
             engine: STORABLE_PLACEHOLDER,
             engine_spec: STORABLE_BASELINE,
             airframe_mass_kg: 1016.9,
-            tank_volume_m3: 0.152,
+            // Placeholder: replaced by `derived_tank_volume_m3` below.
+            tank_volume_m3: 0.0,
             propellant_budget_kg: 180.0,
             reference_delta_v_m_s: transfer.total_delta_v_m_s,
         }
@@ -226,7 +245,8 @@ impl Contract {
             engine: STORABLE_PLACEHOLDER,
             engine_spec: STORABLE_BASELINE,
             airframe_mass_kg: 1016.9,
-            tank_volume_m3: 0.152,
+            // Placeholder: replaced by `derived_tank_volume_m3` below.
+            tank_volume_m3: 0.0,
             propellant_budget_kg: 180.0,
             reference_delta_v_m_s: libm::hypot(dv_t, dv_w),
         }
@@ -251,7 +271,8 @@ impl Contract {
             engine: STORABLE_PLACEHOLDER,
             engine_spec: TUG_BASELINE,
             airframe_mass_kg: 5182.1,
-            tank_volume_m3: 38.6,
+            // Placeholder: replaced by `derived_tank_volume_m3` below.
+            tank_volume_m3: 0.0,
             propellant_budget_kg: 12_800.0,
             // Demonstrated three-kick reference budget. The separate 3,120 m/s
             // oracle is a gravity-loss regression, not a target-reaching claim.
@@ -261,6 +282,9 @@ impl Contract {
     }
     /// Solve the stage with its baseline engine and fill the derived fields.
     fn with_baseline_engine(mut self) -> Self {
+        // The airframe is sized from the load it must carry, so the catalog
+        // volume is a consequence of the card, not a second hand-typed number.
+        self.tank_volume_m3 = self.derived_tank_volume_m3();
         let vehicle = self
             .vehicle(self.engine_spec)
             .expect("the baseline engine of every contract must solve");
@@ -268,6 +292,19 @@ impl Contract {
         self.dry_mass_kg = vehicle.dry_mass_kg;
         self.initial.mass = vehicle.initial_mass_kg;
         self
+    }
+
+    /// Airframe volume for the structural propellant budget, from the one tank
+    /// geometry the thermal model also signs: per-fluid liquid volume at the
+    /// baseline mixture ratio, plus the shared ullage allowance.
+    ///
+    /// This is the single derivation `docs/thermal.md` and the tank model both
+    /// read. `Contract::tank_volume_m3` is always this value for a contract
+    /// that has passed through `with_baseline_engine`.
+    pub fn derived_tank_volume_m3(&self) -> f64 {
+        crate::derived_geometry(self, self.propellant_budget_kg)
+            .map(|geometry| geometry.airframe_volume_m3)
+            .unwrap_or(0.0)
     }
 
     /// Design the stage around a player's engine. Thrust, specific impulse,

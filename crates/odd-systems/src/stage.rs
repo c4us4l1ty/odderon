@@ -50,11 +50,52 @@ impl StageThermalHistory {
 
 /// Build the two tank specs for an engine and a total propellant load.
 ///
-/// `load_kg` is split by the mixture ratio; each tank's volume follows from its
-/// own saturated-liquid density with a 5% ullage allowance. Area is the sphere
-/// of that volume, which is the minimum-area shape and therefore the optimistic
+/// Geometry comes from `crate::geometry::TankGeometry`, the same derivation the
+/// contract card sizes its airframe with: the load splits by mixture ratio, the
+/// two liquid volumes fix the usable volume and the bulk density, and the fixed
+/// ullage fraction inflates that to the airframe. Area is the sphere of each
+/// tank's volume, which is the minimum-area shape and therefore the optimistic
 /// bound a designer starts from.
+///
+/// Nothing here re-invents a padding factor: a call to this function and a call
+/// to `Contract::derived_tank_volume_m3` must land on the same airframe volume,
+/// or the catalog and the signed thermal spec disagree about the vehicle.
 pub fn tanks_for(
+    engine: &EngineSpec,
+    load_kg: f64,
+    template: &TankSpec,
+) -> Result<(TankSpec, TankSpec), IntegrationError> {
+    if !load_kg.is_finite() || load_kg <= 0.0 {
+        return Err(IntegrationError::InvalidInput);
+    }
+    let (oxidizer_fluid, fuel_fluid) = Fluid::pair(engine.propellant);
+    let geometry = crate::geometry::TankGeometry::derive(
+        oxidizer_fluid,
+        fuel_fluid,
+        engine.of_ratio,
+        load_kg,
+        crate::geometry::DEFAULT_ULLAGE_FRACTION,
+    )
+    .ok_or(IntegrationError::InvalidInput)?;
+    let build = |fluid: Fluid, volume: f64| -> TankSpec {
+        let radius = libm::cbrt(3.0 * volume / (4.0 * std::f64::consts::PI));
+        let area = 4.0 * std::f64::consts::PI * radius * radius;
+        TankSpec {
+            fluid,
+            volume_m3: volume,
+            area_m2: area,
+            ..*template
+        }
+    };
+    Ok((
+        build(oxidizer_fluid, geometry.tank_volumes_m3[0]),
+        build(fuel_fluid, geometry.tank_volumes_m3[1]),
+    ))
+}
+
+/// The frozen v3 tank pair: each tank is its own liquid volume plus a 5 %
+/// pad, independently. Reproduced only for replaying records signed under it.
+pub fn tanks_for_frozen(
     engine: &EngineSpec,
     load_kg: f64,
     template: &TankSpec,
@@ -86,10 +127,29 @@ pub fn tanks_for(
 
 impl StageThermal {
     /// A conservative default blanket for a stage flying the given engine.
+    ///
+    /// Geometry is the v4 rule (one shared airframe derivation). For the
+    /// frozen per-tank padding that v3 certificates were signed against, use
+    /// `new_at` with `PhysicsRevision::FrozenUncoupled`.
     pub fn new(
         engine: &EngineSpec,
         load_kg: f64,
         mli_layers: u32,
+    ) -> Result<Self, IntegrationError> {
+        Self::new_at(engine, load_kg, mli_layers, true)
+    }
+
+    /// Build a stage under a specific geometry rule.
+    ///
+    /// `coupled_geometry` selects v4's shared-airframe derivation; `false`
+    /// reproduces the frozen v3 rule, where each tank took its own liquid
+    /// volume times a 5 % pad. Keeping both lets a historical record replay
+    /// exactly the vehicle it was signed with.
+    pub fn new_at(
+        engine: &EngineSpec,
+        load_kg: f64,
+        mli_layers: u32,
+        coupled_geometry: bool,
     ) -> Result<Self, IntegrationError> {
         let template = TankSpec {
             fluid: Fluid::Lh2,
@@ -107,7 +167,11 @@ impl StageThermal {
             cryocooler_lift_w: 0.0,
             cryocooler_carnot_fraction: 0.25,
         };
-        let (oxidizer, fuel) = tanks_for(engine, load_kg, &template)?;
+        let (oxidizer, fuel) = if coupled_geometry {
+            tanks_for(engine, load_kg, &template)?
+        } else {
+            tanks_for_frozen(engine, load_kg, &template)?
+        };
         Ok(Self {
             oxidizer,
             fuel,

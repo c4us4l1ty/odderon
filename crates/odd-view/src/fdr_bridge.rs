@@ -11,7 +11,10 @@
 //! byte channel, and strings leave as length + byte.
 use super::identity_bridge;
 use super::mission_bridge::{self as bridge};
-use odd_report::{AttemptMode, Command, Fdr, FdrError, SCHEMA_VERSION};
+use odd_report::{AttemptMode, Command, Fdr, FdrError, FROZEN_V3_SCHEMA_VERSION, SCHEMA_VERSION};
+
+/// First schema whose record carries the coupled-mass block.
+const V4_SCHEMA_VERSION: u16 = SCHEMA_VERSION;
 use odd_verify::REPORT_LEN;
 use std::sync::Mutex;
 
@@ -40,8 +43,24 @@ const MAX_THERMAL_SPECS: usize = 1;
 const MAX_VENT_EVENTS: usize = odd_report::MAX_VENT_EVENTS;
 const V3_TRAILER_MAX: usize =
     5 + MAX_THERMAL_SPECS * THERMAL_SPEC_STRIDE + MAX_VENT_EVENTS * VENT_STRIDE;
-const MAX_FIELDS: usize =
-    HEADER + MAX_COMMANDS * COMMAND_STRIDE + REPORT_LEN + 32 + 32 + 64 + V3_TRAILER_MAX;
+/// v4 trailer, one field per entry so neither count can change the stride:
+///
+/// ```text
+/// 0  burn window count
+/// 1  flameout present (0 or 1)     2  flameout seconds
+/// 3  remaining propellant present  4  remaining propellant kg
+/// 5..5+2·MAX_COMMANDS  start_s, end_s pairs
+/// ```
+const V4_HEADER: usize = 5;
+const V4_TRAILER_MAX: usize = V4_HEADER + MAX_COMMANDS * 2;
+const MAX_FIELDS: usize = HEADER
+    + MAX_COMMANDS * COMMAND_STRIDE
+    + REPORT_LEN
+    + 32
+    + 32
+    + 64
+    + V3_TRAILER_MAX
+    + V4_TRAILER_MAX;
 
 static FIELDS: Mutex<Vec<f64>> = Mutex::new(Vec::new());
 static RECORDER: Mutex<Option<Fdr>> = Mutex::new(None);
@@ -77,6 +96,30 @@ pub extern "C" fn mission_fdr_field(value: f64) -> i32 {
 #[no_mangle]
 pub extern "C" fn mission_fdr_field_count() -> u32 {
     FIELDS.lock().unwrap().len() as u32
+}
+
+/// Index just past the v3 trailer, which is where the v4 block starts.
+/// A pre-v3 record has no trailer at all, so the answer is the end of the
+/// signature.
+fn v3_end_from(fields: &[f64]) -> Option<usize> {
+    let schema = integer(*fields.first()?)?;
+    let metrics_at = HEADER + integer(*fields.get(22)?)? as usize * COMMAND_STRIDE;
+    let hash_at = metrics_at + REPORT_LEN;
+    let mut at = hash_at + 128;
+    if schema < i64::from(FROZEN_V3_SCHEMA_VERSION) {
+        return Some(at);
+    }
+    let spec_count = integer(*fields.get(at + 1)?)?;
+    if !(0..=MAX_THERMAL_SPECS as i64).contains(&spec_count) {
+        return None;
+    }
+    at += 2 + spec_count as usize * THERMAL_SPEC_STRIDE;
+    at += 3;
+    let vent_count = integer(*fields.get(at)?)?;
+    if !(0..=MAX_VENT_EVENTS as i64).contains(&vent_count) {
+        return None;
+    }
+    Some(at + 1 + vent_count as usize * VENT_STRIDE)
 }
 
 fn integer(value: f64) -> Option<i64> {
@@ -207,7 +250,7 @@ fn parse_fields(fields: &[f64], callsign: &str) -> Option<Fdr> {
     let mut vent_events = Vec::new();
     let mut delegation_mask = 0u8;
     let mut parsed_loss = ([0.0; 2], 0.0);
-    if schema >= i64::from(SCHEMA_VERSION) {
+    if schema >= i64::from(FROZEN_V3_SCHEMA_VERSION) {
         let mut at = hash_at + 128;
         delegation_mask = u8::try_from(integer(*fields.get(at)?)?).ok()?;
         let spec_count = integer(*fields.get(at + 1)?)?;
@@ -260,6 +303,42 @@ fn parse_fields(fields: &[f64], callsign: &str) -> Option<Fdr> {
             });
             at += VENT_STRIDE;
         }
+        // A v4 record continues with the coupled-state block; a v3 record has
+        // nothing after the vent list.
+        if schema == i64::from(FROZEN_V3_SCHEMA_VERSION) && at != fields.len() {
+            return None;
+        }
+    }
+    // --- v4 trailer ---
+    let mut flown_burn_windows = Vec::new();
+    let mut flameout_time_s = None;
+    let mut propellant_remaining_kg = None;
+    if schema >= i64::from(V4_SCHEMA_VERSION) {
+        // The v4 block begins immediately after the v3 trailer's vent list.
+        let mut at = v3_end_from(fields)?;
+        let count = integer(*fields.get(at)?)?;
+        if !(0..=MAX_COMMANDS as i64).contains(&count) {
+            return None;
+        }
+        at += 1;
+        for _ in 0..count {
+            let start = *fields.get(at)?;
+            let end = *fields.get(at + 1)?;
+            flown_burn_windows.push((start, end));
+            at += 2;
+        }
+        match integer(*fields.get(at)?)? {
+            0 => {}
+            1 => flameout_time_s = Some(*fields.get(at + 1)?),
+            _ => return None,
+        }
+        at += 2;
+        match integer(*fields.get(at)?)? {
+            0 => {}
+            1 => propellant_remaining_kg = Some(*fields.get(at + 1)?),
+            _ => return None,
+        }
+        at += 2;
         if at != fields.len() {
             return None;
         }
@@ -289,6 +368,9 @@ fn parse_fields(fields: &[f64], callsign: &str) -> Option<Fdr> {
         vent_events,
         boil_off_kg: parsed_loss.0,
         cryocooler_energy_j: parsed_loss.1,
+        flown_burn_windows,
+        flameout_time_s,
+        propellant_remaining_kg,
         public_key,
         signature,
     })
@@ -412,6 +494,11 @@ fn record_from_capture(
         delegation_mask: captured.delegation.0,
         boil_off_kg: captured.thermal.tank_lost_kg,
         cryocooler_energy_j: captured.thermal.cooler_energy_j,
+        // v4: the flown windows and live pool come from the same flight the
+        // recorder captured, so the signed record and the trajectory agree.
+        flown_burn_windows: captured.flown_burn_windows.clone(),
+        flameout_time_s: captured.flameout_time_s,
+        propellant_remaining_kg: Some(captured.final_state.mass - captured.dry_mass),
         vent_events: captured
             .thermal
             .vents
@@ -760,6 +847,24 @@ pub extern "C" fn mission_fdr_fields_from_record() -> u32 {
             ]);
         }
     }
+    if fdr.schema_version >= V4_SCHEMA_VERSION {
+        // Count first, then the windows at a variable stride, then the two
+        // flagged scalars — exactly what `parse_fields` reads back. Emitting
+        // them in a different order still produced a plausible field count,
+        // which is why the browser signer must follow this layout too.
+        fields.push(fdr.flown_burn_windows.len() as f64);
+        for (start, end) in &fdr.flown_burn_windows {
+            fields.extend_from_slice(&[*start, *end]);
+        }
+        match fdr.flameout_time_s {
+            Some(time) => fields.extend_from_slice(&[1.0, time]),
+            None => fields.extend_from_slice(&[0.0, 0.0]),
+        }
+        match fdr.propellant_remaining_kg {
+            Some(kg) => fields.extend_from_slice(&[1.0, kg]),
+            None => fields.extend_from_slice(&[0.0, 0.0]),
+        }
+    }
     let count = fields.len() as u32;
     *FIELDS.lock().unwrap() = fields;
     count
@@ -897,9 +1002,26 @@ mod tests {
         parse_fields(&fields, &fdr.callsign).expect("layout must round trip")
     }
 
+    /// The v4 block's *order* matters, not just its width: the writer and the
+    /// reader disagreed once and the round-trip test passed anyway because the
+    /// fixture had no windows and two empty flags.
     #[test]
-    fn transport_layout_round_trips_every_field() {
-        let license = odd_identity::License::from_entropy([3u8; 16]);
+    fn the_v4_block_round_trips_a_non_empty_flight() {
+        let license = odd_identity::License::from_entropy([5u8; 16]);
+        let mut fdr = transport_fixture(&license);
+        // 101's window is 10,800 s, so a window past it must be rejected —
+        // and one inside it must survive the round trip.
+        fdr.flown_burn_windows = vec![(61.0, 160.0), (2_995.0, 2_995.82)];
+        fdr.flameout_time_s = Some(2_995.82);
+        fdr.propellant_remaining_kg = Some(120.0);
+        fdr.sign(&license).expect("the fixture signs");
+        let back = roundtrip_fields(&fdr);
+        assert_eq!(back.flown_burn_windows, fdr.flown_burn_windows);
+        assert_eq!(back.flameout_time_s, fdr.flameout_time_s);
+        assert_eq!(back.propellant_remaining_kg, fdr.propellant_remaining_kg);
+    }
+
+    fn transport_fixture(license: &odd_identity::License) -> Fdr {
         let mut fdr = Fdr {
             schema_version: SCHEMA_VERSION,
             thermal_specs: Vec::new(),
@@ -936,11 +1058,21 @@ mod tests {
             final_state_hash: [1u8; 32],
             elo_before: 1200.0,
             elo_after: 1201.0,
+            flown_burn_windows: vec![],
+            flameout_time_s: None,
+            propellant_remaining_kg: None,
             public_key: [0; 32],
             signature: [0; 64],
         };
         fdr.metrics[0] = 1080.0;
-        fdr.sign(&license).unwrap();
+        fdr.sign(license).unwrap();
+        fdr
+    }
+
+    #[test]
+    fn transport_layout_round_trips_every_field() {
+        let license = odd_identity::License::from_entropy([3u8; 16]);
+        let fdr = transport_fixture(&license);
         let parsed = roundtrip_fields(&fdr);
         assert_eq!(parsed.canonical_bytes(), fdr.canonical_bytes());
         assert_eq!(parsed.public_key, fdr.public_key);

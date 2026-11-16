@@ -751,8 +751,16 @@ fn thermal_annex(fdr: &Fdr) -> String {
         ],
     ];
     if let Some(spec) = fdr.thermal_specs.first() {
-        out.push_str("<p id=\"thermal-coupling-note\">The thermal model estimates vented mass along the flown trajectory; this version does not subtract it from propagated mass or the burn fuel budget.</p>");
-        out.push_str("<p id=\"tank-volume-note\">The combined tank volumes including ullage are not reconciled with the catalog volume and shell sizing. A verified replay is not a physical tank-fit proof.</p>");
+        // v4 couples the vent into the flight, so the old "we do not subtract
+        // it" and "the tanks do not fit the airframe" disclaimers are no longer
+        // true. A v1–v3 certificate keeps its original wording below.
+        if fdr.schema_version >= crate::fdr::SCHEMA_VERSION {
+            out.push_str("<p id=\"thermal-coupling-note\">Vented mass is drawn from the same propellant pool the engine burns, so it reduces both the remaining fuel and the mass every acceleration divides by. A pool emptied by boil-off truncates thrust and is signed as a flameout.</p>");
+            out.push_str("<p id=\"tank-volume-note\">Tank volume, mixture split and ullage come from the geometry the contract card sizes the airframe with, so the signed stage fits the vehicle it describes.</p>");
+        } else {
+            out.push_str("<p id=\"thermal-coupling-note\">This is a pre-v4 certificate. Its thermal loss is integrated and signed but was not subtracted from propagated mass or the burn fuel budget under the model it was flown with.</p>");
+            out.push_str("<p id=\"tank-volume-note\">This is a pre-v4 certificate. Its tank volumes and ullage were not reconciled with the catalog airframe, so the replay is not a tank-fit proof.</p>");
+        }
         rows.extend([
             vec!["Insulation layers".into(), spec.mli_layers.to_string()],
             vec![
@@ -960,6 +968,9 @@ mod tests {
             vent_events: Vec::new(),
             boil_off_kg: [0.0; 2],
             cryocooler_energy_j: 0.0,
+            flown_burn_windows: vec![],
+            flameout_time_s: None,
+            propellant_remaining_kg: None,
             contract_id: 101,
             attempt_mode: AttemptMode::Ranked,
             callsign: "TEST PILOT".into(),

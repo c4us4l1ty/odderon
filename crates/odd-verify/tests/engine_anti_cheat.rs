@@ -39,6 +39,7 @@ fn custom() -> (EngineSpec, FlightSpec) {
                 load_kg: vehicle.initial_mass_kg - vehicle.dry_mass_kg,
             }),
             delegation: odd_contracts::DelegationMask::MANUAL,
+            revision: odd_core::PhysicsRevision::CoupledFitted,
             contract_id: 101,
             epoch_s: odd_contracts::START_EPOCH,
             duration_us: contract.duration_us,
@@ -135,6 +136,9 @@ fn record(spec: EngineSpec, flight: &FlightSpec) -> Fdr {
         final_state_hash: outcome.final_state_hash,
         elo_before: 1200.0,
         elo_after: 1203.0,
+        flown_burn_windows: vec![],
+        flameout_time_s: None,
+        propellant_remaining_kg: None,
         public_key: [0; 32],
         signature: [0; 64],
     };

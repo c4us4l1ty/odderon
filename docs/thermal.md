@@ -217,22 +217,28 @@ with no thermal history, but the authority refuses new submissions of them.
 These rules change no v3 bytes but reject non-baseline or supercritical v3
 records that earlier verification accepted; see the schema changelog.
 
-### Unresolved v3 tank-volume/ullage inconsistency
+### Resolved in v4: one tank-volume definition
 
-The catalog describes a fixed tank volume and also calls it *usable* volume;
-the load is limited by that number while each thermal tank adds a 5% volume
-allowance for ullage. For the baseline 12,800 kg contract 103 tug, the signed
-tank volumes total **40.475496 m³** against the catalog's **38.6 m³**. The
-hardware sizing calculation uses the latter. If 38.6 m³ is the total tank
-envelope the modeled tanks do not fit; if it is usable liquid volume, the
-additional envelope and its hardware mass are not accounted for consistently.
-`frozen_tug_geometry_discloses_the_ullage_capacity_gap` reproduces this, rather
-than asserting real-world feasibility. Fixing the definition, load and
-geometry changes masses, trajectories and signed results, so it needs a
-versioned physics/recorder migration; it is not silently rewritten in v3.
+The catalog used to describe a fixed tank volume that it also called *usable*
+volume, while each thermal tank added its own 5 % ullage allowance. The tug's
+signed tanks therefore totalled **40.475496 m³** inside a **38.6 m³** airframe.
+The root cause was a meaning error, not a rounding one: 38.6 m³ was within
+0.06 m³ of the *usable* volume (38.548092 m³) and was being read as the whole
+airframe, then inflated again per tank.
 
-The historical fixed-input 16 kW cooled-tug pin remains **3.843961 kg** and
-**4209.826545 MJ** on its original baseline-targeted maneuver plan. The UI now
+v4 derives one `TankGeometry` from the load, the mixture ratio, each fluid's
+saturated-liquid density and a single shared 3 % ullage fraction. The airframe
+is **39.740301 m³** with **38.548092 m³** usable, and both the contract card
+(`Contract::derived_tank_volume_m3`), the signed thermal spec and the flown mass
+read it. `oracle_tank_volume_zero_discrepancy` asserts the disagreement is zero
+to 1e-9 relative, and `tug_geometry_matches_the_airframe_it_is_signed_into`
+replaces the test that used to document the gap. Because this moves masses,
+trajectories and signed results it ships only as schema 4; v1/v2/v3 records keep
+their frozen geometry and verify unchanged.
+
+The historical fixed-input 16 kW cooled-tug pin is v4's **3.841022 kg** and
+**4201.757718 MJ** on that same baseline-targeted maneuver plan, re-pinned when
+the airframe became 39.740301 m³ of derived geometry. The UI now
 targets the actual assembled stage, so that *different* trajectory produces
 different thermal numbers; its dossier is checked against its own flown result
 instead of re-baselining the fixed-input physics pin.

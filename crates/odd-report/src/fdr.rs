@@ -28,7 +28,10 @@ use sha2::{Digest, Sha256};
 ///
 /// Older records still parse and verify: schema 2 carries a certified engine
 /// but no tanks, schema 1 carries neither and is labelled legacy.
-pub const SCHEMA_VERSION: u16 = 3;
+pub const SCHEMA_VERSION: u16 = 4;
+/// Last schema before the coupled-mass migration. Records carrying it replay
+/// under `PhysicsRevision::FrozenUncoupled`, exactly as they always did.
+pub const FROZEN_V3_SCHEMA_VERSION: u16 = 3;
 /// First schema whose engine block is a physical design rather than a claim.
 pub const ENGINE_SCHEMA_VERSION: u16 = 2;
 /// Last schema whose engine was an unverified claim.
@@ -37,6 +40,10 @@ pub const METRIC_COUNT: usize = 58;
 /// Domain separator for the signed bytes. Distinct from the key-derivation
 /// domain so a license signature can never be replayed as a flight signature.
 pub const SIGN_DOMAIN: &[u8] = b"odderon-flight-data-recorder-v3\0";
+/// Domain of schema-4 records: the coupled-mass migration. Kept distinct so a
+/// v3 certificate can never be replayed as a v4 flight, or the other way
+/// round — the two describe different physics.
+pub const COUPLED_SIGN_DOMAIN: &[u8] = b"odderon-flight-data-recorder-v4\0";
 /// Domain of schema-2 records (engine, no tanks). Kept distinct so a v2
 /// signature can never be replayed as a v3 signature.
 pub const ENGINE_SIGN_DOMAIN: &[u8] = b"odderon-flight-data-recorder-v2\0";
@@ -194,6 +201,16 @@ pub struct Fdr {
     pub boil_off_kg: [f64; TANKS_PER_STAGE],
     /// Electricity the cryocoolers drew over the flight, J.
     pub cryocooler_energy_j: f64,
+    /// --- v4 block. Absent (empty / `None`) for every earlier schema. ---
+    ///
+    /// Every scheduled burn window, `(start_s, end_s)`, as flown after any
+    /// flameout truncated it. A burn that never lit has `start == end`.
+    pub flown_burn_windows: Vec<(f64, f64)>,
+    /// Instant a propellant tank emptied while a burn was still scheduled.
+    pub flameout_time_s: Option<f64>,
+    /// Live propellant aboard at the scoring instant, kg, after burning and
+    /// venting. `None` for a schema that did not track it.
+    pub propellant_remaining_kg: Option<f64>,
     pub public_key: [u8; 32],
     pub signature: [u8; 64],
 }
@@ -380,7 +397,7 @@ impl Fdr {
         out.extend_from_slice(&self.final_state_hash);
         put_f64(&mut out, self.elo_before);
         put_f64(&mut out, self.elo_after);
-        if self.schema_version >= SCHEMA_VERSION {
+        if self.schema_version >= FROZEN_V3_SCHEMA_VERSION {
             // --- FROZEN v3 BLOCK. Order and width are part of the schema. ---
             out.push(self.delegation_mask);
             put_u16(&mut out, self.thermal_specs.len() as u16);
@@ -419,6 +436,28 @@ impl Fdr {
                 put_f64(&mut out, event.temperature_k);
             }
         }
+        if self.schema_version >= SCHEMA_VERSION {
+            // --- v4 BLOCK. Appended after the v3 block, in this order. ---
+            put_u16(&mut out, self.flown_burn_windows.len() as u16);
+            for (start, end) in &self.flown_burn_windows {
+                put_f64(&mut out, *start);
+                put_f64(&mut out, *end);
+            }
+            match self.flameout_time_s {
+                Some(time) => {
+                    out.push(1);
+                    put_f64(&mut out, time);
+                }
+                None => out.push(0),
+            }
+            match self.propellant_remaining_kg {
+                Some(kg) => {
+                    out.push(1);
+                    put_f64(&mut out, kg);
+                }
+                None => out.push(0),
+            }
+        }
         out
     }
 
@@ -427,7 +466,8 @@ impl Fdr {
         match self.schema_version {
             0..=LEGACY_SCHEMA_VERSION => LEGACY_SIGN_DOMAIN,
             ENGINE_SCHEMA_VERSION => ENGINE_SIGN_DOMAIN,
-            _ => SIGN_DOMAIN,
+            FROZEN_V3_SCHEMA_VERSION => SIGN_DOMAIN,
+            _ => COUPLED_SIGN_DOMAIN,
         }
     }
 
@@ -444,7 +484,10 @@ impl Fdr {
     pub fn validate_shape(&self) -> Result<(), FdrError> {
         if !matches!(
             self.schema_version,
-            LEGACY_SCHEMA_VERSION | ENGINE_SCHEMA_VERSION | SCHEMA_VERSION
+            LEGACY_SCHEMA_VERSION
+                | ENGINE_SCHEMA_VERSION
+                | FROZEN_V3_SCHEMA_VERSION
+                | SCHEMA_VERSION
         ) {
             return Err(FdrError::UnsupportedSchema(self.schema_version));
         }
@@ -458,7 +501,7 @@ impl Fdr {
         } else if self.engine.is_some() {
             return Err(FdrError::Malformed("legacy record carries an engine"));
         }
-        if self.schema_version >= SCHEMA_VERSION {
+        if self.schema_version >= FROZEN_V3_SCHEMA_VERSION {
             if self.delegation_mask & !0b1111 != 0 {
                 return Err(FdrError::Malformed("delegation mask bits"));
             }
@@ -533,6 +576,40 @@ impl Fdr {
             }
         } else if !self.thermal_specs.is_empty() || !self.vent_events.is_empty() {
             return Err(FdrError::Malformed("pre-v3 record carries tanks"));
+        }
+        if self.schema_version >= SCHEMA_VERSION {
+            if self.flown_burn_windows.len() > MAX_COMMANDS {
+                return Err(FdrError::Malformed("too many flown burn windows"));
+            }
+            for (start, end) in &self.flown_burn_windows {
+                // A window is a segment of the signed flight, so it must be
+                // finite, inside the mission and not run backwards. A burn
+                // that never lit is legal and carries `start == end`.
+                if !start.is_finite()
+                    || !end.is_finite()
+                    || *start < 0.0
+                    || *end < *start
+                    || *end > self.duration_us as f64 / 1e6
+                {
+                    return Err(FdrError::Malformed("flown burn window"));
+                }
+            }
+            if let Some(time) = self.flameout_time_s {
+                if !time.is_finite() || time < 0.0 || time > self.duration_us as f64 / 1e6 {
+                    return Err(FdrError::Malformed("flameout time"));
+                }
+            }
+            if let Some(kg) = self.propellant_remaining_kg {
+                // Never negative, never more than the vehicle could carry.
+                if !kg.is_finite() || kg < 0.0 || kg > self.initial_mass_kg {
+                    return Err(FdrError::Malformed("remaining propellant"));
+                }
+            }
+        } else if !self.flown_burn_windows.is_empty()
+            || self.flameout_time_s.is_some()
+            || self.propellant_remaining_kg.is_some()
+        {
+            return Err(FdrError::Malformed("pre-v4 record carries coupled state"));
         }
         if self.commands.len() > MAX_COMMANDS {
             return Err(FdrError::Malformed("too many commands"));
@@ -635,7 +712,7 @@ impl Fdr {
         replayed_kg: [f64; TANKS_PER_STAGE],
         replayed_energy_j: f64,
     ) -> Result<(), FdrError> {
-        if self.schema_version < SCHEMA_VERSION {
+        if self.schema_version < FROZEN_V3_SCHEMA_VERSION {
             return Ok(());
         }
         for (index, (recorded, actual)) in self.boil_off_kg.iter().zip(replayed_kg).enumerate() {
@@ -656,7 +733,7 @@ impl Fdr {
     }
 
     pub fn compare_vent_events(&self, replayed: &[VentEvent]) -> Result<(), FdrError> {
-        if self.schema_version < SCHEMA_VERSION {
+        if self.schema_version < FROZEN_V3_SCHEMA_VERSION {
             return Ok(());
         }
         if self.vent_events.len() != replayed.len() {
@@ -726,14 +803,19 @@ impl Fdr {
             LEGACY_SIGN_DOMAIN
         } else if bytes.starts_with(ENGINE_SIGN_DOMAIN) {
             ENGINE_SIGN_DOMAIN
-        } else {
+        } else if bytes.starts_with(SIGN_DOMAIN) {
             SIGN_DOMAIN
+        } else {
+            COUPLED_SIGN_DOMAIN
         };
         reader.expect(domain)?;
         let schema_version = reader.u16()?;
         if !matches!(
             schema_version,
-            LEGACY_SCHEMA_VERSION | ENGINE_SCHEMA_VERSION | SCHEMA_VERSION
+            LEGACY_SCHEMA_VERSION
+                | ENGINE_SCHEMA_VERSION
+                | FROZEN_V3_SCHEMA_VERSION
+                | SCHEMA_VERSION
         ) {
             return Err(FdrError::UnsupportedSchema(schema_version));
         }
@@ -741,7 +823,8 @@ impl Fdr {
         let expected_domain = match schema_version {
             LEGACY_SCHEMA_VERSION => LEGACY_SIGN_DOMAIN,
             ENGINE_SCHEMA_VERSION => ENGINE_SIGN_DOMAIN,
-            _ => SIGN_DOMAIN,
+            FROZEN_V3_SCHEMA_VERSION => SIGN_DOMAIN,
+            _ => COUPLED_SIGN_DOMAIN,
         };
         if domain != expected_domain {
             return Err(FdrError::Malformed("schema and signing domain disagree"));
@@ -807,7 +890,7 @@ impl Fdr {
         let elo_after = reader.f64()?;
         // --- FROZEN v3 BLOCK ---
         let (thermal_specs, delegation_mask, vent_events, boil_off_kg, cryocooler_energy_j) =
-            if schema_version >= SCHEMA_VERSION {
+            if schema_version >= FROZEN_V3_SCHEMA_VERSION {
                 let mask = reader.u8()?;
                 let spec_count = reader.u16()? as usize;
                 if spec_count > 16 {
@@ -879,6 +962,31 @@ impl Fdr {
             } else {
                 (Vec::new(), 0, Vec::new(), [0.0; TANKS_PER_STAGE], 0.0)
             };
+        // --- v4 BLOCK ---
+        let (flown_burn_windows, flameout_time_s, propellant_remaining_kg) =
+            if schema_version >= SCHEMA_VERSION {
+                let count = reader.u16()? as usize;
+                if count > MAX_COMMANDS {
+                    return Err(FdrError::Malformed("too many flown burn windows"));
+                }
+                let mut windows = Vec::with_capacity(count);
+                for _ in 0..count {
+                    windows.push((reader.f64()?, reader.f64()?));
+                }
+                let flameout = match reader.u8()? {
+                    0 => None,
+                    1 => Some(reader.f64()?),
+                    _ => return Err(FdrError::Malformed("flameout flag")),
+                };
+                let remaining = match reader.u8()? {
+                    0 => None,
+                    1 => Some(reader.f64()?),
+                    _ => return Err(FdrError::Malformed("remaining propellant flag")),
+                };
+                (windows, flameout, remaining)
+            } else {
+                (Vec::new(), None, None)
+            };
         let public_key = reader.bytes::<32>()?;
         let signature = reader.bytes::<64>()?;
         if !reader.at_end() {
@@ -909,6 +1017,9 @@ impl Fdr {
             vent_events,
             boil_off_kg,
             cryocooler_energy_j,
+            flown_burn_windows,
+            flameout_time_s,
+            propellant_remaining_kg,
             public_key,
             signature,
         };
@@ -961,6 +1072,12 @@ impl Fdr {
             o.vent_events("vent_events", &self.vent_events);
             o.array("boil_off_kg", &self.boil_off_kg);
             o.number("cryocooler_energy_j", self.cryocooler_energy_j);
+            o.burn_windows("flown_burn_windows", &self.flown_burn_windows);
+            o.number("flameout_time_s", self.flameout_time_s.unwrap_or(f64::NAN));
+            o.number(
+                "propellant_remaining_kg",
+                self.propellant_remaining_kg.unwrap_or(f64::NAN),
+            );
             o.string("public_key", &crate::hex::encode(&self.public_key));
             o.string("ed25519_signature", &crate::hex::encode(&self.signature));
             o.string("canonical_digest", &crate::hex::encode(&self.digest()));

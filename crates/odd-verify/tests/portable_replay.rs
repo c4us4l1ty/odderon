@@ -21,6 +21,7 @@ fn rescue_spec() -> FlightSpec {
     FlightSpec {
         thermal: None,
         delegation: odd_contracts::DelegationMask::MANUAL,
+        revision: odd_core::PhysicsRevision::CoupledFitted,
         contract_id: 101,
         epoch_s: odd_contracts::START_EPOCH,
         duration_us: contract.duration_us,
@@ -84,6 +85,9 @@ fn recorder(spec: &FlightSpec) -> Fdr {
         final_state_hash: outcome.final_state_hash,
         elo_before: 1200.0,
         elo_after: 1204.0,
+        flown_burn_windows: vec![],
+        flameout_time_s: None,
+        propellant_remaining_kg: None,
         public_key: [0; 32],
         signature: [0; 64],
     };

@@ -7,6 +7,8 @@
 //!
 //! It lives outside `odd-sim` because `odd-contracts` already depends on
 //! `odd-sim`; putting the replay there would close a dependency cycle.
+pub mod coupled_flight;
+
 use odd_astro::{
     elements::Elements,
     finite_burn::isolate_finite_burn,
@@ -60,6 +62,9 @@ pub struct FlightSettings {
     pub thermal: Option<ThermalInputs>,
     /// Which disciplines the Chief-AI sized. Caps Seff at 0.65 when non-zero.
     pub delegation: odd_contracts::DelegationMask,
+    /// The physics this flight is computed under. New flights use
+    /// `CoupledFitted`; a replay passes the revision its record declares.
+    pub revision: odd_core::PhysicsRevision,
 }
 
 /// The physical inputs the tank model needs, all of them design choices.
@@ -81,6 +86,14 @@ pub struct FlightOutcome {
     pub burn_sweeps: Vec<f64>,
     /// Boil-off evaluated along the flown spline. Inert for storable stages.
     pub thermal: odd_contracts::ThermalOutcome,
+    /// Windows each scheduled burn actually flew, seconds. A v4 flameout
+    /// shortens one; under the frozen models every window is flown in full.
+    pub flown_burn_windows: Vec<(f64, f64)>,
+    /// Instant a tank emptied while a burn was still scheduled (v4 only).
+    pub flameout_time_s: Option<f64>,
+    /// Propellant still aboard at the scoring instant, kg, after burning and
+    /// venting (v4 only; `None` when the schema did not couple mass).
+    pub propellant_remaining_kg: Option<f64>,
 }
 
 /// Earth-relative Moon state at a mission time. Shared with the browser's
@@ -146,12 +159,45 @@ pub fn compute(
     let options = contract.options();
     let limits = contract.limits();
     let end = s.duration_us as f64 / 1e6;
-    let Ok(integrated) =
-        model.propagate_with_limits(s.initial, end, options, &burns, limits, |t| {
-            environment(eph, s.epoch, t)
-        })
-    else {
-        return None;
+    // v4 flies one coupled system: the vents and the engine draw from the same
+    // pool, so the mass every acceleration divides by is already net of both.
+    // A storable stage has no tank model, so it keeps the plain propagator.
+    let coupled = if s.revision.couples_vented_mass() && s.thermal.is_some() {
+        crate::coupled_flight::fly_coupled(s, &contract, &burns, |t| environment(eph, s.epoch, t))
+    } else {
+        None
+    };
+    let (integrated, coupled_windows, coupled_flameout, coupled_remaining) = match &coupled {
+        Some(flight) => {
+            // The coupled loop reports impact as "the trajectory stops early";
+            // it has no central-body event detector of its own.
+            let stopped = flight.terminal().filter(|frame| frame.time < end);
+            (
+                odd_astro::integrator::Integrated {
+                    trajectory: flight.trajectory.clone(),
+                    events: Vec::new(),
+                    stopped: stopped.map(|frame| odd_astro::integrator::EventRecord {
+                        name: "impact",
+                        time: frame.time,
+                        state: frame,
+                    }),
+                },
+                flight.flown_burns.clone(),
+                flight.flameout_s,
+                Some(flight.remaining_kg),
+            )
+        }
+        None => {
+            let Ok(integrated) =
+                model.propagate_with_limits(s.initial, end, options, &burns, limits, |t| {
+                    environment(eph, s.epoch, t)
+                })
+            else {
+                return None;
+            };
+            let windows = burns.iter().map(|b| (b.start, b.end)).collect();
+            (integrated, windows, None, None)
+        }
     };
     let impacted = integrated.stopped.is_some();
     let mut evaluation_s = if let Some(stop) = integrated.stopped {
@@ -204,10 +250,24 @@ pub fn compute(
                 - std::f64::consts::PI,
         )
     };
-    // Boil-off is integrated along the *flown* spline with the same adaptive
-    // stepper and the same ephemeris, so replay reproduces the vent history.
-    let thermal = match s.thermal {
-        Some(inputs) => odd_contracts::thermal::evaluate(
+    // v1–v3 integrate boil-off along the *flown* spline after the fact, with
+    // the same adaptive stepper and the same ephemeris, so replay reproduces
+    // the vent history. v4 already integrated the tanks *inside* the flight:
+    // re-running them here would integrate the same vent twice and compare a
+    // signed loss against a number the vehicle never paid.
+    let coupled_thermal = coupled.as_ref().map(|flight| {
+        let outcome = &flight.outcome;
+        odd_contracts::ThermalOutcome {
+            lost_kg: outcome.vented_kg[0] + outcome.vented_kg[1],
+            tank_lost_kg: outcome.vented_kg,
+            cooler_energy_j: outcome.cooler_joules,
+            vents: flight.vents.clone(),
+            inert: false,
+        }
+    });
+    let thermal = match (coupled_thermal, s.thermal) {
+        (Some(outcome), _) => outcome,
+        (None, Some(inputs)) => odd_contracts::thermal::evaluate_at(
             odd_contracts::thermal::ThermalStage {
                 contract: &contract,
                 spec: &inputs.engine_spec,
@@ -225,11 +285,12 @@ pub fn compute(
             },
             eph,
             s.epoch,
+            s.revision,
         )
         // An integration/validation failure is not an inert tank. Reject
         // the flight rather than certifying zero loss on a model failure.
         .ok()?,
-        None => odd_contracts::ThermalOutcome::inert(),
+        (None, None) => odd_contracts::ThermalOutcome::inert(),
     };
     let mut report = [f64::NAN; REPORT_LEN];
     report[0] = final_state.mass;
@@ -351,6 +412,12 @@ pub fn compute(
     }
     Some(FlightOutcome {
         thermal,
+        flown_burn_windows: coupled_windows,
+        flameout_time_s: coupled_flameout,
+        // The coupled flight reports the live pool; the uncoupled one only
+        // knows the propagated mass.
+        propellant_remaining_kg: coupled_remaining
+            .or_else(|| Some((final_state.mass - s.dry_mass).max(0.0))),
         trajectory: integrated.trajectory,
         report,
         final_state,
@@ -379,6 +446,8 @@ pub struct FlightSpec {
     pub thermal: Option<ThermalInputs>,
     /// Signed delegation provenance, so a replay applies the same Seff cap.
     pub delegation: odd_contracts::DelegationMask,
+    /// The physics the record declares. Replay uses it to pick tank geometry.
+    pub revision: odd_core::PhysicsRevision,
 }
 
 pub struct ReplayOutcome {
@@ -433,6 +502,7 @@ fn settings_from_spec(
             // boil-off so their certificates remain valid.
             thermal: spec.thermal,
             delegation: spec.delegation,
+            revision: spec.revision,
             contract_id: spec.contract_id,
             epoch: spec.epoch_s,
             initial: Keyframe {
@@ -652,7 +722,8 @@ pub fn verify_record(fdr: &Fdr) -> Result<ReplayOutcome, FdrError> {
 /// Legacy v1/v2 records remain replayable as historical records, but the
 /// server does not issue new ratings or receipts for those old schemas.
 pub fn certify_thermal(fdr: &Fdr) -> Result<(), FdrError> {
-    if fdr.schema_version < odd_report::SCHEMA_VERSION {
+    // v3 and v4 both sign the tank block; v1/v2 predate it.
+    if fdr.schema_version < odd_report::FROZEN_V3_SCHEMA_VERSION {
         return Ok(());
     }
     let engine = fdr
@@ -686,9 +757,14 @@ pub fn certify_thermal(fdr: &Fdr) -> Result<(), FdrError> {
     let contract =
         Contract::get(fdr.contract_id).ok_or(FdrError::Malformed("unknown thermal contract"))?;
     let inputs = thermal_inputs_from_record(fdr).ok_or(FdrError::Malformed("thermal inputs"))?;
+    // Certify under the revision the record itself declares: a v3 certificate
+    // was signed against the frozen per-tank 5% geometry, so replaying it with
+    // v4's shared airframe would reject a genuine historical record.
+    let revision = odd_core::PhysicsRevision::for_schema(fdr.schema_version)
+        .ok_or(FdrError::Malformed("unknown physics revision"))?;
     let stage = inputs
         .design
-        .stage(&contract, &engine, inputs.load_kg)
+        .stage_at(&contract, &engine, inputs.load_kg, revision)
         .ok_or(FdrError::Malformed("invalid cryogenic tank"))?;
     stage
         .oxidizer
@@ -842,6 +918,10 @@ pub fn spec_from_record(fdr: &Fdr) -> FlightSpec {
     FlightSpec {
         thermal: thermal_inputs_from_record(fdr),
         delegation: odd_contracts::DelegationMask(fdr.delegation_mask),
+        // The record's own schema selects the physics. A v3 certificate keeps
+        // the geometry and mass rules it was signed under.
+        revision: odd_core::PhysicsRevision::for_schema(fdr.schema_version)
+            .unwrap_or(odd_core::PhysicsRevision::FrozenUncoupled),
         contract_id: fdr.contract_id,
         epoch_s: fdr.epoch_s,
         duration_us: fdr.duration_us,
@@ -883,7 +963,7 @@ pub fn hash_final_state(report: &[f64; REPORT_LEN], state: &Keyframe) -> [u8; 32
 /// A record with no thermal block (schema 1/2, or a storable stage) has no
 /// tank model, so its replay produces no vent events.
 pub fn thermal_inputs_from_record(fdr: &Fdr) -> Option<ThermalInputs> {
-    if fdr.schema_version < odd_report::SCHEMA_VERSION {
+    if fdr.schema_version < odd_report::FROZEN_V3_SCHEMA_VERSION {
         return None;
     }
     let spec = fdr.thermal_specs.first()?;

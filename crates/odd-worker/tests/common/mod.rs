@@ -72,6 +72,7 @@ pub fn settings(contract: &Contract) -> FlightSettings {
         node_metric: false,
         thermal: None,
         delegation: odd_contracts::DelegationMask::MANUAL,
+        revision: odd_core::PhysicsRevision::CoupledFitted,
     }
 }
 
@@ -148,6 +149,9 @@ pub fn signed_rescue(pred: [f64; 6]) -> (Fdr, License) {
         boil_off_kg: [0.0, 0.0],
         cryocooler_energy_j: 0.0,
         vent_events: Vec::new(),
+        flown_burn_windows: vec![],
+        flameout_time_s: None,
+        propellant_remaining_kg: None,
         public_key: [0; 32],
         signature: [0; 64],
     };

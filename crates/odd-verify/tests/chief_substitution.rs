@@ -82,6 +82,7 @@ fn signed_stage(mask: DelegationMask, player: &ThermalDesign) -> (Fdr, License) 
         engine: vehicle.engine,
         node_metric: false,
         delegation: mask,
+        revision: odd_core::PhysicsRevision::CoupledFitted,
         thermal: Some(ThermalInputs {
             engine_spec: flown.engine,
             design: flown.thermal,
@@ -151,6 +152,9 @@ fn signed_stage(mask: DelegationMask, player: &ThermalDesign) -> (Fdr, License) 
                 temperature_k: event.temperature_k,
             })
             .collect(),
+        flown_burn_windows: vec![],
+        flameout_time_s: None,
+        propellant_remaining_kg: None,
         public_key: [0; 32],
         signature: [0; 64],
     };

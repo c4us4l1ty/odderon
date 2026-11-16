@@ -67,6 +67,9 @@ pub fn error_code(err: &ServerError) -> &'static str {
         ServerError::ContractMismatch(_) => "ContractMismatch",
         ServerError::SegmentMismatch(_) => "SegmentMismatch",
         ServerError::ThermalSegmentsUnsupported => "ThermalSegmentsUnsupported",
+        ServerError::SegmentNotResumable => "SegmentNotResumable",
+        ServerError::SegmentTooLarge => "SegmentTooLarge",
+        ServerError::RateLimited => "RateLimited",
         ServerError::CommitmentMissing => "CommitmentMissing",
         ServerError::AttemptModeMismatch => "AttemptModeMismatch",
         ServerError::AttemptAlreadySubmitted => "AttemptAlreadySubmitted",
@@ -392,6 +395,35 @@ fn checkpoint_from_json(v: &Json) -> Option<SegmentCheckpoint> {
         prop_kg: v.get("prop_kg")?.as_f64()?,
         tank_temps: [tt[0].as_f64()?, tt[1].as_f64()?],
         cum_hash: array32(v.get("cum_hash"))?,
+        prev_seg_hash: match v.get("prev_seg_hash") {
+            Some(Json::Null) | None => None,
+            Some(value) => Some(array32(Some(value))?),
+        },
+        tank_states: match v.get("tank_states") {
+            Some(Json::Arr(rows)) => {
+                if rows.len() != 2 {
+                    return None;
+                }
+                let mut out = [[0.0; 3]; 2];
+                for (row, slot) in rows.iter().zip(out.iter_mut()) {
+                    let cells = row.as_array()?;
+                    if cells.len() != 3 {
+                        return None;
+                    }
+                    for (cell, value) in cells.iter().zip(slot.iter_mut()) {
+                        *value = cell.as_f64()?;
+                    }
+                }
+                Some(out)
+            }
+            _ => None,
+        },
+        cooler_joules: v.get("cooler_joules").map_or(0.0, |j| {
+            j.as_f64()
+                .filter(|v| v.is_finite() && *v >= 0.0)
+                .unwrap_or(0.0)
+        }),
+        vent_count: v.get("vent_count").and_then(|j| j.as_u32()).unwrap_or(0),
     })
 }
 
