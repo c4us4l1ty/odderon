@@ -8,6 +8,8 @@ import { resolve, extname } from 'node:path';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import jsQR from 'jsqr';
+import { startAuthority } from './support/authority-server.mjs';
+const authority = await startAuthority();
 const root=resolve('web');
 
 // Rebuild the QR matrix from the emitted vector rectangles and decode it with
@@ -47,7 +49,10 @@ function nextUlp(value){
   return view.getFloat64(0);
 }
 const server=createServer(async (req,res)=>{
-  const path=resolve(root,'.'+new URL(req.url,'http://test').pathname.replace(/\/$/,'/index.html'));
+  const url=new URL(req.url,'http://test');
+  if(url.pathname.startsWith('/api/v1/')){authority.handle(req,res);return;}
+  if(url.pathname==='/authority-config.js'){res.setHeader('Content-Type','text/javascript');res.end(`export const SERVER_PUBLIC_KEY = ${JSON.stringify(authority.key)};`);return;}
+  const path=resolve(root,'.'+url.pathname.replace(/\/$/,'/index.html'));
   if(!path.startsWith(root+'/')){res.writeHead(403).end();return;}
   try{const data=await readFile(path);res.setHeader('Content-Type',({'.html':'text/html','.js':'text/javascript','.css':'text/css','.wasm':'application/wasm'})[extname(path)]||'application/octet-stream');res.end(data);}catch{res.writeHead(404).end();}
 });
@@ -493,7 +498,7 @@ try{
   await page.locator('#node-t').fill('81.50942505');
   await page.locator('#prefill').click();
   await page.locator('#execute').click();
-  await page.waitForFunction(()=>!document.getElementById('debrief').hidden||(missionDiagnostics.locked&&!missionDiagnostics.pending),null,{timeout:120000});
+  await page.waitForFunction(()=>(!document.getElementById('debrief').hidden||missionDiagnostics.locked)&&!missionDiagnostics.pending,null,{timeout:120000});
   assert.equal(await page.locator('#debrief').isHidden(),false,`mission error: ${await page.locator('#execute-status').textContent()}, page errors: ${errors}`);
   const debrief=await page.locator('#debrief-content').textContent();
   const score=Number(debrief.match(/([0-9.]+)%Mission score/)?.[1]);
@@ -506,7 +511,8 @@ try{
   assert.notEqual(firstRated.elo,1200,'a ranked flight must move Astro-Elo off its start value');
   assert.equal(firstRated.elo,firstRated.ranked['101'].elo);
   assert.equal(firstRated.flights,1);
-  assert.match(await page.locator('#elo-result').textContent(),/Ranked flight certified/);
+  assert.match(await page.locator('#certification-status').textContent(),/CERTIFIED SERVER-RANKED RECEIPT/);
+  assert.match(await page.locator('#elo-result').textContent(),/Server-ranked Astro-Elo/);
   // The executed flight is signed as a ranked certificate.
   assert.match(await page.locator('#recorder-status').textContent(),/Flight recorder signed by ODD-ID-/);
   const rankedDownload=page.waitForEvent('download');
@@ -544,7 +550,8 @@ try{
   assert.equal(rankedFdr.metrics.length,58);
   assert.equal(rankedFdr.ed25519_signature.length,128);
   assert.equal(rankedFdr.final_state_hash.length,64);
-  assert.ok(rankedFdr.elo_after!==rankedFdr.elo_before,'the rating change must be inside the signed record');
+  assert.equal(rankedFdr.elo_after,rankedFdr.elo_before,'client rating fields are not authoritative');
+  assert.notEqual(rankedFdr.server_receipt.elo_after,rankedFdr.server_receipt.elo_before,'the server-signed receipt carries the rating change');
   assert.ok(rankedFdr.command_timeline.length>=1);
   assert.ok(Number.isInteger(rankedFdr.command_timeline[0].time_us));
   // The portability claim is only real if a process with no browser, no wasm
@@ -576,7 +583,7 @@ try{
   await page.locator('#example').click();
   assert.equal(await page.evaluate(()=>missionDiagnostics.nodes.length),1);
   await page.locator('#execute').click();
-  await page.waitForFunction(()=>!document.getElementById('debrief').hidden||(missionDiagnostics.locked&&!missionDiagnostics.pending),null,{timeout:180000});
+  await page.waitForFunction(()=>(!document.getElementById('debrief').hidden||missionDiagnostics.locked)&&!missionDiagnostics.pending,null,{timeout:180000});
   assert.equal(await page.locator('#debrief').isHidden(),false,`mission error: ${await page.locator('#execute-status').textContent()}, page errors: ${errors}`);
   const sso=await page.locator('#debrief-content').textContent();
   const ssoScore=Number(sso.match(/([0-9.]+)%Mission score/)?.[1]);
@@ -612,7 +619,7 @@ try{
   await page.locator('#predict-peri').fill(String(tugReport[2]/1000));
   await page.locator('#predict-time').fill(String(tugReport[29]));
   await page.locator('#execute').click();
-  await page.waitForFunction(()=>!document.getElementById('debrief').hidden||(missionDiagnostics.locked&&!missionDiagnostics.pending),null,{timeout:240000});
+  await page.waitForFunction(()=>(!document.getElementById('debrief').hidden||missionDiagnostics.locked)&&!missionDiagnostics.pending,null,{timeout:240000});
   assert.equal(await page.locator('#debrief').isHidden(),false,`mission error: ${await page.locator('#execute-status').textContent()}, page errors: ${errors}`);
   const tug=await page.locator('#debrief-content').textContent();
   const tugScore=Number(tug.match(/([0-9.]+)%Mission score/)?.[1]);
@@ -636,7 +643,7 @@ try{
   const beforeReload=await page.evaluate(()=>missionDiagnostics.profile());
   assert.deepEqual(Object.keys(beforeReload.ranked).sort(),['101','102','103']);
   await page.reload();
-  await page.waitForFunction(()=>!document.getElementById('add-node').disabled,null,{timeout:30000});
+  await page.waitForFunction(()=>!document.getElementById('add-node').disabled&&missionDiagnostics.profile()?.ratingSource==='server',null,{timeout:30000});
   const afterReload=await page.evaluate(()=>missionDiagnostics.profile());
   assert.equal(afterReload.publicId,beforeReload.publicId,'the license must survive a reload');
   assert.deepEqual(afterReload.publicKey,beforeReload.publicKey);
@@ -669,6 +676,7 @@ try{
   assert.equal(await page.evaluate(()=>missionDiagnostics.profile().elo),beforeReload.elo,'restoring the same license must keep its rating');
   await page.locator('#profile-callsign').fill('GATE-PILOT');
   await page.locator('#profile-callsign-form button[type=submit]').click();
+  await page.waitForFunction(()=>missionDiagnostics.profile().callsign==='GATE-PILOT');
   assert.equal(await page.evaluate(()=>missionDiagnostics.profile().callsign),'GATE-PILOT');
   await page.locator('#profile-close').click();
   assert.equal(await page.locator('#profile-dialog').isVisible(),false);
@@ -694,14 +702,14 @@ try{
 
   // Replaying a certified contract must be practice and must not farm Elo.
   assert.equal(await page.evaluate(()=>missionDiagnostics.isRanked('101')),true);
-  assert.equal(await page.locator('#attempt-mode').inputValue(),'practice');
-  assert.equal(await page.locator('#attempt-mode option[value=ranked]').isDisabled(),true);
+  assert.equal(await page.locator('#attempt-mode').inputValue(),'ranked');
+  assert.equal(await page.locator('#attempt-mode option[value=ranked]').isDisabled(),false,'server decides eligibility, not local state');
   await page.locator('#example').click();
   await page.locator('#prefill').click();
   await page.locator('#execute').click();
-  await page.waitForFunction(()=>!document.getElementById('debrief').hidden||(missionDiagnostics.locked&&!missionDiagnostics.pending),null,{timeout:120000});
+  await page.waitForFunction(()=>(!document.getElementById('debrief').hidden||missionDiagnostics.locked)&&!missionDiagnostics.pending,null,{timeout:120000});
   assert.equal(await page.locator('#debrief').isHidden(),false,`practice replay error: ${await page.locator('#execute-status').textContent()}`);
-  assert.match(await page.locator('#elo-result').textContent(),/Practice flight — Astro-Elo unchanged/);
+  assert.match(await page.locator('#elo-result').textContent(),/Server-verified practice — Astro-Elo unchanged/);
   const afterPractice=await page.evaluate(()=>missionDiagnostics.profile());
   assert.equal(afterPractice.elo,beforeReload.elo,'a replayed contract must not change Astro-Elo');
   assert.equal(afterPractice.flights,beforeReload.flights+1);
@@ -823,7 +831,7 @@ try{
     const repaired=await probe.evaluate(()=>missionDiagnostics.profile());
     // Repair must never discard a usable secret: the identity is the account.
     assert.equal(repaired.flightKey,'ODD-0011-2233-4455-6677-8899-AABB-CCDD-EEFF',`${label}: identity must survive repair`);
-    assert.equal(repaired.elo,label==='null rating'?1200:1234.5,`${label}: rating`);
+    assert.equal(repaired.elo,1200,`${label}: an unsigned cached rating is never authoritative`);
     await probe.locator('#open-profile').click();
     assert.ok((await probe.locator('#profile-elo').textContent()).length>0,label);
     assert.deepEqual(probeErrors,[],`${label} must not raise a page error`);
@@ -842,7 +850,7 @@ try{
     await probe.goto(`http://127.0.0.1:${server.address().port}/mission.html`);
     await probe.waitForFunction(()=>window.missionDiagnostics?.profile?.(),null,{timeout:30000});
     const first=await probe.evaluate(()=>missionDiagnostics.profile());
-    assert.equal(first.elo,1337.5);
+    assert.equal(first.elo,1200,'an unsigned rating cannot be restored');
     await probe.locator('#open-profile').click();
     // A seven-group key must be refused with a useful message.
     await probe.locator('#profile-restore-input').fill('ODD-FEED-DCBA-0099-8877-6655-4433-2211');
@@ -855,18 +863,19 @@ try{
     assert.notEqual(second.publicId,first.publicId,'a different key must switch identity');
     assert.equal(second.elo,1200,'a new identity starts at the base rating');
     assert.deepEqual(second.ranked,{},'a new identity has no certificates');
+    await probe.waitForFunction(()=>missionDiagnostics.profile().ratingSource==='server');
     assert.equal(await probe.locator('#topbar-elo').textContent(),'1200');
     // Returning with the original twelve words must resume, not reset.
     await probe.locator('#profile-restore-input').fill(first.mnemonic);
     await probe.locator('#profile-restore').click();
     const resumed=await probe.evaluate(()=>missionDiagnostics.profile());
     assert.equal(resumed.publicId,first.publicId);
-    assert.equal(resumed.elo,1337.5,'switching back must not erase the rating');
+    assert.equal(resumed.elo,1200,'switching back cannot revive an unsigned rating');
     assert.equal(resumed.callsign,'PILOT A');
-    assert.deepEqual(Object.keys(resumed.ranked),['101'],'the certificate must survive the round trip');
-    assert.equal(await probe.evaluate(()=>missionDiagnostics.isRanked('101')),true,'a certified contract must stay certified after a switch');
+    assert.deepEqual(Object.keys(resumed.ranked),[],'an unsigned certificate is discarded');
+    assert.equal(await probe.evaluate(()=>missionDiagnostics.isRanked('101')),false,'a local cache cannot invent certification');
     assert.deepEqual(probeErrors,[]);
     await probe.close();
   }
   assert.deepEqual(errors,[]);console.log('Browser viewport, interactions, bounds, WebGL, responsive layout, three mission prototypes, license persistence, signed-dossier verification, damaged-storage repair and identity switching passed.');
-} finally{if(browser)await browser.close();await new Promise(r=>server.close(r));}
+} finally{if(browser)await browser.close();await new Promise(r=>server.close(r));await authority.close();}

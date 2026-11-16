@@ -11,11 +11,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let key = ServerKey::from_seed(seed);
     let db = std::env::var("ODDERON_DB").unwrap_or_else(|_| "odderon.sqlite".into());
     let addr = std::env::var("ODDERON_BIND").unwrap_or_else(|_| "0.0.0.0:8787".into());
+    let listener = std::net::TcpListener::bind(&addr)?;
     println!(
         "Authority public key: {}",
         odd_report::hex::encode(&key.public_key())
     );
-    println!("Authority listening on {addr}");
-    http::serve(&addr, AuthorityEngine::new(SqliteStore::open(&db)?, key))?;
+    println!("Authority listening on {}", listener.local_addr()?);
+    http::serve_listener(listener, AuthorityEngine::new(SqliteStore::open(&db)?, key))?;
     Ok(())
 }

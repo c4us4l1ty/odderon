@@ -7,6 +7,9 @@ import * as identity from './identity.js';
 import { initProfile, openProfile } from './profile.js';
 import * as recorder from './recorder.js';
 import { initVerify, openVerify, verifyFields, result as verificationResult } from './verify.js';
+import * as authority from './authority.js';
+import { verifyReceipt } from './authority-crypto.js';
+import { initLeaderboard } from './leaderboard.js';
 const $=id=>document.getElementById(id);
 const MU=3.986004418e14,R=6378137,G0=9.80665;
 let INITIAL=R+260000,TARGET=R+550000,DURATION=10800,DRY=1020,plane=[1,0],scenario='101',contractId=101;
@@ -20,7 +23,7 @@ let setup=[820497600,DURATION,1200,DRY,2400,310,INITIAL,0,0,0,Math.sqrt(MU/INITI
 const canvas=$('plan-canvas'),ctx=canvas.getContext('2d');
 const lensCanvas=$('lens-canvas'),lensCtx=lensCanvas.getContext('2d');
 let wasm,nodes=[],compiledOrder=[],selected=-1,preview=[],lunarPreview=[],actual=null,lastReport=null,lastLunarInfo=null,worker=null,timer=null,locked=null,drag=null,draws=0,messages=0,sequence=0;
-let activeLens=null,activeTerm=null,lensPhase=0,lensDraws=0,lastComputeMs=null,lastCapture=null,lastRecorder=null,engineLab=null;
+let activeLens=null,activeTerm=null,lensPhase=0,lensDraws=0,lastComputeMs=null,lastCapture=null,lastRecorder=null,engineLab=null,authorityPending=0;
 // The design the stage actually flies. The lab can be mid-edit without this
 // changing: only "Fit this engine to the stage" commits it. mission_contract()
 // rebuilds the baseline, so every reconfigure must re-apply this afterwards or
@@ -179,15 +182,17 @@ function workerPayload(isLocked){
   if(isLocked){const p=locked.prediction;payload.locked=[p.dv,p.apo*1000,p.peri*1000,p.fuel,p.time,Number.isFinite(p.miss)?p.miss:NaN];}
   return payload;
 }
-function startFlight(isLocked,version=++sequence){
+function startFlight(isLocked,version=++sequence,flightContext=null){
   cancelFlight();worker=new Worker('./mission-worker.js',{type:'module'});const current=worker;
   current.onmessage=({data})=>{messages++;if(worker!==current||version!==sequence)return;current.terminate();worker=null;
     if(data.error){$('plan-status').textContent=data.error;$('plan-status').classList.add('failure');if(isLocked)$('execute-status').textContent=data.error;return;}
     actual=data.points;lastReport=data.report;lastCapture=data.capture??null;lastBoilOff=data.boilOff??null;lastDelegationMask=data.delegationMask??0;lastRecorder=null;lastComputeMs=Number.isFinite(data.computeMs)?data.computeMs:null;lastLunarInfo=data.lunarInfo?.[0]?data.lunarInfo:null;if(data.lunar?.length)lunarPreview=data.lunar;updateCausal();draw();$('plan-status').textContent='Flight model ready. No simulation runs while idle.';annotateAcronyms($('plan-status'));
-    if(isLocked)showDebrief(data.report);
+    if(isLocked)showDebrief(data.report,flightContext,version);
   };
   current.onerror=()=>{if(worker!==current)return;worker.terminate();worker=null;$('plan-status').textContent='Flight worker failed.';if(isLocked)$('execute-status').textContent='Flight worker failed.';};
-  messages++;current.postMessage(workerPayload(isLocked));
+  const payload=workerPayload(isLocked);
+  if(flightContext){payload.attemptMode=flightContext.ticket?.mode??1;payload.callsign=flightContext.callsign;}
+  messages++;current.postMessage(payload);
 }
 function prefill(){
   const state=readState(wasm,DURATION),metrics=orbitMetrics(state);if(!metrics){$('execute-status').textContent='The ideal orbit has no finite farthest point.';return false;}
@@ -195,7 +200,7 @@ function prefill(){
   $('predict-apo').value=metrics.apo.toFixed(3);$('predict-peri').value=metrics.peri.toFixed(3);
   $('predict-fuel').value=(state[6]-DRY).toFixed(3);$('predict-time').value=String(DURATION);$('predict-miss').value='';$('execute-status').textContent='';return true;
 }
-function showDebrief(report){
+function showDebrief(report,flightContext,version){
   const [mass,apo,peri,e,rescueScore,dv]=report,p=locked.prediction;
   const drift=report[28]*180/Math.PI,inclination=report[26]*180/Math.PI;
   const impacted=report[30]===1,entry=report[31],evaluation=report[29],attrEnd=report[18],truncated=report[19]===1;
@@ -250,40 +255,71 @@ function showDebrief(report){
     const note=document.createElement('div');note.className='attribution-note';note.textContent=`Signed contributions sum to the total error ${scenario==='102'?fmt(report[14]*180/Math.PI,3)+'°':fmt(report[14]/1000,2)+' km'}; efficiency residual ${fmt(report[17],9)}. Attribution epoch ${fmt(attrEnd,1)} s. Exact four-player Shapley uses 16 coalition propagations${lastComputeMs!==null?`; flight, loss isolation and attribution took ${fmt(lastComputeMs,1)} ms in this worker`:''}.`;list.append(note);
   }
   const elo=document.createElement('p');elo.className='elo-update';elo.id='elo-result';
-  const requested=$('attempt-mode')?.value??'ranked';
-  const missionRating=identity.profile()?.missionElo[String(contractId)]??CONTRACT_RATINGS[contractId]??1200;
-  const outcome=identity.recordFlight({contractId,score,mode:requested,missionRating});
-  if(outcome.ranked){
-    elo.textContent=`Ranked flight certified. Astro-Elo ${fmt(outcome.before,0)} → ${fmt(outcome.after,1)} (${outcome.delta>=0?'+':''}${fmt(outcome.delta,1)}, K=${outcome.k}); contract rating ${fmt(outcome.missionBefore,0)} → ${fmt(outcome.missionAfter,1)}. Contract ${contractId} now has a locked official certificate; further attempts are practice.`;
+  const signed=document.createElement('p');signed.className='profile-note';signed.id='recorder-status';
+  const cert=document.createElement('p');cert.className='verify-verdict';cert.id='certification-status';
+  cert.textContent='UNVERIFIED LOCAL / PRACTICE';
+  const active=identity.profile();
+  const activeKey=active.publicKey.map(b=>b.toString(16).padStart(2,'0')).join('');
+  if(activeKey===flightContext.pubkey){
+    const outcome=identity.recordFlight({contractId,score});
+    elo.textContent=`Practice / pending verification — no local Astro-Elo was awarded. Client-recorded value ${fmt(outcome.after,1)} is not authoritative.`;
+    if(lastCapture){
+      try{
+        const fields=recorder.stampOutcome(lastCapture,{ranked:flightContext.ticket?.mode===0,before:outcome.before,after:outcome.before});
+        lastRecorder=recorder.sign(wasm,fields,flightContext.callsign);
+        signed.textContent=`Flight recorder signed by ${lastRecorder.document.public_id}; digest ${lastRecorder.document.canonical_digest.slice(0,16)}…`;
+      }catch(error){signed.textContent=`Recorder could not be signed: ${String(error.message||error)}`;}
+    }else signed.textContent='No recorder was captured for this flight.';
   }else{
-    elo.textContent=`Practice flight — Astro-Elo unchanged at ${fmt(outcome.after,1)}. ${outcome.alreadyRanked?`Contract ${contractId} already has a certified ranked certificate, so this run cannot change the rating.`:'Practice mode was selected.'}`;
+    lastRecorder=null;
+    elo.textContent='The active license changed during flight; no record was signed or submitted.';
   }
   const actions=document.createElement('div');actions.className='button-row';
   const print=document.createElement('button');print.id='export-pdr';print.textContent='Print debrief (PDF)';print.title='Opens the browser print dialog; choose Save as PDF.';print.addEventListener('click',()=>window.print());actions.append(print);
-  // Sign the recorder now that the rating outcome is settled. Signing is cheap
-  // and stays on this thread so the license secret never enters a worker.
-  const signed=document.createElement('p');signed.className='profile-note';signed.id='recorder-status';
-  if(lastCapture){
-    try{
-      const fields=recorder.stampOutcome(lastCapture,{ranked:outcome.ranked,before:outcome.before,after:outcome.after});
-      lastRecorder=recorder.sign(wasm,fields,identity.profile().callsign);
-      // A ranked certificate is issued once, so keep the signed document with
-      // the certificate; a later reload must still be able to export it.
-      if(outcome.ranked)identity.attachCertificate(contractId,lastRecorder.json);
-      signed.textContent=`Flight recorder signed by ${lastRecorder.document.public_id}. ${outcome.ranked?'Ranked certificate':'Practice record'}; canonical digest ${lastRecorder.document.canonical_digest.slice(0,16)}…`;
-    }catch(error){signed.textContent=`Recorder could not be signed: ${String(error.message||error)}`;}
-  }else{signed.textContent='No recorder was captured for this flight.';}
   const exportButton=document.createElement('button');exportButton.id='export-fdr';exportButton.textContent='Export signed recorder (.odderon-fdr.json)';exportButton.disabled=!lastRecorder;
   exportButton.addEventListener('click',()=>{if(lastRecorder)recorder.download(`contract-${contractId}.odderon-fdr.json`,`${lastRecorder.json}\n`,'application/json');});
   const dossierButton=document.createElement('button');dossierButton.id='verify-flight';dossierButton.textContent='Verify / Replay Dossier';dossierButton.disabled=!lastCapture;
   dossierButton.addEventListener('click',()=>{
     if(!lastRecorder)return;
     const {fields,callsign}=recorder.fieldsFromJson(lastRecorder.document);
-    openVerify();verifyFields(fields,callsign);
+    openVerify();verifyFields(fields,callsign,lastRecorder.document.server_receipt??null);
   });
   actions.append(exportButton,dossierButton);
-  $('debrief-content').replaceChildren(table,cards,loss,heading,list,elo,signed,actions);
+  $('debrief-content').replaceChildren(table,cards,loss,heading,list,cert,elo,signed,actions);
   annotateAcronyms($('debrief-content'));$('debrief').hidden=false;$('execute-status').textContent=impacted?'Flight ended in impact. The prediction remains locked.':'Flight complete. The prediction remains locked.';annotateAcronyms($('execute-status'));
+  if(flightContext.ticket&&lastRecorder)void settleReceipt(lastRecorder,flightContext,version,cert,elo,actions);
+}
+
+async function settleReceipt(record,context,version,cert,elo,actions){
+  authorityPending++;
+  cert.textContent='Submitting the signed flight for server replay…';
+  try{
+    const response=await authority.submit(record.payload,context.ticket);
+    const r=response?.receipt;
+    if(response?.accepted!==true||r?.attempt_num!==context.ticket.attempt_num||r?.mode!==context.ticket.mode
+      ||response.fdr_hash!==r.fdr_hash||!verifyReceipt(wasm,r,record.document))throw Error('The authority returned an invalid or mismatched receipt.');
+    const accepted=recorder.withReceipt(record,r);
+    // Keep the receipt even if the debrief was closed while submission ran,
+    // but never attach it to a different active identity.
+    const saved=identity.recordReceipt(accepted.json);
+    if(version!==sequence)return;
+    lastRecorder=accepted;
+    cert.textContent=r.mode===0?'★ CERTIFIED SERVER-RANKED RECEIPT':'SERVER-VERIFIED PRACTICE';
+    cert.className=`verify-verdict ${r.mode===0?'is-verified':''}`;
+    elo.textContent=r.mode===0
+      ? `Server-ranked Astro-Elo ${r.elo_before.toFixed(1)} → ${r.elo_after.toFixed(1)} (${(r.elo_after-r.elo_before)>=0?'+':''}${(r.elo_after-r.elo_before).toFixed(1)}); mission rating ${r.mission_elo_after.toFixed(1)}.`
+      : `Server-verified practice — Astro-Elo unchanged at ${r.elo_after.toFixed(1)}.`;
+    if(!saved)elo.textContent+=' Switch back to the signing license to sync this result.';
+    actions.querySelector('#retry-submit')?.remove();
+  }catch(error){
+    if(version!==sequence)return;
+    cert.textContent='UNVERIFIED LOCAL / PRACTICE';
+    elo.textContent=`Authority did not certify this flight: ${String(error.message||error)}. No local rating was awarded.`;
+    if(!actions.querySelector('#retry-submit')){
+      const retry=document.createElement('button');retry.id='retry-submit';retry.textContent='Retry server submission';
+      retry.addEventListener('click',()=>{retry.remove();void settleReceipt(record,context,version,cert,elo,actions);});actions.append(retry);
+    }
+  }finally{authorityPending--;}
 }
 // Warning discriminants follow odd_app::causal::Warning declaration order.
 const CAUSAL_EVIDENCE=[
@@ -531,17 +567,17 @@ $('example').addEventListener('click',()=>{
   else{const v1=Math.sqrt(MU/INITIAL),v2=Math.sqrt(MU/TARGET);nodes=[{time:200,dv:[v1*(Math.sqrt(TARGET/a)-1),0,0]},{time:200+coast,dv:[v2*(1-Math.sqrt(INITIAL/a)),0,0]}];}
   selected=0;updatePreview();prefill();
 });
-// Ranked eligibility belongs to the persistent license, so the control
-// reflects it instead of letting a player farm the same contract.
+// Only the authority decides whether a commit is attempt 1. A local cache
+// never unlocks or blocks ranked eligibility; deliberately chosen practice
+// does not consume the first ranked attempt.
 function updateAttemptMode(reset=false){
   const select=$('attempt-mode');if(!select)return;
-  const certified=identity.isRanked($('mission-select').value);
-  select.querySelector('option[value="ranked"]').disabled=certified;
-  // Switching contracts returns to the eligible default; a certification
-  // forces practice. Mid-planning refreshes leave a deliberate choice alone.
-  if(certified)select.value='practice';else if(reset)select.value='ranked';
+  const available=authority.configured();
+  select.querySelector('option[value="ranked"]').disabled=!available;
+  if(!available)select.value='practice';else if(reset&&!locked)select.value='ranked';
+  select.disabled=!!locked;
   const note=$('attempt-mode-note');
-  if(note)note.textContent=certified?'This contract already has a certified ranked certificate. Further runs are practice and cannot change Astro-Elo.':'Your first execution of this contract is ranked and locks its official certificate.';
+  if(note)note.textContent=available?'Ranked launch commits the design and prediction before the locked flight. The server forces later attempts to verified practice.':'No trusted server key is configured. Local practice and replay are available, but no rating or certification is awarded.';
 }
 identity.onChange(()=>updateAttemptMode());
 $('mission-select').addEventListener('change',()=>{
@@ -569,9 +605,35 @@ $('execute').addEventListener('click',()=>{
   if($('predict-miss').value.trim()!==''&&(!Number.isFinite(miss)||miss<0)){$('execute-status').textContent='Target miss distance must be non-negative.';return;}
   locked=Object.freeze({prediction:Object.freeze({dv:vals[0],apo:vals[1],peri:vals[2],fuel:vals[3],time:vals[4],miss})});
   for(const id of ['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time','predict-miss','prefill','execute'])$(id).disabled=true;
-  $('unlock').hidden=false;$('debrief').hidden=true;$('execute-status').textContent='Prediction locked. Simulating the flight and its comparisons…';engineLab?.setLocked();assembly?.setLocked();syncFields();startFlight(true);
+  $('unlock').hidden=false;$('debrief').hidden=true;engineLab?.setLocked();assembly?.setLocked();syncFields();updateAttemptMode();
+  void launchLocked();
 });
-$('unlock').addEventListener('click',()=>{locked=null;cancelFlight();sequence++;engineLab?.setLocked();assembly?.setLocked();$('unlock').hidden=true;$('debrief').hidden=true;$('execute-status').textContent='';for(const id of ['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time','predict-miss'])$(id).disabled=false;updatePreview();});
+async function launchLocked(){
+  cancelFlight();const version=++sequence;
+  lastReport=null;lastCapture=null;lastRecorder=null;
+  const profile=identity.profile(),pubkey=profile.publicKey.map(b=>b.toString(16).padStart(2,'0')).join('');
+  const context={pubkey,callsign:profile.callsign,ticket:null};
+  if($('attempt-mode').value==='ranked'){
+    authorityPending++;$('execute-status').textContent='Committing the locked design and prediction before flight…';
+    try{
+      if(!configure(wasm,nodes))throw Error('The locked design could not be compiled.');
+      const p=locked.prediction;
+      if(!wasm.mission_lock(p.dv,p.apo*1000,p.peri*1000,p.fuel,p.time,Number.isFinite(p.miss)?p.miss:NaN))throw Error('The locked prediction is invalid.');
+      context.ticket=await authority.commit(wasm,contractId);
+      if(version!==sequence||!locked)return;
+      const current=identity.profile().publicKey.map(b=>b.toString(16).padStart(2,'0')).join('');
+      if(current!==pubkey)throw Error('The active license changed; the committed attempt was not flown.');
+      $('execute-status').textContent=context.ticket.mode===0?'Commit accepted. Simulating the ranked flight…':'This is a later attempt; the server requires practice. Simulating…';
+      startFlight(true,version,context);
+    }catch(error){
+      if(version===sequence)$('execute-status').textContent=`Ranked launch stopped: ${String(error.message||error)}. No locked flight ran. If a response was lost, the attempt may have been consumed; retry may be practice.`;
+    }finally{authorityPending--;}
+  }else{
+    $('execute-status').textContent='Local practice: simulating the locked flight without a server rating…';
+    startFlight(true,version,context);
+  }
+}
+$('unlock').addEventListener('click',()=>{locked=null;cancelFlight();sequence++;engineLab?.setLocked();assembly?.setLocked();updateAttemptMode();$('unlock').hidden=true;$('debrief').hidden=true;$('execute-status').textContent='';for(const id of ['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time','predict-miss'])$(id).disabled=false;updatePreview();});
 canvas.addEventListener('pointerdown',e=>{
   if(locked||!preview.length||e.button!==0)return;const p=mousePoint(e),node=nodes[selected];
   if(node){const state=readState(wasm,node.time),center=toCanvas(state);for(const h of handles(center,state))if(distance(p,h.end)<12){drag={pointer:e.pointerId,key:h.key,start:p,initial:node.dv[{t:0,n:1,w:2}[h.key]],dir:h.dir};startLens(h.key);canvas.setPointerCapture(e.pointerId);return;}if(distance(p,center)<12){drag={pointer:e.pointerId,key:'time'};startLens('time');canvas.setPointerCapture(e.pointerId);return;}}
@@ -587,8 +649,8 @@ canvas.addEventListener('pointermove',e=>{
 function endDrag(e){if(drag&&drag.pointer===e.pointerId){drag=null;stopLens();scheduleFlight();}}
 canvas.addEventListener('pointerup',endDrag);canvas.addEventListener('pointercancel',endDrag);canvas.addEventListener('lostpointercapture',endDrag);canvas.addEventListener('pointerleave',e=>{if(!drag&&!intoLens(e))stopLens();});
 new ResizeObserver(draw).observe(canvas.parentElement);
-window.missionDiagnostics=Object.freeze({wasm:()=>wasm,recorder:()=>lastRecorder,verification:()=>verificationResult(),openVerify,profile:()=>identity.profile(),isRanked:id=>identity.isRanked(id),openProfile,get nodeTimeRange(){return nodeTimeRange();},clampNodeTime,get nodeMarker(){const n=nodes[selected];if(!n||!wasm)return null;const s=readState(wasm,n.time);return s.some(x=>!Number.isFinite(x))?null:toCanvas(s);},get pathEnds(){return preview.length?[toCanvas(preview[0].state),toCanvas(preview[preview.length-1].state)]:null;},get nodes(){return nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));},get pending(){return !!worker||timer!==null;},get draws(){return draws;},get messages(){return messages;},get locked(){return !!locked;},get report(){return lastReport?[...lastReport]:null;},get computeMs(){return lastComputeMs;},get lunarInfo(){return lastLunarInfo?[...lastLunarInfo]:null;},get lens(){return activeLens;},get lensDraws(){return lensDraws;},get lensPending(){return lensGovernor.frame!==null;},get engine(){return engineLab?engineLab.diagnostics():null;},get appliedEngine(){return appliedEngine?{...appliedEngine}:null;},get assembly(){return assembly?assembly.diagnostics():null;},get boilOff(){return lastBoilOff;},get flownDelegationMask(){return lastDelegationMask;},get causalValid(){return wasm?wasm.mission_causal_valid()===1&&wasm.mission_engine_causal_valid()===1:false;},get acronymViolations(){return acronymViolations();},get handles(){if(selected<0||!wasm)return [];const state=readState(wasm,nodes[selected].time);return handles(toCanvas(state),state).map(h=>({key:h.key,end:h.end}));}});
-try{const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error('The physics module is not available. Build it first.');({instance:{exports:wasm}}=await WebAssembly.instantiate(await response.arrayBuffer(),{}));identity.init(wasm);initProfile();initVerify(wasm);loadGlossary(wasm);
+window.missionDiagnostics=Object.freeze({wasm:()=>wasm,recorder:()=>lastRecorder,verification:()=>verificationResult(),openVerify,profile:()=>identity.profile(),isRanked:id=>identity.isRanked(id),openProfile,get nodeTimeRange(){return nodeTimeRange();},clampNodeTime,get nodeMarker(){const n=nodes[selected];if(!n||!wasm)return null;const s=readState(wasm,n.time);return s.some(x=>!Number.isFinite(x))?null:toCanvas(s);},get pathEnds(){return preview.length?[toCanvas(preview[0].state),toCanvas(preview[preview.length-1].state)]:null;},get nodes(){return nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));},get pending(){return !!worker||timer!==null||authorityPending>0;},get draws(){return draws;},get messages(){return messages;},get locked(){return !!locked;},get report(){return lastReport?[...lastReport]:null;},get computeMs(){return lastComputeMs;},get lunarInfo(){return lastLunarInfo?[...lastLunarInfo]:null;},get lens(){return activeLens;},get lensDraws(){return lensDraws;},get lensPending(){return lensGovernor.frame!==null;},get engine(){return engineLab?engineLab.diagnostics():null;},get appliedEngine(){return appliedEngine?{...appliedEngine}:null;},get assembly(){return assembly?assembly.diagnostics():null;},get boilOff(){return lastBoilOff;},get flownDelegationMask(){return lastDelegationMask;},get causalValid(){return wasm?wasm.mission_causal_valid()===1&&wasm.mission_engine_causal_valid()===1:false;},get acronymViolations(){return acronymViolations();},get handles(){if(selected<0||!wasm)return [];const state=readState(wasm,nodes[selected].time);return handles(toCanvas(state),state).map(h=>({key:h.key,end:h.end}));}});
+try{const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error('The physics module is not available. Build it first.');({instance:{exports:wasm}}=await WebAssembly.instantiate(await response.arrayBuffer(),{}));identity.init(wasm);initProfile();initVerify(wasm);initLeaderboard();updateAttemptMode(true);loadGlossary(wasm);
 // The lab reads canonical stage numbers back after a redesign so the planner,
 // the worker payload and the signed recorder cannot disagree about the engine.
 engineLab=createLab({wasm,isLocked:()=>!!locked,annotate:annotateAcronyms,onDiagnose:()=>renderEngineCausal(),onApply:baselineOnly=>{

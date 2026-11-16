@@ -2,10 +2,20 @@
 import * as identity from './identity.js';
 import { download } from './recorder.js';
 import { openVerify } from './verify.js';
+import * as authority from './authority.js';
 
 const $ = id => document.getElementById(id);
 let dialog = null;
 let lastFocused = null;
+let syncKey = null;
+
+export async function syncProfile() {
+  const profile = identity.profile();
+  if (!profile || !authority.configured()) return false;
+  const key = profile.publicKey.map(b => b.toString(16).padStart(2, '0')).join('');
+  try { return identity.syncPlayer(await authority.player(key)); }
+  catch { return false; }
+}
 
 function text(tag, value, className) {
   const node = document.createElement(tag);
@@ -46,7 +56,8 @@ function render() {
   if (!profile || !dialog) return;
   $('profile-callsign-value').textContent = profile.callsign;
   $('profile-public-id').textContent = profile.publicId;
-  $('profile-elo').textContent = profile.elo.toFixed(1);
+  $('profile-elo').textContent = profile.ratingSource === 'unverified' ? '—' : profile.elo.toFixed(1);
+  $('profile-rating-source').textContent = profile.ratingSource === 'server' ? 'Synced from the authority.' : profile.ratingSource === 'receipt' ? 'Last verified receipt; sync for current rating.' : 'Unverified local state; no server rating.';
   $('profile-flights').textContent = String(profile.flights);
   $('profile-callsign').value = profile.callsign;
   const body = $('profile-secrets');
@@ -58,7 +69,7 @@ function render() {
   ranked.replaceChildren();
   const entries = Object.entries(profile.ranked);
   if (!entries.length) {
-    ranked.append(text('p', 'No contract has a certified ranked certificate yet. Your first successful execution of each contract is ranked; later runs are practice.', 'profile-note'));
+    ranked.append(text('p', 'No verified server-ranked receipt is stored for this license.', 'profile-note'));
   } else {
     const table = document.createElement('table');
     table.className = 'prediction-table';
@@ -95,7 +106,7 @@ function render() {
     ranked.append(table);
   }
   $('topbar-callsign').textContent = profile.callsign;
-  $('topbar-elo').textContent = profile.elo.toFixed(0);
+  $('topbar-elo').textContent = profile.ratingSource === 'unverified' ? '—' : profile.elo.toFixed(0);
 }
 
 function build() {
@@ -113,6 +124,7 @@ function build() {
       <div><span class="field-label">Astro-Elo</span><strong id="profile-elo">—</strong></div>
       <div><span class="field-label">Flights</span><strong id="profile-flights">—</strong></div>
     </div>
+    <p id="profile-rating-source" class="profile-note"></p><button type="button" id="profile-sync">Sync rating from authority</button>
     <form id="profile-callsign-form">
       <label class="field-label" for="profile-callsign">Change callsign</label>
       <div class="profile-row"><input id="profile-callsign" maxlength="24" autocomplete="off"><button type="submit">Save callsign</button></div>
@@ -149,10 +161,25 @@ function build() {
   });
   // Click outside the panel closes it.
   dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
-  $('profile-callsign-form').addEventListener('submit', event => {
+  $('profile-callsign-form').addEventListener('submit', async event => {
     event.preventDefault();
-    const result = identity.setCallsign($('profile-callsign').value);
-    $('profile-callsign-status').textContent = result.ok ? 'Callsign saved.' : result.error;
+    const name = $('profile-callsign').value.trim();
+    if (!name || name.length > 24 || !/^[\w \-]+$/.test(name)) {
+      $('profile-callsign-status').textContent = 'Use 1–24 letters, digits, spaces, dash or underscore.';
+      return;
+    }
+    const key = identity.profile().publicId;
+    try {
+      const registered = authority.configured() ? await authority.registerCallsign(name) : null;
+      if (identity.profile().publicId !== key) throw Error('The active license changed; try again.');
+      const result = identity.setCallsign(registered?.name ?? name);
+      $('profile-callsign-status').textContent = result.ok
+        ? (registered ? 'Callsign registered to this license.' : 'Saved locally only; no authority is configured.') : result.error;
+    } catch (error) { $('profile-callsign-status').textContent = String(error.message || error); }
+  });
+  $('profile-sync').addEventListener('click', async () => {
+    $('profile-rating-source').textContent = 'Syncing…';
+    if (!await syncProfile()) $('profile-rating-source').textContent = 'Authority unavailable; cached values are not authoritative.';
   });
   $('profile-restore-input').addEventListener('input', () => {
     const result = identity.checkRestore($('profile-restore-input').value);
@@ -184,8 +211,14 @@ function build() {
     $('profile-import-status').className = `profile-note ${result.ok ? 'is-valid' : ''}`;
     event.target.value = '';
   });
-  identity.onChange(render);
+  identity.onChange(profile => {
+    render();
+    const key = profile?.publicId;
+    if (key && key !== syncKey) { syncKey = key; void syncProfile(); }
+  });
   render();
+  syncKey = identity.profile()?.publicId;
+  void syncProfile();
 }
 
 export function openProfile() {

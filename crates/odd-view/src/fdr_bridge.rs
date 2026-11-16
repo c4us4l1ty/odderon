@@ -104,6 +104,18 @@ pub extern "C" fn mission_fdr_parse() -> i32 {
     1
 }
 
+/// Check the pilot's signature without running the expensive replay.
+#[no_mangle]
+pub extern "C" fn mission_fdr_signature_valid() -> i32 {
+    i32::from(
+        RECORDER
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|fdr| fdr.verify_signature().is_ok()),
+    )
+}
+
 /// The digest is recomputed from parsed fields, never taken from a mutable
 /// JSON `canonical_digest` property supplied by the browser.
 #[no_mangle]

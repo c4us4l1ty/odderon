@@ -173,13 +173,21 @@ export function sign(wasm, fields, callsign) {
   return { json, document: JSON.parse(json), payload: readString(wasm, 3) };
 }
 
+/// The receipt is a separate server-signed envelope; FDR v3 canonical bytes
+/// remain unchanged. It travels with the downloadable recorder.
+export function withReceipt(record, receipt) {
+  const document = { ...record.document, server_receipt: receipt };
+  return { ...record, document, json: JSON.stringify(document, null, 2) };
+}
+
 /// Turn either a JSON document or a #verify= payload into worker inputs.
 export function prepareVerification(wasm, text) {
   const trimmed = String(text).trim();
   if (!trimmed) throw Error('paste a recorder file or a #verify= payload');
   if (trimmed.startsWith('{')) {
-    const { fields, callsign } = fieldsFromJson(JSON.parse(trimmed));
-    return { fields, callsign };
+    const document = JSON.parse(trimmed);
+    const { fields, callsign } = fieldsFromJson(document);
+    return { fields, callsign, receipt: document.server_receipt ?? null };
   }
   absorbText(wasm, trimmed.includes('#verify=') ? trimmed.slice(trimmed.indexOf('#verify=')) : trimmed);
   if (wasm.mission_fdr_from_payload() !== 1) throw Error('that verification payload could not be decoded');

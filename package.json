@@ -6,7 +6,8 @@
     "test": "node --test tests/browser/*.test.js",
     "test:browser": "node tests/browser/observatory.mjs",
     "test:idle": "node tests/browser/idle-cpu.mjs",
-    "test:assembly": "node tests/browser/assembly.mjs"
+    "test:assembly": "node tests/browser/assembly.mjs",
+    "test:authority": "node tests/browser/authority.mjs"
   },
   "devDependencies": {
     "@sparticuz/chromium": "141.0.0",
