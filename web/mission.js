@@ -4,9 +4,9 @@ import { Governor } from './governor.js';
 import { createLab } from './engine-lab.js';
 import { createAssembly, assemblyPayload, applyAssembly } from './assembly.js';
 import * as identity from './identity.js';
-import { initProfile, openProfile } from './profile.js';
+import { initProfile, openProfile, syncProfile } from './profile.js';
 import * as recorder from './recorder.js';
-import { initVerify, openVerify, verifyFields, result as verificationResult } from './verify.js';
+import { initVerify, openVerify, result as verificationResult } from './verify.js';
 import * as authority from './authority.js';
 import { verifyReceipt } from './authority-crypto.js';
 import { initLeaderboard } from './leaderboard.js';
@@ -282,9 +282,9 @@ function showDebrief(report,flightContext,version){
   exportButton.addEventListener('click',()=>{if(lastRecorder)recorder.download(`contract-${contractId}.odderon-fdr.json`,`${lastRecorder.json}\n`,'application/json');});
   const dossierButton=document.createElement('button');dossierButton.id='verify-flight';dossierButton.textContent='Verify / Replay Dossier';dossierButton.disabled=!lastCapture;
   dossierButton.addEventListener('click',()=>{
-    if(!lastRecorder)return;
-    const {fields,callsign}=recorder.fieldsFromJson(lastRecorder.document);
-    openVerify();verifyFields(fields,callsign,lastRecorder.document.server_receipt??null);
+    // Show the very document being replayed beside its verdict, rather than
+    // leaving an older pasted recorder in the verification input.
+    if(lastRecorder)openVerify(lastRecorder.json);
   });
   actions.append(exportButton,dossierButton);
   $('debrief-content').replaceChildren(table,cards,loss,heading,list,cert,elo,signed,actions);
@@ -292,7 +292,7 @@ function showDebrief(report,flightContext,version){
   if(flightContext.ticket&&lastRecorder)void settleReceipt(lastRecorder,flightContext,version,cert,elo,actions);
 }
 
-async function settleReceipt(record,context,version,cert,elo,actions){
+async function settleReceipt(record,context,version,cert,elo,actions,receiptRevision=identity.profileRevision()){
   authorityPending++;
   cert.textContent='Submitting the signed flight for server replay…';
   try{
@@ -303,7 +303,10 @@ async function settleReceipt(record,context,version,cert,elo,actions){
     const accepted=recorder.withReceipt(record,r);
     // Keep the receipt even if the debrief was closed while submission ran,
     // but never attach it to a different active identity.
-    const saved=identity.recordReceipt(accepted.json);
+    const saved=identity.recordReceipt(accepted.json,{expectedRevision:receiptRevision});
+    // Receipts are immutable historical snapshots, and concurrent submissions
+    // can settle out of order. Refresh the current rating after accepting one.
+    if(saved)void syncProfile();
     if(version!==sequence)return;
     lastRecorder=accepted;
     cert.textContent=r.mode===0?'★ CERTIFIED SERVER-RANKED RECEIPT':'SERVER-VERIFIED PRACTICE';
@@ -319,7 +322,9 @@ async function settleReceipt(record,context,version,cert,elo,actions){
     elo.textContent=`Authority did not certify this flight: ${String(error.message||error)}. No local rating was awarded.`;
     if(!actions.querySelector('#retry-submit')){
       const retry=document.createElement('button');retry.id='retry-submit';retry.textContent='Retry server submission';
-      retry.addEventListener('click',()=>{retry.remove();void settleReceipt(record,context,version,cert,elo,actions);});actions.append(retry);
+      // The retry refers to the original submission, so retain its original
+      // profile revision rather than making an old receipt look newly ordered.
+      retry.addEventListener('click',()=>{retry.remove();void settleReceipt(record,context,version,cert,elo,actions,receiptRevision);});actions.append(retry);
     }
   }finally{authorityPending--;}
 }

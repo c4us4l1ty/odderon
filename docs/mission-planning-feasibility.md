@@ -480,7 +480,8 @@ terminal-state hash to reproduce bit for bit.
 This is an experimental prototype. There is no launch-window optimizer,
 B-plane targeting, lunar orbit insertion, terrain/landing model, space-weather
 atmosphere or thrust steering law. Cryogenic loss is evaluated one-way and is
-not subtracted from orbital mass or burn fuel; see [thermal.md](thermal.md).
+not subtracted from orbital mass or burn fuel. The v3 tank geometry also has an
+unresolved ullage/envelope inconsistency; see [thermal.md](thermal.md).
 The authority cannot prevent prior simulation on an untrusted client or a new
 key, and its checkpoint path is a full replay. The perigee splitter is a
 bounded practice-only forward search for two or three equal kicks, not a

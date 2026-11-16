@@ -41,9 +41,13 @@ try {
   const C = bundledChromium.default ?? bundledChromium;
   browser = await chromium.launch({ executablePath: process.env.CHROME_BIN || await C.executablePath(), headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage', '--no-proxy-server'] });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-  const errors = [], submitBodies = [];
+  const errors = [], submitBodies = [], commitBodies = [];
   page.on('pageerror', error => errors.push(String(error)));
-  page.on('request', request => { if (request.method() === 'POST' && request.url().endsWith('/api/v1/submit')) submitBodies.push(request.postData()); });
+  page.on('request', request => {
+    if (request.method() !== 'POST') return;
+    if (request.url().endsWith('/api/v1/submit')) submitBodies.push(request.postData());
+    if (request.url().endsWith('/api/v1/commit')) commitBodies.push(request.postData());
+  });
   await page.addInitScript(() => {
     window.authorityEvents = [];
     const fetchNative = window.fetch.bind(window);
@@ -87,6 +91,10 @@ try {
 
   await page.click('#example');
   await page.waitForFunction(() => !missionDiagnostics.pending, null, { timeout: 120000 });
+  // Signed FDRs distinguish -0 from +0. Exercise an actual browser input so
+  // receipt attachment, exported JSON, verification and cache must retain it.
+  await page.fill('#node-n', '-0');
+  assert.equal(await page.evaluate(() => Object.is(missionDiagnostics.nodes[0].dv[1], -0)), true);
   await page.click('#prefill');
   assert.equal(await page.locator('#attempt-mode').inputValue(), 'ranked');
   // Include *all* flight workers, not just locked ones: an unlocked numerical
@@ -103,6 +111,45 @@ try {
   assert.equal(first.record.document.server_receipt.attempt_num, 1);
   assert.equal(first.record.document.server_receipt.fdr_hash, first.record.document.canonical_digest);
   assert.notEqual(first.profile.elo, 1200);
+  // Settle the automatic post-receipt refresh so the deliberately delayed
+  // GET below is the only player request being controlled by this test.
+  await page.evaluate(async () => (await import('./profile.js')).syncProfile());
+  // A player GET can have been issued before the server accepted this
+  // receipt. Deliver its older snapshot afterwards; it must not roll back
+  // the newly verified rating or label the stale value as current server data.
+  const staleRating = await page.evaluate(async ({ text, receipt }) => {
+    const identity = await import('./identity.js'), profile = await import('./profile.js');
+    const nativeFetch = window.fetch;
+    let release;
+    window.fetch = () => new Promise(resolve => { release = resolve; });
+    try {
+      const sync = profile.syncProfile();
+      const saved = identity.recordReceipt(text);
+      release(new Response(JSON.stringify({ pubkey: receipt.pubkey, elo: receipt.elo_before,
+        ranked_count: 0, callsign: null }), { status: 200, headers: { 'content-type': 'application/json' } }));
+      const oldSync = await sync;
+      return { saved, oldSync, elo: identity.profile().elo, source: identity.profile().ratingSource };
+    } finally { window.fetch = nativeFetch; }
+  }, { text: first.record.json, receipt: first.record.document.server_receipt });
+  assert.deepEqual(staleRating, { saved: true, oldSync: null, elo: first.profile.elo, source: 'server' },
+    'a stale player response must not overwrite a later receipt');
+  const syncRace = await page.evaluate(async receipt => {
+    const identity = await import('./identity.js'), profile = await import('./profile.js');
+    const nativeFetch = window.fetch, pending = [];
+    window.fetch = () => new Promise(resolve => pending.push(resolve));
+    const response = elo => new Response(JSON.stringify({ pubkey: receipt.pubkey, elo,
+      ranked_count: 1, callsign: null }), { status: 200, headers: { 'content-type': 'application/json' } });
+    try {
+      const older = profile.syncProfile(), newer = profile.syncProfile();
+      pending[1](response(receipt.elo_after));
+      const newerResult = await newer;
+      pending[0](response(receipt.elo_before));
+      const olderResult = await older;
+      return { newerResult, olderResult, elo: identity.profile().elo, source: identity.profile().ratingSource };
+    } finally { window.fetch = nativeFetch; }
+  }, first.record.document.server_receipt);
+  assert.deepEqual(syncRace, { newerResult: true, olderResult: null, elo: first.profile.elo, source: 'server' },
+    'a slower earlier sync must not overwrite a newer one');
   const at = event => first.events.indexOf(event);
   assert.ok(at('commit-request') >= 0 && at('commit-request') < at('commit-response'));
   assert.ok(at('commit-response') < at('flight-start'), first.events.join(' > '));
@@ -148,12 +195,23 @@ try {
   await page.click('#export-fdr');
   const saved = JSON.parse(await readFile(await (await download).path(), 'utf8'));
   assert.deepEqual(saved.server_receipt, first.record.document.server_receipt);
+  assert.equal(Object.is(saved.command_timeline[0].delta_v_tnw[1], -0), true, 'export must retain the signed negative zero');
+  assert.equal(await page.evaluate(() => missionDiagnostics.isRanked(101)), true, 'the valid ranked recorder must be cached');
   await page.click('#verify-flight');
   await page.waitForFunction(() => missionDiagnostics.verification()?.code === 1, null, { timeout: 180000 });
   assert.match(await page.locator('#verify-certification').textContent(), /CERTIFIED SERVER-RANKED/);
   const verified = await page.evaluate(() => missionDiagnostics.verification());
   assert.match(verified.dossier, /id="annex-d"/);
   assert.ok(verified.dossier.includes(first.record.document.server_receipt.server_sig));
+  assert.equal(Object.is(JSON.parse(verified.json).command_timeline[0].delta_v_tnw[1], -0), true,
+    'the verification worker must also export the original signed zero');
+  const verifiedDownload = page.waitForEvent('download');
+  await page.click('#verify-download-json');
+  const verifiedText = await readFile(await (await verifiedDownload).path(), 'utf8');
+  await page.evaluate(text => missionDiagnostics.openVerify(text), verifiedText);
+  await page.waitForFunction(() => missionDiagnostics.verification()?.code === 1, null, { timeout: 180000 });
+  assert.match(await page.locator('#verify-certification').textContent(), /CERTIFIED SERVER-RANKED/,
+    'a verifier-exported recorder must still verify and retain its receipt');
   // A separate browser context acts as a phone/recruiter with no pilot
   // storage. Independently decode the printed QR and follow the public link;
   // certification must come back from the pinned-key-checked receipt.
@@ -171,6 +229,121 @@ try {
   await page.click('#verify-close');
   console.log('PASS ranked dossier QR independently decodes and certifies in a fresh browser');
 
+  // Complete old work *after* a newer invalid input. A verification verdict
+  // belongs to one document; neither a stale worker nor a delayed public
+  // fetch may replace the result for the newer document.
+  const verificationRaces = await page.evaluate(async ({ text, payload, receipt }) => {
+    const verify = await import('./verify.js');
+    const NativeWorker = window.Worker, nativeFetch = window.fetch;
+    const workers = [];
+    window.Worker = class {
+      constructor() { this.terminated = false; workers.push(this); }
+      postMessage() {}
+      terminate() { this.terminated = true; }
+    };
+    try {
+      verify.openVerify(text);
+      const old = workers.at(-1);
+      verify.verifyText('{invalid');
+      old.onmessage({ data: { verification: { code: 1, verdict: 'STALE VERIFIED', certification: '★ STALE', json: '', dossier: null } } });
+      const workerRace = { code: verify.result()?.code, terminated: old.terminated };
+
+      verify.openVerify(text);
+      const edited = workers.at(-1);
+      const input = document.getElementById('verify-input');
+      input.value = '{edited';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      edited.onmessage({ data: { verification: { code: 1, verdict: 'STALE VERIFIED', certification: '★ STALE', json: '', dossier: null } } });
+      const editRace = { code: verify.result()?.code ?? null, terminated: edited.terminated,
+        verdict: document.getElementById('verify-verdict').textContent };
+
+      let releaseFetch;
+      window.fetch = () => new Promise(resolve => { releaseFetch = resolve; });
+      const fetching = verify.openPublicFlight(receipt.fdr_hash);
+      const count = workers.length;
+      verify.verifyText('{newer-invalid');
+      releaseFetch(new Response(JSON.stringify({ fdr_payload: payload, receipt }),
+        { status: 200, headers: { 'content-type': 'application/json' } }));
+      await fetching;
+      const fetchRace = { code: verify.result()?.code, startedWorkers: workers.length - count };
+
+      const closedFetch = verify.openPublicFlight(receipt.fdr_hash);
+      const beforeReopen = workers.length;
+      document.getElementById('verify-dialog').close();
+      verify.openVerify(); // close events are delivered asynchronously
+      releaseFetch(new Response(JSON.stringify({ fdr_payload: payload, receipt }),
+        { status: 200, headers: { 'content-type': 'application/json' } }));
+      await closedFetch;
+      const reopenRace = { code: verify.result()?.code ?? null, startedWorkers: workers.length - beforeReopen,
+        busy: !document.getElementById('verify-busy').hidden };
+
+      let releaseFile;
+      const fileInput = document.getElementById('verify-import');
+      Object.defineProperty(fileInput, 'files', { configurable: true,
+        value: [{ text: () => new Promise(resolve => { releaseFile = resolve; }) }] });
+      fileInput.dispatchEvent(new Event('change'));
+      verify.verifyText('{newer-than-file');
+      const beforeFile = workers.length;
+      releaseFile(text);
+      await Promise.resolve();
+      await Promise.resolve();
+      const fileRace = { code: verify.result()?.code, startedWorkers: workers.length - beforeFile,
+        input: document.getElementById('verify-input').value };
+      delete fileInput.files;
+
+      verify.verifyFields([], 'test');
+      const fieldsInput = document.getElementById('verify-input').value;
+      return { workerRace, editRace, fetchRace, reopenRace, fileRace, fieldsInput };
+    } finally {
+      window.Worker = NativeWorker;
+      window.fetch = nativeFetch;
+      document.getElementById('verify-dialog').close();
+    }
+  }, { text: first.record.json, payload: first.record.payload, receipt: first.record.document.server_receipt });
+  assert.deepEqual(verificationRaces.workerRace, { code: 0, terminated: true }, 'an invalid newer input cancels the old replay');
+  assert.deepEqual(verificationRaces.editRace, { code: null, terminated: true, verdict: '' }, 'editing input clears and cancels its old verdict');
+  assert.deepEqual(verificationRaces.fetchRace, { code: 0, startedWorkers: 0 }, 'an old public fetch cannot replace newer input');
+  assert.deepEqual(verificationRaces.reopenRace, { code: null, startedWorkers: 0, busy: false }, 'closing and reopening cancels an old fetch');
+  assert.deepEqual(verificationRaces.fileRace, { code: 0, startedWorkers: 0, input: '{newer-than-file' }, 'an old file read cannot replace newer input');
+  assert.equal(verificationRaces.fieldsInput, '', 'a field-based replay must not display an unrelated document');
+  console.log('PASS stale replay workers, file reads and public fetches cannot overwrite newer verification');
+
+  // A queued close event from the old dialog must not cancel the refresh of
+  // an immediately reopened leaderboard.
+  const leaderboardRace = await page.evaluate(async () => {
+    const leaderboard = await import('./leaderboard.js');
+    const nativeFetch = window.fetch, pending = [];
+    window.fetch = () => new Promise(resolve => pending.push(resolve));
+    let dialog;
+    try {
+      leaderboard.openLeaderboard();
+      dialog = document.getElementById('leaderboard-dialog');
+      const closed = new Promise(resolve => dialog.addEventListener('close', resolve, { once: true }));
+      dialog.close();
+      leaderboard.openLeaderboard();
+      await closed;
+      for (const resolve of pending) resolve(new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } }));
+      const status = document.getElementById('leaderboard-status');
+      return await new Promise(resolve => {
+        const observer = new MutationObserver(() => {
+          if (!status.textContent.startsWith('Loading')) {
+            clearTimeout(timer); observer.disconnect(); resolve(status.textContent);
+          }
+        });
+        const timer = setTimeout(() => { observer.disconnect(); resolve(status.textContent); }, 5000);
+        observer.observe(status, { childList: true, characterData: true, subtree: true });
+        if (!status.textContent.startsWith('Loading')) {
+          clearTimeout(timer); observer.disconnect(); resolve(status.textContent);
+        }
+      });
+    } finally {
+      window.fetch = nativeFetch;
+      if (dialog?.open) dialog.close();
+    }
+  });
+  assert.match(leaderboardRace, /^No ranked flights on page 1/, 'an old close event must not cancel the new refresh');
+  console.log('PASS rapid leaderboard reopen retains its new refresh');
+
   await page.click('#open-leaderboard');
   await page.waitForSelector('.leaderboard-replay', { timeout: 30000 });
   assert.match(await page.locator('#leaderboard-rows').textContent(), /ORBIT-PILOT/);
@@ -184,7 +357,7 @@ try {
   // may never display a certified banner or a certified dossier annex.
   const tampered = structuredClone(saved);
   tampered.server_receipt.elo_after = 2999;
-  await page.evaluate(doc => missionDiagnostics.openVerify(JSON.stringify(doc)), tampered);
+  await page.evaluate(async doc => missionDiagnostics.openVerify((await import('./recorder.js')).stringifySigned(doc)), tampered);
   await page.waitForFunction(() => missionDiagnostics.verification() !== null, null, { timeout: 180000 });
   const tamperedVerdict = await page.evaluate(() => missionDiagnostics.verification());
   assert.equal(tamperedVerdict.code, 1, JSON.stringify(tamperedVerdict));
@@ -195,11 +368,11 @@ try {
   // localStorage cannot manufacture a certified rating; when the authority
   // is unavailable on reload, the forged cache is discarded. On sync the
   // authority's actual rating is restored.
-  await page.evaluate(doc => {
+  await page.evaluate(async doc => {
     const key = 'odderon.flightLicense.v1', s = JSON.parse(localStorage.getItem(key));
     s.elo = 2999;
     s.ranked['101'].elo = 2999;
-    s.ranked['101'].recorder = JSON.stringify(doc);
+    s.ranked['101'].recorder = (await import('./recorder.js')).stringifySigned(doc);
     localStorage.setItem(key, JSON.stringify(s));
   }, tampered);
   const blockPlayer = route => route.abort();
@@ -247,7 +420,29 @@ try {
   const oldRetry = await fetch(`${base}/api/v1/submit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: secondBody });
   assert.equal(oldRetry.status, 200, `old practice retry: ${await oldRetry.clone().text()}`);
   assert.deepEqual((await oldRetry.json()).receipt, second.record.document.server_receipt);
-  console.log('PASS an older identical-practice retry keeps its original receipt');
+
+  // A fresh practice ticket may carry exactly the same signed bytes as a
+  // bare base64url string instead of a #verify= fragment. Both adapters must
+  // compare canonical records, not falsely call their spelling a collision.
+  const freshCommit = await fetch(`${base}/api/v1/commit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: commitBodies.at(-1) });
+  assert.equal(freshCommit.status, 200, await freshCommit.clone().text());
+  const freshTicket = await freshCommit.json();
+  assert.equal(freshTicket.attempt_num, 4);
+  const variant = JSON.parse(submitBodies.at(-1));
+  variant.ticket = freshTicket;
+  variant.fdr_payload = variant.fdr_payload.replace(/^#verify=/, '');
+  const sameFlight = await fetch(`${base}/api/v1/submit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(variant) });
+  assert.equal(sameFlight.status, 200, `equivalent payload: ${await sameFlight.clone().text()}`);
+  const variantReceipt = (await sameFlight.json()).receipt;
+  assert.equal(variantReceipt.fdr_hash, third.canonical_digest);
+  assert.equal(variantReceipt.attempt_num, 4);
+  const stillRetry = await fetch(`${base}/api/v1/submit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: secondBody });
+  assert.deepEqual((await stillRetry.json()).receipt, second.record.document.server_receipt);
+  console.log('PASS equivalent practice encodings share a flight while retries keep their original receipts');
+
+  // Treat this as the revision at which an earlier submission began. Later
+  // ranked flights will update the same profile before its response arrives.
+  const oldRequestRevision = await page.evaluate(async () => (await import('./identity.js')).profileRevision());
 
   // Exercise cross-target server replay for the remaining canonical contracts,
   // including a genuinely delegated cryogenic tug. No numerical preview runs
@@ -276,6 +471,77 @@ try {
   await page.waitForFunction(() => missionDiagnostics.verification()?.code === 1 && document.getElementById('verify-certification').textContent.includes('SERVER-RANKED'), null, { timeout: 180000 });
   await page.click('#verify-close');
   console.log('PASS contracts 102 and 103: server-ranked replay, including delegated cryogenic physics');
+
+  // A delayed old receipt, an idempotent retry and a practice receipt are
+  // authentic but historical. None may roll back a newer local rating, even
+  // though the ranked certificate still needs to be retained.
+  const receiptRace = await page.evaluate(async ({ ranked, practice, oldRevision }) => {
+    const identity = await import('./identity.js');
+    const before = identity.profile();
+    const savedOld = identity.recordReceipt(ranked, { expectedRevision: oldRevision });
+    const afterOld = identity.profile();
+    const savedDuplicate = identity.recordReceipt(ranked, { expectedRevision: identity.profileRevision() });
+    const afterDuplicate = identity.profile();
+    const savedPractice = identity.recordReceipt(practice, { expectedRevision: identity.profileRevision() });
+    const afterPractice = identity.profile();
+    return { before: before.elo, afterOld: afterOld.elo, afterDuplicate: afterDuplicate.elo,
+      afterPractice: afterPractice.elo, savedOld, savedDuplicate, savedPractice,
+      certificate: !!identity.certificate(101) };
+  }, { ranked: first.record.json, practice: second.record.json, oldRevision: oldRequestRevision });
+  assert.ok(receiptRace.savedOld && receiptRace.savedDuplicate && receiptRace.savedPractice && receiptRace.certificate);
+  assert.equal(receiptRace.afterOld, receiptRace.before, 'a delayed receipt must not roll back newer rating state');
+  assert.equal(receiptRace.afterDuplicate, receiptRace.before, 'an already cached receipt is historical');
+  assert.equal(receiptRace.afterPractice, receiptRace.before, 'practice cannot replace a newer ranked rating');
+  console.log('PASS delayed, duplicate and practice receipts cannot roll back a newer rating');
+
+  // Reproduce the same ordering through the actual UI: the server commits
+  // contract 101, its response is held, then this pilot flies 102 before the
+  // older response arrives. Both certificates must survive and the profile
+  // must converge to the server's latest rating.
+  const orderingPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  let releaseOld, markAccepted, heldResponse;
+  const holdOld = new Promise(resolve => { releaseOld = resolve; });
+  const oldAccepted = new Promise(resolve => { markAccepted = resolve; });
+  try {
+    await orderingPage.goto(`${base}/mission.html`);
+    await orderingPage.waitForFunction(() => missionDiagnostics?.wasm?.() && !missionDiagnostics.pending, null, { timeout: 60000 });
+    await orderingPage.waitForFunction(() => missionDiagnostics.profile().ratingSource === 'server', null, { timeout: 30000 });
+    await orderingPage.route('**/api/v1/submit', async route => {
+      if (!heldResponse) {
+        const response = await route.fetch();
+        heldResponse = await response.json();
+        markAccepted();
+        await holdOld;
+        await route.fulfill({ response });
+      } else await route.continue();
+    });
+    await orderingPage.click('#example'); await orderingPage.click('#prefill'); await orderingPage.click('#execute');
+    let timer;
+    try {
+      await Promise.race([oldAccepted, new Promise((_, reject) => { timer = setTimeout(() => reject(Error('old receipt was not accepted')), 120000); })]);
+    } finally { clearTimeout(timer); }
+    assert.equal(heldResponse.receipt.contract_id, 101);
+    await orderingPage.click('#unlock'); await orderingPage.selectOption('#mission-select', '102');
+    await orderingPage.click('#example'); await orderingPage.click('#prefill'); await orderingPage.click('#execute');
+    await orderingPage.waitForFunction(() => missionDiagnostics.recorder()?.document?.server_receipt?.contract_id === 102,
+      null, { timeout: 180000 });
+    const current = await orderingPage.evaluate(async () => {
+      const key = missionDiagnostics.recorder().document.public_key;
+      return (await fetch(`/api/v1/player/${key}`)).json();
+    });
+    assert.equal(current.ranked_count, 2);
+    assert.notEqual(current.elo, heldResponse.receipt.elo_after);
+    await orderingPage.waitForFunction(elo => missionDiagnostics.profile().elo === elo, current.elo, { timeout: 30000 });
+    releaseOld();
+    await orderingPage.waitForFunction(() => missionDiagnostics.isRanked(101) && !missionDiagnostics.pending, null, { timeout: 60000 });
+    const final = await orderingPage.evaluate(() => ({ profile: missionDiagnostics.profile(), second: missionDiagnostics.isRanked(102) }));
+    assert.equal(final.profile.elo, current.elo, 'a late first response must not replace the latest server rating');
+    assert.equal(final.second, true);
+  } finally {
+    releaseOld();
+    await orderingPage.close();
+  }
+  console.log('PASS overlapping real ranked submissions preserve both certificates and the latest rating');
 
   // A separate pilot's very first tug is manually fitted with a powered
   // cooler. This exercises active cooling across browser WASM and both real
@@ -378,8 +644,20 @@ try {
   await retryPage.waitForSelector('#retry-submit', { timeout: 180000 });
   assert.equal(lostResponse?.accepted, true, 'server actually accepted the response that the network lost');
   assert.equal(await retryPage.locator('#certification-status').textContent(), 'UNVERIFIED LOCAL / PRACTICE');
+  // Model an intervening player snapshot whose Elo happens to equal the old
+  // receipt's before-value (ratings can revisit a value). If a GET is then
+  // unavailable, the retry must not treat the old receipt as a new update.
+  await retryPage.route('**/api/v1/player/**', blockPlayer);
+  await retryPage.evaluate(async receipt => {
+    const identity = await import('./identity.js');
+    identity.syncPlayer({ pubkey: receipt.pubkey, elo: receipt.elo_before, ranked_count: 2, callsign: null });
+  }, lostResponse.receipt);
   await retryPage.click('#retry-submit');
   await retryPage.waitForFunction(() => document.getElementById('certification-status').textContent.includes('CERTIFIED SERVER-RANKED') && !missionDiagnostics.pending, null, { timeout: 180000 });
+  assert.equal(await retryPage.evaluate(() => missionDiagnostics.profile().elo), lostResponse.receipt.elo_before,
+    'an old retry must use the revision captured before its first submission');
+  await retryPage.unroute('**/api/v1/player/**', blockPlayer);
+  await retryPage.evaluate(async () => (await import('./profile.js')).syncProfile());
   const retry = await retryPage.evaluate(async () => {
     const record = missionDiagnostics.recorder().document;
     const player = await (await fetch(`/api/v1/player/${record.public_key}`)).json();

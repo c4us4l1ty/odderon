@@ -236,6 +236,20 @@ impl<S: Store> AuthorityEngine<S> {
         let attempt_num = ticket.attempt_num;
         let fdr_hash = fdr.digest();
 
+        // The digest covers the canonical body, not the public key. Validate
+        // the stored record and receipt, then compare decoded bodies rather
+        // than transport spellings: a URL, fragment and bare base64url can
+        // all encode the same signed flight.
+        let existing = self.store.load_fdr(&fdr_hash)?;
+        if let Some(stored) = &existing {
+            let decoded = stored.verified_record(&fdr_hash, &self.server_key.public_key())?;
+            if decoded.public_key != fdr.public_key
+                || decoded.canonical_bytes() != fdr.canonical_bytes()
+            {
+                return Err(ServerError::FdrHashCollision);
+            }
+        }
+
         // Idempotent re-submit: the same attempt returns the same receipt
         // and never moves Elo twice.
         if let Some(receipt) =
@@ -243,8 +257,43 @@ impl<S: Store> AuthorityEngine<S> {
                 .load_receipt(&ticket.pubkey, ticket.contract_id, attempt_num)?
         {
             let p = &receipt.payload;
+            // A persisted receipt is an idempotency barrier, not blindly
+            // trusted data. Corrupt or swapped receipts must never be returned
+            // as success or treated as permission to score this attempt again.
+            if !receipt.verify(&self.server_key.public_key())
+                || p.pubkey != ticket.pubkey
+                || p.contract_id != ticket.contract_id
+                || p.attempt_num != attempt_num
+                || p.mode != mode
+            {
+                return Err(ServerError::Storage(
+                    "stored receipt binding is invalid".into(),
+                ));
+            }
             if p.fdr_hash != fdr_hash {
                 return Err(ServerError::AttemptAlreadySubmitted);
+            }
+            if p.score_s_bits != score_s.to_bits() {
+                return Err(ServerError::Storage(
+                    "stored receipt score is invalid".into(),
+                ));
+            }
+            let stored = existing
+                .as_ref()
+                .ok_or_else(|| ServerError::Storage("stored flight is missing".into()))?;
+            // SQLite keeps a receipt copy on the public flight as well as the
+            // idempotency row. If this flight still indexes this attempt,
+            // independently valid but divergent copies must not disagree.
+            // A later Practice attempt may legitimately reuse the same FDR
+            // hash and replace the flight index with its own receipt.
+            if stored.pubkey == ticket.pubkey
+                && stored.contract_id == ticket.contract_id
+                && stored.attempt_num == attempt_num
+                && stored.receipt.as_ref() != Some(&receipt)
+            {
+                return Err(ServerError::Storage(
+                    "stored receipt copies disagree".into(),
+                ));
             }
             return Ok(SubmitResponse {
                 accepted: true,
@@ -260,26 +309,38 @@ impl<S: Store> AuthorityEngine<S> {
             });
         }
 
-        // The FDR digest covers the canonical body, not the public key. Do
-        // not let a second key overwrite a public record with identical body.
-        if let Some(existing) = self.store.load_fdr(&fdr_hash)? {
-            if existing.pubkey != ticket.pubkey || existing.bytes != req.fdr_payload.as_bytes() {
-                return Err(ServerError::FdrHashCollision);
-            }
+        // If the flight index says this exact attempt was already submitted,
+        // a missing idempotency row is corruption, not a fresh submission.
+        if existing.as_ref().is_some_and(|stored| {
+            stored.pubkey == ticket.pubkey
+                && stored.contract_id == ticket.contract_id
+                && stored.attempt_num == attempt_num
+        }) {
+            return Err(ServerError::Storage("stored receipt is missing".into()));
         }
 
         let mut player = self.store.load_player(&ticket.pubkey)?;
         let mission_before = self.store.load_mission_elo(ticket.contract_id)?;
+        if !player.elo.is_finite() || !mission_before.is_finite() {
+            return Err(ServerError::Storage("invalid stored rating".into()));
+        }
         let elo_before = player.elo;
         let (elo_after, mission_after) = if mode == AttemptMode::Ranked {
+            let next_count = player
+                .ranked_count
+                .checked_add(1)
+                .ok_or_else(|| ServerError::Storage("ranked counter overflow".into()))?;
             let (p, m) = odd_contracts::elo::apply_ranked(
                 player.elo,
                 mission_before,
                 score_s,
                 player.ranked_count,
             );
+            if !p.is_finite() || !m.is_finite() {
+                return Err(ServerError::Storage("invalid resulting rating".into()));
+            }
             player.elo = p;
-            player.ranked_count += 1;
+            player.ranked_count = next_count;
             self.store.save_player(&ticket.pubkey, &player)?;
             self.store.save_mission_elo(ticket.contract_id, m)?;
             (p, m)

@@ -17,7 +17,11 @@ const MAX_PROFILES = 8;
 let wasm = null;
 let state = null;
 let ratingSource = 'unverified';
+// Any profile mutation invalidates an in-flight player snapshot, even when
+// the user switches away and back to the same key before it arrives.
+let revision = 0;
 const listeners = new Set();
+export const profileRevision = () => revision;
 
 export const eloK = ranked => (ranked < 20 ? 40 : 20);
 export const missionK = MISSION_K;
@@ -148,6 +152,7 @@ function persist() {
 }
 
 function notify() {
+  revision++;
   for (const listener of listeners) listener(profile());
 }
 
@@ -336,22 +341,41 @@ function hexOf(bytes) {
   return bytes.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-/// A ranked certificate is kept only after the receipt and its FDR binding
-/// have been checked against the pinned server key.
-export function recordReceipt(recorderJson) {
+/// Keep an authenticated certificate even when its response was delayed, but
+/// do not let an old receipt roll back a newer profile. Receipt timestamps have
+/// only second resolution and do not establish transaction order; use the
+/// revision captured before submission and the Elo transition instead.
+export function recordReceipt(recorderJson, { expectedRevision = revision } = {}) {
   if (typeof recorderJson !== 'string' || recorderJson.length > 262144) return false;
   try {
     const document = JSON.parse(recorderJson), receipt = document.server_receipt;
     if (receipt?.pubkey !== hexOf(identityFields().publicKey) || !verifyReceipt(wasm, receipt, document)) return false;
-    state.elo = receipt.elo_after;
-    state.missionElo[String(receipt.contract_id)] = receipt.mission_elo_after;
+    const id = String(receipt.contract_id);
+    let duplicate = false;
+    try {
+      const prior = JSON.parse(state.ranked[id]?.recorder ?? 'null')?.server_receipt;
+      duplicate = prior?.fdr_hash === receipt.fdr_hash && prior?.attempt_num === receipt.attempt_num
+        && prior?.server_sig?.toLowerCase() === receipt.server_sig.toLowerCase();
+    } catch { /* a damaged cached certificate is not a duplicate */ }
+    // A practice receipt cannot move Elo. For a new ranked receipt, the
+    // signed before-value must continue the last confirmed local snapshot;
+    // otherwise a fresh authority sync is needed to establish current Elo.
+    const advances = receipt.mode === 0 && !duplicate
+      && (ratingSource === 'unverified' || Object.is(receipt.elo_before, state.elo));
+    const firstPractice = receipt.mode === 1 && ratingSource === 'unverified';
+    if (expectedRevision === revision && (advances || firstPractice)) {
+      state.elo = receipt.elo_after;
+      state.missionElo[id] = receipt.mission_elo_after;
+      ratingSource = 'receipt';
+    }
     if (receipt.mode === 0) {
-      state.ranked[String(receipt.contract_id)] = {
+      state.ranked[id] = {
         score: receipt.score_s, elo: receipt.elo_after, delta: receipt.elo_after - receipt.elo_before,
         at: receipt.timestamp_s * 1000, recorder: recorderJson,
       };
     }
-    ratingSource = 'receipt';
+    // Even a duplicate invalidates an older in-flight player GET. The caller
+    // starts a fresh sync after the receipt has been processed.
     persist(); notify();
     return true;
   } catch { return false; }
@@ -405,5 +429,6 @@ export function reset() {
   }
   state = null;
   ratingSource = 'unverified';
+  revision++;
   wasm.mission_identity_clear();
 }

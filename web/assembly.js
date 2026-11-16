@@ -42,6 +42,7 @@ export function assemblyPayload(wasm) {
       [THERMAL_FIELDS.epsilon, wasm.mission_thermal_get(1)],
       [THERMAL_FIELDS.shell, wasm.mission_thermal_get(6)],
       [THERMAL_FIELDS.strut, wasm.mission_thermal_get(4)],
+      [THERMAL_FIELDS.relief, wasm.mission_thermal_get(5)],
       [THERMAL_FIELDS.radiator, wasm.mission_thermal_get(3)],
       [THERMAL_FIELDS.cooler, wasm.mission_thermal_get(2)],
       [THERMAL_FIELDS.array, wasm.mission_thermal_get(8)],

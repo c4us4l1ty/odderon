@@ -40,7 +40,9 @@ Cloudflare-compatible WASM/D1/R2 shell. The public-key pin is empty by default,
 so a static-only deployment offers practice without ranked certification.
 See [server-authority](docs/server-authority.md) and the
 [Cloudflare deployment prerequisites](crates/odd-worker-cloudflare/README.md).
-Local emulator tests and a dry-run do not mean the service is deployed.
+Local emulator tests and a dry-run do not mean the service is deployed. The
+[bug-hunt report](docs/bug-hunt-2026-11-14.md) lists recent fixes, regressions,
+compatibility effects and remaining model limitations.
 
 Cryogenic tanks and the four Chief-AI departments are wired into flown designs,
 replay and the dossier; Contract 103 offers an optional paid recommended

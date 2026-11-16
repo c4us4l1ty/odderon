@@ -142,6 +142,24 @@ canonical bytes; v1 launch tickets cannot be used for a new submission or retry
 under the new rule. See [server authority](server-authority.md) for the
 upgrade and hindsight limits.
 
+A later validation hardening fixes the cryogenic environment to the playable
+contract baseline: the signed structure temperature must be 293 K and the
+radiative sink 3 K. The modeled saturation temperature at the relief setting
+must also be finite, positive and strictly below that fluid's critical
+temperature. These checks close fictitious cold-support and supercritical
+liquid claims, without changing v3 bytes or normal baseline/card calculations.
+They **can reject previously accepted v3 records**, including custom records
+with non-baseline boundary temperatures or relief points outside the model;
+a previously signed receipt does not make such a record pass the new replay
+rules. Coordinate browser and authority upgrades and retain an appropriate
+historical verifier if those prior records must remain independently replayable.
+Schemas 1/2 have no thermal block and remain readable offline.
+
+JSON transport now preserves negative zero, which was already significant to
+the frozen signature and was previously lost when JavaScript re-serialized a
+recorder. Noncanonical base64url tails of length 1 modulo 4 are rejected;
+valid `#verify=` fragments and bare payloads are unchanged.
+
 ---
 
 ## v2 — physical engine design

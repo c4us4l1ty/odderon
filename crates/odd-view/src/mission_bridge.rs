@@ -1050,6 +1050,9 @@ pub(crate) fn apply_engine_design(spec: odd_propulsion::EngineSpec) -> i32 {
             Err(odd_propulsion::PropulsionError::ThermalLimitExceeded) => return -2,
             Err(_) => return -1,
         };
+    if !valid_stage(&contract, &vehicle) {
+        return -1;
+    }
     settings.engine_spec = spec;
     settings.engine = vehicle.engine;
     settings.dry_mass = vehicle.dry_mass_kg;
@@ -1190,30 +1193,68 @@ pub extern "C" fn mission_engine_effective(field: u32) -> f64 {
 // and a thicker blanket changes the hardware the chief would size.
 // ---------------------------------------------------------------------------
 
-/// Re-solve the current stage with the session's engine, delegation and
-/// cryogenic design. Returns the same codes as `apply_engine_design`.
-fn rebuild_stage() -> i32 {
+/// Check the same thermal bounds used by the flight before publishing an
+/// assembly edit. An engine solution alone does not validate its tank or bus.
+fn valid_stage(contract: &Contract, vehicle: &odd_contracts::Vehicle) -> bool {
+    if !vehicle.dry_mass_kg.is_finite()
+        || vehicle.dry_mass_kg <= 0.0
+        || !vehicle.propellant_kg.is_finite()
+        || vehicle.propellant_kg <= 0.0
+        || !vehicle.initial_mass_kg.is_finite()
+        || vehicle.initial_mass_kg <= vehicle.dry_mass_kg
+    {
+        return false;
+    }
+    let flown = &vehicle.effective;
+    if !odd_systems::needs_thermal_model(flown.engine.propellant) {
+        return true;
+    }
+    flown
+        .thermal
+        .stage(contract, &flown.engine, vehicle.propellant_kg)
+        .is_some_and(|stage| {
+            stage.oxidizer.validate().is_ok()
+                && stage.fuel.validate().is_ok()
+                && stage.bus.validate().is_ok()
+                && stage.structure_temperature_k.is_finite()
+                && stage.structure_temperature_k > 0.0
+                && stage.sink_temperature_k.is_finite()
+                && stage.sink_temperature_k > 0.0
+        })
+}
+
+/// Apply an edit to a candidate, then rebuild and validate it before touching
+/// the live stage or its compiled plan. A rejected edit is a true no-op.
+fn rebuild_stage(edit: impl FnOnce(&mut Settings) -> Result<(), i32>) -> i32 {
     let mut guard = SETTINGS.lock().unwrap();
     let Some(settings) = guard.as_mut() else {
         return 0;
     };
-    let Some(contract) = Contract::get(settings.contract_id) else {
+    let mut candidate = settings.clone();
+    if let Err(code) = edit(&mut candidate) {
+        return code;
+    }
+    let Some(contract) = Contract::get(candidate.contract_id) else {
         return 0;
     };
     let vehicle = match contract.vehicle_delegated(
-        settings.engine_spec,
-        settings.delegation,
-        &settings.thermal_design,
+        candidate.engine_spec,
+        candidate.delegation,
+        &candidate.thermal_design,
     ) {
         Ok(vehicle) => vehicle,
         Err(odd_propulsion::PropulsionError::ThermalLimitExceeded) => return -2,
         Err(_) => return -1,
     };
-    settings.engine = vehicle.engine;
-    settings.dry_mass = vehicle.dry_mass_kg;
-    settings.initial.mass = vehicle.initial_mass_kg;
-    settings.nodes.clear();
-    settings.guidance.clear();
+    if !valid_stage(&contract, &vehicle) {
+        return 0;
+    }
+    candidate.engine = vehicle.engine;
+    candidate.dry_mass = vehicle.dry_mass_kg;
+    candidate.initial.mass = vehicle.initial_mass_kg;
+    candidate.nodes.clear();
+    candidate.guidance.clear();
+    *settings = candidate;
     drop(guard);
     clear_results();
     1
@@ -1275,14 +1316,10 @@ pub extern "C" fn mission_delegation_set(mask: u32) -> i32 {
     if !mask.is_valid() {
         return 0;
     }
-    {
-        let mut guard = SETTINGS.lock().unwrap();
-        let Some(settings) = guard.as_mut() else {
-            return 0;
-        };
+    rebuild_stage(|settings| {
         settings.delegation = mask;
-    }
-    rebuild_stage()
+        Ok(())
+    })
 }
 
 /// The current delegation bitmask.
@@ -1439,6 +1476,9 @@ pub extern "C" fn mission_thermal_apply_card() -> i32 {
     else {
         return 0;
     };
+    if !valid_stage(&contract, &vehicle) {
+        return 0;
+    }
     settings.thermal_design = design;
     settings.engine = vehicle.engine;
     settings.dry_mass = vehicle.dry_mass_kg;
@@ -1467,17 +1507,13 @@ pub extern "C" fn mission_thermal_set(field: u32, value: f64) -> i32 {
     if mission_thermal_get(7) != 1.0 {
         return 0;
     }
-    {
-        let mut guard = SETTINGS.lock().unwrap();
-        let Some(settings) = guard.as_mut() else {
-            return 0;
-        };
+    rebuild_stage(|settings| {
         let d = &mut settings.thermal_design;
         match field {
             0 => {
                 let layers = value.round();
                 if !(1.0..=100.0).contains(&layers) {
-                    return 0;
+                    return Err(0);
                 }
                 d.mli_layers = layers as u32;
                 d.epsilon_eff = odd_systems::ideal_epsilon_for_layers(d.mli_layers) * 4.0;
@@ -1486,27 +1522,27 @@ pub extern "C" fn mission_thermal_set(field: u32, value: f64) -> i32 {
                 if !(0.0..1.0).contains(&value)
                     || value < odd_systems::ideal_epsilon_for_layers(d.mli_layers)
                 {
-                    return 0;
+                    return Err(0);
                 }
                 d.epsilon_eff = value;
             }
             2 => {
                 // A cooler needs somewhere to reject its heat.
                 if value > 0.0 && d.radiator_area_m2 <= 0.0 {
-                    return 0;
+                    return Err(0);
                 }
                 d.cryocooler_lift_w = value;
             }
             3 => {
                 if value == 0.0 && d.cryocooler_lift_w > 0.0 {
-                    return 0;
+                    return Err(0);
                 }
                 d.radiator_area_m2 = value;
             }
             4 => d.strut_conductance_w_k = value,
             5 => {
                 if value <= 0.0 {
-                    return 0;
+                    return Err(0);
                 }
                 d.relief_pressure_pa = value;
             }
@@ -1514,23 +1550,23 @@ pub extern "C" fn mission_thermal_set(field: u32, value: f64) -> i32 {
                 // The array must at least cover the fixed avionics load, and
                 // its mass is charged to the stage like any other hardware.
                 if value < d.bus.avionics_w {
-                    return 0;
+                    return Err(0);
                 }
                 d.bus.array_w_at_1au = value;
             }
             6 => {
                 let Ok(id) = u8::try_from(value.round() as i64) else {
-                    return 0;
+                    return Err(0);
                 };
                 if odd_contracts::thermal::shell_from_u8(id).is_none() {
-                    return 0;
+                    return Err(0);
                 }
                 d.shell = id;
             }
-            _ => return 0,
+            _ => return Err(0),
         }
-    }
-    rebuild_stage()
+        Ok(())
+    })
 }
 
 /// Boil-off readout from the last execution. 0 total kg lost, 1 oxidizer kg,
@@ -1564,6 +1600,52 @@ mod tests {
     // The scalar bridge owns process-wide statics; native tests must not
     // interleave setup/compile/lock calls the way separate workers would.
     pub(super) static TEST_LOCK: Mutex<()> = Mutex::new(());
+    #[test]
+    fn invalid_stage_edits_are_atomic_and_cannot_poison_the_plan() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        assert_eq!(mission_contract(103), 1);
+        assert_eq!(mission_add_node(1600.0, 200.0, 0.0, 0.0), 1);
+        assert_eq!(mission_compile(), 1);
+        let before = [
+            mission_thermal_get(5),
+            mission_thermal_get(3),
+            mission_parameter(3),
+            mission_preview(100.0, 0),
+        ];
+        assert!(before.iter().all(|v| v.is_finite()));
+        // Liquid hydrogen cannot reach this modeled relief point while liquid.
+        assert_eq!(mission_thermal_set(5, 2_000_000.0), 0);
+        assert_eq!(mission_thermal_get(5), before[0]);
+        assert_eq!(mission_thermal_set(3, f64::MAX), 0);
+        assert_eq!(mission_thermal_get(3), before[1]);
+        assert_eq!(mission_parameter(3).to_bits(), before[2].to_bits());
+        assert_eq!(mission_node_count(), 1);
+        assert_eq!(mission_preview(100.0, 0).to_bits(), before[3].to_bits());
+
+        // Free sandbox setups have no catalog vehicle to rebuild. A failed
+        // delegation request must not still change its stored mask.
+        let r = odd_contracts::EARTH_EQUATORIAL_RADIUS + 260_000.0;
+        assert_eq!(
+            mission_setup(
+                820_497_600.0,
+                10_800.0,
+                1200.0,
+                1020.0,
+                2400.0,
+                310.0,
+                r,
+                0.0,
+                0.0,
+                0.0,
+                (MU / r).sqrt(),
+                0.0
+            ),
+            1
+        );
+        assert_eq!(mission_delegation_set(1), 0);
+        assert_eq!(mission_delegation_mask(), 0);
+    }
+
     #[test]
     fn recommended_card_is_real_paid_hardware_and_respects_delegation() {
         let _guard = TEST_LOCK.lock().unwrap();

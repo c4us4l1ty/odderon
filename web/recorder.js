@@ -173,11 +173,25 @@ export function sign(wasm, fields, callsign) {
   return { json, document: JSON.parse(json), payload: readString(wasm, 3) };
 }
 
+/// JSON.stringify normally changes -0 to +0, but FDR and receipt signatures
+/// cover the IEEE-754 sign bit. Preserve negative zero in every nested field;
+/// non-finite numbers retain JSON.stringify's normal null representation.
+/// Choose a marker absent from the original JSON so even untrusted strings or
+/// object keys cannot be mistaken for a numeric value during replacement.
+export function stringifySigned(value) {
+  const original = JSON.stringify(value);
+  if (original === undefined) return original;
+  let marker = '__odderon_negative_zero__';
+  while (original.includes(JSON.stringify(marker))) marker += '_';
+  const encoded = JSON.stringify(value, (_key, item) => Object.is(item, -0) ? marker : item, 2);
+  return encoded.split(JSON.stringify(marker)).join('-0');
+}
+
 /// The receipt is a separate server-signed envelope; FDR v3 canonical bytes
 /// remain unchanged. It travels with the downloadable recorder.
 export function withReceipt(record, receipt) {
   const document = { ...record.document, server_receipt: receipt };
-  return { ...record, document, json: JSON.stringify(document, null, 2) };
+  return { ...record, document, json: stringifySigned(document) };
 }
 
 /// Turn either a JSON document or a #verify= payload into worker inputs.

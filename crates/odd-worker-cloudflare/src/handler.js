@@ -138,8 +138,14 @@ async function submitOrCommit(request, env, wasm, body, parsed, now) {
     const subject = { pubkey: pk, contract };
     const snapshot = {};
     if (isCommit) {
-      const row = await first(db, 'SELECT n FROM attempts WHERE pubkey=?1 AND contract=?2', pk, contract);
-      snapshot.attempts = row?.n ?? 0;
+      const row = await first(db, 'SELECT n,typeof(n) AS n_type FROM attempts WHERE pubkey=?1 AND contract=?2', pk, contract);
+      // Zero is the in-memory seed for a *missing* row, never a valid
+      // persisted counter. Treat corruption and exhaustion as storage
+      // failures rather than issuing another ranked attempt 1.
+      if (row && (row.n_type !== 'integer' || !num(row.n) || row.n < 1 || row.n === 0xffffffff)) {
+        throw Error('attempt counter exhausted or invalid');
+      }
+      snapshot.attempts = row ? row.n : 0;
     } else {
       snapshot.player = await first(db, 'SELECT elo,ranked,callsign FROM players WHERE pubkey=?1', pk);
       const mission = await first(db, 'SELECT elo FROM missions WHERE contract=?1', contract);
@@ -267,7 +273,8 @@ export async function handle(request, env, wasm) {
       const flight = await getFlight(db, env.FDRS, hash);
       if (!flight) return response(404, { error: 'not found' });
       return engineResponse(route(wasm, env.SERVER_SEED, method, `/api/v1/verify/${hash}`, '', now,
-        { pubkey: flight.pubkey || ZERO_KEY, contract: flight.contract }, { fdr: flight }));
+        { pubkey: flight.pubkey || ZERO_KEY, contract: flight.contract },
+        { fdr: flight, receipt: { attempt: flight.attempt, bytes: flight.receipt } }));
     }
     return response(404, { error: 'not found' });
   } catch (error) {

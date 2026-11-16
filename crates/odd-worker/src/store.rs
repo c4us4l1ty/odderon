@@ -50,6 +50,41 @@ pub struct StoredFdr {
     pub receipt: Option<ServerReceipt>,
 }
 
+impl StoredFdr {
+    /// Authenticate the content-addressed record and its own receipt against
+    /// the stored index. This is an integrity check, not another physics
+    /// replay; a public consumer still independently replays the flight.
+    pub(crate) fn verified_record(
+        &self,
+        hash: &Hash,
+        server_pk: &PubKey,
+    ) -> Result<odd_report::Fdr, ServerError> {
+        let invalid = || ServerError::Storage("stored flight binding is invalid".into());
+        let text = std::str::from_utf8(&self.bytes).map_err(|_| invalid())?;
+        let record = odd_report::Fdr::from_verify_payload(text).map_err(|_| invalid())?;
+        let receipt = self.receipt.as_ref().ok_or_else(invalid)?;
+        let p = &receipt.payload;
+        if record.verify_signature().is_err()
+            || record.digest() != *hash
+            || record.public_key != self.pubkey
+            || record.contract_id != self.contract_id
+            || record.attempt_mode != self.mode
+            || record.delegation_mask != self.delegation_mask
+            || record.metrics[4].to_bits() != self.score_s.to_bits()
+            || !receipt.verify(server_pk)
+            || p.fdr_hash != *hash
+            || p.pubkey != self.pubkey
+            || p.contract_id != self.contract_id
+            || p.attempt_num != self.attempt_num
+            || p.mode != self.mode
+            || p.score_s_bits != self.score_s.to_bits()
+        {
+            return Err(invalid());
+        }
+        Ok(record)
+    }
+}
+
 /// One ranked leaderboard row.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LeaderRow {

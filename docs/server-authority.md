@@ -74,11 +74,14 @@ and 2 remain independently readable and replayable offline but lack the v3
 thermal/delegation proof and cannot receive new server receipts. For v3 a
 storable stage must have no cryogenic block; a cryogenic stage must have
 exactly one stage-0 block with matching propellant and bit-exact derived tank
-volumes. The verifier checks the tank model and declared bus inputs, recomputes
-vehicle mass and delegated hardware, and fails closed if thermal integration
-fails. The signed metrics, final hash, vent events, per-tank loss and cooler
-energy must reproduce. The authoritative score is replay `report[4]`, never a
-client-supplied rating.
+volumes. The verifier checks the tank model and declared bus inputs, fixes the
+structure/sink to the contract baseline and refuses supercritical relief
+isotherms, recomputes vehicle mass and delegated hardware, and fails closed if
+thermal integration fails. This verification-rule change can invalidate old
+custom v3 records even when their existing receipt signature is valid; see the
+[schema changelog](fdr-schema-changelog.md). The signed metrics, final hash,
+vent events, per-tank loss and cooler energy must reproduce. The authoritative
+score is replay `report[4]`, never a client-supplied rating.
 
 Player Elo starts at 1200; the player K factor is 40 for the first 20 ranked
 flights, then 20. Mission K is 8. Both changes are committed atomically for a
@@ -86,9 +89,10 @@ ranked submission; Practice does not change either. The formulas and bit-level
 parity tests live in `crates/odd-contracts/src/elo.rs` and
 `crates/odd-contracts/tests/elo_parity.rs`.
 
-The physics remains a simplified model. In particular, thermal loss is
-integrated and signed **after** the orbit propagation: vented mass is not
-subtracted from orbital mass, burn fuel or the score. The score's fuel-failure
+The physics remains a simplified model. The v3 tank sizing has an unresolved
+ullage/envelope inconsistency; see [thermal.md](thermal.md). In addition,
+thermal loss is integrated and signed **after** the orbit propagation: vented
+mass is not subtracted from orbital mass, burn fuel or the score. The score's fuel-failure
 threshold and prediction term also use the catalog baseline dry mass rather
 than the fitted stage's dry mass. The debrief's displayed remaining propellant
 uses the fitted dry mass, so these can differ, and a lighter fitted stage can
@@ -110,9 +114,16 @@ Never learn the trust anchor from the receipt, an API response or localStorage.
 The browser validates the signature and its FDR/pilot/contract/mode binding
 before showing `CERTIFIED SERVER-RANKED RECEIPT`; a valid Practice receipt is
 labelled separately. Local edits to cached Elo cannot manufacture a valid
-receipt, and player sync restores the server value. Existing receipts will not
-validate under a different pin; key rotation/old-key trust and migration need
-an explicit operational plan and are not implemented automatically.
+receipt. The browser guards in-flight player snapshots and delayed receipts
+against newer changes in the same page, retains the original revision on retry,
+and refreshes the player after a successful receipt. A cached receipt is only
+a historical rating snapshot: its timestamp has second resolution and may
+reflect request start rather than commit order. The player GET has no signed
+global revision, so offline views and other tabs/devices are not guaranteed to
+reflect the newest transaction; sync against the authority for a fresh value.
+Existing receipts will not validate under a different pin; key rotation/old-key
+trust and migration need an explicit operational plan and are not implemented
+automatically.
 
 A verified dossier carries an independently checkable receipt in Annex D.
 Its ranked QR resolves to the deployment's `mission.html#flight=<fdr_hash>`,
@@ -140,11 +151,25 @@ parity of this full-replay path only.
 ## Transactions and deployment boundary
 
 SQLite uses `BEGIN IMMEDIATE` for the entire read/compute/write operation.
+Attempt counters are bounded to the protocol's `u32` range; an existing zero,
+malformed or exhausted counter fails rather than issuing a new first attempt.
+SQLite rejects invalid persisted ratings, malformed commitment/flight index
+fields and unreadable receipt rows rather than coercing or truncating them.
+The engine checks receipt signatures and bindings on retries. When the public
+flight still indexes that attempt, its receipt must equal the idempotency copy;
+public lookup also requires those copies to match. This catches missing or
+divergent rows without preventing a later Practice attempt from reusing the
+same signed flight. Storage errors return HTTP 503 rather than being reported
+as a client error; existing damaged data needs repair from trusted backups.
+
 A D1 batch alone does not protect earlier reads. The Cloudflare shell reads a
 primary-session snapshot and a global revision, invokes Rust, and publishes
 proposed D1 writes in a batch guarded by a compare-and-increment of that
 revision. A stale snapshot is retried up to 16 times; missing or invalid
 revision and storage errors fail closed. All writers must obey this guard.
+These checks do not reconstruct a lost idempotency row if the old flight is no
+longer indexed or a different record is submitted; durable storage and
+recoverable backups remain prerequisites.
 
 R2 writes precede the guarded D1 batch and use an FDR-hash/payload-SHA-256
 key. A failed or stale transaction can leave an unreferenced object; it must

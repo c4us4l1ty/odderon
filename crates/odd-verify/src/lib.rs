@@ -672,6 +672,17 @@ pub fn certify_thermal(fdr: &Fdr) -> Result<(), FdrError> {
     if spec.stage != 0 || spec.propellant_id != engine.propellant as u8 {
         return Err(FdrError::Malformed("thermal stage or propellant"));
     }
+    // These are model boundary conditions, not paid-for hardware. Letting a
+    // signer invent a refrigerated structure makes heat disappear without a
+    // cooler, bus draw or mass. The playable contracts use one fixed thermal
+    // environment; a variable-temperature structure would need its own
+    // energy balance and versioned model before it can be certified.
+    let boundary = odd_contracts::ThermalDesign::baseline();
+    if spec.structure_temperature_k.to_bits() != boundary.structure_temperature_k.to_bits()
+        || spec.sink_temperature_k.to_bits() != boundary.sink_temperature_k.to_bits()
+    {
+        return Err(FdrError::ContractMismatch("thermal boundary temperatures"));
+    }
     let contract =
         Contract::get(fdr.contract_id).ok_or(FdrError::Malformed("unknown thermal contract"))?;
     let inputs = thermal_inputs_from_record(fdr).ok_or(FdrError::Malformed("thermal inputs"))?;
