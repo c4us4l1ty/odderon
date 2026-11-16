@@ -53,6 +53,23 @@ fn signed(value: f64, decimals: usize) -> String {
     }
 }
 
+/// Receipt material that the caller has already authenticated against its
+/// configured server key and bound to this FDR. Kept independent of the
+/// authority crate so reporting does not depend on the server implementation.
+#[derive(Clone, Debug)]
+pub struct ReceiptAnnex {
+    pub server_public_key: [u8; 32],
+    /// Canonical payload followed by the 64-byte server signature.
+    pub receipt_bytes: Vec<u8>,
+    pub attempt_num: u32,
+    pub mode: AttemptMode,
+    pub score_s: f64,
+    pub elo_before: f64,
+    pub elo_after: f64,
+    pub mission_elo_after: f64,
+    pub timestamp_s: i64,
+}
+
 /// Section 2 figure: Level-1 prediction against the Level-3 flight.
 pub fn trajectory_svg(geometry: &Geometry) -> String {
     const SIZE: f64 = 640.0;
@@ -176,6 +193,17 @@ fn scan_target(payload: &str) -> &str {
 /// The complete dossier. `payload` is the QR text; pass
 /// `fdr.verify_payload()` unless an absolute URL is wanted.
 pub fn html(fdr: &Fdr, geometry: &Geometry, payload: &str) -> Result<String, &'static str> {
+    html_with_receipt(fdr, geometry, payload, None)
+}
+
+/// The caller must verify the receipt signature and FDR binding before
+/// supplying the annex; `None` always renders an unverified local result.
+pub fn html_with_receipt(
+    fdr: &Fdr,
+    geometry: &Geometry,
+    payload: &str,
+    receipt: Option<&ReceiptAnnex>,
+) -> Result<String, &'static str> {
     let qr = Qr::new(payload)?;
     let digest = crate::hex::encode(&fdr.digest());
     let signature = crate::hex::encode(&fdr.signature);
@@ -204,7 +232,7 @@ pub fn html(fdr: &Fdr, geometry: &Geometry, payload: &str) -> Result<String, &'s
         ],
         vec!["Attempt mode".into(), fdr.attempt_mode.label().into()],
         vec![
-            "Astro-Elo".into(),
+            "Client-recorded Elo (not authoritative)".into(),
             format!(
                 "{} &#8594; {} ({})",
                 number(fdr.elo_before, 1),
@@ -235,7 +263,7 @@ pub fn html(fdr: &Fdr, geometry: &Geometry, payload: &str) -> Result<String, &'s
         "identity-table",
     ));
     body.push_str(&format!(
-        "<p>The recorder is signed over a canonical byte string domain-separated with <code>{}</code>. The signature covers the command timeline, all {} debrief fields, the terminal-state hash, the callsign and the rating change, so none of them can be edited independently. Rating arithmetic follows E = 1/(1+10<sup>(R<sub>m</sub>&#8722;R<sub>p</sub>)/400</sup>) and R<sub>p</sub>&#8242; = R<sub>p</sub> + K(S&#8722;E); a ranked certificate is issued once per contract and later attempts are practice.</p>",
+        "<p>The recorder is signed over a canonical byte string domain-separated with <code>{}</code>. The signature covers the command timeline, all {} debrief fields, the terminal-state hash, the callsign and the client-recorded rating fields, so none of them can be edited independently. These client fields are not a server rating. Only a valid, FDR-bound server receipt in Annex D certifies a ranked result.</p>",
         escape_html(String::from_utf8_lossy(crate::fdr::SIGN_DOMAIN).trim_end_matches('\0')),
         crate::fdr::METRIC_COUNT
     ));
@@ -459,6 +487,7 @@ pub fn html(fdr: &Fdr, geometry: &Geometry, payload: &str) -> Result<String, &'s
 
     body.push_str(&engine_annex(fdr));
     body.push_str(&thermal_annex(fdr));
+    body.push_str(&receipt_annex(receipt));
 
     let mode_class = if fdr.attempt_mode == AttemptMode::Ranked {
         "ranked"
@@ -471,6 +500,53 @@ pub fn html(fdr: &Fdr, geometry: &Geometry, payload: &str) -> Result<String, &'s
         escape_html(&fdr.callsign),
         fdr.schema_version
     ))
+}
+
+/// Annex D includes the signed bytes, not just a visual badge, so an
+/// independent verifier can check exactly what the authority signed.
+fn receipt_annex(receipt: Option<&ReceiptAnnex>) -> String {
+    let mut out = String::from("<section id=\"annex-d\"><h2>Annex D. Server receipt</h2>");
+    let Some(r) = receipt else {
+        out.push_str("<p>UNVERIFIED LOCAL / PRACTICE. No valid server receipt was supplied for this flight.</p></section>");
+        return out;
+    };
+    let label = if r.mode == AttemptMode::Ranked {
+        "&#9733; CERTIFIED SERVER-RANKED RECEIPT"
+    } else {
+        "SERVER-VERIFIED PRACTICE"
+    };
+    out.push_str(&format!("<p><strong>{label}</strong>. The application checked this receipt against its configured server key and the replayed flight. Verify the embedded bytes and key independently before trusting a printed copy.</p>"));
+    let rows = vec![
+        vec!["Attempt".into(), r.attempt_num.to_string()],
+        vec!["Mode".into(), r.mode.label().into()],
+        vec!["Score".into(), r.score_s.to_string()],
+        vec!["Server Elo before".into(), r.elo_before.to_string()],
+        vec!["Server Elo after".into(), r.elo_after.to_string()],
+        vec!["Mission Elo after".into(), r.mission_elo_after.to_string()],
+        vec![
+            "Server timestamp (Unix seconds)".into(),
+            r.timestamp_s.to_string(),
+        ],
+        vec![
+            "Server public key".into(),
+            format!("<code>{}</code>", crate::hex::encode(&r.server_public_key)),
+        ],
+        vec![
+            "Canonical receipt and signature (hex)".into(),
+            format!(
+                "<code class=\"wrap\">{}</code>",
+                crate::hex::encode(&r.receipt_bytes)
+            ),
+        ],
+    ];
+    out.push_str(&table(
+        "Table D1. Server-signed receipt. The final 64 bytes are the Ed25519 signature.",
+        &["Field", "Value"],
+        &rows,
+        "receipt-table",
+    ));
+    out.push_str("</section>");
+    out
 }
 
 /// Annex B: the signed engine design and the performance recomputed from it.

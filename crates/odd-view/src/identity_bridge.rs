@@ -340,6 +340,10 @@ pub extern "C" fn mission_word_byte(index: u32, position: u32) -> f64 {
 }
 
 /// The byte channel as text, for bridges that need a callsign or a payload.
+pub(crate) fn input_bytes() -> Vec<u8> {
+    INPUT.lock().unwrap().clone()
+}
+
 pub(crate) fn input_text() -> String {
     absorbed_text().unwrap_or_default()
 }

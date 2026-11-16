@@ -47,6 +47,7 @@ static FIELDS: Mutex<Vec<f64>> = Mutex::new(Vec::new());
 static RECORDER: Mutex<Option<Fdr>> = Mutex::new(None);
 static JSON: Mutex<String> = Mutex::new(String::new());
 static DOSSIER: Mutex<String> = Mutex::new(String::new());
+static SERVER_RECEIPT: Mutex<Option<odd_report::dossier::ReceiptAnnex>> = Mutex::new(None);
 /// The deployment page URL, supplied by the browser. A QR code has to carry
 /// an absolute URL to be scannable by a phone; the module cannot know the
 /// origin it is served from, so the page states it.
@@ -90,6 +91,9 @@ fn integer(value: f64) -> Option<i64> {
 /// channel. Returns 1 on success, 0 when the layout is impossible.
 #[no_mangle]
 pub extern "C" fn mission_fdr_parse() -> i32 {
+    *SERVER_RECEIPT.lock().unwrap() = None;
+    *VERDICT.lock().unwrap() = None;
+    *GEOMETRY.lock().unwrap() = None;
     *RECORDER.lock().unwrap() = None;
     let fields = FIELDS.lock().unwrap().clone();
     let Some(fdr) = parse_fields(&fields, &identity_bridge::input_text()) else {
@@ -459,6 +463,7 @@ pub extern "C" fn mission_fdr_sign() -> i32 {
 /// -1 SignatureMismatch, -2 metric replay mismatch, -3 terminal-state mismatch.
 #[no_mangle]
 pub extern "C" fn mission_fdr_verify() -> i32 {
+    *SERVER_RECEIPT.lock().unwrap() = None;
     *REPLAYED.lock().unwrap() = None;
     *GEOMETRY.lock().unwrap() = None;
     let Some(fdr) = RECORDER.lock().unwrap().clone() else {
@@ -519,6 +524,52 @@ fn verdict_text() -> String {
     }
 }
 
+/// Load a server key followed by the canonical receipt and signature from the
+/// byte channel. Only a valid receipt for the already-replayed record reaches
+/// the report. A failed load clears a previously accepted receipt.
+#[no_mangle]
+pub extern "C" fn mission_fdr_receipt_load() -> i32 {
+    *SERVER_RECEIPT.lock().unwrap() = None;
+    if !matches!(*VERDICT.lock().unwrap(), Some(Ok(()))) {
+        return 0;
+    }
+    let bytes = identity_bridge::input_bytes();
+    let Some(key_bytes) = bytes.get(..32) else {
+        return 0;
+    };
+    let Ok(key) = <[u8; 32]>::try_from(key_bytes) else {
+        return 0;
+    };
+    let Some(receipt) = odd_worker::ServerReceipt::from_bytes(&bytes[32..]) else {
+        return 0;
+    };
+    let Some(fdr) = RECORDER.lock().unwrap().clone() else {
+        return 0;
+    };
+    let p = &receipt.payload;
+    if !receipt.verify(&key)
+        || p.fdr_hash != fdr.digest()
+        || p.pubkey != fdr.public_key
+        || p.contract_id != fdr.contract_id
+        || p.mode != fdr.attempt_mode
+        || p.score_s_bits != fdr.metrics[4].to_bits()
+    {
+        return 0;
+    }
+    *SERVER_RECEIPT.lock().unwrap() = Some(odd_report::dossier::ReceiptAnnex {
+        server_public_key: key,
+        receipt_bytes: receipt.to_bytes(),
+        attempt_num: p.attempt_num,
+        mode: p.mode,
+        score_s: p.score_s(),
+        elo_before: p.elo_before(),
+        elo_after: p.elo_after(),
+        mission_elo_after: p.mission_elo_after(),
+        timestamp_s: p.timestamp_s,
+    });
+    1
+}
+
 /// Build the printable dossier for the parsed (or captured) recorder.
 #[no_mangle]
 pub extern "C" fn mission_fdr_dossier() -> i32 {
@@ -551,7 +602,12 @@ pub extern "C" fn mission_fdr_dossier_from_record() -> i32 {
         return 0;
     };
     let payload = dossier_payload(&fdr);
-    let Ok(document) = odd_report::dossier::html(&fdr, &geometry, &payload) else {
+    let Ok(document) = odd_report::dossier::html_with_receipt(
+        &fdr,
+        &geometry,
+        &payload,
+        SERVER_RECEIPT.lock().unwrap().as_ref(),
+    ) else {
         return 0;
     };
     *DOSSIER.lock().unwrap() = document;
@@ -561,6 +617,9 @@ pub extern "C" fn mission_fdr_dossier_from_record() -> i32 {
 /// Load a recorder from a `#verify=` payload in the byte channel.
 #[no_mangle]
 pub extern "C" fn mission_fdr_from_payload() -> i32 {
+    *SERVER_RECEIPT.lock().unwrap() = None;
+    *VERDICT.lock().unwrap() = None;
+    *GEOMETRY.lock().unwrap() = None;
     *RECORDER.lock().unwrap() = None;
     JSON.lock().unwrap().clear();
     DOSSIER.lock().unwrap().clear();
@@ -1046,6 +1105,55 @@ mod tests {
             "per-burn sweeps {parts} must sum to report[57] {}",
             fdr.metrics[57]
         );
+    }
+
+    #[test]
+    fn flown_dossier_accepts_only_a_valid_bound_server_receipt() {
+        let _guard = bridge::test_lock();
+        let fdr = flown_recorder();
+        *RECORDER.lock().unwrap() = Some(fdr.clone());
+        assert_eq!(mission_fdr_verify(), 1);
+        let key = odd_worker::ServerKey::from_seed([0x5e; 32]);
+        let receipt = odd_worker::ServerReceipt::issue(
+            odd_worker::ReceiptPayload::new(
+                fdr.digest(),
+                fdr.public_key,
+                fdr.contract_id,
+                1,
+                AttemptMode::Ranked,
+                fdr.metrics[4],
+                1200.0,
+                1205.0,
+                799.0,
+                1_700_000_000,
+            ),
+            &key,
+        );
+        let load = |r: &odd_worker::ServerReceipt| {
+            identity_bridge::mission_input_reset();
+            for byte in key.public_key().iter().chain(r.to_bytes().iter()) {
+                assert_eq!(identity_bridge::mission_input_absorb(f64::from(*byte)), 1);
+            }
+            mission_fdr_receipt_load()
+        };
+        assert_eq!(load(&receipt), 1);
+        assert_eq!(mission_fdr_dossier_from_record(), 1);
+        let html = DOSSIER.lock().unwrap().clone();
+        assert!(html.contains("id=\"annex-d\""));
+        assert!(html.contains("CERTIFIED SERVER-RANKED RECEIPT"));
+        assert!(html.contains(&odd_report::hex::encode(&receipt.to_bytes())));
+        let mut forged = receipt.clone();
+        forged.payload.elo_after_bits = 2999.0f64.to_bits();
+        assert_eq!(load(&forged), 0);
+        assert_eq!(mission_fdr_dossier_from_record(), 1);
+        assert!(DOSSIER
+            .lock()
+            .unwrap()
+            .contains("UNVERIFIED LOCAL / PRACTICE"));
+        // Even a valid signature cannot certify a different record's digest.
+        let mut other = receipt.payload.clone();
+        other.fdr_hash[0] ^= 1;
+        assert_eq!(load(&odd_worker::ServerReceipt::issue(other, &key)), 0);
     }
 
     #[test]
