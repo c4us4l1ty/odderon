@@ -7,21 +7,42 @@
 //! cannot prove that an untrusted client did not simulate beforehand.
 
 use crate::protocol::{put_f64, put_i64, put_u32, Hash};
+use odd_core::PhysicsRevision;
 use odd_report::fdr::Fdr;
 use sha2::{Digest, Sha256};
 
 /// Domain separator for the vehicle-and-plan hash. V2 adds every maneuver;
 /// old v1 tickets cannot authorize a new submission under this rule.
 pub const DESIGN_DOMAIN: &[u8] = b"odderon-design-hash-v2";
+/// Domain separator for the v4 vehicle-and-plan hash. V4 binds the physics
+/// revision into the commitment, so the same masses and commands committed
+/// under the coupled model cannot be replayed, certified or re-scored under
+/// the frozen one (or vice versa).
+pub const DESIGN_DOMAIN_V4: &[u8] = b"odderon-design-hash-v4";
 /// Domain separator for the locked prediction hash.
 pub const PREDICTION_DOMAIN: &[u8] = b"odderon-prediction-hash-v1";
+
+/// The physics a record's schema selects. Unknown schema numbers fall back to
+/// the frozen rule here; the record's own validation rejects them first.
+fn revision_for(schema_version: u16) -> PhysicsRevision {
+    PhysicsRevision::for_schema(schema_version).unwrap_or(PhysicsRevision::FrozenUncoupled)
+}
 
 /// Hash the physical vehicle and the locked maneuver plan: masses, engine,
 /// cryogenic fit-out, delegation, epochs, delta-v and optional guidance.
 /// Claimed outcomes are excluded and are checked by the replay instead.
 pub fn design_hash(fdr: &Fdr) -> Hash {
+    let revision = revision_for(fdr.schema_version);
     let mut out = Vec::new();
-    out.extend_from_slice(DESIGN_DOMAIN);
+    if revision.couples_vented_mass() {
+        out.extend_from_slice(DESIGN_DOMAIN_V4);
+        // The revision is inside the hash: a v4 vehicle is a different
+        // commitment from the identical v3 vehicle, because it flies under
+        // different mass and tank rules.
+        out.push(fdr.schema_version as u8);
+    } else {
+        out.extend_from_slice(DESIGN_DOMAIN);
+    }
     put_f64(&mut out, fdr.dry_mass_kg);
     put_f64(&mut out, fdr.initial_mass_kg);
     put_f64(&mut out, fdr.thrust_n);

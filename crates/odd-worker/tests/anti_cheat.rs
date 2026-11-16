@@ -72,7 +72,35 @@ fn server_rejects_new_legacy_schema_certificates() {
         .unwrap_err();
     assert_eq!(
         error,
-        ServerError::MalformedFdr("server requires schema 3".into())
+        ServerError::MalformedFdr("server requires schema 3 or 4".into())
+    );
+}
+
+/// A v3 certificate predates the coupled model, so it cannot earn a *new*
+/// receipt: the authority would be rating a flight under physics it did not
+/// fly. It still verifies offline and still replays, which is the compatibility
+/// rule the frozen fixtures pin.
+#[test]
+fn server_verifies_but_does_not_rate_a_frozen_v3_certificate() {
+    let mut engine = engine();
+    let (mut fdr, license) = signed_rescue(prediction_a());
+    fdr.schema_version = odd_report::FROZEN_V3_SCHEMA_VERSION;
+    // A genuine v3 record carries no coupled state.
+    fdr.flown_burn_windows.clear();
+    fdr.flameout_time_s = None;
+    fdr.propellant_remaining_kg = None;
+    fdr.sign(&license).unwrap();
+    assert!(
+        odd_verify::verify_record(&fdr).is_ok(),
+        "a v3 certificate must keep verifying under its frozen model"
+    );
+    let ticket = commit_for(&mut engine, &fdr, &license);
+    let error = engine
+        .submit(submit_request(&fdr, ticket), NOW)
+        .unwrap_err();
+    assert_eq!(
+        error,
+        ServerError::MalformedFdr("new submissions require the current recorder schema".into())
     );
 }
 
@@ -649,11 +677,33 @@ fn launch_hash_binds_command_order_epochs_vectors_and_guidance() {
             "{field}"
         );
     }
-    let mut outcome_only = original;
+    let mut outcome_only = original.clone();
     outcome_only.metrics[4] = 0.5;
     assert_eq!(
         odd_worker::commitment::design_hash(&outcome_only),
         reference,
         "outcomes are verified by replay, not known at launch"
+    );
+    // Those three fields *are* outcomes, so they stay out of the launch hash.
+    let mut coupled_state = original.clone();
+    coupled_state.flown_burn_windows = vec![(61.0, 160.0)];
+    coupled_state.flameout_time_s = Some(2_995.0);
+    coupled_state.propellant_remaining_kg = Some(120.0);
+    assert_eq!(
+        odd_worker::commitment::design_hash(&coupled_state),
+        reference,
+        "flown windows, flameout and remaining propellant are replay results"
+    );
+    // The *physics revision* is not an outcome: the same vehicle under the
+    // frozen and the coupled rules must not commit to the same bytes.
+    let mut frozen = original;
+    frozen.schema_version = odd_report::FROZEN_V3_SCHEMA_VERSION;
+    frozen.flown_burn_windows.clear();
+    frozen.flameout_time_s = None;
+    frozen.propellant_remaining_kg = None;
+    assert_ne!(
+        odd_worker::commitment::design_hash(&frozen),
+        reference,
+        "a v4 commitment must not authorize a v3 flight"
     );
 }

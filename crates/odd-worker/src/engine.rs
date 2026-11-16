@@ -179,10 +179,25 @@ impl<S: Store> AuthorityEngine<S> {
         }
         let fdr = Fdr::from_verify_payload(&req.fdr_payload)
             .map_err(|e| ServerError::MalformedFdr(format!("{e:?}")))?;
-        // Earlier recorder schemas remain readable offline, but omit v3's
-        // cryogenic and delegation proof and cannot earn a new server receipt.
+        // The authority issues v4 receipts and still replays v3 certificates,
+        // which keep verifying under the frozen model they were flown with.
+        // v1/v2 remain readable offline but omit the cryogenic and delegation
+        // proof, so they cannot earn a receipt.
+        if fdr.schema_version < odd_report::FROZEN_V3_SCHEMA_VERSION {
+            return Err(ServerError::MalformedFdr(
+                "server requires schema 3 or 4".into(),
+            ));
+        }
+        if fdr.schema_version > odd_report::SCHEMA_VERSION {
+            return Err(ServerError::MalformedFdr("unknown recorder schema".into()));
+        }
+        // A submission must be flown under the current physics. Replaying a v3
+        // record here is a verification service, not a new rating: it has no
+        // v4 coupled state to certify.
         if fdr.schema_version != odd_report::SCHEMA_VERSION {
-            return Err(ServerError::MalformedFdr("server requires schema 3".into()));
+            return Err(ServerError::MalformedFdr(
+                "new submissions require the current recorder schema".into(),
+            ));
         }
         if fdr.public_key != ticket.pubkey || fdr.contract_id != ticket.contract_id {
             return Err(ServerError::TicketSubjectMismatch);
