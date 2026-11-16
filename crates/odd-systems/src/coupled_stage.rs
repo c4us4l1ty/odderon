@@ -76,13 +76,14 @@ where
         }
     }
 
-    /// Solar generation available to the coolers at this instant, W.
-    fn bus_w(&mut self, time_s: f64) -> Result<f64, IntegrationError> {
+    /// Solar generation available to the coolers at this instant, W, and the
+    /// environment it was derived from.
+    fn bus_at(&mut self, time_s: f64) -> Result<(f64, ThermalEnvironment), IntegrationError> {
         let env = (self.environment)(time_s)?;
         let illumination = env.illumination();
         let generation =
             self.bus.array_w_at_1au * (env.solar_flux_w_m2() / SOLAR_CONSTANT_W_M2) * illumination;
-        Ok(libm::fmax(0.0, generation - self.bus.avionics_w))
+        Ok((libm::fmax(0.0, generation - self.bus.avionics_w), env))
     }
 }
 
@@ -116,10 +117,9 @@ where
             return Ok(TankRate::default());
         }
         // The bus is shared. Both tanks are evaluated against what remains
-        // after avionics; the standalone model's strict priority order decides
-        // which cooler is actually served when the surplus is short.
-        let available = self.bus_w(time_s)?;
-        let env = (self.environment)(time_s)?;
+        // after avionics; when the surplus is short, the validators' strict
+        // priority order (oxidizer first) decides who is actually served.
+        let (available, env) = self.bus_at(time_s)?;
         let balance = heat_balance(
             &spec,
             temperature_k,

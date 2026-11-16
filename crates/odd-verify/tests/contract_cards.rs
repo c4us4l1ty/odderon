@@ -259,9 +259,14 @@ fn baseline_targeted_cooled_tug_preserves_thermal_physics_pin() {
         }),
     };
     let result = compute(&settings, &plan, None, &eph).unwrap();
-    assert_eq!(format!("{:.6}", result.thermal.lost_kg), "3.843961");
+    // The tank geometry is now derived from the load: 40.475496 m3 of airframe
+    // instead of the typed 38.6 m3 envelope, with the 3% ullage the tank model
+    // already assumed. The cooled loss and the cooler draw both moved by a few
+    // parts per million as a result. Pinned to the derived numbers so a silent
+    // rebaseline still fails this test.
+    assert_eq!(format!("{:.6}", result.thermal.lost_kg), "3.843971");
     assert_eq!(
         format!("{:.6}", result.thermal.cooler_energy_j / 1e6),
-        "4209.826545"
+        "4209.825991"
     );
 }
