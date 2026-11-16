@@ -592,7 +592,7 @@ pub extern "C" fn mission_fdr_dossier() -> i32 {
     let Some(geometry) = bridge::dossier_geometry() else {
         return 0;
     };
-    let payload = dossier_payload(&fdr);
+    let payload = dossier_payload(&fdr, None);
     let Ok(document) = odd_report::dossier::html(&fdr, &geometry, &payload) else {
         return 0;
     };
@@ -613,13 +613,11 @@ pub extern "C" fn mission_fdr_dossier_from_record() -> i32 {
     let Some(geometry) = GEOMETRY.lock().unwrap().clone() else {
         return 0;
     };
-    let payload = dossier_payload(&fdr);
-    let Ok(document) = odd_report::dossier::html_with_receipt(
-        &fdr,
-        &geometry,
-        &payload,
-        SERVER_RECEIPT.lock().unwrap().as_ref(),
-    ) else {
+    let receipt = SERVER_RECEIPT.lock().unwrap();
+    let payload = dossier_payload(&fdr, receipt.as_ref());
+    let Ok(document) =
+        odd_report::dossier::html_with_receipt(&fdr, &geometry, &payload, receipt.as_ref())
+    else {
         return 0;
     };
     *DOSSIER.lock().unwrap() = document;
@@ -777,11 +775,16 @@ pub extern "C" fn mission_fdr_field_at(index: u32) -> f64 {
         .unwrap_or(f64::NAN)
 }
 
-/// The QR text: an absolute URL when the page told us where it is served,
-/// otherwise the bare fragment (which the dossier labels as relative rather
-/// than inventing a host).
-fn dossier_payload(fdr: &Fdr) -> String {
-    let fragment = fdr.verify_payload();
+/// A verified ranked receipt gets a public content-addressed link, so a
+/// scanner can retrieve both the record and its server certificate. Local
+/// and practice dossiers retain the self-contained, offline-verifiable FDR.
+/// The caller may pass only a receipt already verified and bound to `fdr`.
+fn dossier_payload(fdr: &Fdr, receipt: Option<&odd_report::dossier::ReceiptAnnex>) -> String {
+    let fragment = if receipt.is_some_and(|r| r.mode == AttemptMode::Ranked) {
+        format!("#flight={}", odd_report::hex::encode(&fdr.digest()))
+    } else {
+        fdr.verify_payload()
+    };
     let origin = ORIGIN.lock().unwrap().clone();
     if origin.is_empty() {
         return fragment;
@@ -848,12 +851,12 @@ mod tests {
             assert_eq!(mission_fdr_origin_byte(f64::from(byte)), 1);
         }
         assert_eq!(mission_fdr_origin_commit(), 1);
-        let payload = dossier_payload(&fdr);
+        let payload = dossier_payload(&fdr, None);
         assert!(payload.starts_with(url));
         assert!(payload.ends_with(&fdr.verify_payload()));
         assert_eq!(payload, format!("{url}{}", fdr.verify_payload()));
         mission_fdr_origin_reset();
-        assert_eq!(dossier_payload(&fdr), fdr.verify_payload());
+        assert_eq!(dossier_payload(&fdr, None), fdr.verify_payload());
     }
 
     /// A hostile or malformed origin must never reach the printed page.
@@ -1154,14 +1157,19 @@ mod tests {
         assert!(html.contains("id=\"annex-d\""));
         assert!(html.contains("CERTIFIED SERVER-RANKED RECEIPT"));
         assert!(html.contains(&odd_report::hex::encode(&receipt.to_bytes())));
+        let target = format!("#flight={}", odd_report::hex::encode(&fdr.digest()));
+        assert!(
+            html.contains(&target),
+            "ranked QR must resolve to the receipt"
+        );
         let mut forged = receipt.clone();
         forged.payload.elo_after_bits = 2999.0f64.to_bits();
         assert_eq!(load(&forged), 0);
         assert_eq!(mission_fdr_dossier_from_record(), 1);
-        assert!(DOSSIER
-            .lock()
-            .unwrap()
-            .contains("UNVERIFIED LOCAL / PRACTICE"));
+        let unverified = DOSSIER.lock().unwrap().clone();
+        assert!(unverified.contains("UNVERIFIED LOCAL / PRACTICE"));
+        assert!(unverified.contains("#verify="));
+        assert!(!unverified.contains("#flight="));
         // Even a valid signature cannot certify a different record's digest.
         let mut other = receipt.payload.clone();
         other.fdr_hash[0] ^= 1;

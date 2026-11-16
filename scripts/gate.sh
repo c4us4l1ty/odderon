@@ -20,7 +20,7 @@ cargo test --locked --offline --workspace --lib --tests --no-fail-fast
 step "server authority: local HTTP/SQLite adapter + anti-cheat oracles (no cloud credentials)"
 cargo clippy --locked --offline -p odd-worker --all-targets --features local -- -D warnings
 cargo test --locked --offline -p odd-worker --features local --lib --tests
-cargo build --locked --offline -p odd-worker --features local --bin odderon-authority
+cargo build --locked --offline -p odd-worker --features local --bin odderon-authority --example segment_chain
 
 step "Cloudflare authority wasm"
 cargo build --locked --offline --release -p odd-authority-wasm --target wasm32-unknown-unknown

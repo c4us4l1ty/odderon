@@ -6,8 +6,8 @@
 //! * `oracle_server_anti_hindsight_commitment`
 //! * `oracle_server_first_attempt_only_ranked`
 //! * `oracle_chunked_segment_verification_parity`
-//! * `oracle_devtools_localstorage_tamper_defeated` (receipt layer; the
-//!   browser layer is added with the Slice 3 UI)
+//! * `oracle_devtools_localstorage_tamper_defeated` (receipt layer;
+//!   `tests/browser/authority.mjs` also exercises the browser layer)
 
 use odd_contracts::Contract;
 use odd_ephem::Ephemeris;
@@ -26,7 +26,8 @@ fn oracle_server_anti_hindsight_commitment() {
     let _ = plan;
     let pred_a = prediction_from_nodes(&nodes);
 
-    // The pilot commits to prediction A before flying.
+    // This fixture is generated offline. The test proves that the ticket
+    // binds prediction A; it cannot prove a pilot did not simulate earlier.
     let (fdr_a, license) = signed_rescue(pred_a);
     let ticket = commit_for(&mut engine, &fdr_a, &license);
 
@@ -53,6 +54,26 @@ fn oracle_server_anti_hindsight_commitment() {
         .submit(submit_request(&fdr_b, ticket), NOW)
         .expect_err("the re-signed prediction must be refused");
     assert_eq!(err, ServerError::PredictionCommitmentMismatch);
+}
+
+#[test]
+fn server_rejects_new_legacy_schema_certificates() {
+    let mut engine = engine();
+    let (mut fdr, license) = signed_rescue(prediction_a());
+    fdr.schema_version = odd_report::ENGINE_SCHEMA_VERSION;
+    fdr.sign(&license).unwrap();
+    assert!(
+        odd_verify::verify_record(&fdr).is_ok(),
+        "old records remain independently replayable"
+    );
+    let ticket = commit_for(&mut engine, &fdr, &license);
+    let error = engine
+        .submit(submit_request(&fdr, ticket), NOW)
+        .unwrap_err();
+    assert_eq!(
+        error,
+        ServerError::MalformedFdr("server requires schema 3".into())
+    );
 }
 
 #[test]
@@ -178,12 +199,37 @@ fn oracle_chunked_segment_verification_parity() {
     let mut tampered: Vec<SegmentCheckpoint> = chain.clone();
     let bit = tampered[1].state_vector[0].to_bits() ^ 1;
     tampered[1].state_vector[0] = f64::from_bits(bit);
-    let mut bad_req = submit_request(&fdr, ticket);
+    let mut bad_req = submit_request(&fdr, ticket.clone());
     bad_req.segments = Some(tampered);
     let err = engine
         .submit(bad_req, NOW)
         .expect_err("a tampered segment must be refused");
     assert_eq!(err, ServerError::SegmentMismatch(1));
+
+    // Hash chains are unkeyed: a cheater can recompute every link after
+    // modifying a field. The authority must compare those fields with the
+    // replay, not merely check the links.
+    for field in ["propellant", "tank temperature", "time"] {
+        let mut forged = chain.clone();
+        match field {
+            "propellant" => forged[1].prop_kg += 1.0,
+            "tank temperature" => forged[1].tank_temps[0] = 25.0,
+            "time" => forged[1].t_us = forged[0].t_us,
+            _ => unreachable!(),
+        }
+        let mut previous = None;
+        for checkpoint in &mut forged {
+            checkpoint.cum_hash = odd_worker::segment::link_hash(previous.as_ref(), checkpoint);
+            previous = Some(checkpoint.cum_hash);
+        }
+        let mut request = submit_request(&fdr, ticket.clone());
+        request.segments = Some(forged);
+        assert_eq!(
+            engine.submit(request, NOW).unwrap_err(),
+            ServerError::SegmentMismatch(1),
+            "{field} must be checked even after rehashing"
+        );
+    }
 }
 
 #[test]
@@ -280,5 +326,173 @@ fn ticket_must_be_stored_and_record_mode_must_match() {
             .submit(submit_request(&wrong, ticket), NOW)
             .unwrap_err(),
         ServerError::AttemptModeMismatch
+    );
+}
+
+#[test]
+fn server_rejects_committed_forged_cryogenic_proofs() {
+    use odd_contracts::ThermalDesign;
+    use odd_propulsion::{EngineSpec, Propellant};
+    use odd_report::StageThermalSpec;
+
+    // Start with a real locked rescue and fit a cryogenic methalox engine.
+    // Fly it once to obtain an honest score and thermal history; the forged
+    // records below are then committed and signed by their own pilot.
+    let (mut fdr, license) = signed_rescue(prediction_a());
+    let contract = Contract::get(101).unwrap();
+    let spec = EngineSpec {
+        propellant: Propellant::LoxLch4,
+        of_ratio: 3.4,
+        p_c_pa: 6.0e6,
+        r_throat_m: 0.012,
+        r_exit_m: 0.012 * libm::sqrt(70.0),
+        length_fraction: 0.85,
+    };
+    let vehicle = contract.vehicle(spec).unwrap();
+    let design = ThermalDesign::baseline();
+    fdr.engine = Some(spec);
+    fdr.initial_mass_kg = vehicle.initial_mass_kg;
+    fdr.dry_mass_kg = vehicle.dry_mass_kg;
+    fdr.thrust_n = vehicle.engine.thrust_newtons;
+    fdr.specific_impulse_s = vehicle.engine.specific_impulse_seconds;
+    let stage = design
+        .stage(&contract, &spec, fdr.initial_mass_kg - fdr.dry_mass_kg)
+        .unwrap();
+    fdr.thermal_specs = vec![StageThermalSpec {
+        stage: 0,
+        tank_volumes_m3: [stage.oxidizer.volume_m3, stage.fuel.volume_m3],
+        propellant_id: spec.propellant as u8,
+        mli_layers: design.mli_layers,
+        epsilon_eff: design.epsilon_eff,
+        tank_shell_material: design.shell,
+        absorptivity: design.absorptivity,
+        outer_epsilon: design.outer_epsilon,
+        strut_conductance_w_k: design.strut_conductance_w_k,
+        relief_pressure_pa: design.relief_pressure_pa,
+        radiator_area_m2: design.radiator_area_m2,
+        radiator_epsilon: design.radiator_epsilon,
+        cryocooler_w: design.cryocooler_lift_w,
+        cryocooler_carnot_fraction: design.cryocooler_carnot_fraction,
+        array_w_at_1au: design.bus.array_w_at_1au,
+        avionics_w: design.bus.avionics_w,
+        electric_propulsion_w: design.bus.electric_propulsion_w,
+        structure_temperature_k: design.structure_temperature_k,
+        sink_temperature_k: design.sink_temperature_k,
+    }];
+    let replay = odd_verify::replay_flight(&odd_verify::spec_from_record(&fdr)).unwrap();
+    fdr.metrics = replay.report;
+    fdr.final_state_hash = replay.final_state_hash;
+    fdr.boil_off_kg = replay.boil_off_kg;
+    fdr.cryocooler_energy_j = replay.cryocooler_energy_j;
+    fdr.vent_events = replay.vent_events;
+    fdr.sign(&license).unwrap();
+    assert!(fdr.metrics[4].is_finite());
+    assert!(odd_verify::verify_record(&fdr).is_ok());
+
+    for forgery in ["omitted tank", "invalid blanket", "false tank volume"] {
+        let mut forged = fdr.clone();
+        match forgery {
+            "omitted tank" => {
+                forged.thermal_specs.clear();
+                forged.vent_events.clear();
+                forged.boil_off_kg = [0.0, 0.0];
+                forged.cryocooler_energy_j = 0.0;
+            }
+            "invalid blanket" => {
+                forged.thermal_specs[0].epsilon_eff = 0.000_001;
+                forged.vent_events.clear();
+                forged.boil_off_kg = [0.0, 0.0];
+                forged.cryocooler_energy_j = 0.0;
+            }
+            "false tank volume" => forged.thermal_specs[0].tank_volumes_m3[1] *= 1.5,
+            _ => unreachable!(),
+        }
+        forged.sign(&license).unwrap();
+        let mut authority = engine();
+        let ticket = commit_for(&mut authority, &forged, &license);
+        assert!(
+            matches!(
+                authority.submit(submit_request(&forged, ticket), NOW),
+                Err(ServerError::ReplayRejected(_))
+            ),
+            "a valid commitment and pilot signature must not certify {forgery}"
+        );
+        assert_eq!(
+            authority
+                .store()
+                .load_player(&license.public_key())
+                .unwrap()
+                .ranked_count,
+            0
+        );
+    }
+}
+
+#[test]
+fn committed_flight_plan_cannot_be_changed_after_launch() {
+    let (original, pilot) = signed_rescue(prediction_a());
+    let mut authority = engine();
+    let ticket = commit_for(&mut authority, &original, &pilot);
+
+    // A malicious client can compile, replay and sign a different plan
+    // while keeping exactly the same committed vehicle and prediction.
+    let mut later = original.clone();
+    later.commands[0].delta_v_tnw[0] += 1.0;
+    let replay = odd_verify::replay_flight(&odd_verify::spec_from_record(&later)).unwrap();
+    later.metrics = replay.report;
+    later.final_state_hash = replay.final_state_hash;
+    later.boil_off_kg = replay.boil_off_kg;
+    later.cryocooler_energy_j = replay.cryocooler_energy_j;
+    later.vent_events = replay.vent_events;
+    later.sign(&pilot).unwrap();
+    assert!(
+        odd_verify::verify_record(&later).is_ok(),
+        "the changed plan is independently valid"
+    );
+    assert_eq!(
+        authority
+            .submit(submit_request(&later, ticket), NOW)
+            .unwrap_err(),
+        ServerError::DesignCommitmentMismatch,
+        "a signed launch ticket must bind the maneuver plan as well as the vehicle"
+    );
+    assert_eq!(
+        authority
+            .store()
+            .load_player(&pilot.public_key())
+            .unwrap()
+            .ranked_count,
+        0
+    );
+}
+
+#[test]
+fn launch_hash_binds_command_order_epochs_vectors_and_guidance() {
+    let (original, _) = signed_rescue(prediction_a());
+    let reference = odd_worker::commitment::design_hash(&original);
+    for field in ["epoch", "vector", "guidance", "order", "count"] {
+        let mut changed = original.clone();
+        match field {
+            "epoch" => changed.commands[0].time_us += 1,
+            "vector" => changed.commands[0].delta_v_tnw[2] = 0.5,
+            "guidance" => changed.commands[0].guidance = Some([1.0; 6]),
+            "order" => changed.commands.reverse(),
+            "count" => {
+                changed.commands.pop();
+            }
+            _ => unreachable!(),
+        }
+        assert_ne!(
+            odd_worker::commitment::design_hash(&changed),
+            reference,
+            "{field}"
+        );
+    }
+    let mut outcome_only = original;
+    outcome_only.metrics[4] = 0.5;
+    assert_eq!(
+        odd_worker::commitment::design_hash(&outcome_only),
+        reference,
+        "outcomes are verified by replay, not known at launch"
     );
 }

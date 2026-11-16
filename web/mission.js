@@ -63,11 +63,11 @@ const lens={
   tnw:'Three perpendicular push directions: along motion, sideways in the orbital plane, and out of the plane. Hover a colored handle to isolate one direction.',
   leo:'A close Earth parking orbit, here a few hundred kilometers up. The projection compares the parking circle with Earth’s surface.',
   dag:'A cause-and-effect chain with no loops. Each warning points from symptom to mechanism to cause to a one-click demonstration.',
-  pdr:'An engineering dossier comparing your locked prediction with modeled flight, signed error contributions and practice rating.',
+  pdr:'An engineering dossier comparing your locked prediction with modeled flight, signed error contributions and any verified server receipt.',
   mli:'Each film layer re-radiates heat to the next, so the leak falls as layers are added. The projection shows the outer skin running hot while only a small fraction reaches the liquid. Past about twenty layers the support struts, not the blanket, set the floor.',
   cop:'A cryocooler lifts heat from the cold tank and rejects it, plus the electricity it consumed, through a warm radiator. The projection compares heat lifted with power drawn: at 20 K against a 300 K sink the electricity is one to two orders of magnitude larger, and the Carnot ceiling caps the ratio.',
   gnc:'Guidance decides where to point, navigation decides where you are, and control moves the actuators. The projection shows the attitude hardware drawing from the same electrical bus that feeds the cooler and the propulsion.',
-  'boil-off':'Heat leaking into a cryogenic tank vaporizes liquid. Below the relief setting the tank self-pressurizes; at relief it vents and that propellant is lost to the mission. The projection shows the liquid level falling as heat arrives.',
+  'boil-off':'Heat leaking into a cryogenic tank vaporizes liquid. Below the relief setting the tank self-pressurizes; at relief it vents and the model reports the estimated loss. This version does not feed that loss back into orbital mass or the fuel budget. The projection shows the liquid level falling as heat arrives.',
   t:'A push along the direction of travel changes orbital energy. Near the closest point, a forward push raises the farthest point of the orbit; a backward push lowers it. The projection shows kinetic-energy gain or loss and the opposite side breathing outward or inward.',
   n:'This sideways push stays in the orbital plane and is perpendicular to the direction of travel. Near an apsis it points roughly inward or outward; away from one it is not exactly radial. The projection rotates the eccentricity vector.',
   w:'This push is perpendicular to the orbital plane. It changes the direction of the orbit’s angular momentum and tilts the plane about the line of nodes. The projection shows torque as radius crossed with force.',
@@ -523,7 +523,7 @@ function drawLens(){
     arrow(cx-70,cy-20,cx-34,cy-20,'#e1bc76');
     for(let i=0;i<3;i++){const y=cy-40-((lensPhase*18+i*12)%30);lensCtx.fillStyle='#edbc98';lensCtx.beginPath();lensCtx.arc(cx,y,2.5,0,Math.PI*2);lensCtx.fill();}
     lensCtx.fillText('Heat in vaporizes liquid; the relief valve vents it',10,14);
-    lensCtx.fillText('Vented propellant is gone from the mission',10,h-8);
+    lensCtx.fillText('Loss is reported, not fed back into orbital mass',10,h-8);
   }else if(key==='dag'){
     const labels=['Symptom','Mechanism','Cause','Demo'];for(let i=0;i<4;i++){const x=15+i*65;lensCtx.strokeStyle='#8ea98d';lensCtx.strokeRect(x,cy-12,52,24);lensCtx.fillStyle='#c7d3c4';lensCtx.fillText(labels[i],x+4,cy+4);if(i<3)arrow(x+52,cy,x+65,cy,'#e2bc79');}lensCtx.fillText('Deterministic cause chain',10,14);
   }else if(key==='pdr'){
@@ -584,7 +584,7 @@ function updateAttemptMode(reset=false){
   const note=$('attempt-mode-note');
   if(note)note.textContent=!available?'No trusted server key is configured. Local practice and replay are available, but no rating or certification is awarded.'
     :practiced?'Numerical practice was used on this contract in this page session. Ranked is disabled here; offline practice does not consume a server attempt.'
-    :'Ranked launch commits the design and prediction before the modeled flight. The server forces later attempts to verified practice. Numerical tug targeting is practice-only.';
+    :'Ranked launch commits the vehicle, maneuver plan and prediction before the modeled flight. The server forces later attempts to verified practice. Numerical tug targeting is practice-only.';
   const split=$('split-kick');
   if(split){split.disabled=!!locked||(scenario==='103'&&select.value==='ranked');split.title=scenario==='103'&&select.value==='ranked'?'Numerical targeting runs the flight model and is available only in practice.':'';}
 }
@@ -623,7 +623,7 @@ async function launchLocked(){
   const profile=identity.profile(),pubkey=profile.publicKey.map(b=>b.toString(16).padStart(2,'0')).join('');
   const context={pubkey,callsign:profile.callsign,ticket:null};
   if($('attempt-mode').value==='ranked'){
-    authorityPending++;$('execute-status').textContent='Committing the locked design and prediction before flight…';
+    authorityPending++;$('execute-status').textContent='Committing the locked vehicle, plan and prediction before flight…';
     try{
       if(!configure(wasm,nodes))throw Error('The locked design could not be compiled.');
       const p=locked.prediction;

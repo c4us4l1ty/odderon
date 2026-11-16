@@ -93,11 +93,18 @@ async function getFlight(db, bucket, hash) {
     WHERE f.hash=?1`, hash);
   if (!row) return null;
   if (!row.receipt) throw Error('stored flight is missing its receipt');
-  const object = await bucket.get(row.r2_key || row.hash); // legacy read-only layout
+  const r2key = row.r2_key ?? row.hash; // null is the legacy hash-only layout
+  if (typeof r2key !== 'string' || !r2key) throw Error('stored flight key is invalid');
+  const object = await bucket.get(r2key);
   if (!object) throw Error('stored flight payload is missing');
+  if (!Number.isSafeInteger(object.size) || object.size > MAX_BODY) throw Error('stored flight payload exceeds bound');
+  const payload = await object.text();
+  if (row.r2_key != null && r2key !== await objectKey({ hash: row.hash, payload })) {
+    throw Error('stored flight payload digest mismatch');
+  }
   return { hash: row.hash, pubkey: row.pubkey, contract: row.contract, attempt: row.attempt,
     mode: row.mode, score: row.score, delegation_mask: row.delegation_mask,
-    payload: await object.text(), receipt: row.receipt };
+    payload, receipt: row.receipt };
 }
 async function objectKey(flight) {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(flight.payload)));

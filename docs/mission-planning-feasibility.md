@@ -2,11 +2,11 @@
 
 This document records the implemented experimental mission loop and the
 numeric conventions behind its acceptance gates. It is not an operational
-flight-dynamics product. The three contracts are playable local scenarios and
-challenge ratings are fixed catalog labels. The player rating and flight
-license now persist in the browser, and a ranked flight carries an Ed25519
-signed recorder that a reader re-flies bit for bit; what does not exist is a
-server that adjudicates the rating. See
+flight-dynamics product. The three contracts are playable scenarios. An
+Ed25519-signed flight recorder can be re-flown bit for bit, and a configured
+authority decides ranked ratings and signs receipts. The browser keeps the
+license and a local receipt cache, not an authoritative rating. See
+[server authority](server-authority.md) and
 [Flight identity and signed records](#flight-identity-and-signed-records).
 
 ## Work-package status
@@ -30,7 +30,7 @@ server that adjudicates the rating. See
 These are prototype work-package gates, not flight-operations certification.
 Since they were written, `crates/odd-identity` (persisted flight license) and
 `crates/odd-report` (signed recorder, deterministic dossier, verification QR)
-have shipped, and the browser keeps one ranked certificate per contract.
+have shipped, and the browser caches server receipts for ranked flights.
 `crates/odd-propulsion` (WP 1.5) has also shipped: the engine is now a
 physical design solved from chamber conditions and nozzle geometry, the
 browser exposes it as a draggable CAD and Schlieren lab, and the signed
@@ -39,10 +39,11 @@ recorder carries the design rather than a claimed thrust.
 `crates/odd-systems` (WP 1.6) has shipped: cryogenic tanks are integrated by
 the same adaptive Dormand-Prince stepper as the trajectory, driven by actual
 sun/planet vectors and eclipse state, with active cooling drawing from the
-electrical bus ahead of electric propulsion. The 12.8 t cislunar tug loses
-582 kg (4.55%) over its 6.94-day window with a 20-layer blanket. Three numbers
-in that work-package card were physically impossible as written; the
-corrections and their derivations are in `docs/thermal.md`.
+electrical bus ahead of potential electric propulsion. Thermal loss is reported
+along the flown spline but is not fed back into orbital or burn mass; the
+current missions use chemical propulsion. Three numbers in that work-package
+card were physically impossible as written; the corrections and their
+derivations are in `docs/thermal.md`.
 
 `odd-contracts::chief_ai` (WP 1.7) has shipped: four deterministic department
 heads with a per-discipline `[AUTO-DELEGATED]`/`[MANUAL]` toggle, +35% mass and
@@ -52,8 +53,10 @@ FDR **schema v3 is frozen** (`docs/fdr-schema-changelog.md`): it signs the
 per-stage thermal spec, the delegation bitmask, the exact vent history and the
 integrated boil-off magnitude. Schema 1 and 2 records still verify.
 
-A server-authoritative rating (WP 1.9) remains deferred, deliberately: it will
-be written against the frozen v3 schema so no certificate is invalidated.
+The server-authoritative rating (WP 1.9) is implemented against schema 3.
+Legacy schemas remain replayable offline, but the server will not issue new
+receipts for them. The checkpoint endpoint performs a full replay, not
+incremental verification; production deployment is separately configured.
 
 ## Apsides, directions and time quantization
 
@@ -325,25 +328,27 @@ not labeled as exact additive causes.
   demonstrated reference budget is 3,240 m/s in three kicks; the 3,120 m/s
   oracle is a separate gravity-loss regression.
 
-The local score is transparent: 50% objective quality, 25% locked-prediction
-closeness, 25% delta-v efficiency against the contract's reference geometry.
-Hard impact, fuel or deadline failures score zero. Attribution shares never
-enter the score. The debrief updates a local practice Astro-Elo with the
-standard expected-score formula (Kp = 40 for the first 20 local missions, then
-20; Km = 8). The rating is persisted locally and every ranked update is backed
-by a signed, replay-verified recorder, but no server adjudicates it: it is a
-local ladder, not a global one.
+The score is 50% objective quality, 25% locked-prediction closeness and 25%
+delta-v efficiency against the catalog reference. Hard impact, fuel or deadline
+failures score zero; attribution shares never enter the score. The authority
+recomputes that score and applies Elo only for the first ranked attempt per
+key and contract (Kp = 40 for the first 20 ranked flights, then 20; Km = 8).
+The browser's cache is not authoritative. For frozen replay compatibility, the
+score's fuel-failure threshold and remaining-fuel prediction use catalog
+baseline dry mass, which can differ from the fitted stage shown in the debrief.
+A lighter fitted stage can score a fuel failure even with fuel remaining.
 
 The mission page includes a ranked selector, canvas node and handle
 interaction, keyboard-accessible numerical controls, the Rust-backed Physics
 Lens and causal checks, a perigee-kick splitter, locked predictions,
 worker-based flight, impact-aware debriefs, a patched lunar preview legend,
-prediction-vs-reality table, exact Shapley list, finite-burn loss line, practice
-Elo update and a print-styled PDR export button. That button is the quick
+prediction-vs-reality table, exact Shapley list, finite-burn loss line,
+receipt status and a print-styled PDR export button. That button is the quick
 print-to-PDF summary. The full dossier is a separate export owned by
 `crates/odd-report`: it is issued only after a successful verify-and-replay and
 carries the canonical digest, the metric tables and the vector verification
-QR. Boil-off is explicitly marked not modeled.
+QR. Cryogenic boil-off is reported and verified but is not fed back into the
+orbital or burn mass.
 
 Heavy propagation, targeting and counterfactuals run in one-shot workers; the
 idle gate remains zero animation callbacks and zero worker messages over two
@@ -434,15 +439,11 @@ returns `computeMs`
   emitted SVG rectangles, decodes it with `jsqr`, and verifies the decoded
   payload again.
 - `oracle_browser_persistence_and_idle_gate`:
-  `tests/browser/observatory.mjs` (the first execution of a contract certifies
-  it and moves Astro-Elo; license, public key, mnemonic, rating and all three
-  certificates survive a full document reload; the profile dialog exports a
-  backup that re-imports to the same identity and rating; a corrupted
-  mnemonic is rejected while the real one validates; replaying a certified
-  contract stays practice with the rating and certificate unchanged; the
-  profile dialog and the verification dialog each settle to 0 animation
-  callbacks and 0 worker messages over 2 s; a shared `#verify=` link verifies
-  in a fresh document).
+  `tests/browser/observatory.mjs` (server-certified first attempts, license
+  and receipt-cache reload, backup/restore, mnemonic validation and idle
+  checks). `tests/browser/authority.mjs` separately exercises first-attempt
+  enforcement, public `#flight=` QR replay and localStorage tamper rejection
+  against both native and workerd authorities.
 
 ## Flight identity and signed records
 
@@ -456,18 +457,13 @@ Randomness is supplied by the caller (`crypto.getRandomValues` in the browser),
 which is why the crate needs no `getrandom` and builds for wasm32 without a shim.
 The public identifier is `ODD-ID-` plus base32 of the first ten public-key bytes.
 
-The license, callsign, player rating, per-contract ratings and certified
-certificates persist in one versioned `localStorage` record, which also archives
-up to eight identities so switching away and back resumes a pilot's own progress.
-Without that archive a switch would erase the certificates of the identity being
-left, which would let the same contract be certified twice. **This is a local
-practice identity, not key custody**: `localStorage` is readable by any script on
-the origin, and the profile dialog and the exported backup both say so. A ranked
-certificate is issued once per contract; later attempts are practice and cannot
-move the rating. The signed recorder is stored with the certificate, because a
-locked rating would otherwise leave the official record unrecoverable except by
-flying again, which would be practice; the profile dialog can export and
-re-verify it after a reload.
+The license, callsign, cached player rating and signed records persist in a
+versioned `localStorage` record, which archives up to eight identities for
+switching. **This is not key custody**: storage is readable by scripts on the
+origin, and the profile dialog and exported backup say so. The authority, not
+the archive, enforces one ranked commit per key and contract. Valid receipts
+and records can be cached and re-verified after reload; sync restores the
+server's rating. Another key is another identity, not a Sybil-proof account.
 
 `crates/odd-report` signs a canonical fixed-layout byte string, not JSON. Every
 field a reader acts on is inside it, including the callsign and the Elo change.
@@ -483,20 +479,21 @@ terminal-state hash to reproduce bit for bit.
 
 This is an experimental prototype. There is no launch-window optimizer,
 B-plane targeting, lunar orbit insertion, terrain/landing model, space-weather
-atmosphere, thrust steering law, cryogenic boil-off model, or server-backed
-multiplayer rating. Astro-Elo and the flight license are local to one browser;
-there is no account recovery beyond the exported backup, no revocation, and no
-defence against someone who reads the origin's storage. The perigee splitter is a bounded forward search for two or
-three equal kicks, not a global optimizer. The lunar patch is a display/preview
-aid; continuous third-body gravity remains the execution model. The debrief print button is a plain print-to-PDF export; the signed,
-QR-bearing dossier is a separate export that is only issued after a successful
-verify-and-replay, either as a self-contained HTML download or printed to PDF
-from a sandboxed frame at the document's own `@page` geometry. No server-side PDF
-renderer is involved. The dossier QR carries an origin-independent `#verify=`
-fragment, so a reader must prepend the deployment address; it is not a scannable
-absolute URL. It is encoded at error correction M, falling back deterministically
-to L for a maximal twelve-command guided flight whose payload exceeds M's byte
-capacity; the level actually used is stated in both the SVG and the printed
-verification block. Exact
+atmosphere or thrust steering law. Cryogenic loss is evaluated one-way and is
+not subtracted from orbital mass or burn fuel; see [thermal.md](thermal.md).
+The authority cannot prevent prior simulation on an untrusted client or a new
+key, and its checkpoint path is a full replay. The perigee splitter is a
+bounded practice-only forward search for two or three equal kicks, not a
+global optimizer. The lunar patch is a display/preview aid; continuous
+third-body gravity remains the execution model.
+
+The quick debrief print button and signed QR-bearing dossier are separate
+exports; the latter is issued after verify-and-replay and can be downloaded as
+HTML or printed in the browser. There is no server-side PDF renderer. A ranked
+dossier uses an absolute deployment URL ending in `#flight=<hash>` when the
+origin is available, so the public record and receipt can be retrieved; local
+or Practice dossiers use a self-contained `#verify=` fragment. Without an
+origin these fragments are labelled relative. QR error correction uses M,
+falling back deterministically to L for a maximal payload. Exact
 Shapley is computationally heavier than the original four-run/<5 ms card; the
 implementation chooses mathematical exactness and reports measured cost.

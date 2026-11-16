@@ -1,16 +1,10 @@
-//! Chunked hash-chain verification (blueprint §6.4).
+//! Checkpoint hash-chain verification (blueprint §6.4).
 //!
-//! A long mission can be verified in pieces: the FDR carries a checkpoint
-//! every ~30 sim-days, each chaining a cumulative hash over every prior
-//! checkpoint. The authority recomputes the chain in O(1) per segment and
-//! binds the terminal checkpoint to the same `final_state_hash` the full
-//! replay produces. A one-bit edit to an intermediate checkpoint diverges
-//! the chain at that segment's own boundary, so the rejection names where
-//! the tamper happened rather than only failing at the end.
-//!
-//! The cloud adapter may additionally replay each segment's physics inside
-//! its per-request CPU budget; the chain is what guarantees those pieces
-//! compose to the identical terminal state.
+//! Checkpoints are verified against a complete authoritative replay; this
+//! is not yet incremental execution and does not reduce Worker CPU time.
+//! Every link, time, state, propellant mass and (for storable stages) zero
+//! tank-temperature sentinel is checked. Cryogenic checkpoint temperatures
+//! cannot yet be sampled from a replay and are rejected by the engine.
 
 use crate::protocol::{put_f64, put_i64, Hash, SegmentCheckpoint, ServerError};
 use sha2::{Digest, Sha256};
@@ -49,7 +43,9 @@ pub fn link_hash(prev: Option<&Hash>, cp: &SegmentCheckpoint) -> Hash {
 /// `sample` returns the replayed trajectory's state at a mission time. Each
 /// checkpoint must (a) carry the correct cumulative hash link and (b) match
 /// the authoritative state at its own `t_us` bit-for-bit. The terminal
-/// checkpoint must additionally reproduce `final_state_hash`. Returns
+/// checkpoint must additionally reproduce `final_state_hash`. `dry_mass_kg`
+/// defines propagated propellant mass; temperatures must be zero sentinels
+/// for the supported storable case. Returns
 /// `SegmentMismatch(i)` at the first checkpoint that fails either check, so
 /// a one-bit edit — even one whose downstream hashes were recomputed — is
 /// caught at its own boundary by the physics sample. An empty chain is
@@ -57,6 +53,7 @@ pub fn link_hash(prev: Option<&Hash>, cp: &SegmentCheckpoint) -> Hash {
 pub fn verify_chain<F>(
     checkpoints: &[SegmentCheckpoint],
     final_state_hash: &Hash,
+    dry_mass_kg: f64,
     sample: F,
 ) -> Result<(), ServerError>
 where
@@ -66,7 +63,12 @@ where
         return Err(ServerError::SegmentMismatch(0));
     }
     let mut prev: Option<Hash> = None;
+    let mut previous_time = None;
     for (i, cp) in checkpoints.iter().enumerate() {
+        if cp.t_us < 0 || previous_time.is_some_and(|time| cp.t_us <= time) {
+            return Err(ServerError::SegmentMismatch(i));
+        }
+        previous_time = Some(cp.t_us);
         let expected = link_hash(prev.as_ref(), cp);
         if expected != cp.cum_hash {
             return Err(ServerError::SegmentMismatch(i));
@@ -92,6 +94,16 @@ where
                 return Err(ServerError::SegmentMismatch(i));
             }
         }
+        // `prop_kg` is propagated mass above the signed dry mass. Storable
+        // stages have no modeled tanks and must use the +0.0 sentinels.
+        if cp.prop_kg.to_bits() != (state.mass - dry_mass_kg).to_bits()
+            || cp
+                .tank_temps
+                .iter()
+                .any(|value| value.to_bits() != 0.0f64.to_bits())
+        {
+            return Err(ServerError::SegmentMismatch(i));
+        }
     }
     // The terminal checkpoint must be the flown final state, so the chain
     // composes to exactly the hash the full replay produced.
@@ -112,7 +124,7 @@ where
     Ok(())
 }
 
-/// Build a honest checkpoint chain from a flown trajectory's sampled states.
+/// Build an honest checkpoint chain from a flown trajectory's sampled states.
 /// The recorder uses this to attach segments; the test oracle uses it to
 /// produce a chain that must verify, then tampers one link.
 pub fn build_chain(samples: &[(i64, [f64; 7], f64, [f64; 2])]) -> Vec<SegmentCheckpoint> {

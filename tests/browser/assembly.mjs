@@ -171,6 +171,9 @@ check('the scan target carries the verify fragment', scanUrl.includes('#verify='
 check('the scan target points at this page', scanUrl.startsWith(`${new URL(page.url()).origin}/mission.html#verify=`));
 check('the dossier no longer prints a relative placeholder', !/relative to the serving origin/i.test(scanLine));
 check('the dossier prints the cryogenic annex', verified.dossier.includes('id="annex-c"'));
+check('the storable dossier discloses the baseline dry mass used for scoring',
+  /id="score-dry-mass-note"/.test(verified.dossier)
+  && /fuel threshold and prediction term use the catalog baseline dry mass/.test(verified.dossier));
 check('the dossier names the delegated disciplines', /Delegation bitmask/.test(verified.dossier)
   && /capped at 0.65/.test(verified.dossier));
 
@@ -302,8 +305,22 @@ check('the cooled cryogenic flight verifies', cryoVerified.code === 1, cryoVerif
 check('the dossier reports the fitted cooler', /Commanded cooler lift/.test(cryoVerified.dossier)
   && /400\.000/.test(cryoVerified.dossier));
 check('the dossier reports the array the player paid for', /16000\.0/.test(cryoVerified.dossier));
-check('the dossier reports the suppressed loss', /Total propellant lost<\/th><td>3\.843961 kg/.test(cryoVerified.dossier));
-check('the dossier reports the cooler electricity', /4209\.826545 MJ/.test(cryoVerified.dossier));
+check('the dossier discloses one-way thermal coupling', /id="thermal-coupling-note"/.test(cryoVerified.dossier)
+  && /does not subtract it from propagated mass/.test(cryoVerified.dossier));
+check('the cryogenic dossier discloses the baseline dry mass used for scoring',
+  /id="score-dry-mass-note"/.test(cryoVerified.dossier));
+const debriefDisclaimer = await page.locator('#debrief .disclaimer').textContent();
+check('the debrief discloses one-way thermal coupling', /not subtracted from orbital mass/.test(debriefDisclaimer));
+check('the debrief discloses the score fuel threshold',
+  /fuel threshold and prediction comparison use mass minus the catalog baseline dry mass/.test(debriefDisclaimer));
+// The practice targeter now follows the assembled stage, so this is a new
+// trajectory rather than the older baseline-targeted physics-pin fixture.
+// Compare the dossier to the actual worker output at printed precision; the
+// old input/output pin remains in baseline_targeted_cooled_tug_preserves_thermal_physics_pin.
+check('the dossier reports the suppressed loss', cryoVerified.dossier.includes(
+  `Total propellant lost</th><td>${wellCooled.lost.toFixed(6)} kg`));
+check('the dossier reports the cooler electricity', cryoVerified.dossier.includes(
+  `${(wellCooled.coolerJoules / 1e6).toFixed(6)} MJ`));
 const cryoRecord = await page.evaluate(() => JSON.parse(window.missionDiagnostics.recorder().json));
 check('the signed record carries the array sizing', cryoRecord.array_w_at_1au === 16000
   || cryoRecord.thermal_specs?.[0]?.array_w_at_1au === 16000, JSON.stringify(cryoRecord.thermal_specs?.[0] ?? {}).slice(0, 200));

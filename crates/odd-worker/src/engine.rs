@@ -179,6 +179,11 @@ impl<S: Store> AuthorityEngine<S> {
         }
         let fdr = Fdr::from_verify_payload(&req.fdr_payload)
             .map_err(|e| ServerError::MalformedFdr(format!("{e:?}")))?;
+        // Earlier recorder schemas remain readable offline, but omit v3's
+        // cryogenic and delegation proof and cannot earn a new server receipt.
+        if fdr.schema_version != odd_report::SCHEMA_VERSION {
+            return Err(ServerError::MalformedFdr("server requires schema 3".into()));
+        }
         if fdr.public_key != ticket.pubkey || fdr.contract_id != ticket.contract_id {
             return Err(ServerError::TicketSubjectMismatch);
         }
@@ -188,8 +193,8 @@ impl<S: Store> AuthorityEngine<S> {
         let contract =
             Contract::get(fdr.contract_id).ok_or(ServerError::UnknownContract(fdr.contract_id))?;
 
-        // Anti-hindsight: the presented design and prediction must hash to
-        // exactly what was committed before the flight ran.
+        // The presented vehicle, maneuver plan and prediction must hash to
+        // exactly what the pilot committed in the signed launch ticket.
         if design_hash(&fdr) != ticket.design_hash {
             return Err(ServerError::DesignCommitmentMismatch);
         }
@@ -204,10 +209,17 @@ impl<S: Store> AuthorityEngine<S> {
         let outcome = odd_verify::verify_record(&fdr)
             .map_err(|e| ServerError::ReplayRejected(format!("{e:?}")))?;
 
-        // Optional chunked verification must chain to the same final state,
-        // sampling each checkpoint against the authoritative trajectory.
+        // Optional checkpoints must chain to the same final state, sampling
+        // each against the complete authoritative replay above.
         if let Some(segments) = &req.segments {
-            verify_chain(segments, &outcome.final_state_hash, |t| {
+            // The replay currently retains orbital states but not a sampled
+            // cryogenic temperature history. Never authenticate invented
+            // tank temperatures: full submission still verifies all signed
+            // thermal loss and vent events, but segmented cryo is not ready.
+            if !fdr.thermal_specs.is_empty() {
+                return Err(ServerError::ThermalSegmentsUnsupported);
+            }
+            verify_chain(segments, &outcome.final_state_hash, fdr.dry_mass_kg, |t| {
                 outcome.trajectory.sample(t).ok()
             })?;
         }

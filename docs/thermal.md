@@ -1,8 +1,8 @@
 # Cryogenic tanks, boil-off, and active cooling (WP 1.6)
 
 `crates/odd-systems` is pure deterministic Rust — `f64` plus `libm`, no
-`std::time`, no `web-sys`, no I/O — so the browser, the CLI and the future
-Worker run the identical thermal code path.
+`std::time`, no `web-sys`, no I/O — so the browser, CLI and the authority's
+Rust/WASM replay run the identical thermal code path.
 
 ## What is modelled
 
@@ -73,9 +73,11 @@ machine is always a real heat pump. The regression
 
 The draw comes out of the **existing bus balance** in priority order
 avionics → oxidizer cooler → fuel cooler → electric propulsion, so cooling
-genuinely steals thrust capability from EP. The cooler is thermostatically
-modulated: it lifts only what it must to hold the setpoint, never enough to
-refrigerate the liquid below its own cold tip.
+reduces the modeled power *available* to EP. The current contracts use
+chemical engines; that surplus is not coupled to electric thrust or the
+trajectory. The cooler is thermostatically modulated: it lifts only what it
+must to hold the setpoint, never enough to refrigerate the liquid below its
+own cold tip.
 
 ## Three numbers in the work-package card are physically impossible
 
@@ -141,9 +143,10 @@ the oxidizer's end-of-flight peak. At time `t` the generation is
 avionics comes off the top; the oxidizer cooler is served first; the fuel is
 offered **exactly** `max(0, P_bus(t) − P_ox(t))`; and electric propulsion sees
 only the surplus `max(0, P_fuel_available(t) − P_fuel(t))`. In eclipse the bus
-collapses to zero and every cooler and thruster stops together. The accepted
-steps are logged as `BusAllocation` records on `StageThermalHistory.bus_trend`,
-so the priority rule is checkable from the record, not merely asserted.
+collapses to zero, the coolers receive no power, and EP surplus is zero. The
+accepted steps are logged as `BusAllocation` records on
+`StageThermalHistory.bus_trend`, so the priority rule is checkable in the
+integration history. The full bus trend is not stored in the signed FDR.
 
 The earlier end-state-peak approximation handed the fuel a constant
 `capacity − ox_peak` for the whole mission: fictional in eclipse (the bus was
@@ -158,16 +161,58 @@ allowance actually varies with the instantaneous sunlight.
 designed around, sized from the heat its own reference flight integrates.
 Storables (101, 102) return the neutral design — there is nothing to insulate.
 The cislunar tug (103) recommends 40 MLI layers, a 0.15 W/K mounting, a 2 kW
-cold-tip cooler and 40 m² of radiator on a 12 kW array: integrated over the
-6.94-day reference coast this loses ~1.4 kg (0.011 % of the 12.8 t load) and is
-charged as ~264 kg of real fit-out dry mass, so it is a purchase, never a free
-upgrade. `oracle_multiday_contracts_are_solvable_in_both_modes` re-derives the
-loss, the cooler joules and the delta-v margin every run, in both hand-sized
-and fully-delegated modes.
+cold-tip cooler and 40 m² of radiator on a 12 kW array. The assembly panel's
+**Fit recommended thermal design** button fits it only when Thermal and Power
+are manual, charges ~264 kg of real fit-out dry mass and clears any stale
+plan. The button is disabled for storable stages or chief-owned controls.
+
+`oracle_multiday_contracts_are_solvable_in_both_modes` actually flies the
+multi-day objectives in manual and fully delegated modes: it checks impact,
+fuel, the catalog orbital tolerances and objective score, as well as thermal
+loss and an ideal delta-v margin after subtracting the measured loss. For the
+assembled 103 reference plans, manual loses ~1.44 kg and the chief-sized stack
+~8.99 kg over the 6.94-day window. The practice-only splitter targets the
+assembled engine and masses, not the baseline catalog stage. The browser gate
+also flies both assembled tug designs to the objective in local practice; a
+separate first-attempt manual-card ranked flight tests the server receipt (its
+single-burn trap is not an objective-success claim).
 
 The thermal chief also specifies active cooling for a cryogenic coast — a
 week-long LH2 storage is zero-boil-off territory — but conservatively: a 600 W
 cold tip and 30 m² of radiator on oversized 1.2 W/K mounts, with the power
-chief then sizing the array for that cooler's worst-case draw plus margin. It
-keeps the propellant (~14 kg lost) at a higher dry mass than the right-sized
-card; the player beats it by tuning the mounts, cooler and panel down.
+chief then sizing the array for that cooler's worst-case draw plus margin. On
+the stage-specific reference flight it reports ~9 kg lost at a higher dry
+mass than the right-sized card; the player beats it by tuning the mounts,
+cooler and panel down.
+
+## One-way coupling and verification limits
+
+Thermal integration samples the already-flown orbital spline; it is **not**
+part of the orbital or burn mass derivative. The reported vent loss is not
+subtracted from propagated mass, per-burn fuel, the displayed propagated
+remaining propellant, or scoring. The calculation also does not use the burn
+timeline to deplete the two thermal tanks. A post-hoc rocket-equation margin
+subtracting the total loss is therefore only an idealized check, not a fully
+coupled feasibility proof or a bound on trajectory error. We do not assert
+that the error is negligible. For frozen replay compatibility the scoring
+fuel-failure threshold and prediction term use propagated mass minus the
+**catalog baseline** dry mass, whereas the browser's displayed remaining fuel
+uses the actual fitted dry mass; these differ for redesigned or delegated
+vehicles. A lighter fitted stage can score a fuel failure even with fuel
+remaining. Correcting these assumptions requires an explicit versioned physics
+and scoring migration, rather than silently changing signed v3 results.
+
+For new v3 certificates, storable stages have no thermal block; cryogenic
+stages must carry exactly one stage-0 block with the engine's propellant and
+recomputed tank volumes. The verifier checks finite, non-negative bus powers
+(including EP nameplate demand), valid tank ranges and emittance, and fails
+closed if construction or integration fails. It replays and compares per-tank
+loss, cooler energy and vent events. Schemas 1 and 2 remain replayable offline
+with no thermal history, but the authority refuses new submissions of them.
+This strengthens verification rules without changing the v3 byte layout.
+
+The historical fixed-input 16 kW cooled-tug pin remains **3.843961 kg** and
+**4209.826545 MJ** on its original baseline-targeted maneuver plan. The UI now
+targets the actual assembled stage, so that *different* trajectory produces
+different thermal numbers; its dossier is checked against its own flown result
+instead of re-baselining the fixed-input physics pin.

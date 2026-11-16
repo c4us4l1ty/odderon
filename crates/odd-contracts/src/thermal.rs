@@ -76,8 +76,9 @@ impl ThermalDesign {
         }
     }
 
-    /// Build both tanks for a stage. Returns `None` when the propellant pair
-    /// is storable, because storables have no boil-off to model.
+    /// Build both tanks for a stage. Returns `None` for storable propellants
+    /// or if a cryogenic stage cannot be constructed. Callers must not treat
+    /// the latter as a valid zero-loss result.
     pub fn stage(
         &self,
         contract: &Contract,
@@ -135,7 +136,8 @@ pub fn thermal_environment(
     })
 }
 
-/// What the flight actually lost, and what it cost the bus.
+/// Thermal-model loss along the flight and its bus cost. The current orbital
+/// propagator does not subtract this loss from its mass or fuel budget.
 #[derive(Clone, Debug)]
 pub struct ThermalOutcome {
     pub lost_kg: f64,
@@ -185,9 +187,14 @@ pub fn evaluate(
         load_kg,
         design,
     } = stage_spec;
-    let Some(stage) = design.stage(contract, spec, load_kg) else {
+    if !odd_systems::needs_thermal_model(spec.propellant) {
         return Ok(ThermalOutcome::inert());
-    };
+    }
+    // `stage` also returns None for an invalid cryogenic design or load. It
+    // must never be mistaken for a storable stage with zero boil-off.
+    let stage = design
+        .stage(contract, spec, load_kg)
+        .ok_or(IntegrationError::InvalidInput)?;
     let history: StageThermalHistory = stage.integrate(spec, load_kg, clock, |t| {
         let frame = trajectory
             .sample(t)

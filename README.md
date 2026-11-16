@@ -24,16 +24,28 @@ including the cislunar Contract 103. It remains a simplified prototype with
 explicit model, performance and scoring limits; see
 [mission-planning feasibility](docs/mission-planning-feasibility.md).
 
-Phases 1–3 add a persistent Aerospace Flight License and signed flight records:
+The Aerospace Flight License and signed flight records are implemented:
 `crates/odd-identity` derives a 12-word mnemonic, an `ODD-` flight key and an
-RFC 8032 Ed25519 keypair from one 128-bit secret, and `crates/odd-report` signs a
-canonical flight data recorder and emits a deterministic print-ready dossier with
-a vector QR verification payload. The browser persists the license and ranked
-Astro-Elo locally, certifies each contract once, and can verify any shared
-recorder by checking the signature and re-running the flight bit for bit. Identity
-is local to one browser, not key custody; see
-[mission-planning feasibility](docs/mission-planning-feasibility.md) for the gate
-map and the limits.
+Ed25519 keypair from one 128-bit secret. `crates/odd-report` emits a canonical
+signed recorder and a print-ready dossier with a vector QR. The browser stores
+its license and a cache of receipts; identity remains browser-local, not key
+custody.
+
+Astro-Elo is **server-authoritative** when a trusted authority is configured.
+The pilot commits the vehicle, maneuver plan and prediction before the honest
+browser flies; the authority replays the record and signs the first-attempt
+ranked receipt. Later attempts are practice. Callsigns, leaderboard, public
+replay and receipt-bearing dossiers are implemented for native SQLite and a
+Cloudflare-compatible WASM/D1/R2 shell. The public-key pin is empty by default,
+so a static-only deployment offers practice without ranked certification.
+See [server-authority](docs/server-authority.md) and the
+[Cloudflare deployment prerequisites](crates/odd-worker-cloudflare/README.md).
+Local emulator tests and a dry-run do not mean the service is deployed.
+
+Cryogenic tanks and the four Chief-AI departments are wired into flown designs,
+replay and the dossier; Contract 103 offers an optional paid recommended
+thermal card. [Thermal notes](docs/thermal.md) describe the one-way boil-off
+model, score limitations and objective-reaching manual/delegated tests.
 
 Work Package 1.5 replaces the fixed engine card with a solved liquid engine:
 `crates/odd-propulsion` computes chamber properties, nozzle flow, Summerfield
@@ -67,6 +79,11 @@ cargo build --locked --workspace --target wasm32-unknown-unknown
 cargo fmt --all -- --check
 ```
 
+For the sandbox's full offline acceptance sweep, first run
+`./scripts/provision.sh` to install its toolchain, vendored dependencies and
+headless browser, then run `./scripts/gate.sh`. The gate includes the browser
+and both authority adapters; its disposable test seed is not a production key.
+
 CI additionally compares native and WebAssembly fixtures in Node and headless
 Chrome. To run that check locally, build `odd-core-oracle` natively and for wasm,
 then run `node tools/core-oracle/check-parity.mjs` with Chrome on `PATH` (or set
@@ -90,4 +107,6 @@ and the optional vehicle study are illustrative.
 After building and serving the WebAssembly module as above, open
 <http://localhost:8000/mission.html> for the three experimental mission
 contracts. Contract 103's single-burn example demonstrates the perigee-kick
-trap; its splitter targets actual numerical periapses.
+trap; its practice-only splitter targets numerical periapses for the assembled
+stage. A static-only server cannot issue ranked receipts; ranked requires the
+same-origin authority and a pinned public key described above.

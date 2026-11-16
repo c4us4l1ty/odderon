@@ -60,6 +60,7 @@ pub fn error_code(err: &ServerError) -> &'static str {
         ServerError::ReplayRejected(_) => "ReplayRejected",
         ServerError::ContractMismatch(_) => "ContractMismatch",
         ServerError::SegmentMismatch(_) => "SegmentMismatch",
+        ServerError::ThermalSegmentsUnsupported => "ThermalSegmentsUnsupported",
         ServerError::CommitmentMissing => "CommitmentMissing",
         ServerError::AttemptModeMismatch => "AttemptModeMismatch",
         ServerError::AttemptAlreadySubmitted => "AttemptAlreadySubmitted",
@@ -97,6 +98,9 @@ pub fn route<S: Store>(
             let Some(req) = parsed.as_ref().and_then(submit_from_json) else {
                 return Response::json(400, &Json::Str("bad submit body".into()));
             };
+            if pathname == "/api/v1/submit-segment" && req.segments.is_none() {
+                return Response::error(&ServerError::SegmentMismatch(0));
+            }
             match engine.submit(req, now_s) {
                 Ok(resp) => Response::json(200, &response_to_json(&resp)),
                 Err(e) => Response::error(&e),
@@ -330,7 +334,8 @@ pub fn ticket_from_json(v: &Json) -> Option<CommitTicket> {
     })
 }
 
-fn checkpoint_to_json(c: &SegmentCheckpoint) -> Json {
+/// Serialize one checkpoint in the public wire format.
+pub fn checkpoint_to_json(c: &SegmentCheckpoint) -> Json {
     let mut o = BTreeMap::new();
     o.insert("t_us".into(), Json::Num(c.t_us as f64));
     o.insert(
@@ -379,7 +384,8 @@ fn submit_from_json(v: &Json) -> Option<SubmitRequest> {
             }
             Some(out)
         }
-        _ => None,
+        None | Some(Json::Null) => None,
+        _ => return None,
     };
     Some(SubmitRequest {
         fdr_payload,

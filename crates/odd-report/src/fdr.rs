@@ -484,6 +484,7 @@ impl Fdr {
                     || !(0.0..=1.0).contains(&spec.absorptivity)
                     || !(0.0..=1.0).contains(&spec.outer_epsilon)
                     || !(0.0..=1.0).contains(&spec.radiator_epsilon)
+                    || !spec.cryocooler_carnot_fraction.is_finite()
                     || spec.cryocooler_carnot_fraction <= 0.0
                     || spec.cryocooler_carnot_fraction > 1.0
                 {

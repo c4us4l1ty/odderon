@@ -37,6 +37,10 @@ export function assemblyPayload(wasm) {
     // Order matters: a cooler needs radiator area before it can be set.
     fields: cryogenic ? [
       [THERMAL_FIELDS.layers, wasm.mission_thermal_get(0)],
+      // A catalog card can use a non-default emittance; capture it explicitly
+      // instead of silently re-deriving a different blanket in the worker.
+      [THERMAL_FIELDS.epsilon, wasm.mission_thermal_get(1)],
+      [THERMAL_FIELDS.shell, wasm.mission_thermal_get(6)],
       [THERMAL_FIELDS.strut, wasm.mission_thermal_get(4)],
       [THERMAL_FIELDS.radiator, wasm.mission_thermal_get(3)],
       [THERMAL_FIELDS.cooler, wasm.mission_thermal_get(2)],
@@ -49,6 +53,8 @@ export function assemblyPayload(wasm) {
 /// throwing so the caller can report which stage could not be rebuilt.
 export function applyAssembly(wasm, data) {
   if (!data) return true;
+  // Lowering radiator area to zero requires the previous cooler off first.
+  if (data.fields?.length && wasm.mission_thermal_get(2) > 0 && wasm.mission_thermal_set(2, 0) !== 1) return false;
   for (const [field, value] of data.fields ?? []) {
     if (wasm.mission_thermal_set(field, value) !== 1) return false;
   }
@@ -203,6 +209,10 @@ export function createAssembly({ wasm, isLocked, annotate, onChange }) {
   function setLocked() {
     const locked = isLocked();
     const cryogenic = wasm.mission_thermal_get(7) === 1;
+    const mask = wasm.mission_delegation_mask();
+    const card = el('thermal-apply-card');
+    card.disabled = locked || wasm.mission_thermal_card_available() !== 1 || (mask & 0b0110) !== 0;
+    card.title = (mask & 0b0110) !== 0 ? 'Switch Thermal and Power to MANUAL to fit the recommended design.' : '';
     for (const control of toggles) control.disabled = locked;
     for (const [key, control] of Object.entries(thermalControls)) {
       // A delegated slider is locked because the chief owns it, not because
@@ -228,6 +238,10 @@ export function createAssembly({ wasm, isLocked, annotate, onChange }) {
     onChange();
     return true;
   }
+
+  el('thermal-apply-card').addEventListener('click', () => {
+    rebuild(wasm.mission_thermal_apply_card(), 'The recommended card could not be fitted to this stage.');
+  });
 
   toggles.forEach((toggle, i) => {
     toggle.addEventListener('change', () => {

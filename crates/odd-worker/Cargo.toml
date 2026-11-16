@@ -36,3 +36,8 @@ odd-systems = { path = "../odd-systems" }
 name = "odderon-authority"
 path = "src/bin/authority.rs"
 required-features = ["local"]
+
+[[example]]
+name = "segment_chain"
+path = "examples/segment_chain.rs"
+required-features = ["wire"]

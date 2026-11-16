@@ -2,12 +2,15 @@
 // and for tests only; production must pin a different, privately held seed.
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { resolve, extname } from 'node:path';
 import { chromium } from 'playwright-core';
 import bundledChromium from '@sparticuz/chromium';
 import { startAuthority } from './support/authority-server.mjs';
 import { startCloudAuthority } from './support/cloud-authority.mjs';
+import { decodeQrFromSvg } from './support/qr.mjs';
 
 const cloud = process.env.ODDERON_AUTHORITY === 'cloudflare';
 const authority = await (cloud ? startCloudAuthority() : startAuthority());
@@ -108,6 +111,39 @@ try {
   assert.deepEqual(first.events, ['commit-request', 'commit-response', 'flight-start', 'flight-result', 'submit-request', 'submit-response']);
   console.log('PASS ranked browser order:', first.events.join(' > '));
 
+  // The native helper replays the actual browser FDR to build checkpoints.
+  // Both transports must return the exact original receipt for the chain,
+  // and reject rewritten metadata even after all hash links are recomputed.
+  const fullRequest = JSON.parse(submitBodies.at(-1));
+  const chain = JSON.parse(execFileSync(resolve('target/debug/examples/segment_chain'), [first.record.payload], { encoding: 'utf8' }));
+  const postSegments = segments => fetch(`${base}/api/v1/submit-segment`, { method: 'POST', headers: { 'content-type':'application/json' }, body: JSON.stringify({ ...fullRequest, segments }) });
+  const validChain = await postSegments(chain);
+  assert.equal(validChain.status, 200, `valid segment replay: ${await validChain.clone().text()}`);
+  assert.deepEqual((await validChain.json()).receipt, first.record.document.server_receipt);
+  const missingChain = await postSegments(null);
+  assert.equal(missingChain.status, 400);
+  assert.equal((await missingChain.json()).code, 'SegmentMismatch');
+  const rehash = checkpoints => {
+    let prior = Buffer.from('odderon-segment-chain-v1');
+    for (const cp of checkpoints) {
+      const data = Buffer.alloc(8 + 7 * 8 + 8 + 2 * 8);
+      data.writeBigInt64BE(BigInt(cp.t_us)); let offset = 8;
+      for (const n of [...cp.state_vector, cp.prop_kg, ...cp.tank_temps]) { data.writeDoubleBE(n, offset); offset += 8; }
+      prior = createHash('sha256').update(prior).update(data).digest();
+      cp.cum_hash = prior.toString('hex');
+    }
+  };
+  for (const field of ['propellant', 'temperature']) {
+    const forged = structuredClone(chain);
+    if (field === 'propellant') forged[1].prop_kg += 1;
+    else forged[1].tank_temps[0] = 25;
+    rehash(forged);
+    const rejected = await postSegments(forged);
+    assert.equal(rejected.status, 400, `${field} was accepted after rehashing`);
+    assert.equal((await rejected.json()).code, 'SegmentMismatch');
+  }
+  console.log('PASS full/segmented replay parity and rehashed checkpoint forgery rejection');
+
   const download = page.waitForEvent('download');
   await page.click('#export-fdr');
   const saved = JSON.parse(await readFile(await (await download).path(), 'utf8'));
@@ -118,8 +154,22 @@ try {
   const verified = await page.evaluate(() => missionDiagnostics.verification());
   assert.match(verified.dossier, /id="annex-d"/);
   assert.ok(verified.dossier.includes(first.record.document.server_receipt.server_sig));
+  // A separate browser context acts as a phone/recruiter with no pilot
+  // storage. Independently decode the printed QR and follow the public link;
+  // certification must come back from the pinned-key-checked receipt.
+  const qr = decodeQrFromSvg(verified.dossier);
+  assert.equal(qr, `${base}/mission.html#flight=${first.record.document.canonical_digest}`);
+  const scanner = await browser.newPage({ viewport: { width: 1000, height: 800 } });
+  const fetched = [];
+  scanner.on('request', request => { if (request.url().includes('/api/v1/verify/')) fetched.push(request.url()); });
+  await scanner.goto(qr);
+  await scanner.waitForFunction(() => window.missionDiagnostics?.verification()?.code === 1
+    && document.getElementById('verify-certification')?.textContent.includes('SERVER-RANKED'), null, { timeout: 180000 });
+  assert.ok(fetched.some(url => url.endsWith(first.record.document.canonical_digest)), 'QR must fetch the public FDR and receipt');
+  assert.match((await scanner.evaluate(() => missionDiagnostics.verification())).dossier, /id="annex-d"/);
+  await scanner.close();
   await page.click('#verify-close');
-  console.log('PASS receipt embedded in exported FDR and replayed dossier');
+  console.log('PASS ranked dossier QR independently decodes and certifies in a fresh browser');
 
   await page.click('#open-leaderboard');
   await page.waitForSelector('.leaderboard-replay', { timeout: 30000 });
@@ -218,10 +268,80 @@ try {
   assert.equal(tug.record.server_receipt.contract_id, 103);
   assert.equal(tug.record.delegation_mask, 2);
   assert.ok(tug.record.thermal_specs.length > 0 && tug.boil && !tug.boil.inert);
+  const cryoRequest = { ...JSON.parse(submitBodies.at(-1)), segments: [] };
+  const unsupported = await fetch(`${base}/api/v1/submit-segment`, { method: 'POST', headers: { 'content-type':'application/json' }, body: JSON.stringify(cryoRequest) });
+  assert.equal(unsupported.status, 400);
+  assert.equal((await unsupported.json()).code, 'ThermalSegmentsUnsupported', 'unsupported cryogenic checkpoint temperatures must fail closed');
   await page.click('#verify-flight');
   await page.waitForFunction(() => missionDiagnostics.verification()?.code === 1 && document.getElementById('verify-certification').textContent.includes('SERVER-RANKED'), null, { timeout: 180000 });
   await page.click('#verify-close');
   console.log('PASS contracts 102 and 103: server-ranked replay, including delegated cryogenic physics');
+
+  // A separate pilot's very first tug is manually fitted with a powered
+  // cooler. This exercises active cooling across browser WASM and both real
+  // server runtimes, rather than only a practice or passive cryogenic flight.
+  const cooled = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  await cooled.goto(`${base}/mission.html`);
+  await cooled.waitForFunction(() => missionDiagnostics?.wasm?.() && !missionDiagnostics.pending, null, { timeout: 60000 });
+  assert.equal(await cooled.locator('#thermal-apply-card').isDisabled(), true, 'storable contracts have no cryogenic card');
+  await cooled.selectOption('#mission-select', '103');
+  await cooled.waitForFunction(() => !missionDiagnostics.pending && missionDiagnostics.assembly?.cryogenic, null, { timeout: 60000 });
+  const plainMass = await cooled.evaluate(() => missionDiagnostics.assembly.dryMass);
+  await cooled.click('#thermal-apply-card');
+  await cooled.waitForFunction(() => !missionDiagnostics.pending && missionDiagnostics.assembly?.coolerLift === 2000 && missionDiagnostics.assembly?.arrayWatts === 12000);
+  const card = await cooled.evaluate(() => missionDiagnostics.assembly);
+  assert.ok(card.dryMass > plainMass, 'the recommended hardware must be charged as dry mass');
+  assert.equal(card.mliLayers, 40);
+  assert.equal(card.strutConductance, 0.15);
+  await cooled.click('#example'); await cooled.fill('#node-t', '700'); await cooled.click('#prefill'); await cooled.click('#execute');
+  await cooled.waitForFunction(() => !document.getElementById('debrief').hidden && !missionDiagnostics.pending, null, { timeout: 240000 });
+  assert.equal(await cooled.locator('#certification-status').textContent(), '★ CERTIFIED SERVER-RANKED RECEIPT');
+  const active = await cooled.evaluate(() => ({ record: missionDiagnostics.recorder().document, boil: missionDiagnostics.boilOff }));
+  assert.equal(active.record.server_receipt.attempt_num, 1);
+  assert.equal(active.record.server_receipt.contract_id, 103);
+  assert.equal(active.record.delegation_mask, 0);
+  assert.equal(active.record.thermal_specs[0].cryocooler_w, 2000);
+  assert.equal(active.record.thermal_specs[0].array_w_at_1au, 12000);
+  assert.equal(active.record.thermal_specs[0].epsilon_eff, card.epsilon, 'the recommended emittance must survive the worker snapshot');
+  assert.ok(active.boil && !active.boil.inert && active.boil.coolerJoules > 0, JSON.stringify(active.boil));
+  assert.ok(active.record.cryocooler_energy_j > 0);
+  await cooled.click('#verify-flight');
+  await cooled.waitForFunction(() => missionDiagnostics.verification()?.code === 1
+    && document.getElementById('verify-certification').textContent.includes('SERVER-RANKED'), null, { timeout: 240000 });
+  const activeDossier = await cooled.evaluate(() => missionDiagnostics.verification().dossier);
+  assert.match(activeDossier, /id="annex-c"/);
+  assert.match(activeDossier, /id="annex-d"/);
+  await cooled.click('#verify-close');
+  console.log('PASS paid recommended cryogenic card reaches first-attempt ranked flight and verified dossier');
+
+  // Numerical targeting is a practice-only teaching aid. Prove in the real
+  // browser that it targets the assembled stage rather than the baseline:
+  // first the paid manual card, then all four delegated chiefs. Both actual
+  // trajectories must reach the catalog objective, not just have Δv margin.
+  // These local flights are transport-independent, so run them once here.
+  if (!cloud) {
+    for (const [name, mask, total] of [['manual card', 0, 3240], ['fully delegated', 15, 3252]]) {
+      await cooled.click('#unlock');
+      if (mask) for (let i = 0; i < 4; i++) await cooled.click(`#delegate-${i}`);
+      await cooled.selectOption('#attempt-mode', 'practice');
+      assert.equal(await cooled.evaluate(() => missionDiagnostics.assembly.mask), mask);
+      await cooled.click('#example');
+      await cooled.fill('#node-t', String(total));
+      await cooled.click('#split-kick');
+      await cooled.waitForFunction(() => missionDiagnostics.nodes.length === 3 && !missionDiagnostics.pending,
+        null, { timeout: 240000 });
+      await cooled.click('#prefill'); await cooled.click('#execute');
+      await cooled.waitForFunction(() => !document.getElementById('debrief').hidden && !missionDiagnostics.pending,
+        null, { timeout: 240000 });
+      const flown = await cooled.evaluate(() => ({ report: missionDiagnostics.report, record: missionDiagnostics.recorder().document }));
+      assert.equal(flown.record.delegation_mask, mask, name);
+      assert.equal(flown.report[30], 0, name);
+      assert.ok(flown.report[35] >= 0.8, `${name} objective ${flown.report[35]}`);
+      assert.ok(Math.abs(flown.report[1] + 6378137 - 380000000) <= 15000000, name);
+    }
+    console.log('PASS practice targeter flies manual and fully delegated assembled tugs to the objective');
+  }
+  await cooled.close();
 
   // A failed commit must not start physics. If the submit response is lost
   // after the server has applied it, retry the *same* ticket and payload and

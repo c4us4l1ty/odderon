@@ -161,19 +161,23 @@ where
 {
     pair.oxidizer.validate()?;
     pair.fuel.validate()?;
+    bus.validate()?;
     let specs = [&pair.oxidizer, &pair.fuel];
     let ThermalClock {
         start_s,
         end_s,
         options,
     } = clock;
-    if !end_s.is_finite()
+    if !start_s.is_finite()
+        || !end_s.is_finite()
         || end_s < start_s
         || options.max_steps == 0
-        || !bus.array_w_at_1au.is_finite()
-        || bus.array_w_at_1au < 0.0
-        || !bus.avionics_w.is_finite()
-        || bus.avionics_w < 0.0
+        || !context.structure_temperature_k.is_finite()
+        || context.structure_temperature_k <= 0.0
+        || !context.sink_temperature_k.is_finite()
+        || context.sink_temperature_k <= 0.0
+        || !context.bus_w.is_finite()
+        || context.bus_w < 0.0
     {
         return Err(IntegrationError::InvalidInput);
     }

@@ -21,9 +21,9 @@ pub const COMMIT_DOMAIN: &[u8] = b"odderon-client-commit-v1";
 /// Domain separator for a callsign registration signature.
 pub const CALLSIGN_DOMAIN: &[u8] = b"odderon-callsign-v1";
 
-/// `POST /api/v1/commit` body. The client commits to a design and a
-/// prediction *before* any physics runs; `client_sig` covers the canonical
-/// commitment bytes under the pilot's key.
+/// `POST /api/v1/commit` body. The honest client commits its vehicle,
+/// maneuver plan and prediction before launching the modeled flight;
+/// `client_sig` covers the commitment bytes under the pilot's key.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommitRequest {
     pub contract_id: u32,
@@ -105,7 +105,7 @@ impl CommitTicket {
     }
 }
 
-/// One checkpoint in a chunked hash-chain verification (blueprint §6.4).
+/// One checkpoint in a hash chain checked after a full authoritative replay.
 /// The state vector is `[x, y, z, vx, vy, vz, mass]`; `cum_hash` chains every
 /// prior checkpoint so a tampered intermediate breaks the chain at its own
 /// boundary rather than only at the end.
@@ -121,7 +121,7 @@ pub struct SegmentCheckpoint {
 /// `POST /api/v1/submit` body. `fdr_payload` is the signed FDR in the same
 /// base64url wire form the QR code uses (`Fdr::verify_payload`). The ticket
 /// is the one the server issued at commit; the server re-checks its own
-/// signature on it. Optional segments switch on chunked verification.
+/// signature on it. Optional segments are checked after a full replay.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SubmitRequest {
     pub fdr_payload: String,
@@ -157,7 +157,7 @@ pub enum ServerError {
     /// The submitted design does not hash to the committed design.
     DesignCommitmentMismatch,
     /// The submitted prediction does not hash to the committed prediction.
-    /// This is the anti-hindsight gate: a re-signed prediction B fails here.
+    /// A re-signed prediction B fails here; prior simulation is not detectable.
     PredictionCommitmentMismatch,
     /// The ticket is for a different key or contract than the FDR.
     TicketSubjectMismatch,
@@ -171,6 +171,8 @@ pub enum ServerError {
     /// A chunked segment did not reproduce its checkpoint, or the cumulative
     /// hash chain broke at this boundary.
     SegmentMismatch(usize),
+    /// The current checkpoint verifier cannot authenticate cryogenic tank temperatures.
+    ThermalSegmentsUnsupported,
     /// The ticket does not correspond to a stored commitment.
     CommitmentMissing,
     /// The record or ticket mode does not match the forced attempt mode.
@@ -202,6 +204,7 @@ impl core::fmt::Display for ServerError {
             Self::ReplayRejected(e) => write!(f, "physics replay rejected the record: {e}"),
             Self::ContractMismatch(e) => write!(f, "contract framing mismatch: {e}"),
             Self::SegmentMismatch(i) => write!(f, "segment {i} broke the verification chain"),
+            Self::ThermalSegmentsUnsupported => write!(f, "cryogenic checkpoint temperatures are not yet verifiable; submit the complete flight instead"),
             Self::CommitmentMissing => write!(f, "ticket has no matching stored commitment"),
             Self::AttemptModeMismatch => write!(f, "record mode does not match the ticket"),
             Self::AttemptAlreadySubmitted => {

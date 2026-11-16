@@ -179,14 +179,16 @@ fn table(caption: &str, headers: &[&str], rows: &[Vec<String>], id: &str) -> Str
 
 /// What the QR actually points at, for the header's "Scan at:" line.
 ///
-/// The payload is either an absolute deployment URL carrying a `#verify=`
-/// fragment, or a bare `#verify=` fragment when the dossier was built without
-/// a known origin. In the latter case the line says so rather than printing a
-/// fake host: the fragment resolves against whatever origin serves the file.
+/// An absolute URL can carry a self-contained `#verify=` fragment or a
+/// public receipt lookup `#flight=`. Bare fragments are explicitly labeled
+/// as relative instead of inventing a host.
 fn scan_target(payload: &str) -> &str {
-    match payload.find("#verify=") {
-        Some(0) => "this deployment, #verify= fragment (relative to the serving origin)",
-        Some(_) | None => payload,
+    if payload.starts_with("#verify=") {
+        "this deployment, #verify= fragment (relative to the serving origin)"
+    } else if payload.starts_with("#flight=") {
+        "this deployment, #flight= fragment (relative to the serving origin)"
+    } else {
+        payload
     }
 }
 
@@ -405,6 +407,7 @@ pub fn html_with_receipt(
         &prediction_rows,
         "prediction-table",
     ));
+    body.push_str("<p id=\"score-dry-mass-note\">The realized remaining propellant in this table uses the fitted dry mass. For frozen replay compatibility, the score's fuel threshold and prediction term use the catalog baseline dry mass instead; its fuel result can therefore differ from this table.</p>");
     let mut shapley_rows = Vec::new();
     for (player, label) in PLAYERS.iter().enumerate() {
         shapley_rows.push(vec![
@@ -748,6 +751,7 @@ fn thermal_annex(fdr: &Fdr) -> String {
         ],
     ];
     if let Some(spec) = fdr.thermal_specs.first() {
+        out.push_str("<p id=\"thermal-coupling-note\">The thermal model estimates vented mass along the flown trajectory; this version does not subtract it from propagated mass or the burn fuel budget.</p>");
         rows.extend([
             vec!["Insulation layers".into(), spec.mli_layers.to_string()],
             vec![
@@ -1068,6 +1072,10 @@ mod tests {
         ] {
             assert!(document.contains(&format!("id=\"{id}\"")), "missing {id}");
         }
+        assert!(document.contains("id=\"score-dry-mass-note\""));
+        assert!(document.contains(
+            "score's fuel threshold and prediction term use the catalog baseline dry mass"
+        ));
         assert_eq!(
             document.matches("<svg").count(),
             3,
@@ -1101,6 +1109,15 @@ mod tests {
         .unwrap();
         assert!(absolute.contains("Scan at:"));
         assert!(absolute.contains("https://flights.example.org/verify#verify="));
+        let ranked = html(&fdr, &geometry(), "#flight=abcd").unwrap();
+        assert!(ranked.contains("#flight= fragment (relative to the serving origin)"));
+        let ranked_absolute = html(
+            &fdr,
+            &geometry(),
+            "https://flights.example.org/mission.html#flight=abcd",
+        )
+        .unwrap();
+        assert!(ranked_absolute.contains("https://flights.example.org/mission.html#flight=abcd"));
     }
 
     #[test]

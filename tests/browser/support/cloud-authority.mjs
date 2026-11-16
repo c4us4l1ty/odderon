@@ -6,20 +6,25 @@ import { createPrivateKey, createPublicKey } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-export async function startCloudAuthority() {
+export async function startCloudAuthority({ migrateThrough = 2 } = {}) {
   const dir = resolve('crates/odd-worker-cloudflare/src');
   const migrations = [];
   for (const name of ['0001_init.sql', '0002_transaction_guard.sql']) {
     const sql = (await readFile(resolve('crates/odd-worker-cloudflare/migrations', name), 'utf8')).replace(/^\s*--.*$/gm, '');
-    migrations.push(...sql.split(';').map(s => s.trim()).filter(Boolean));
+    migrations.push(sql.split(';').map(s => s.trim()).filter(Boolean));
   }
   const entry = `
     import app from './index.js';
     const migrations=${JSON.stringify(migrations)};
+    let failPut=false;
     export default {async fetch(req,env,ctx){
       const url=new URL(req.url);
       if(url.pathname==='/__test/migrate'){
-        await env.DB.batch(migrations.map(s=>env.DB.prepare(s)));return new Response('ok');
+        const {index}=await req.json();
+        await env.DB.batch(migrations[index].map(s=>env.DB.prepare(s)));return Response.json({ok:true});
+      }
+      if(url.pathname==='/__test/fail-put'){
+        const body=await req.json();failPut=body.fail;return Response.json({ok:true});
       }
       if(url.pathname==='/__test/query'){
         const {sql,values=[]}=await req.json();
@@ -30,7 +35,10 @@ export async function startCloudAuthority() {
         if(value!==undefined){await env.FDRS.put(key,value);return Response.json({ok:true});}
         const object=await env.FDRS.get(key);return Response.json({value:object?await object.text():null});
       }
-      return app.fetch(req,env,ctx);
+      const bucket={get:(...args)=>env.FDRS.get(...args),put:(...args)=>{
+        if(failPut)throw Error('injected R2 put failure');return env.FDRS.put(...args);
+      }};
+      return app.fetch(req,{...env,FDRS:bucket},ctx);
     }};`;
   const seed = '5e'.repeat(32);
   const privateKey = createPrivateKey({ key: Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), Buffer.from(seed, 'hex')]), format: 'der', type: 'pkcs8' });
@@ -45,8 +53,6 @@ export async function startCloudAuthority() {
     ],
     d1Databases: ['DB'], r2Buckets: ['FDRS'], bindings: { SERVER_SEED: seed },
   });
-  const migration = await mf.dispatchFetch('http://authority/__test/migrate', { method: 'POST' });
-  if (!migration.ok) throw Error(`D1 migration failed: ${await migration.text()}`);
   async function test(path, payload) {
     const r = await mf.dispatchFetch(`http://authority/__test/${path}`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload),
@@ -54,8 +60,14 @@ export async function startCloudAuthority() {
     if (!r.ok) throw Error(`workerd test ${path}: ${r.status} ${await r.text()}`);
     return r.json();
   }
+  try {
+    for (let index = 0; index < migrateThrough; index++) await test('migrate', { index });
+  } catch (error) { await mf.dispose(); throw error; }
   return {
     key,
+    fetch: (path, init) => mf.dispatchFetch(`http://authority${path}`, init),
+    migrate: index => test('migrate', { index }),
+    failPut: fail => test('fail-put', { fail }),
     async handle(req, res) {
       try {
         const chunks = [];

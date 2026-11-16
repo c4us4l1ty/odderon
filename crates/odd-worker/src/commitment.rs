@@ -1,24 +1,24 @@
-//! Canonical design and prediction hashes for the anti-hindsight commitment.
+//! Canonical design/plan and prediction hashes for the launch commitment.
 //!
-//! The pilot commits to `H(design)` and `H(prediction)` at LOCK & LAUNCH,
-//! before any physics runs. At submit the server recomputes both from the
-//! presented FDR and refuses a mismatch. The prediction hash is what defeats
-//! hindsight: re-signing a record with a prediction rewritten to match the
-//! flown outcome changes these bytes and fails `PredictionCommitmentMismatch`.
+//! The honest browser commits to `H(design + plan)` and `H(prediction)` at
+//! LOCK & LAUNCH, before it starts the modeled flight. At submit the server
+//! recomputes both from the presented FDR and refuses a mismatch. Re-signing
+//! a changed prediction fails `PredictionCommitmentMismatch`, but a commitment
+//! cannot prove that an untrusted client did not simulate beforehand.
 
-use crate::protocol::{put_f64, put_u32, Hash};
+use crate::protocol::{put_f64, put_i64, put_u32, Hash};
 use odd_report::fdr::Fdr;
 use sha2::{Digest, Sha256};
 
-/// Domain separator for the vehicle design hash.
-pub const DESIGN_DOMAIN: &[u8] = b"odderon-design-hash-v1";
+/// Domain separator for the vehicle-and-plan hash. V2 adds every maneuver;
+/// old v1 tickets cannot authorize a new submission under this rule.
+pub const DESIGN_DOMAIN: &[u8] = b"odderon-design-hash-v2";
 /// Domain separator for the locked prediction hash.
 pub const PREDICTION_DOMAIN: &[u8] = b"odderon-prediction-hash-v1";
 
-/// Hash the physical vehicle the record flies: masses, the engine design,
-/// the cryogenic fit-out and the delegation mask. Commands and claimed
-/// outcomes are deliberately excluded — those are checked by the replay,
-/// not by the commitment.
+/// Hash the physical vehicle and the locked maneuver plan: masses, engine,
+/// cryogenic fit-out, delegation, epochs, delta-v and optional guidance.
+/// Claimed outcomes are excluded and are checked by the replay instead.
 pub fn design_hash(fdr: &Fdr) -> Hash {
     let mut out = Vec::new();
     out.extend_from_slice(DESIGN_DOMAIN);
@@ -62,6 +62,22 @@ pub fn design_hash(fdr: &Fdr) -> Hash {
         put_f64(&mut out, spec.sink_temperature_k);
     }
     out.push(fdr.delegation_mask);
+    out.extend_from_slice(&(fdr.commands.len() as u16).to_be_bytes());
+    for command in &fdr.commands {
+        put_i64(&mut out, command.time_us);
+        for value in &command.delta_v_tnw {
+            put_f64(&mut out, *value);
+        }
+        match command.guidance {
+            None => out.push(0),
+            Some(values) => {
+                out.push(1);
+                for value in &values {
+                    put_f64(&mut out, *value);
+                }
+            }
+        }
+    }
     Sha256::digest(&out).into()
 }
 

@@ -5,7 +5,9 @@
 //! signature is perfectly valid because the player signed the lie themselves.
 use odd_contracts::Contract;
 use odd_propulsion::{EngineSpec, Propellant};
-use odd_report::{AttemptMode, Command, Fdr, FdrError, LEGACY_SCHEMA_VERSION, SCHEMA_VERSION};
+use odd_report::{
+    AttemptMode, Command, Fdr, FdrError, StageThermalSpec, LEGACY_SCHEMA_VERSION, SCHEMA_VERSION,
+};
 use odd_verify::FlightSpec;
 
 /// A rescue flown with a player-designed methalox engine instead of the
@@ -31,7 +33,11 @@ fn custom() -> (EngineSpec, FlightSpec) {
     (
         spec,
         FlightSpec {
-            thermal: None,
+            thermal: Some(odd_verify::ThermalInputs {
+                engine_spec: spec,
+                design: odd_contracts::ThermalDesign::baseline(),
+                load_kg: vehicle.initial_mass_kg - vehicle.dry_mass_kg,
+            }),
             delegation: odd_contracts::DelegationMask::MANUAL,
             contract_id: 101,
             epoch_s: odd_contracts::START_EPOCH,
@@ -64,13 +70,45 @@ fn custom() -> (EngineSpec, FlightSpec) {
 
 fn record(spec: EngineSpec, flight: &FlightSpec) -> Fdr {
     let outcome = odd_verify::replay_flight(flight).expect("custom-engine flight replays");
+    let thermal_specs = flight
+        .thermal
+        .map(|inputs| {
+            let contract = Contract::get(flight.contract_id).unwrap();
+            let design = inputs.design;
+            let stage = design
+                .stage(&contract, &inputs.engine_spec, inputs.load_kg)
+                .unwrap();
+            StageThermalSpec {
+                stage: 0,
+                tank_volumes_m3: [stage.oxidizer.volume_m3, stage.fuel.volume_m3],
+                propellant_id: inputs.engine_spec.propellant as u8,
+                mli_layers: design.mli_layers,
+                epsilon_eff: design.epsilon_eff,
+                tank_shell_material: design.shell,
+                absorptivity: design.absorptivity,
+                outer_epsilon: design.outer_epsilon,
+                strut_conductance_w_k: design.strut_conductance_w_k,
+                relief_pressure_pa: design.relief_pressure_pa,
+                radiator_area_m2: design.radiator_area_m2,
+                radiator_epsilon: design.radiator_epsilon,
+                cryocooler_w: design.cryocooler_lift_w,
+                cryocooler_carnot_fraction: design.cryocooler_carnot_fraction,
+                array_w_at_1au: design.bus.array_w_at_1au,
+                avionics_w: design.bus.avionics_w,
+                electric_propulsion_w: design.bus.electric_propulsion_w,
+                structure_temperature_k: design.structure_temperature_k,
+                sink_temperature_k: design.sink_temperature_k,
+            }
+        })
+        .into_iter()
+        .collect();
     let mut fdr = Fdr {
         schema_version: SCHEMA_VERSION,
-        thermal_specs: Vec::new(),
+        thermal_specs,
         delegation_mask: 0,
-        vent_events: Vec::new(),
-        boil_off_kg: [0.0; 2],
-        cryocooler_energy_j: 0.0,
+        vent_events: outcome.vent_events,
+        boil_off_kg: outcome.boil_off_kg,
+        cryocooler_energy_j: outcome.cryocooler_energy_j,
         contract_id: flight.contract_id,
         attempt_mode: AttemptMode::Ranked,
         callsign: "ENGINE GATE".into(),
@@ -194,6 +232,7 @@ fn legacy_records_still_verify_but_are_labelled() {
     let contract = Contract::get(101).unwrap();
     let (_, mut flight) = custom();
     // Fly the baseline stage the way schema 1 did: bare thrust and Isp.
+    flight.thermal = None;
     flight.initial_mass_kg = contract.initial.mass;
     flight.dry_mass_kg = contract.dry_mass_kg;
     flight.thrust_n = contract.engine.thrust_newtons;

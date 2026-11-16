@@ -751,7 +751,15 @@ pub extern "C" fn mission_split_tug(kicks: u32, total_dv: f64, first_node_s: f64
     let Some(eph) = EPHEMERIS.get_or_init(|| Ephemeris::bundled().ok()).as_ref() else {
         return 0;
     };
-    let Ok(split) = odd_contracts::split_tug(kicks as usize, total_dv, first_node_s, eph) else {
+    let Some(mut contract) = Contract::get(s.contract_id) else {
+        return 0;
+    };
+    contract.initial = s.initial;
+    contract.dry_mass_kg = s.dry_mass;
+    contract.engine = s.engine;
+    let Ok(split) =
+        odd_contracts::split_tug_for_stage(&contract, kicks as usize, total_dv, first_node_s, eph)
+    else {
         return 0;
     };
     {
@@ -1386,6 +1394,62 @@ pub extern "C" fn mission_thermal_get(field: u32) -> f64 {
     }
 }
 
+/// Whether this contract and its current flown engine support the catalog's
+/// recommended cryogenic card. A storable contract has no cryogenic card.
+#[no_mangle]
+pub extern "C" fn mission_thermal_card_available() -> i32 {
+    let Some(settings) = SETTINGS.lock().unwrap().clone() else {
+        return 0;
+    };
+    let Some(contract) = Contract::get(settings.contract_id) else {
+        return 0;
+    };
+    let Some(flown) = settings.effective() else {
+        return 0;
+    };
+    i32::from(
+        odd_systems::needs_thermal_model(contract.engine_spec.propellant)
+            && odd_systems::needs_thermal_model(flown.engine.propellant),
+    )
+}
+
+/// Apply the contract's recommended *manual* cryogenic design. It remains a
+/// paid, editable choice, not an automatic change to historical baselines.
+/// Build the vehicle before changing the session so a rejected card cannot
+/// leave partially updated hardware behind.
+#[no_mangle]
+pub extern "C" fn mission_thermal_apply_card() -> i32 {
+    if mission_thermal_card_available() != 1 {
+        return 0;
+    }
+    let mut guard = SETTINGS.lock().unwrap();
+    let Some(settings) = guard.as_mut() else {
+        return 0;
+    };
+    // Don't quietly replace a chief's flown hardware with a manual choice.
+    if settings.delegation.0 & 0b0110 != 0 {
+        return 0;
+    }
+    let Some(contract) = Contract::get(settings.contract_id) else {
+        return 0;
+    };
+    let design = contract.thermal_card();
+    let Ok(vehicle) =
+        contract.vehicle_delegated(settings.engine_spec, settings.delegation, &design)
+    else {
+        return 0;
+    };
+    settings.thermal_design = design;
+    settings.engine = vehicle.engine;
+    settings.dry_mass = vehicle.dry_mass_kg;
+    settings.initial.mass = vehicle.initial_mass_kg;
+    settings.nodes.clear();
+    settings.guidance.clear();
+    drop(guard);
+    clear_results();
+    1
+}
+
 /// Set a cryogenic design field, then rebuild the stage. Returns 1 on
 /// success, 0 for an unknown field or an unphysical value.
 ///
@@ -1500,6 +1564,26 @@ mod tests {
     // The scalar bridge owns process-wide statics; native tests must not
     // interleave setup/compile/lock calls the way separate workers would.
     pub(super) static TEST_LOCK: Mutex<()> = Mutex::new(());
+    #[test]
+    fn recommended_card_is_real_paid_hardware_and_respects_delegation() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        assert_eq!(mission_contract(101), 1);
+        assert_eq!(mission_thermal_card_available(), 0);
+        assert_eq!(mission_thermal_apply_card(), 0);
+        assert_eq!(mission_contract(103), 1);
+        let baseline = mission_parameter(3);
+        assert_eq!(mission_thermal_card_available(), 1);
+        assert_eq!(mission_thermal_apply_card(), 1);
+        let card = Contract::get(103).unwrap().thermal_card();
+        assert_eq!(mission_thermal_get(0), card.mli_layers as f64);
+        assert_eq!(mission_thermal_get(1).to_bits(), card.epsilon_eff.to_bits());
+        assert_eq!(mission_thermal_get(2), card.cryocooler_lift_w);
+        assert_eq!(mission_thermal_get(8), card.bus.array_w_at_1au);
+        assert!(mission_parameter(3) > baseline);
+        assert_eq!(mission_delegation_set(2), 1);
+        assert_eq!(mission_thermal_apply_card(), 0);
+    }
+
     #[test]
     fn preview_and_failed_setup_clear_stale_state() {
         let _guard = TEST_LOCK.lock().unwrap();

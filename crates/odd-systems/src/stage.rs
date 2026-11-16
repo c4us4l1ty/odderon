@@ -277,6 +277,42 @@ mod tests {
     }
 
     #[test]
+    fn invalid_bus_or_thermal_context_cannot_be_integrated() {
+        let clock = ThermalClock {
+            start_s: 0.0,
+            end_s: 1.0,
+            options: options(),
+        };
+        let base = StageThermal::new(&engine(), 12_800.0, 20).unwrap();
+        for field in [
+            "ep negative",
+            "ep nan",
+            "array",
+            "avionics",
+            "structure",
+            "sink",
+        ] {
+            let mut stage = base;
+            match field {
+                "ep negative" => stage.bus.electric_propulsion_w = -1.0,
+                "ep nan" => stage.bus.electric_propulsion_w = f64::NAN,
+                "array" => stage.bus.array_w_at_1au = f64::INFINITY,
+                "avionics" => stage.bus.avionics_w = -1.0,
+                "structure" => stage.structure_temperature_k = f64::NAN,
+                "sink" => stage.sink_temperature_k = 0.0,
+                _ => unreachable!(),
+            }
+            assert!(
+                matches!(
+                    stage.integrate(&engine(), 12_800.0, clock, |_| Ok(sun())),
+                    Err(IntegrationError::InvalidInput)
+                ),
+                "invalid {field} must fail closed"
+            );
+        }
+    }
+
+    #[test]
     fn storables_need_no_thermal_model() {
         assert!(needs_thermal_model(Propellant::LoxLh2));
         assert!(needs_thermal_model(Propellant::LoxLch4));

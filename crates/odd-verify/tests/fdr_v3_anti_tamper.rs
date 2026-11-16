@@ -380,3 +380,79 @@ fn malformed_v3_blocks_are_rejected_by_name() {
         }
     }
 }
+
+/// An attacker owns a signing key, so the signature alone does not make a
+/// thermal claim true. In particular, a failed or omitted tank model must
+/// never be interpreted as an inert (storable) stage.
+#[test]
+fn resigned_cryogenic_records_cannot_omit_or_invalidate_the_tank_model() {
+    let (honest, _) = signed_tug(&ThermalDesign::baseline());
+    let key = License::from_entropy([7u8; 16]);
+    let mut omitted = honest.clone();
+    omitted.thermal_specs.clear();
+    omitted.vent_events.clear();
+    omitted.boil_off_kg = [0.0, 0.0];
+    omitted.cryocooler_energy_j = 0.0;
+    omitted.sign(&key).unwrap();
+    assert_eq!(omitted.verify_signature(), Ok(()));
+    assert!(
+        verify_record(&omitted).is_err(),
+        "an omitted cryogenic tank must not replay as storable"
+    );
+
+    // Keep the same structural hardware mass but claim a physically
+    // impossible blanket; before fail-closed thermal evaluation this made an
+    // integration error look like zero boil-off.
+    let mut invalid = honest.clone();
+    invalid.thermal_specs[0].epsilon_eff = 0.000_001;
+    invalid.vent_events.clear();
+    invalid.boil_off_kg = [0.0, 0.0];
+    invalid.cryocooler_energy_j = 0.0;
+    invalid.sign(&key).unwrap();
+    assert_eq!(invalid.verify_signature(), Ok(()));
+    assert!(
+        verify_record(&invalid).is_err(),
+        "a failed thermal model must not become zero loss"
+    );
+    let mut bad_replay = odd_verify::spec_from_record(&honest);
+    bad_replay.thermal.as_mut().unwrap().design.epsilon_eff = 0.000_001;
+    assert!(
+        odd_verify::replay_flight(&bad_replay).is_none(),
+        "a thermal integration error must fail the whole replay"
+    );
+
+    // A malicious signer is not obliged to call Fdr::sign's shape guard.
+    // Construct raw signatures to exercise validation of the signed input.
+    for field in ["negative EP demand", "NaN EP demand", "NaN Carnot fraction"] {
+        let mut lie = honest.clone();
+        match field {
+            "negative EP demand" => lie.thermal_specs[0].electric_propulsion_w = -1.0,
+            "NaN EP demand" => lie.thermal_specs[0].electric_propulsion_w = f64::NAN,
+            "NaN Carnot fraction" => lie.thermal_specs[0].cryocooler_carnot_fraction = f64::NAN,
+            _ => unreachable!(),
+        }
+        lie.signature = key.sign(&lie.canonical_bytes());
+        assert!(
+            lie.verify_signature().is_err(),
+            "{field} must fail shape validation"
+        );
+        assert!(verify_record(&lie).is_err(), "{field} must fail replay");
+    }
+
+    for field in ["stage", "propellant", "volume", "extra stage"] {
+        let mut lie = honest.clone();
+        match field {
+            "stage" => lie.thermal_specs[0].stage = 1,
+            "propellant" => lie.thermal_specs[0].propellant_id = 2,
+            "volume" => lie.thermal_specs[0].tank_volumes_m3[1] *= 1.5,
+            "extra stage" => lie.thermal_specs.push(lie.thermal_specs[0]),
+            _ => unreachable!(),
+        }
+        lie.sign(&key).unwrap();
+        assert_eq!(lie.verify_signature(), Ok(()));
+        assert!(
+            verify_record(&lie).is_err(),
+            "re-signed {field} must not be trusted"
+        );
+    }
+}

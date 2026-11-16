@@ -1,8 +1,9 @@
 //! The storage port. The engine talks to this trait only; the local SQLite
-//! adapter and the Cloudflare D1/R2 adapter implement it. An adapter must
-//! give the engine exclusive access for the duration of one operation (a
-//! mutex guard locally, a D1 batch in the cloud) so the read–compute–write
-//! of a ranked result is atomic.
+//! adapter and the Cloudflare snapshot/WASM bridge use it. An adapter must
+//! serialize each read–compute–write operation, not merely its final writes:
+//! SQLite uses BEGIN IMMEDIATE; Cloudflare guards its D1 batch with a global
+//! revision and retries stale snapshots. The default transaction hooks are
+//! no-ops and are safe only for infallible, isolated stores such as tests.
 
 use crate::protocol::{AttemptMode, Hash, PubKey, ServerError};
 use crate::receipt::ServerReceipt;
@@ -49,7 +50,7 @@ pub struct StoredFdr {
     pub receipt: Option<ServerReceipt>,
 }
 
-/// One leaderboard row (Slice 3 reads these).
+/// One ranked leaderboard row.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LeaderRow {
     pub callsign: Option<String>,
