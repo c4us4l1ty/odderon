@@ -1,9 +1,11 @@
 //! Bounded lunar sphere-of-influence search and a Level-1 patched-conic preview.
 //! The SOI is a Laplace approximation, not a physical gravity discontinuity.
 //! Full-force flight still uses continuous third-body gravity; this module only
-//! finds/preview a patch. It does not target a B-plane or guarantee capture.
+//! finds/preview a patch. It computes the B-plane at SOI entry but does not
+//! target a B-plane or guarantee capture.
 use crate::planner::{kepler_coast, Plan, PlanError};
 use odd_astro::{
+    bplane::{compute_bplane, Bplane},
     patched_conics::{patch_to_primary, patch_to_secondary},
     spline::{Keyframe, TrajectorySpline},
 };
@@ -15,6 +17,10 @@ pub struct Encounter {
     pub vehicle_primary: State,
     pub secondary: State,
     pub soi_radius_m: f64,
+    /// B-plane at SOI entry, computed from the hyperbolic excess velocity
+    /// relative to the secondary. `None` when the encounter state is not
+    /// hyperbolic or the B-plane basis is degenerate.
+    pub bplane: Option<Bplane>,
 }
 
 fn relative_distance(vehicle: State, secondary: State) -> f64 {
@@ -23,15 +29,21 @@ fn relative_distance(vehicle: State, secondary: State) -> f64 {
 }
 
 /// First downward crossing of the secondary SOI in an accepted numerical path.
+/// `mu_secondary` is the secondary's gravitational parameter, used to compute
+/// the B-plane at entry.
 pub fn find_entry<F>(
     path: &TrajectorySpline,
     soi_radius_m: f64,
+    mu_secondary: f64,
     mut secondary: F,
 ) -> Result<Option<Encounter>, PlanError>
 where
     F: FnMut(f64) -> Result<State, PlanError>,
 {
     if !soi_radius_m.is_finite() || soi_radius_m <= 0.0 {
+        return Err(PlanError::InvalidInput);
+    }
+    if !mu_secondary.is_finite() || mu_secondary <= 0.0 {
         return Err(PlanError::InvalidInput);
     }
     let mut bracket = None;
@@ -84,14 +96,31 @@ where
     }
     let time_s = lo + (hi - lo) * 0.5;
     let s = path.sample(time_s).map_err(|_| PlanError::NumericalRange)?;
+    let sec = secondary(time_s)?;
+    // Vehicle state relative to the secondary at the encounter epoch.
+    let rel = State {
+        position_m: std::array::from_fn(|i| s.position[i] - sec.position_m[i]),
+        velocity_m_s: std::array::from_fn(|i| s.velocity[i] - sec.velocity_m_s[i]),
+    };
+    // Reference vector: secondary-to-primary direction. In the primary-centered
+    // frame the primary is at the origin, so this is -secondary.position.
+    let reference = [-sec.position_m[0], -sec.position_m[1], -sec.position_m[2]];
+    let bplane = compute_bplane(
+        rel.position_m,
+        rel.velocity_m_s,
+        mu_secondary,
+        Some(reference),
+    )
+    .ok();
     Ok(Some(Encounter {
         time_s,
         vehicle_primary: State {
             position_m: s.position,
             velocity_m_s: s.velocity,
         },
-        secondary: secondary(time_s)?,
+        secondary: sec,
         soi_radius_m,
+        bplane,
     }))
 }
 
@@ -190,12 +219,27 @@ impl LunarPatch {
         };
         let moon_initial =
             patch_to_secondary(vehicle, sec).map_err(|_| PlanError::NumericalRange)?;
+        // B-plane at entry: vehicle state relative to the Moon, with the
+        // Moon-to-Earth vector as the B-plane reference.
+        let rel = State {
+            position_m: std::array::from_fn(|i| s.position[i] - sec.position_m[i]),
+            velocity_m_s: std::array::from_fn(|i| s.velocity[i] - sec.velocity_m_s[i]),
+        };
+        let reference = [-sec.position_m[0], -sec.position_m[1], -sec.position_m[2]];
+        let bplane = compute_bplane(
+            rel.position_m,
+            rel.velocity_m_s,
+            mu_secondary,
+            Some(reference),
+        )
+        .ok();
         Ok(Some(Self {
             entry: Encounter {
                 time_s: entry_us as f64 / 1e6,
                 vehicle_primary: vehicle,
                 secondary: sec,
                 soi_radius_m,
+                bplane,
             },
             moon_initial,
             mu_secondary,

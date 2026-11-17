@@ -311,7 +311,7 @@ pub fn compute(
         .iter()
         .find(|e| e.name == "atmospheric_entry")
         .map_or(f64::NAN, |e| e.time);
-    if let Ok(Some(enc)) = find_entry(&integrated.trajectory, lunar_soi(), |t| {
+    if let Ok(Some(enc)) = find_entry(&integrated.trajectory, lunar_soi(), MOON_MU, |t| {
         moon_state(eph, s.epoch, t)
     }) {
         report[32] = enc.time_s;
