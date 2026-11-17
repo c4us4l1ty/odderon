@@ -710,7 +710,6 @@ pub fn split_tug_for_stage(
             contract.engine,
             &nodes,
             &guidance,
-            None,
         )
         .map_err(|_| odd_sim::targeting::TargetError::InvalidInput)?;
         let burns = plan
@@ -746,7 +745,6 @@ pub fn split_tug_for_stage(
         contract.engine,
         &nodes,
         &guidance,
-        None,
     )
     .map_err(|_| odd_sim::targeting::TargetError::InvalidInput)?;
     Ok(SplitPlan {

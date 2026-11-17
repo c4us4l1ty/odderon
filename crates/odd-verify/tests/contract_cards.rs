@@ -242,7 +242,6 @@ fn baseline_targeted_cooled_tug_preserves_thermal_physics_pin() {
         vehicle.engine,
         &baseline.nodes,
         &baseline.guidance,
-        None,
     )
     .unwrap();
     let settings = FlightSettings {

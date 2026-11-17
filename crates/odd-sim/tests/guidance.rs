@@ -43,7 +43,6 @@ fn guided_frame_freezes_inertial_direction_for_both_levels() {
         engine(),
         &nodes,
         &[Some(guide)],
-        None,
     )
     .unwrap();
     let ideal_dv = plan.impulses[0].delta_v_m_s;
@@ -61,17 +60,8 @@ fn guided_frame_freezes_inertial_direction_for_both_levels() {
     // Empty guidance uses the ideal frame and therefore a different direction.
     let ideal = Plan::compile(initial(), MU, 10_000_000_000, 5200.0, engine(), &nodes).unwrap();
     assert!((ideal.impulses[0].delta_v_m_s[0] - ideal_dv[0]).abs() > 1.0);
-    let empty = Plan::compile_guided(
-        initial(),
-        MU,
-        10_000_000_000,
-        5200.0,
-        engine(),
-        &nodes,
-        &[],
-        None,
-    )
-    .unwrap();
+    let empty =
+        Plan::compile_guided(initial(), MU, 10_000_000_000, 5200.0, engine(), &nodes, &[]).unwrap();
     assert_eq!(empty.impulses[0].delta_v_m_s, ideal.impulses[0].delta_v_m_s);
     assert!(matches!(
         Plan::compile_guided(
@@ -82,102 +72,7 @@ fn guided_frame_freezes_inertial_direction_for_both_levels() {
             engine(),
             &nodes,
             &[None, None],
-            None
         ),
         Err(PlanError::InvalidInput)
     ));
-}
-
-#[test]
-fn thermal_boiloff_reduces_mass_before_burn() {
-    let nodes = [ManeuverNode {
-        epoch_us: 1_600_000_000,
-        tnw_m_s: [3120.0, 0.0, 0.0],
-    }];
-    // No boil-off: baseline plan.
-    let baseline = Plan::compile_guided(
-        initial(),
-        MU,
-        10_000_000_000,
-        5200.0,
-        engine(),
-        &nodes,
-        &[],
-        None,
-    )
-    .unwrap();
-    let baseline_mass = baseline.sample(1_600_000_000).unwrap().mass;
-
-    // Constant 1 kg/s boil-off over 1600 s = 1600 kg lost before the burn.
-    let mut loss_kg = 0.0;
-    let with_boiloff = Plan::compile_guided(
-        initial(),
-        MU,
-        10_000_000_000,
-        5200.0,
-        engine(),
-        &nodes,
-        &[],
-        Some(&mut |start_s, end_s| {
-            let loss = (end_s - start_s) * 1.0;
-            loss_kg += loss;
-            loss
-        }),
-    )
-    .unwrap();
-    let boiloff_mass = with_boiloff.sample(1_600_000_000).unwrap().mass;
-
-    // Mass should be lower — boil-off reduces what the burn can draw on.
-    // (Not exactly `loss_kg` because the rocket equation burns less
-    // propellant when the pre-burn mass is lower.)
-    assert!(
-        boiloff_mass < baseline_mass,
-        "{boiloff_mass} vs {baseline_mass}"
-    );
-}
-
-#[test]
-fn thermal_boiloff_can_cause_propellant_deficit() {
-    let nodes = [ManeuverNode {
-        epoch_us: 1_600_000_000,
-        tnw_m_s: [3120.0, 0.0, 0.0],
-    }];
-    // 20 kg/s boil-off over 1600 s = 32,000 kg lost — far more than the
-    // 18,000 kg initial mass, so the burn cannot proceed.
-    let result = Plan::compile_guided(
-        initial(),
-        MU,
-        10_000_000_000,
-        5200.0,
-        engine(),
-        &nodes,
-        &[],
-        Some(&mut |_, _| 20_000.0),
-    );
-    assert!(matches!(result, Err(PlanError::PropellantDeficit)));
-}
-
-#[test]
-fn thermal_boiloff_none_matches_legacy() {
-    let nodes = [ManeuverNode {
-        epoch_us: 1_600_000_000,
-        tnw_m_s: [3120.0, 0.0, 0.0],
-    }];
-    let legacy = Plan::compile(initial(), MU, 10_000_000_000, 5200.0, engine(), &nodes).unwrap();
-    let none = Plan::compile_guided(
-        initial(),
-        MU,
-        10_000_000_000,
-        5200.0,
-        engine(),
-        &nodes,
-        &[],
-        None,
-    )
-    .unwrap();
-    assert_eq!(
-        legacy.sample(1_600_000_000).unwrap().mass,
-        none.sample(1_600_000_000).unwrap().mass
-    );
-    assert_eq!(legacy.commanded_propellant_kg, none.commanded_propellant_kg);
 }
