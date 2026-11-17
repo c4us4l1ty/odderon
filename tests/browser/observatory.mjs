@@ -440,7 +440,7 @@ try{
   // watch the Schlieren field and the dossier inputs respond, then fly it.
   {
     await page.locator('[data-flight-mode="propulsion"]').click();
-    await page.waitForFunction(()=>missionDiagnostics.engine?.solution,null,{timeout:60000});
+    await page.waitForFunction(()=>missionDiagnostics.engine?.solution&&missionDiagnostics.engine?.raster,null,{timeout:60000});
     const start=await page.evaluate(()=>missionDiagnostics.engine);
     assert.equal(start.code,1,'the contract baseline must solve');
     assert.equal(start.stations,96,'the axial flow field must be sampled');
