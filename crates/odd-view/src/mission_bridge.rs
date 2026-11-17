@@ -356,6 +356,7 @@ pub extern "C" fn mission_compile() -> i32 {
         s.engine,
         &s.nodes,
         &s.guidance,
+        None,
     ) {
         Ok(result) => result,
         Err(error) => {
@@ -528,6 +529,7 @@ pub extern "C" fn mission_target_bplane(target_bt: f64, target_br: f64) -> i32 {
                 s.engine,
                 &perturbed,
                 &s.guidance,
+                None,
             ) else {
                 continue;
             };

@@ -102,7 +102,7 @@ impl Plan {
         engine: Engine,
         nodes: &[ManeuverNode],
     ) -> Result<Self, PlanError> {
-        Self::compile_guided(initial, mu, end_us, dry_mass_kg, engine, nodes, &[])
+        Self::compile_guided(initial, mu, end_us, dry_mass_kg, engine, nodes, &[], None)
     }
 
     /// Compile with optional pre-burn reference states supplied by a numerical
@@ -111,6 +111,13 @@ impl Plan {
     /// the ideal preview applies that *same inertial impulse* at the node.
     /// This permits targeting an actual perturbed periapsis rather than the
     /// periapsis of an earlier ideal conic. Empty guidance means ideal frames.
+    ///
+    /// `boiloff` is an optional callback invoked once per coast interval,
+    /// `(start_s, end_s) -> boil_off_kg`. When `Some`, the returned mass is
+    /// subtracted from the vehicle's mass before the next burn, coupling
+    /// thermal boil-off into the available burn mass. When `None` the preview
+    /// matches the legacy behaviour: mass only decreases by burning.
+    #[allow(clippy::too_many_arguments)]
     pub fn compile_guided(
         initial: Keyframe,
         mu: f64,
@@ -119,6 +126,7 @@ impl Plan {
         engine: Engine,
         nodes: &[ManeuverNode],
         guidance: &[Option<State>],
+        mut boiloff: Option<&mut dyn FnMut(f64, f64) -> f64>,
     ) -> Result<Self, PlanError> {
         if !guidance.is_empty() && guidance.len() != nodes.len() {
             return Err(PlanError::InvalidInput);
@@ -151,17 +159,33 @@ impl Plan {
         let mut total_dv = 0.0;
         for (index, node) in nodes.iter().enumerate() {
             let previous = *segments.last().ok_or(PlanError::NumericalRange)?;
+            let start_s = previous.epoch_us as f64 / 1e6;
+            let node_s = node.epoch_us as f64 / 1e6;
             let pre = kepler_coast(
                 previous.state,
                 mu,
                 (node.epoch_us - previous.epoch_us) as f64 / 1e6,
             )?;
+            // Thermal boil-off during the coast reduces the mass the next
+            // burn can draw on. A cryogenic stage that sits for hours loses
+            // propellant before the engine ever lights.
+            let mut mass_before_burn = previous.mass_kg;
+            if let Some(cb) = boiloff.as_mut() {
+                let loss = cb(start_s, node_s);
+                if !loss.is_finite() || loss < 0.0 {
+                    return Err(PlanError::NumericalRange);
+                }
+                mass_before_burn -= loss;
+                if mass_before_burn < dry_mass_kg {
+                    return Err(PlanError::PropellantDeficit);
+                }
+            }
             let reference = guidance.get(index).copied().flatten().unwrap_or(pre);
             let burn = compile_burn(
                 reference,
                 node.tnw_m_s,
                 node.epoch_us,
-                previous.mass_kg,
+                mass_before_burn,
                 engine,
             )?;
             let crate::CommandKind::Burn { dur_us, .. } = burn.command.kind;
@@ -173,7 +197,7 @@ impl Plan {
             if burn.command.t_us < 0 || burn_end > end_us {
                 return Err(PlanError::BurnOutsidePlan);
             }
-            let mass = previous.mass_kg - burn.commanded_propellant_kg;
+            let mass = mass_before_burn - burn.commanded_propellant_kg;
             if mass < dry_mass_kg {
                 return Err(PlanError::PropellantDeficit);
             }

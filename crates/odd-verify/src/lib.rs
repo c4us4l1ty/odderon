@@ -629,6 +629,7 @@ pub fn replay_flight(spec: &FlightSpec) -> Option<ReplayOutcome> {
         settings.engine,
         &nodes,
         &guidance,
+        None,
     )
     .ok()?;
     // A recorded prediction means the flight was locked; without one the
