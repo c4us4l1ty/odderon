@@ -23,6 +23,24 @@ The title screen checks whether `odd_view.wasm` is present and reports the
 flight computer as ready or not built. It does not instantiate a second physics
 runtime. A missing module does not disguise itself as a successful build.
 
+## Flight Deck stations
+
+The Flight Deck is a fixed-height command console rather than a stacked web
+page. Its left station rail switches one active operational workspace at a time:
+
+- **FDO / Flight:** contract selection, orbit viewport and maneuver controls;
+- **ACD / Academy:** placement and lessons docked above the live flight controls;
+- **PRP / Engine:** engine geometry, Schlieren view and fitted performance;
+- **VHC / Vehicle:** delegation, tanks, thermal hardware and electrical sizing;
+- **PCL / Predict:** prediction contract and launch commitment;
+- **FDR / Debrief:** unlocked after execution and opened automatically.
+
+The top command strip keeps the active station, operation, frame and authority
+mode visible. On narrow screens the station rail becomes a bottom game bar.
+Profile, leaderboard and verification overlays share the same flight-computer
+visual language. The Observatory is also an instrument console and links
+straight back to the game menu and Flight Deck.
+
 ## Storefront and hosting boundary
 
 A storefront may link to the deployed root route, but it is not part of the
@@ -45,9 +63,13 @@ On a fresh checkout:
 bun run dev
 ```
 
-Provisioning builds `web/odd_view.wasm`; the generated module is intentionally
-ignored by Git. Subsequent launches need only `bun run dev` unless Rust/WASM
-sources changed. The development command serves `web/` and prints the local URL.
+Provisioning prefers an installed Rust/rustup toolchain and builds
+`web/odd_view.wasm`; the generated module is intentionally ignored by Git. It
+does not require GCC and does not install headless-browser test dependencies.
+Subsequent launches need only `bun run dev` unless Rust/WASM sources changed.
+The Bun-native development server has no downloaded server package and prints
+the local URL. Contributors running the complete acceptance suite use
+`./scripts/provision.sh --full`.
 
 The equivalent server-independent build sequence remains:
 
@@ -66,9 +88,11 @@ Observatory and Flight Deck. It checks:
 - settings behavior and local persistence;
 - title artwork application;
 - desktop and mobile horizontal containment;
+- all six Flight Deck station transitions and the automatic debrief transition;
+- Academy access to the live flight controls;
 - Observatory rendering and zero-idle behavior;
 - the existing mission, signature, replay and authority paths.
 
-The shell makes the application recognizable and launchable as a game. It does
-not claim that the current long-form Flight Deck has completed its planned
-single-viewport mission-control redesign; that remains a focused UI work item.
+The shipped UI is a game shell and operational console, not a storefront or
+marketing site. It intentionally remains a dense engineering simulation: it
+does not claim a free-flight 3D cockpit, walking character, or finished campaign.

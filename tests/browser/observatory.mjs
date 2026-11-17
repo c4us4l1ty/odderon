@@ -41,7 +41,15 @@ try{
   const menuMobile=await browser.newPage({viewport:{width:390,height:844},deviceScaleFactor:2});
   await menuMobile.goto(`http://127.0.0.1:${server.address().port}/`);await menuMobile.waitForFunction(()=>document.querySelector('#system-state')?.textContent.includes('READY'));
   assert.equal(await menuMobile.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true,'mobile title screen overflows horizontally');
-  assert.equal(await menuMobile.locator('.game-menu').isVisible(),true);await menuMobile.close();
+  assert.equal(await menuMobile.locator('.game-menu').isVisible(),true);
+  await menuMobile.goto(`http://127.0.0.1:${server.address().port}/mission.html`);
+  await menuMobile.waitForFunction(()=>window.odderonFlightShell&&document.getElementById('add-node')&&!document.getElementById('add-node').disabled,null,{timeout:30000});
+  assert.equal(await menuMobile.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'mobile Flight Deck overflows horizontally');
+  assert.equal(await menuMobile.evaluate(()=>getComputedStyle(document.body).overflow),'hidden','Flight Deck must be a fixed game console, not document navigation');
+  await menuMobile.locator('[data-flight-mode="propulsion"]').click();assert.equal(await menuMobile.locator('#engine-lab').isVisible(),true);
+  await menuMobile.locator('[data-flight-mode="prediction"]').click();assert.equal(await menuMobile.locator('#prediction-workspace').isVisible(),true);
+  const mobileRail=await menuMobile.locator('.flight-mode-nav').boundingBox();assert.ok(mobileRail.y>700,'station rail must become a mobile game bar');
+  await menuMobile.close();
   // Capture the actual MediaQueryList objects so we can deliver a monitor
   // change notification even on headless Chrome versions whose CDP metrics
   // override updates matchMedia results without emitting a change event.
@@ -171,6 +179,8 @@ try{
   await page.setViewportSize({width:1440,height:1000});
   await page.goto(`http://127.0.0.1:${server.address().port}/mission.html`);
   await page.waitForFunction(()=>!document.getElementById('add-node').disabled,null,{timeout:30000});
+  assert.equal(await page.evaluate(()=>odderonFlightShell.mode),'flight');
+  await page.locator('[data-flight-mode="academy"]').click();
   // Onboarding is opt-in, uses the real mission controls, and writes no local
   // progress until the player explicitly consents.
   assert.equal(await page.locator('#onboarding').isVisible(),true);
@@ -188,10 +198,14 @@ try{
   assert.equal(await page.evaluate(()=>localStorage.getItem('odderon:playtest:v1')),null);
   await page.locator('#onboarding-close').click();
   assert.equal(await page.locator('#onboarding').isHidden(),true);
+  await page.locator('[data-flight-mode="academy"]').click();
+  assert.equal(await page.locator('#onboarding').isVisible(),true,'Academy station must reopen a closed lesson dock');
+  await page.locator('#onboarding-close').click();
   // Explicit playtest consent creates a local-only session. A hint and close
   // produce a deterministic drop-off that can be exported and then cleared.
   await page.reload();
   await page.waitForFunction(()=>!document.getElementById('add-node').disabled,null,{timeout:30000});
+  await page.locator('[data-flight-mode="academy"]').click();
   await page.locator('#playtest-consent').check();
   await page.locator('#onboarding-start').click();
   await page.locator('#onboarding-hint').click();
@@ -202,6 +216,7 @@ try{
   assert.equal(localPlaytest.observations[0].drop_off_step,'lesson-1');
   await page.reload();
   await page.waitForFunction(()=>!document.getElementById('add-node').disabled,null,{timeout:30000});
+  await page.locator('[data-flight-mode="academy"]').click();
   await page.locator('#playtest-consent').check();
   const downloadPromise=page.waitForEvent('download');
   await page.locator('#playtest-export').click();
@@ -427,7 +442,8 @@ try{
   // oracle_browser_cad_lab_and_idle_gate: design the engine on the canvas,
   // watch the Schlieren field and the dossier inputs respond, then fly it.
   {
-    await page.waitForFunction(()=>missionDiagnostics.engine?.solution,null,{timeout:60000});
+    await page.locator('[data-flight-mode="propulsion"]').click();
+    await page.waitForFunction(()=>missionDiagnostics.engine?.solution&&missionDiagnostics.engine?.raster,null,{timeout:60000});
     const start=await page.evaluate(()=>missionDiagnostics.engine);
     assert.equal(start.code,1,'the contract baseline must solve');
     assert.equal(start.stations,96,'the axial flow field must be sampled');
@@ -528,6 +544,7 @@ try{
     // A lab edit that was never applied must not reach the flight.
     await page.locator('#engine-pc').fill('7');
     await page.locator('#engine-pc').dispatchEvent('input');
+    await page.locator('[data-flight-mode="flight"]').click();
     await page.locator('#add-node').click();
     await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:120000});
     const unapplied=await page.evaluate(()=>({applied:missionDiagnostics.appliedEngine,labPc:missionDiagnostics.engine.spec.pc,thrust:missionDiagnostics.wasm().mission_parameter(4)}));
@@ -535,6 +552,7 @@ try{
     assert.equal(unapplied.applied.pc,fitted.applied.pc,'an unapplied edit must not be committed');
     assert.equal(unapplied.thrust,fitted.thrust,'an unapplied edit must not change the flown stage');
     await page.locator('#remove-node').click();
+    await page.locator('[data-flight-mode="propulsion"]').click();
     await page.locator('#engine-pc').fill(String(fitted.applied.pc/1e6));
     await page.locator('#engine-pc').dispatchEvent('input');
     await page.waitForFunction(()=>!missionDiagnostics.pending,null,{timeout:120000});
@@ -543,6 +561,7 @@ try{
   // Fitting a new engine clears the plan: the old burn durations were computed
   // for the old thrust and mass, so they must not survive the redesign.
   assert.equal(await page.evaluate(()=>missionDiagnostics.nodes.length),0,'a redesign must discard the stale plan');
+  await page.locator('[data-flight-mode="flight"]').click();
   await page.locator('#add-node').click();
   await page.locator('#node-t').fill('82.38547669');
   await page.locator('#add-node').click();
@@ -557,6 +576,7 @@ try{
   await page.mouse.move(canvasBox.x+handle[0],canvasBox.y+handle[1]);await page.mouse.down();await page.mouse.move(canvasBox.x+handle[0]+5,canvasBox.y+handle[1]+5,{steps:3});await page.mouse.up();
   assert.notEqual(await page.evaluate(()=>missionDiagnostics.nodes[1].dv[0]),81.50942505,'dragging a handle should change the maneuver');
   await page.locator('#node-t').fill('81.50942505');
+  await page.locator('[data-flight-mode="prediction"]').click();
   await page.locator('#prefill').click();
   await page.locator('#execute').click();
   await page.waitForFunction(()=>(!document.getElementById('debrief').hidden||missionDiagnostics.locked)&&!missionDiagnostics.pending,null,{timeout:120000});
@@ -653,11 +673,14 @@ try{
   const missionIdle=await page.evaluate(()=>({frames:testFrameCallbacks,messages:testWorkerMessages,draws:missionDiagnostics.draws}));
   await page.waitForTimeout(2000);
   assert.deepEqual(await page.evaluate(()=>({frames:testFrameCallbacks,messages:testWorkerMessages,draws:missionDiagnostics.draws})),missionIdle,'mission must settle without frames, redraws, or worker messages');
+  await page.locator('[data-flight-mode="prediction"]').click();
   await page.locator('#unlock').click();
   assert.equal(await page.evaluate(()=>missionDiagnostics.locked),false);
+  await page.locator('[data-flight-mode="flight"]').click();
   await page.locator('#mission-select').selectOption('102');
   await page.locator('#example').click();
   assert.equal(await page.evaluate(()=>missionDiagnostics.nodes.length),1);
+  await page.locator('[data-flight-mode="prediction"]').click();
   await page.locator('#execute').click();
   await page.waitForFunction(()=>(!document.getElementById('debrief').hidden||missionDiagnostics.locked)&&!missionDiagnostics.pending,null,{timeout:180000});
   assert.equal(await page.locator('#debrief').isHidden(),false,`mission error: ${await page.locator('#execute-status').textContent()}, page errors: ${errors}`);
@@ -679,13 +702,18 @@ try{
   // Contract 103: fly a fresh delegated cryogenic design through the
   // authority without running the numerical splitter as a ranked preview.
   // Then exercise that numerical teaching aid explicitly in local practice.
+  await page.locator('[data-flight-mode="prediction"]').click();
   await page.locator('#unlock').click();
+  await page.locator('[data-flight-mode="flight"]').click();
   await page.locator('#mission-select').selectOption('103');
+  await page.locator('[data-flight-mode="vehicle"]').click();
   await page.locator('#delegate-1').click();
+  await page.locator('[data-flight-mode="flight"]').click();
   await page.locator('#example').click();
   assert.equal(await page.locator('#split-kick').isDisabled(),true,'numerical targeting is not a ranked preview');
   assert.equal(await page.evaluate(()=>missionDiagnostics.report),null,'the ranked planner has not run a modeled flight');
   await page.locator('#node-t').fill('700');
+  await page.locator('[data-flight-mode="prediction"]').click();
   await page.locator('#prefill').click();
   await page.locator('#execute').click();
   await page.waitForFunction(()=>(!document.getElementById('debrief').hidden||missionDiagnostics.locked)&&!missionDiagnostics.pending,null,{timeout:240000});
@@ -701,9 +729,13 @@ try{
   assert.ok(rankedTug.record.thermal_specs.length>0 && rankedTug.thermal && !rankedTug.thermal.inert,'server replay includes delegated cryogenic physics');
   console.log('Portable replay: server-certified delegated cryogenic Contract 103.');
 
+  await page.locator('[data-flight-mode="prediction"]').click();
   await page.locator('#unlock').click();
+  await page.locator('[data-flight-mode="vehicle"]').click();
   await page.locator('#delegate-1').click();
+  await page.locator('[data-flight-mode="prediction"]').click();
   await page.locator('#attempt-mode').selectOption('practice');
+  await page.locator('[data-flight-mode="flight"]').click();
   await page.locator('#example').click();
   assert.equal(await page.evaluate(()=>missionDiagnostics.report),null);
   await page.locator('#split-kick').click();
@@ -712,6 +744,7 @@ try{
   const tugNodes=await page.evaluate(()=>missionDiagnostics.nodes);
   assert.ok(tugNodes[1].guidance&&tugNodes[2].guidance,'later kicks must carry numerical guidance');
   assert.ok(Math.abs(tugNodes[1].time-10303.134747)<2,`second kick epoch ${tugNodes[1].time}`);
+  await page.locator('[data-flight-mode="prediction"]').click();
   await page.locator('#prefill').click();
   await page.locator('#execute').click();
   await page.waitForFunction(()=>(!document.getElementById('debrief').hidden||missionDiagnostics.locked)&&!missionDiagnostics.pending,null,{timeout:240000});
@@ -831,6 +864,7 @@ try{
   assert.equal(await page.locator('#attempt-mode').inputValue(),'ranked');
   assert.equal(await page.locator('#attempt-mode option[value=ranked]').isDisabled(),false,'server decides eligibility, not local state');
   await page.locator('#example').click();
+  await page.locator('[data-flight-mode="prediction"]').click();
   await page.locator('#prefill').click();
   await page.locator('#execute').click();
   await page.waitForFunction(()=>(!document.getElementById('debrief').hidden||missionDiagnostics.locked)&&!missionDiagnostics.pending,null,{timeout:120000});

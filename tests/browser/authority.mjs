@@ -12,6 +12,7 @@ import { startAuthority } from './support/authority-server.mjs';
 import { startCloudAuthority } from './support/cloud-authority.mjs';
 import { decodeQrFromSvg } from './support/qr.mjs';
 
+const station = (page, name) => page.evaluate(mode => window.odderonFlightShell.activate(mode), name);
 const cloud = process.env.ODDERON_AUTHORITY === 'cloudflare';
 const authority = await (cloud ? startCloudAuthority() : startAuthority());
 console.log(`Authority browser gate: ${cloud ? 'Cloudflare workerd / D1 / R2' : 'native HTTP / SQLite'}`);
@@ -89,13 +90,13 @@ try {
   assert.equal(await page.evaluate(() => missionDiagnostics.profile().callsign), 'ORBIT-PILOT');
   await page.click('#profile-close');
 
-  await page.click('#example');
+  await station(page, 'flight'); await page.click('#example');
   await page.waitForFunction(() => !missionDiagnostics.pending, null, { timeout: 120000 });
   // Signed FDRs distinguish -0 from +0. Exercise an actual browser input so
   // receipt attachment, exported JSON, verification and cache must retain it.
   await page.fill('#node-n', '-0');
   assert.equal(await page.evaluate(() => Object.is(missionDiagnostics.nodes[0].dv[1], -0)), true);
-  await page.click('#prefill');
+  await station(page, 'prediction'); await page.click('#prefill');
   assert.equal(await page.locator('#attempt-mode').inputValue(), 'ranked');
   // Include *all* flight workers, not just locked ones: an unlocked numerical
   // preview would reveal the answer and invalidate the ordering assertion.
@@ -392,9 +393,9 @@ try {
 
   // A second commit must be forced to Practice by the server even after the
   // local cache was wiped; it cannot move the rating or enter the board.
-  await page.click('#example');
+  await station(page, 'flight'); await page.click('#example');
   await page.waitForFunction(() => !missionDiagnostics.pending, null, { timeout: 120000 });
-  await page.click('#prefill');
+  await station(page, 'prediction'); await page.click('#prefill');
   await page.click('#execute');
   await page.waitForFunction(() => !document.getElementById('debrief').hidden && !missionDiagnostics.pending, null, { timeout: 180000 });
   assert.equal(await page.locator('#certification-status').textContent(), 'SERVER-VERIFIED PRACTICE');
@@ -412,7 +413,7 @@ try {
   // their server receipts have different attempt numbers. Retrying the
   // earlier ticket must still return its original receipt.
   const secondBody = submitBodies.at(-1);
-  await page.click('#unlock'); await page.click('#example'); await page.click('#prefill'); await page.click('#execute');
+  await station(page, 'prediction'); await page.click('#unlock'); await station(page, 'flight'); await page.click('#example'); await station(page, 'prediction'); await page.click('#prefill'); await page.click('#execute');
   await page.waitForFunction(() => !document.getElementById('debrief').hidden && !missionDiagnostics.pending, null, { timeout: 180000 });
   const third = await page.evaluate(() => missionDiagnostics.recorder().document);
   assert.equal(third.server_receipt.attempt_num, 3);
@@ -447,16 +448,16 @@ try {
   // Exercise cross-target server replay for the remaining canonical contracts,
   // including a genuinely delegated cryogenic tug. No numerical preview runs
   // before these first ranked commitments.
-  await page.click('#unlock'); await page.selectOption('#mission-select', '102');
-  await page.click('#example'); await page.click('#prefill'); await page.click('#execute');
+  await station(page, 'prediction'); await page.click('#unlock'); await station(page, 'flight'); await page.selectOption('#mission-select', '102');
+  await station(page, 'flight'); await page.click('#example'); await station(page, 'prediction'); await page.click('#prefill'); await page.click('#execute');
   await page.waitForFunction(() => !document.getElementById('debrief').hidden && !missionDiagnostics.pending, null, { timeout: 180000 });
   assert.equal(await page.locator('#certification-status').textContent(), '★ CERTIFIED SERVER-RANKED RECEIPT');
   assert.equal(await page.evaluate(() => missionDiagnostics.recorder().document.server_receipt.contract_id), 102);
-  await page.click('#unlock'); await page.selectOption('#mission-select', '103');
-  await page.click('#delegate-1'); await page.click('#example');
+  await station(page, 'prediction'); await page.click('#unlock'); await station(page, 'flight'); await page.selectOption('#mission-select', '103');
+  await station(page, 'vehicle'); await page.click('#delegate-1'); await station(page, 'flight'); await page.click('#example');
   assert.equal(await page.locator('#split-kick').isDisabled(), true);
   assert.equal(await page.evaluate(() => missionDiagnostics.report), null);
-  await page.fill('#node-t', '700'); await page.click('#prefill'); await page.click('#execute');
+  await page.fill('#node-t', '700'); await station(page, 'prediction'); await page.click('#prefill'); await page.click('#execute');
   await page.waitForFunction(() => !document.getElementById('debrief').hidden && !missionDiagnostics.pending, null, { timeout: 240000 });
   assert.equal(await page.locator('#certification-status').textContent(), '★ CERTIFIED SERVER-RANKED RECEIPT');
   const tug = await page.evaluate(() => ({ record: missionDiagnostics.recorder().document, boil: missionDiagnostics.boilOff }));
@@ -515,14 +516,14 @@ try {
         await route.fulfill({ response });
       } else await route.continue();
     });
-    await orderingPage.click('#example'); await orderingPage.click('#prefill'); await orderingPage.click('#execute');
+    await station(orderingPage, 'flight'); await orderingPage.click('#example'); await station(orderingPage, 'prediction'); await orderingPage.click('#prefill'); await orderingPage.click('#execute');
     let timer;
     try {
       await Promise.race([oldAccepted, new Promise((_, reject) => { timer = setTimeout(() => reject(Error('old receipt was not accepted')), 120000); })]);
     } finally { clearTimeout(timer); }
     assert.equal(heldResponse.receipt.contract_id, 101);
-    await orderingPage.click('#unlock'); await orderingPage.selectOption('#mission-select', '102');
-    await orderingPage.click('#example'); await orderingPage.click('#prefill'); await orderingPage.click('#execute');
+    await station(orderingPage, 'prediction'); await orderingPage.click('#unlock'); await station(orderingPage, 'flight'); await orderingPage.selectOption('#mission-select', '102');
+    await station(orderingPage, 'flight'); await orderingPage.click('#example'); await station(orderingPage, 'prediction'); await orderingPage.click('#prefill'); await orderingPage.click('#execute');
     await orderingPage.waitForFunction(() => missionDiagnostics.recorder()?.document?.server_receipt?.contract_id === 102,
       null, { timeout: 180000 });
     const current = await orderingPage.evaluate(async () => {
@@ -550,16 +551,16 @@ try {
   await cooled.goto(`${base}/mission.html`);
   await cooled.waitForFunction(() => missionDiagnostics?.wasm?.() && !missionDiagnostics.pending, null, { timeout: 60000 });
   assert.equal(await cooled.locator('#thermal-apply-card').isDisabled(), true, 'storable contracts have no cryogenic card');
-  await cooled.selectOption('#mission-select', '103');
+  await station(cooled, 'flight'); await cooled.selectOption('#mission-select', '103');
   await cooled.waitForFunction(() => !missionDiagnostics.pending && missionDiagnostics.assembly?.cryogenic, null, { timeout: 60000 });
   const plainMass = await cooled.evaluate(() => missionDiagnostics.assembly.dryMass);
-  await cooled.click('#thermal-apply-card');
+  await station(cooled, 'vehicle'); await cooled.click('#thermal-apply-card');
   await cooled.waitForFunction(() => !missionDiagnostics.pending && missionDiagnostics.assembly?.coolerLift === 2000 && missionDiagnostics.assembly?.arrayWatts === 12000);
   const card = await cooled.evaluate(() => missionDiagnostics.assembly);
   assert.ok(card.dryMass > plainMass, 'the recommended hardware must be charged as dry mass');
   assert.equal(card.mliLayers, 40);
   assert.equal(card.strutConductance, 0.15);
-  await cooled.click('#example'); await cooled.fill('#node-t', '700'); await cooled.click('#prefill'); await cooled.click('#execute');
+  await station(cooled, 'flight'); await cooled.click('#example'); await cooled.fill('#node-t', '700'); await station(cooled, 'prediction'); await cooled.click('#prefill'); await cooled.click('#execute');
   await cooled.waitForFunction(() => !document.getElementById('debrief').hidden && !missionDiagnostics.pending, null, { timeout: 240000 });
   assert.equal(await cooled.locator('#certification-status').textContent(), '★ CERTIFIED SERVER-RANKED RECEIPT');
   const active = await cooled.evaluate(() => ({ record: missionDiagnostics.recorder().document, boil: missionDiagnostics.boilOff }));
@@ -587,16 +588,20 @@ try {
   // These local flights are transport-independent, so run them once here.
   if (!cloud) {
     for (const [name, mask, total] of [['manual card', 0, 3240], ['fully delegated', 15, 3252]]) {
-      await cooled.click('#unlock');
-      if (mask) for (let i = 0; i < 4; i++) await cooled.click(`#delegate-${i}`);
+      await station(cooled, 'prediction'); await cooled.click('#unlock');
+      if (mask) {
+        await station(cooled, 'vehicle');
+        for (let i = 0; i < 4; i++) await cooled.click(`#delegate-${i}`);
+      }
+      await station(cooled, 'prediction');
       await cooled.selectOption('#attempt-mode', 'practice');
       assert.equal(await cooled.evaluate(() => missionDiagnostics.assembly.mask), mask);
-      await cooled.click('#example');
+      await station(cooled, 'flight'); await cooled.click('#example');
       await cooled.fill('#node-t', String(total));
       await cooled.click('#split-kick');
       await cooled.waitForFunction(() => missionDiagnostics.nodes.length === 3 && !missionDiagnostics.pending,
         null, { timeout: 240000 });
-      await cooled.click('#prefill'); await cooled.click('#execute');
+      await station(cooled, 'prediction'); await cooled.click('#prefill'); await cooled.click('#execute');
       await cooled.waitForFunction(() => !document.getElementById('debrief').hidden && !missionDiagnostics.pending,
         null, { timeout: 240000 });
       const flown = await cooled.evaluate(() => ({ report: missionDiagnostics.report, record: missionDiagnostics.recorder().document }));
@@ -623,7 +628,7 @@ try {
   });
   await retryPage.goto(`${base}/mission.html`);
   await retryPage.waitForFunction(() => missionDiagnostics?.wasm?.() && !missionDiagnostics.pending, null, { timeout: 60000 });
-  await retryPage.click('#example'); await retryPage.click('#prefill');
+  await station(retryPage, 'flight'); await retryPage.click('#example'); await station(retryPage, 'prediction'); await retryPage.click('#prefill');
   const rejectCommit = route => route.abort();
   await retryPage.route('**/api/v1/commit', rejectCommit);
   await retryPage.click('#execute');
@@ -631,7 +636,7 @@ try {
   assert.equal(await retryPage.evaluate(() => flightStarts), 0, 'commit failure must not run even an unlocked worker');
   assert.equal(await retryPage.locator('#debrief').isHidden(), true);
   await retryPage.unroute('**/api/v1/commit', rejectCommit);
-  await retryPage.click('#unlock');
+  await station(retryPage, 'prediction'); await retryPage.click('#unlock');
   let submitted = 0, lostResponse = null;
   await retryPage.route('**/api/v1/submit', async route => {
     if (++submitted === 1) {
@@ -640,7 +645,7 @@ try {
       await route.abort();
     } else await route.continue();
   });
-  await retryPage.click('#prefill'); await retryPage.click('#execute');
+  await station(retryPage, 'prediction'); await retryPage.click('#prefill'); await retryPage.click('#execute');
   await retryPage.waitForSelector('#retry-submit', { timeout: 180000 });
   assert.equal(lostResponse?.accepted, true, 'server actually accepted the response that the network lost');
   assert.equal(await retryPage.locator('#certification-status').textContent(), 'UNVERIFIED LOCAL / PRACTICE');
@@ -689,7 +694,7 @@ try {
     worker.postMessage({ contract: 101, nodes: [] });
   }));
   assert.match(rejection, /Lock a prediction/);
-  await offline.click('#example'); await offline.click('#prefill'); await offline.click('#execute');
+  await station(offline, 'flight'); await offline.click('#example'); await station(offline, 'prediction'); await offline.click('#prefill'); await offline.click('#execute');
   await offline.waitForFunction(() => !document.getElementById('debrief').hidden && !missionDiagnostics.pending, null, { timeout: 180000 });
   const local = await offline.evaluate(() => ({ record: missionDiagnostics.recorder().document, profile: missionDiagnostics.profile() }));
   assert.equal(local.record.attempt_mode, 'Practice');

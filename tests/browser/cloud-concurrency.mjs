@@ -93,7 +93,11 @@ try {
       else await route.abort();
     });
   }
-  await Promise.all(pages.map(async page => { await page.click('#example'); await page.click('#prefill'); await page.click('#execute'); }));
+  await Promise.all(pages.map(async page => {
+    await page.click('#example');
+    await page.evaluate(()=>odderonFlightShell.activate('prediction'));
+    await page.click('#prefill');await page.click('#execute');
+  }));
   let timer;
   try {
     await Promise.race([Promise.all(arrivals.map(a => a.promise)), new Promise((_, reject) => { timer = setTimeout(() => reject(raceFailure || Error('concurrent flights did not reach submit')), 90000); })]);
@@ -257,13 +261,17 @@ try {
   // can leave an orphan, which an exact retry safely reuses.
   const failurePage = pages[2];
   await failurePage.unroute('**/api/v1/submit');
+  await failurePage.evaluate(()=>odderonFlightShell.activate('prediction'));
   await failurePage.click('#unlock');
+  await failurePage.evaluate(()=>odderonFlightShell.activate('flight'));
   await failurePage.selectOption('#mission-select', '102');
   const playerBefore = (await authority.query('SELECT elo,ranked FROM players WHERE pubkey=?1', pubkeys[2])).results[0];
   let failedBody;
   failurePage.on('request', request => { if (request.method() === 'POST' && request.url().endsWith('/api/v1/submit')) failedBody = request.postData(); });
   await authority.failPut(true);
-  await failurePage.click('#example'); await failurePage.click('#prefill'); await failurePage.click('#execute');
+  await failurePage.click('#example');
+  await failurePage.evaluate(()=>odderonFlightShell.activate('prediction'));
+  await failurePage.click('#prefill');await failurePage.click('#execute');
   await failurePage.waitForSelector('#retry-submit', { timeout:180000 });
   const failedDoc = await failurePage.evaluate(() => missionDiagnostics.recorder().document);
   const request = JSON.parse(failedBody);

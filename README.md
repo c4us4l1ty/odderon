@@ -15,8 +15,8 @@ boundary is summarized in [current project status](docs/project-status.md).
 ```sh
 git clone https://github.com/c4us4l1ty/odderon.git
 cd odderon
-./scripts/provision.sh   # first clone only
-bun run dev
+./scripts/provision.sh   # first clone only; builds the browser WASM
+bun run dev              # Bun-native local game server
 ```
 
 Open the local URL printed by the server. Odderon opens at its game menu;
@@ -105,8 +105,8 @@ cargo fmt --all -- --check
 ```
 
 For the sandbox's full offline acceptance sweep, first run
-`./scripts/provision.sh` to install its toolchain, vendored dependencies and
-headless browser, then run `./scripts/gate.sh`. The gate includes the browser
+`./scripts/provision.sh --full` to install its toolchain, vendored dependencies
+and headless browser, then run `./scripts/gate.sh`. The gate includes the browser
 and both authority adapters; its disposable test seed is not a production key.
 
 CI additionally compares native and WebAssembly fixtures in Node and headless
