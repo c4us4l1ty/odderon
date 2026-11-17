@@ -320,3 +320,31 @@ mod tests {
         assert!(diagnose_engine(&engine(false, false, 5.2)).is_empty());
     }
 }
+
+#[cfg(test)]
+mod discriminant_tests {
+    use super::Warning;
+
+    /// The browser does not read these names — `web/mission.js` hard-codes
+    /// `warning===4||warning===6` to decide when to reveal the split-burn
+    /// button, and `mission_causal_warning` exports the bare discriminant. So
+    /// inserting a variant anywhere but the end silently rebinds that button to
+    /// an unrelated warning, and nothing else in the tree notices.
+    ///
+    /// This test is the notice. It is not a claim that these numbers are good;
+    /// it is a claim that changing them must be deliberate. If you are here
+    /// because you added a `Warning` variant, update `web/mission.js` first.
+    #[test]
+    fn wire_discriminants_are_pinned_to_the_browser() {
+        assert_eq!(Warning::ThrustToWeightBelowOne as u32, 0);
+        assert_eq!(Warning::PeriapsisBelowAtmosphere as u32, 1);
+        assert_eq!(Warning::FiniteBurnGravityLossAbove15Percent as u32, 2);
+        assert_eq!(Warning::PropellantDeficit as u32, 3);
+        assert_eq!(Warning::ApoapsisShortfall as u32, 4);
+        assert_eq!(Warning::Impact as u32, 5);
+        assert_eq!(Warning::LongFiniteBurnArc as u32, 6);
+        assert_eq!(Warning::FlowSeparationAtAltitude as u32, 7);
+        assert_eq!(Warning::ThroatThermalOverload as u32, 8);
+        assert_eq!(Warning::StoichiometricTemperatureSpike as u32, 9);
+    }
+}

@@ -159,6 +159,7 @@ try{
   // a live hover projection; the causal chains are the Rust engine's DAG.
   assert.deepEqual(await page.evaluate(()=>missionDiagnostics.acronymViolations),[]);
   assert.equal(await page.evaluate(()=>missionDiagnostics.causalValid),true);
+
   const acronymSnapshot=await page.evaluate(()=>[...document.querySelectorAll('abbr.term')].map(a=>a.dataset.term).sort());
   for(const term of ['RAAN','AOP','TWR','ISP'])assert.ok(acronymSnapshot.includes(term),`missing rendered acronym ${term}`);
   // Art keys must arrive from odd_app::lens::Projection::key over the bridge.
@@ -180,6 +181,7 @@ try{
   assert.equal(artKeys.DAG,'dag');
   assert.equal(artKeys.PDR,'pdr');
   assert.ok(Object.values(artKeys).every(k=>k.length>0),'every acronym needs an art key');
+
 
   // oracle_identity_roundtrip_and_rfc8032 (wasm32 half): the compiled module
   // must sign identically to the native build, not merely compile.
@@ -247,6 +249,7 @@ try{
   assert.match(await page.locator('#lens-projection').textContent(),/Thrust-to-weight ratio/);
   const lensBefore=await page.evaluate(()=>missionDiagnostics.lensDraws);
   await page.waitForFunction(n=>missionDiagnostics.lensDraws>n,lensBefore);
+
   // The projection renders the hovered term inside itself. Re-entering the
   // active projection must not rewrite those nodes, or the element under the
   // pointer is destroyed and mouseover re-fires forever.
@@ -279,6 +282,40 @@ try{
   assert.equal(await page.evaluate(()=>missionDiagnostics.nodes.length),1,'clicking the path should place a maneuver');
   await page.locator('#remove-node').click();
   await page.locator('#add-node').click();
+  // A refused plan must say *which* refusal it was. Before this the bridge
+  // returned a bare 0 for five different failures and the page named none of
+  // them, so a player could not tell an unaffordable burn from a mistimed one.
+  await page.locator('#add-node').click();
+  // A second node shares the first one's default epoch (200 s), and two burns at
+  // one epoch is legitimately invalid input. Give it its own time first, then
+  // ask for a burn the tanks cannot pay for: 600 m/s needs ~216 kg of the 180 kg
+  // aboard and lasts ~274 s of the 10,800 s window, so the tank is the limit.
+  await page.locator('#node-time').fill('600');
+  await page.locator('#node-t').fill('600');
+  await page.locator('#node-t').dispatchEvent('input');
+  const refusal=await page.evaluate(()=>({
+    copy:document.getElementById('plan-status').textContent,
+    failure:document.getElementById('plan-status').classList.contains('failure'),
+    code:missionDiagnostics.wasm().mission_compile_error(),
+  }));
+  assert.equal(refusal.code,4,'an unaffordable burn must report a fuel refusal');
+  assert.ok(
+    /more fuel than this stage carries/.test(refusal.copy),
+    `the refusal must name the failure, got: ${refusal.copy}`,
+  );
+  assert.ok(refusal.failure,'a refused plan must be styled as a failure');
+  // And a burnable plan must not leave the refusal behind.
+  await page.locator('#node-t').fill('80');
+  await page.locator('#node-t').dispatchEvent('input');
+  assert.equal(
+    await page.evaluate(()=>missionDiagnostics.wasm().mission_compile_error()),
+    0,
+    'a compiled plan must clear the refusal code',
+  );
+  // Leave the node list exactly as found: this block is diagnostic, not a
+  // fixture, and the rest of the suite indexes nodes[0].
+  await page.locator('#remove-node').click();
+  assert.equal(await page.evaluate(()=>missionDiagnostics.nodes.length),1,'cleanup must restore one node');
 
   // oracle_hardening_clamp_and_exact_sweep (browser half): typed entry and
   // pointer dragging must enforce one identical [t_min, t_max] boundary.

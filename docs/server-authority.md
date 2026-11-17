@@ -157,15 +157,37 @@ free-tier timing guarantee or `?seg=i` implementation. The test named
 `oracle_chunked_segment_verification_parity` proves integrity and receipt
 parity of this full-replay path only.
 
-The v4 helpers for the *next* step exist and are tested, but nothing in
-production calls them: `verify_resumable_segment`, `validate_resumable` and
-`SegmentRateLimiter` in `odd-worker::segment`. `oracle_true_single_segment_resumption_cost`
-proves the coupled propagator reproduces a single-pass flight from a checkpoint
-and charges only the requested window. Shipping that as a protocol is blocked
-on a security question rather than a numerical one: a verifier standing at a
-segment boundary can only audit the transition it starts from, so resuming from
-a client-supplied checkpoint would trust that client for every boundary but the
-launch. Authority-issued links or chained proofs have to come first.
+### Decision: incremental segmented replay is dropped, not deferred
+
+The v4 helpers exist and are tested — `verify_resumable_segment`,
+`validate_resumable` and `SegmentRateLimiter` in `odd-worker::segment` — and
+`oracle_true_single_segment_resumption_cost` proves the coupled propagator
+reproduces a single-pass flight from a checkpoint while charging only the
+requested window. **No production code calls any of them, and it is now a
+decision rather than an unfinished task.** Three independent reasons, each
+sufficient on its own:
+
+1. **It solves a budget that is not the constraint.** "Near-zero CPU" in
+   `BRAINSTORM.md` is about browser rendering at idle — dirty-flagged frames,
+   0 FPS when the camera is still, no React in the telemetry path — which is
+   why the observatory gate asserts zero idle animation callbacks and worker
+   messages. Authority replay cost is a different budget, and the browser
+   already flies locally. A saving there is not the saving the product needs.
+2. **The report is not separable from the trajectory.** Scoring evaluates at
+   `evaluation_s`, which for Contract 103 is the first apoapsis found by
+   scanning the whole spline; the expensive terms — Shapley attribution,
+   finite-burn isolation, thermal integration — all need the full path. A
+   resumed verifier cannot produce the signed report from one window, so the
+   saving is smaller than the oracle's raw RHS count suggests.
+3. **It weakens the trust model.** A verifier at a segment boundary can only
+   audit the transition it starts from, so a client-supplied checkpoint is
+   trusted for every boundary but the launch. Authority-issued links or
+   chained proofs would be a prerequisite, and that is a protocol change
+   larger than the saving justifies.
+
+The code is kept because the oracles pin real invariants about the coupled
+propagator and cost nothing to run. It should not be re-proposed without
+retiring one of the three reasons above in writing.
 
 ## Transactions and deployment boundary
 

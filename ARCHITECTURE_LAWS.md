@@ -1,6 +1,6 @@
-The 5 Global "Anti-Hallucination Laws"
+The Global "Anti-Hallucination Laws"
 
-Before starting any Block, your AI agent must obey these five invariant laws across the entire project:
+Before starting any Block, your AI agent must obey these invariant laws across the entire project:
 
 1. The Dimensional Unit Law: Every variable and data contract must strictly use SI Base Units internally: meters (mm), kilograms (kgkg), seconds (ss), Kelvin (KK), Pascals (PaPa), Watts (WW), radians (radrad), and Joules (JJ). Display conversions (e.g., kmkm, daysdays, light-yearslight-years, RPMRPM) are permitted only in the UI formatting layer.
   
@@ -11,6 +11,10 @@ Before starting any Block, your AI agent must obey these five invariant laws acr
 4. The No-Magic-Lookup Law: No engine, habitat, or subsystem may return hardcoded performance scores (e.g., if (engine == "ion") return 3000;). Every output metric must be algebraically derived from fundamental physical inputs (temperature, molar mass, pressure, area, efficiency).
    
 5. The NASA Oracle Gate: No Work Package is considered complete until it passes its numerical Ground-Truth Oracle Test against real NASA/Vallado textbook reference values.
+
+6. The No-Invented-Truth Law: A claim in a design document is not evidence. No document may state a number, tolerance, or physical outcome as established unless a test, a measurement, or a cited source backs it, and any claim that later measurement contradicts must be corrected in place rather than quietly left standing. Prose that describes retired behaviour is a defect, not a legacy note.
+
+7. The Card-Is-A-Hypothesis Law: Spec cards are hypotheses. Any physical number, tolerance, or design rationale in a work-package card must be checked against first principles or measurement before implementation. When a card conflicts with physics or with the measured behaviour of the code, the card loses. Report the conflict; do not implement around it.
 
 
 
