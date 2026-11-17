@@ -7,43 +7,67 @@ export const LESSONS = Object.freeze([
   Object.freeze({
     title: 'Your satellite is falling', contract: 101, focus: '#plan-canvas',
     copy: 'This satellite is safe but in the wrong place. It needs to be higher, and rounder. Drag the gold arrow to push it. Press LOCK when you think it is right.',
+    success: 'The ideal path has its low side above 500 km and eccentricity below 0.02.',
     hints: ['Watch which side of the orbit moves.', 'One push raises the opposite side.', 'Move around the orbit before adding another push.', 'Use two prograde pushes, one near each low point.'],
   }),
   Object.freeze({
     title: 'Guess first', contract: 101, focus: '#prediction-title',
     copy: 'Before you push: where will the far side end up? Set your prediction, then make the same burn as last time.',
+    success: 'A prediction was locked and the modeled flight completed.',
     hints: ['Prediction must happen before the modeled flight.', 'The ideal cyan path is a useful first estimate.', 'Use the ideal-prediction button, then change one value.', 'Fill every required prediction field before locking.'],
   }),
   Object.freeze({
     title: 'Tilting the orbit', contract: 102, focus: '#node-w',
     copy: 'This orbit has to cross the same ground at the same time every day. Its plane is short. Which of the three handles turns the plane?',
-    hints: ['Height and plane are separate.', 'In-plane sideways is not out of plane.', 'Watch the purple Plane tilt handle.', 'Add at least 50 meters per second out of the orbital plane.'],
+    success: 'The flown orbit reaches at least 98.50 degrees and both apsides are within 40 km of 800 km.',
+    hints: ['Height and plane are separate.', 'In-plane sideways is not out of plane.', 'Watch the purple Plane tilt handle.', 'The measured reference uses 366.8 meters per second across height and plane.'],
   }),
   Object.freeze({
     title: 'The shaking engine', contract: 103, focus: '#engine-altitude',
     copy: 'This engine was shaped for space. Drag the altitude slider up and watch the exhaust. Find where the flow stops separating from the bell.',
+    success: 'The solved plume is attached at or above the measured 17 km transition.',
     hints: ['Ambient pressure falls with altitude.', 'Watch the separation warning, not only thrust.', 'The transition is below 20 kilometers.', 'Move the test stand to at least 17 kilometers.'],
   }),
   Object.freeze({
     title: 'The long-burn trap', contract: 103, focus: '#split-kick',
     copy: 'This tug is heavy and its engine is patient. One burn is the obvious plan. Watch where it ends, then divide the same push.',
-    hints: ['A long burn sweeps through a large orbital angle.', 'Keep the total velocity change; change its timing.', 'The splitter is available in Practice mode.', 'Use three numerical periapsis kicks.'],
+    success: 'The modeled flight survives and reaches at least 380,000 km from Earth’s center.',
+    hints: ['A long burn sweeps through a large orbital angle.', 'Keep the total velocity change; change its timing.', 'The splitter is available in Practice mode.', 'Use three numerical periapsis kicks, then lock and fly.'],
   }),
   Object.freeze({
     title: 'First real contract', contract: 101, focus: '#prediction-title',
     copy: 'Same rescue, real contract. Fill in what you think will happen, lock it, and fly it. The score is not only about the orbit.',
+    success: 'The baseline rescue completed with a finite score above zero.',
     hints: ['Half the score is the objective.', 'Prediction and efficiency are each one quarter.', 'A score requires a locked prediction.', 'Use your two-push rescue and compare every debrief row.'],
   }),
 ]);
 
 export function lessonComplete(index, state) {
   switch (index) {
-    case 0: return state.contract === 101 && state.nodes >= 2;
-    case 1: return state.contract === 101 && state.predictionReady;
-    case 2: return state.contract === 102 && state.maxPlaneChange >= 50;
-    case 3: return state.contract === 103 && state.engineAltitudeKm >= 17 && !state.engineSeparated;
-    case 4: return state.contract === 103 && state.nodes >= 3;
-    case 5: return state.contract === 101 && Number.isFinite(state.score);
+    case 0:
+      return state.contract === 101
+        && state.nodes >= 2
+        && state.idealPeriapsisKm >= 500
+        && state.idealEccentricity < 0.02;
+    case 1:
+      return state.contract === 101 && state.predictionReady && state.flown;
+    case 2:
+      return state.contract === 102
+        && state.flown
+        && state.inclinationDeg >= 98.50
+        && Math.abs(state.apoapsisKm - 800) <= 40
+        && Math.abs(state.periapsisKm - 800) <= 40;
+    case 3:
+      return state.contract === 103
+        && state.engineAltitudeKm >= 17
+        && !state.engineSeparated;
+    case 4:
+      return state.contract === 103
+        && state.flown
+        && !state.impacted
+        && state.apoapsisKm * 1000 + 6_378_137 >= 380_000_000;
+    case 5:
+      return state.contract === 101 && Number.isFinite(state.score) && state.score > 0;
     default: return false;
   }
 }
@@ -92,7 +116,7 @@ export function createOnboarding({ snapshot, activate, storage = localStorage })
   const update = () => {
     if (!active) return;
     const complete = lessonComplete(lesson, snapshot());
-    status.textContent = complete ? 'Measured condition reached.' : 'Act in the real mission controls to continue.';
+    status.textContent = complete ? LESSONS[lesson].success : 'Act in the real mission controls to continue.';
     status.classList.toggle('is-complete', complete);
     next.disabled = !complete;
   };

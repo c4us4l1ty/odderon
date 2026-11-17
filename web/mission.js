@@ -136,7 +136,7 @@ function orbitMetrics(state){
   const h=[r[1]*v[2]-r[2]*v[1],r[2]*v[0]-r[0]*v[2],r[0]*v[1]-r[1]*v[0]],h2=h.reduce((a,b)=>a+b*b,0);
   const energy=speed2/2-MU/radius;if(!(energy<0))return null;
   const a=-MU/(2*energy),e=Math.sqrt(Math.max(0,1+2*energy*h2/(MU*MU)));
-  return {apo:(a*(1+e)-R)/1000,peri:(a*(1-e)-R)/1000};
+  return {apo:(a*(1+e)-R)/1000,peri:(a*(1-e)-R)/1000,eccentricity:e};
 }
 function annotateAcronyms(root){
   if(!root||!TERM_RE)return;
@@ -648,14 +648,23 @@ function onboardingSnapshot(){
   const required=['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time'];
   const predictionReady=required.every(id=>$(id).value.trim()!==''&&Number.isFinite(Number($(id).value)));
   const engine=engineLab?.diagnostics();
+  const ideal=preview.length?orbitMetrics(preview[preview.length-1].state):null;
   return {
     contract:contractId,
     nodes:nodes.length,
-    maxPlaneChange:nodes.reduce((max,node)=>Math.max(max,Math.abs(node.dv[2])),0),
     predictionReady,
+    idealApoapsisKm:ideal?.apo,
+    idealPeriapsisKm:ideal?.peri,
+    idealEccentricity:ideal?.eccentricity,
     engineAltitudeKm:Number($('engine-altitude').value),
     engineSeparated:Number.isFinite(engine?.solution?.separationX),
+    flown:!!lastReport,
+    apoapsisKm:lastReport?.[1]/1000,
+    periapsisKm:lastReport?.[2]/1000,
+    eccentricity:lastReport?.[3],
     score:lastReport?.[4],
+    inclinationDeg:lastReport?.[26]*180/Math.PI,
+    impacted:lastReport?.[30]===1,
   };
 }
 function activateOnboardingLesson(lesson){
