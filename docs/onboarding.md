@@ -1,7 +1,11 @@
 # First 30 Minutes: Onboarding Design
 
-Status: **design, not implementation.** Nothing here ships until this document is
-reviewed. Every lesson below is backed by a measured kernel run in
+Status: **initial browser implementation with a measured design backlog.** The
+mission page now ships an opt-in six-lesson guide, four-rung hints, event-driven
+completion checks and optional local-only progress. It uses the real contract,
+engine and debrief controls and never scripts an outcome. The detailed visual
+storyboard, placement test and playtest protocol below remain acceptance work,
+not a claim that every screen has shipped. Every lesson is backed by a measured kernel run in
 `crates/odd-verify/tests/onboarding_lessons.rs`; where the kernel refused the
 story, the story changed.
 
@@ -430,10 +434,14 @@ would contradict lesson 6.
 
 ---
 
-## 6. Scoring dependency: do not ship lesson 6 as-is
+## 6. Scoring dependency and the shipped containment
 
 Lesson 6 is the first lesson that shows a score. Two measured problems make it
-unsafe to ship before a versioned scoring change.
+unsafe to teach redesign scoring before a versioned scoring change. The initial
+browser guide contains the risk: it enters lesson 6 from Contract 103 by
+reloading baseline Contract 101, requires a real locked prediction, and does not
+fit hardware for the player. The broader storyboard still needs the migration
+below before redesign becomes part of a scored lesson.
 
 ### 6.1 The discontinuity: 0.0 versus NaN versus "a good score"
 

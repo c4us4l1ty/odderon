@@ -21,10 +21,13 @@ The WP 1.3/1.4 experimental mission loop adds a Rust-backed Visual Physics
 Lens and causal warning DAG, multi-node maneuver planning, locked predictions,
 impact handling, numerical perigee-kick targeting, exact Shapley error
 attribution, isolated finite-burn loss and three playable mission scenarios,
-including the cislunar Contract 103. A patched encounter preview now exposes
-lunar B-plane coordinates and a practice targeting aid. It remains a simplified
-prototype—not a lunar-capture optimizer—with explicit model, performance and
-scoring limits; see [mission-planning feasibility](docs/mission-planning-feasibility.md).
+including the cislunar Contract 103. The mission page includes an opt-in,
+event-driven six-lesson guide whose completion checks read the real controls;
+progress stays off until the player consents to local storage. A patched
+encounter preview exposes lunar B-plane coordinates and a practice targeting
+aid. It remains a simplified prototype—not a lunar-capture optimizer—with
+explicit model, performance and scoring limits; see
+[mission-planning feasibility](docs/mission-planning-feasibility.md).
 
 The Aerospace Flight License and signed flight records are implemented:
 `crates/odd-identity` derives a 12-word mnemonic, an `ODD-` flight key and an

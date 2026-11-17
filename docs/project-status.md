@@ -34,8 +34,11 @@ schema 4 integrate tanks, venting and engine depletion in one coupled state.
 There is no second callback-based approximation in the preview; the modeled
 flight is the authority on thermal feasibility.
 
-The measured six-lesson first-30-minutes flow is still a reviewed design in
-[`onboarding.md`](onboarding.md), not an implemented tutorial.
+The mission page now includes the initial measured six-lesson onboarding flow:
+it is opt-in, checks real mission state, offers four hint rungs and stores
+progress only after explicit local consent. The full visual storyboard,
+placement test and playtest protocol in [`onboarding.md`](onboarding.md) remain
+unimplemented acceptance work.
 
 ## Deployment boundary
 
@@ -82,9 +85,11 @@ flight accuracy, distributed production behavior or all hardware.
 1. Restore hosted CI and obtain a real green run.
 2. Keep auditing new kernels through the shipped browser and signed-record path;
    direct library tests alone are not acceptance.
-3. Version the scoring semantics needed by onboarding, then implement the
-   measured lessons in `onboarding.md` with browser gates and local-only,
-   opt-in progress storage.
-4. Playtest that path before adding another major physics subsystem.
+3. Complete and playtest the detailed onboarding storyboard. Keep its scored
+   lesson on the unchanged baseline Contract 101 until scoring semantics are
+   explicitly versioned; do not teach redesign scores through the known
+   catalog-dry-mass defect.
+4. Use local, opt-in observations to refine that path before adding another
+   major physics subsystem.
 5. Choose one operational direction: deploy ranked authority with a real
    runbook, or remain practice-only while building the full ascent work package.
