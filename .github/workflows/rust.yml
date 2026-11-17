@@ -112,7 +112,7 @@ jobs:
           cargo build --locked --release -p odd-view --target wasm32-unknown-unknown
           cp target/wasm32-unknown-unknown/release/odd_view.wasm web/odd_view.wasm
       - name: Upload browser ephemeris module
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: odd-view-wasm
           path: web/odd_view.wasm
