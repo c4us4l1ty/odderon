@@ -57,25 +57,26 @@ A static deployment is practice-only. Miniflare/workerd tests and Wrangler
 
 ## Verification state
 
-The latest accepted merge to `main`,
-`d8a8fba4f55e51cc76c22686250929030a7c45a6` (PR #20), was not executed by
-GitHub Actions: the repository was private, its free minute allocation was
-exhausted and the spending limit was zero. The repository is now public while
-its existing copyright and license terms remain unchanged. Public-repository
-Actions do not consume the private-repository minute allocation; rerun the
-workflow to obtain an independent hosted result.
+The accepted product baseline is main commit
+`ff50973f00a8c87e0d2b6cda039fa03690f708af` (PR #21). Both post-merge hosted
+GitHub Actions workflows passed: the full Rust/browser/authority foundation and
+the status-document synchronization check. The repository is public while its
+existing copyright and license terms remain unchanged.
 
-`scripts/check-status-sync.py` machine-checks this page against the shipped FDR
-schema, contract count and onboarding lesson count, and checks every workflow's
-canceling concurrency policy so those product facts cannot drift silently.
+`docs/project-status.json` is the machine-readable accepted baseline.
+`scripts/check-status-sync.py` checks this prose and that baseline against the
+shipped FDR schema, contract count and onboarding lesson count, and checks every
+workflow's canceling concurrency policy. A merge reference or hosted-CI state
+can no longer change in one representation without failing the status job.
 
 Local acceptance remains `./scripts/gate.sh`. On 2026-11-17 the complete gate
-passed on branch commit `6a995d9`: formatting, clippy, workspace and named v4/v5
-oracles, native/WASM/Chrome parity, browser and idle checks, assembly, native
-SQLite authority, workerd D1/R2 authority and concurrency/fault tests. A green
-gate covers implemented contracts and selected browser/runtime paths; it is not
-proof of real-world flight accuracy, distributed production behavior or all
-hardware.
+passed on branch commit `6a995d9`; subsequent bug fixes passed focused local
+Rust/browser gates and the complete hosted gate before PR #21 merged. Coverage
+includes formatting, clippy, workspace and named v4/v5 oracles,
+native/WASM/Chrome parity, browser and idle checks, assembly, native SQLite
+authority, workerd D1/R2 authority and concurrency/fault tests. A green gate
+covers implemented contracts and selected browser/runtime paths; it is not proof
+of real-world flight accuracy, distributed production behavior or all hardware.
 
 ## Deliberate sacrifices and known defects
 
@@ -96,13 +97,15 @@ hardware.
 
 ## Ordered next work
 
-1. Restore hosted CI and obtain a real green run.
-2. Keep auditing new kernels through the shipped browser and signed-record path;
-   direct library tests alone are not acceptance.
-3. Run the completed placement, seven-lesson storyboard and Schema-5 redesign
-   lesson with external players; aggregate only their explicitly exported local
-   observations with the Rust summary analyzer.
-4. Use those opt-in observations to refine the path before adding another
-   major physics subsystem.
-5. Choose one operational direction: deploy ranked authority with a real
-   runbook, or remain practice-only while building the full ascent work package.
+1. Run the completed placement, seven-lesson storyboard and Schema-5 redesign
+   lesson with the first external cohort, following
+   [`playtest-runbook.md`](playtest-runbook.md).
+2. Aggregate only participant-exported local observations with the Rust summary
+   analyzer; do not add hidden or network telemetry.
+3. Use the measured drop-offs, retries, hints and prediction improvements for
+   one focused onboarding refinement pass.
+4. Keep auditing every change through the browser and signed-record path; direct
+   library tests alone are not acceptance.
+5. Then choose one operational direction from the evidence: deploy ranked
+   authority with a real runbook, or remain practice-only while building the
+   full ascent work package.
