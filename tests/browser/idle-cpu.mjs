@@ -54,7 +54,7 @@ try{
     const a=accounting(),t=process.hrtime.bigint();await new Promise(r=>setTimeout(r,10000));const elapsed=Number(process.hrtime.bigint()-t)/1e9;const b=accounting();
     try{console.log(`Blank-tab control: ${(100*delta(a,b)/elapsed).toFixed(4)}% of one core over ${elapsed.toFixed(3)} s.`);}catch(e){console.log(`Blank-tab control inconclusive: ${e.message}`);}
   }
-  await page.goto(`http://127.0.0.1:${server.address().port}/`);
+  await page.goto(`http://127.0.0.1:${server.address().port}/observatory.html`);
   await page.waitForFunction(()=>window.odderonDiagnostics?.draws>0,null,{timeout:30000});
   await page.waitForTimeout(1000);
   // Sanity check accounting can see CPU burned inside Chromium, not just zeros.
@@ -77,7 +77,7 @@ try{
   const endTime=process.hrtime.bigint(), end=accounting();
   const cpuSeconds=delta(start,end),wallSeconds=Number(endTime-startTime)/1e9,percent=100*cpuSeconds/wallSeconds;
   assert.equal(await page.evaluate(()=>odderonDiagnostics.draws),draws,'frames rendered during idle window');
-  assert.equal(await page.evaluate(()=>odderonDiagnostics.pendingFrame||odderonDiagnostics.pendingTimer),false,'scheduled work during idle window');
+  assert.equal(await page.evaluate(()=>Boolean(odderonDiagnostics.pendingFrame||odderonDiagnostics.pendingTimer)),false,'scheduled work during idle window');
   console.log(`Idle after camera drag: 0 app frames, ${cpuSeconds.toFixed(6)} s CPU / ${wallSeconds.toFixed(3)} s wall = ${percent.toFixed(4)}% of one core; ${end.processes.length} processes, ${end.threads.size} threads. Calibration ${(Number(busy)/1e6).toFixed(1)} ms.`);
   if(percent>=0.2){
     const top=[...end.threads].map(([id,v])=>({id,ns:Number(v-start.threads.get(id))})).sort((a,b)=>b.ns-a.ns).slice(0,10);

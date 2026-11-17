@@ -35,15 +35,31 @@ try{
   // Date controls cannot race the asynchronous WebAssembly download.
   const slow=await browser.newPage();let release;const barrier=new Promise(r=>{release=r;});let requestStarted;const requested=new Promise(r=>{requestStarted=r;});
   await slow.route('**/odd_view.wasm',async route=>{requestStarted();await barrier;await route.continue();});
-  await slow.goto(`http://127.0.0.1:${server.address().port}/`,{waitUntil:'domcontentloaded'});await requested;
+  await slow.goto(`http://127.0.0.1:${server.address().port}/observatory.html`,{waitUntil:'domcontentloaded'});await requested;
   assert.equal(await slow.locator('#date').isDisabled(),true);assert.equal(await slow.locator('#next').isDisabled(),true);
   release();await slow.waitForFunction(()=>window.odderonDiagnostics?.draws>0,null,{timeout:30000});assert.equal(await slow.locator('#date').isEnabled(),true);await slow.close();
+  const menuMobile=await browser.newPage({viewport:{width:390,height:844},deviceScaleFactor:2});
+  await menuMobile.goto(`http://127.0.0.1:${server.address().port}/`);await menuMobile.waitForFunction(()=>document.querySelector('#system-state')?.textContent.includes('READY'));
+  assert.equal(await menuMobile.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true,'mobile title screen overflows horizontally');
+  assert.equal(await menuMobile.locator('.game-menu').isVisible(),true);await menuMobile.close();
   // Capture the actual MediaQueryList objects so we can deliver a monitor
   // change notification even on headless Chrome versions whose CDP metrics
   // override updates matchMedia results without emitting a change event.
   await page.addInitScript(()=>{const raf=window.requestAnimationFrame.bind(window);window.testFrameCallbacks=0;window.requestAnimationFrame=fn=>raf(time=>{window.testFrameCallbacks++;fn(time);});window.testWorkerMessages=0;window.testWorldPasses=0;window.testInstancedPasses=0;const proto=WebGL2RenderingContext.prototype;const drawArrays=proto.drawArrays;proto.drawArrays=function(...args){window.testWorldPasses++;return drawArrays.apply(this,args);};const instanced=proto.drawArraysInstanced;proto.drawArraysInstanced=function(...args){window.testInstancedPasses++;return instanced.apply(this,args);};const NativeWorker=window.Worker;window.Worker=class extends NativeWorker{constructor(...args){super(...args);this.addEventListener('message',()=>window.testWorkerMessages++);}postMessage(...args){window.testWorkerMessages++;return super.postMessage(...args);}};const original=window.matchMedia.bind(window);window.testDensityQueries=[];window.matchMedia=query=>{const result=original(query);if(query.startsWith('(resolution: '))window.testDensityQueries.push(result);return result;};});
   const errors=[];page.on('pageerror',e=>errors.push(String(e)));page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
+  // The root is a game title screen, not a marketing or observatory page.
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
+  await page.waitForFunction(()=>document.querySelector('#system-state')?.textContent.includes('READY'));
+  assert.equal(await page.locator('h1').textContent(),'ODDERON');
+  assert.equal(await page.locator('a[href="./mission.html"]').count(),1);
+  assert.equal(await page.evaluate(()=>document.activeElement?.getAttribute('href')),'./mission.html','Enter must select the focused primary game action');
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true,'title screen overflows horizontally');
+  assert.equal(await page.locator('.spacecraft').evaluate(node=>getComputedStyle(node).backgroundImage.includes('title-orbit.jpg')),true);
+  await page.locator('#open-settings').click();assert.equal(await page.locator('#settings-dialog').evaluate(dialog=>dialog.open),true);
+  await page.locator('#reduced-effects').check();assert.equal(await page.locator('body').evaluate(body=>body.classList.contains('reduced-effects')),true);
+  assert.equal(await page.evaluate(()=>localStorage.getItem('odderon.setting.reduced-effects')),'true');
+  await page.locator('.settings-done').click();
+  await page.goto(`http://127.0.0.1:${server.address().port}/observatory.html`);
   await page.waitForFunction(()=>window.odderonDiagnostics?.draws>0,{timeout:30000});
   await page.waitForFunction(()=>odderonDiagnostics.quality.includes('RESTING')&&!odderonDiagnostics.pendingFrame,null,{timeout:60000});
   assert.equal(await page.evaluate(()=>window.testWorldPasses),1,'initial view must use one world pass');

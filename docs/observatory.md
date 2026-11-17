@@ -14,7 +14,7 @@ cp target/wasm32-unknown-unknown/release/odd_view.wasm web/odd_view.wasm
 python3 -m http.server 8000 --directory web
 ```
 
-Open `http://localhost:8000/`. The wasm output is generated and ignored by Git;
+Open `http://localhost:8000/observatory.html`. The wasm output is generated and ignored by Git;
 rebuild it when Rust code or the packed ephemeris changes. In a remote preview,
 bind the HTTP server to `0.0.0.0` and use the preview URL instead of localhost.
 

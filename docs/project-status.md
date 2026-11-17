@@ -5,6 +5,8 @@ systems; this page says what a player and an operator can actually use.
 
 ## Shipped in the repository
 
+- A full-screen, deployment-neutral game menu that launches the flight deck,
+  Academy and Observatory without depending on a storefront or hosting vendor.
 - An Earth–Moon observatory and three browser mission contracts.
 - Deterministic Rust physics shared by native, WebAssembly and authority replay.
 - Multi-node planning, finite-burn propagation, perturbations, impact/entry,
@@ -80,6 +82,9 @@ of real-world flight accuracy, distributed production behavior or all hardware.
 
 ## Deliberate sacrifices and known defects
 
+- The title route is now recognizably a game and deployment-neutral, but the
+  Flight Deck remains a long-form engineering workspace rather than the planned
+  unified single-viewport mission-control screen.
 - Scientific models are deterministic and inspectable rather than operationally
   complete. Ephemeris coverage, orientation, atmosphere, tanks and propulsion
   have documented bounds.

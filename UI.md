@@ -1,3 +1,12 @@
+# UI vision and implementation boundary
+
+This document is a forward-looking visual blueprint, not a statement that every
+screen or rendering pass is shipped. The implemented root is now a portable,
+full-screen game menu; the Observatory and current long-form Flight Deck remain
+separate player routes. See [`docs/game-shell.md`](docs/game-shell.md) for the
+exact shipped navigation, hosting boundary and browser gates. The unified
+single-viewport Flight Deck described below is still future UI work.
+
 To make **Odderon** look like a hand-painted masterpiece (like `@BlendiByl`’s *Painted Valley*) while functioning with the mathematical rigor of **NASA JPL Mission Control**—and running at **near-0% idle CPU on a laptop with no dedicated GPU**—we must design a specialized visual and UI architecture.
 
 If you ask an AI coding agent to *"make a hand-painted space UI,"* it will normally write a heavy 60-FPS shader that drains your laptop battery in 20 minutes and makes small telemetry text blurry and unreadable.

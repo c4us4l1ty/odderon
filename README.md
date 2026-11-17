@@ -10,6 +10,21 @@ boundary is summarized in [current project status](docs/project-status.md).
 
 # One principle should govern: Odderon's ambition is civilization-scale. Its execution must be bottleneck-scale.
 
+## Play locally
+
+```sh
+git clone https://github.com/c4us4l1ty/odderon.git
+cd odderon
+./scripts/provision.sh   # first clone only
+bun run dev
+```
+
+Open the local URL printed by the server. Odderon opens at its game menu;
+`observatory.html` remains available as an in-game reference screen. The core
+game build is static and does not depend on a storefront or Cloudflare Pages.
+See the [portable game-shell boundary](docs/game-shell.md) for player routes,
+packaging constraints and browser acceptance coverage.
+
 ## Current implementation
 
 Phase 0 is accepted as a foundation with explicit scientific, scope, and
@@ -109,10 +124,11 @@ cp target/wasm32-unknown-unknown/release/odd_view.wasm web/odd_view.wasm
 python3 -m http.server 8000 --directory web
 ```
 
-Open <http://localhost:8000/>. See [observatory notes](docs/observatory.md)
-for controls, browser tests, rendering choices, and scientific/performance
-limitations. Positions are calculated from DE440s; visible surface features
-and the optional vehicle study are illustrative.
+Open <http://localhost:8000/> for the game menu, or
+<http://localhost:8000/observatory.html> for the observatory. See
+[observatory notes](docs/observatory.md) for controls, browser tests, rendering
+choices, and scientific/performance limitations. Positions are calculated from
+DE440s; visible surface features and the optional vehicle study are illustrative.
 
 After building and serving the WebAssembly module as above, open
 <http://localhost:8000/mission.html> for the three experimental mission
