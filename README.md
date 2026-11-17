@@ -46,8 +46,9 @@ compatibility effects and remaining model limitations.
 
 Cryogenic tanks and the four Chief-AI departments are wired into flown designs,
 replay and the dossier; Contract 103 offers an optional paid recommended
-thermal card. [Thermal notes](docs/thermal.md) describe the one-way boil-off
-model, score limitations and objective-reaching manual/delegated tests.
+thermal card. [Thermal notes](docs/thermal.md) describe the coupled v4 boil-off
+model, the frozen one-way v1–v3 behaviour, the measured scoring-baseline defect
+and objective-reaching manual/delegated tests.
 
 Work Package 1.5 replaces the fixed engine card with a solved liquid engine:
 `crates/odd-propulsion` computes chamber properties, nozzle flow, Summerfield

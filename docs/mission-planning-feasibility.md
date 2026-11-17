@@ -479,9 +479,12 @@ terminal-state hash to reproduce bit for bit.
 
 This is an experimental prototype. There is no launch-window optimizer,
 B-plane targeting, lunar orbit insertion, terrain/landing model, space-weather
-atmosphere or thrust steering law. Cryogenic loss is evaluated one-way and is
-not subtracted from orbital mass or burn fuel. The v3 tank geometry also has an
-unresolved ullage/envelope inconsistency; see [thermal.md](thermal.md).
+atmosphere or thrust steering law. Under schema 4 cryogenic loss is **coupled**:
+venting and burning share one propellant pool, so loss is subtracted from
+orbital mass and burn fuel and a dry pool truncates thrust. The one-way
+behaviour and the ullage/envelope inconsistency describe the frozen v1–v3
+records only; see [thermal.md](thermal.md). The scoring baseline still uses the
+catalog dry mass and is a separate, unversioned defect.
 The authority cannot prevent prior simulation on an untrusted client or a new
 key, and its checkpoint path is a full replay. The perigee splitter is a
 bounded practice-only forward search for two or three equal kicks, not a

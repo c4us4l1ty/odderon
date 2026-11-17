@@ -185,22 +185,43 @@ the stage-specific reference flight it reports ~9 kg lost at a higher dry
 mass than the right-sized card; the player beats it by tuning the mounts,
 cooler and panel down.
 
-## One-way coupling and verification limits
+## Coupling: what v4 changed, and what still does not follow the flight
 
-Thermal integration samples the already-flown orbital spline; it is **not**
-part of the orbital or burn mass derivative. The reported vent loss is not
+**Schema 4 is coupled.** The tank columns are part of the integrator state,
+venting and burning draw from one propellant pool, and every acceleration
+divides by the fitted dry mass plus live propellant. A vent therefore reduces
+both the fuel and the mass that converts impulse into orbital energy, and a
+pool emptied by venting truncates thrust and is signed as a flameout.
+`crates/odd-astro/src/coupled.rs` is that law.
+
+The paragraphs below describe the **frozen v1–v3** model, which still replays
+bit for bit and must not be re-read as a description of current flight.
+
+### The frozen one-way model (v3 and earlier)
+
+Thermal integration sampled the already-flown orbital spline; it was **not**
+part of the orbital or burn mass derivative. The reported vent loss was not
 subtracted from propagated mass, per-burn fuel, the displayed propagated
-remaining propellant, or scoring. The calculation also does not use the burn
+remaining propellant, or scoring. The calculation also did not use the burn
 timeline to deplete the two thermal tanks. A post-hoc rocket-equation margin
-subtracting the total loss is therefore only an idealized check, not a fully
-coupled feasibility proof or a bound on trajectory error. We do not assert
-that the error is negligible. For frozen replay compatibility the scoring
-fuel-failure threshold and prediction term use propagated mass minus the
-**catalog baseline** dry mass, whereas the browser's displayed remaining fuel
-uses the actual fitted dry mass; these differ for redesigned or delegated
-vehicles. A lighter fitted stage can score a fuel failure even with fuel
-remaining. Correcting these assumptions requires an explicit versioned physics
-and scoring migration, rather than silently changing signed v3 results.
+subtracting the total loss was therefore only an idealized check, not a fully
+coupled feasibility proof or a bound on trajectory error.
+
+### Still true in v4: the scoring baseline
+
+The scoring fuel-failure threshold and prediction term still use propagated
+mass minus the **catalog baseline** dry mass, whereas the browser's displayed
+remaining fuel uses the actual fitted dry mass. Measured in
+`crates/odd-contracts/tests/v4_scoring_baseline.rs`, the error runs both ways:
+
+* a zero-layer stage (5185.938 kg fitted against a 5200.017 kg catalogue) is
+  declared a fuel failure at a 0.0 score while **7.040 kg is still aboard**;
+* the recommended card (+264 kg) lowers the prediction term to **0.9796×** of
+  the catalogue stage's value for an *exactly correct* prediction, because
+  `mass − catalog_dry` invents purchased hardware as unpredicted propellant.
+
+Correcting this requires an explicit versioned scoring migration rather than
+silently changing signed results, because it would rescale every redesign.
 
 For new v3 certificates, storable stages have no thermal block; cryogenic
 stages must carry exactly one stage-0 block with the engine's propellant and

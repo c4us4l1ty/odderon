@@ -93,14 +93,19 @@ ranked submission; Practice does not change either. The formulas and bit-level
 parity tests live in `crates/odd-contracts/src/elo.rs` and
 `crates/odd-contracts/tests/elo_parity.rs`.
 
-The physics remains a simplified model. The v3 tank sizing has an unresolved
-ullage/envelope inconsistency; see [thermal.md](thermal.md). In addition,
-thermal loss is integrated and signed **after** the orbit propagation: vented
-mass is not subtracted from orbital mass, burn fuel or the score. The score's fuel-failure
-threshold and prediction term also use the catalog baseline dry mass rather
-than the fitted stage's dry mass. The debrief's displayed remaining propellant
-uses the fitted dry mass, so these can differ, and a lighter fitted stage can
-score a fuel failure even with fuel remaining. These behaviors preserve the
+The physics remains a simplified model. Schema 4 **does** couple venting into
+the flight: vented mass leaves one shared propellant pool, so it is subtracted
+from orbital mass and burn fuel, and a dry pool truncates thrust as a
+flameout. The v1–v3 one-way behaviour is frozen and applies only to records
+that declare those schemas; the old v3 ullage/envelope inconsistency is
+likewise historical (see [thermal.md](thermal.md)).
+
+What is **still** uncorrected is the scoring baseline: the fuel-failure
+threshold and prediction term use the catalog dry mass rather than the fitted
+stage's, while the debrief's displayed remaining propellant uses the fitted
+one. A zero-layer stage is declared out of fuel with 7.040 kg still aboard, and
+a +264 kg stage is scored 0.9796× on an exactly correct prediction. Both are
+measured in `crates/odd-contracts/tests/v4_scoring_baseline.rs`. These behaviors preserve the
 frozen replay and score pins; see [thermal.md](thermal.md). A receipt certifies this model's
 replay, not real-world mission feasibility.
 
