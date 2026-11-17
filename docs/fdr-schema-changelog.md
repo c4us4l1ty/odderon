@@ -13,7 +13,8 @@ never be replayed as another.
 |---|---|---|
 | 1 | `odderon-flight-data-recorder-v1\0` | legacy, verifies, engine uncertified |
 | 2 | `odderon-flight-data-recorder-v2\0` | verifies, engine certified, no tanks |
-| 3 | `odderon-flight-data-recorder-v3\0` | **current, FROZEN** |
+| 3 | `odderon-flight-data-recorder-v3\0` | FROZEN, replays; not rateable |
+| 4 | `odderon-flight-data-recorder-v4\0` | **current — coupled propellant** |
 
 ---
 
@@ -175,3 +176,70 @@ Callsign, epoch, duration, masses, initial state, locked prediction, command
 timeline, 58 metrics, terminal-state hash and the Elo change, signed with
 Ed25519. Thrust and Isp were recorded as claims, which is why v1 records are
 labelled legacy.
+
+---
+
+## v4 — coupled propellant: venting draws from the burnt pool (CURRENT)
+
+**Current schema.** `SCHEMA_VERSION = 4`; signing domain
+`odderon-flight-data-recorder-v4\0`, kept distinct from v3 so a v3 certificate
+can never be replayed as a v4 flight or the reverse. They describe different
+physics.
+
+Everything from v3 is unchanged. The v4 block is **appended after the vent
+events**, so every historical byte offset keeps its meaning.
+
+### Added to the signed bytes, in order
+
+| Field | Width | Notes |
+|---|---|---|
+| `flown_burn_windows.len` | u16 | max `MAX_COMMANDS` |
+| per window: `start_s` | f64 | the window actually flown |
+| per window: `end_s` | f64 | truncated by a flameout; never removed |
+| `flameout_time_s` | tag u8 + f64 | `0` = none, `1` then the instant |
+| `propellant_remaining_kg` | tag u8 + f64 | `0` = untracked, `1` then the mass |
+
+A present-flag precedes each optional scalar so "absent" and "present but
+zero" stay distinguishable in the fixed layout, without widening every record.
+
+### What changed physically
+
+v3 integrated the tanks **beside** the flight: loss was reported, and a tug
+whose blanket was bare still arrived at its last perigee kick carrying
+propellant the vehicle no longer had. v4 flies one system —
+
+- boil-off and the engine draw from **one** propellant pool;
+- every acceleration divides by `dry_mass_fitted + propellant(t)`, so venting
+  reduces both the fuel and the mass that converts impulse into orbit energy;
+- a pool emptied by venting **truncates thrust**, which is signed as
+  `flameout_time_s` plus a shortened `flown_burn_windows` entry.
+
+The dry mass is the **fitted** hardware (blanket, radiator, chief margin), not
+the catalog baseline. One `TankGeometry` drives the contract card, the signed
+thermal spec and the flown mass: airframe 39.740301 m³, usable 38.548092 m³,
+a single shared 3 % ullage. `oracle_tank_volume_zero_discrepancy` holds the
+residual to 1e-9 relative.
+
+`PhysicsRevision::for_schema` is the single dispatch point: schema 3 replays
+under `FrozenUncoupled` exactly as it always did, schema 4 under
+`CoupledFitted`.
+
+### Compatibility
+
+- v1/v2/v3 records keep their frozen bytes, geometry and one-way behaviour and
+  still replay bit for bit (`oracle_v1_v2_v3_backward_compatibility`).
+- The **authority** accepts only schema 4 for a new submission in either mode;
+  v1–v3 remain independently readable and replayable offline but cannot earn a
+  new receipt (`a_pre_cryogenic_record_can_never_earn_a_receipt`).
+- This is a **physics re-baseline, not a scoring change**: the objective term
+  on Contract 103's un-cooled reference split moved from 0.813 to 0.358
+  because the vented mass now leaves the vehicle. The score's fuel threshold
+  and prediction term still compare against the catalog baseline dry mass;
+  re-baselining those is a separate versioned change and has not happened.
+
+### Known limits
+
+The coupled loop has no central-body event detector of its own; it reports
+impact as "the trajectory stops early". Scoring still uses the catalog
+baseline dry mass while the UI displays the fitted one, so a lighter fitted
+stage can score a fuel failure with fuel aboard.

@@ -47,14 +47,20 @@ flies 102 and 103, asserts the catalog objective in manual and fully
 delegated modes, and checks thermal losses and an idealized post-loss delta-v
 margin. The practice splitter targets the assembled stage, not the catalog
 baseline. See [thermal.md](thermal.md) for the model, measured examples and
-important one-way coupling limitation.
+v4 coupled mass law and the separate scoring-baseline defect.
 
-FDR schema 3 and its 58 report fields remain frozen. It signs the physical
-engine and thermal specifications, delegation mask, exact vent history,
-per-tank loss and cooler energy. A cryogenic v3 replay requires the matching
-stage-0 tank block and fails closed on invalid models; a storable stage has no
-block. Old schema 1/2 records remain independently replayable, but new server
-submissions require v3. See [fdr-schema-changelog.md](fdr-schema-changelog.md).
+FDR schema 3 and its 58 report fields are frozen: it signs the physical engine
+and thermal specifications, delegation mask, exact vent history, per-tank
+loss and cooler energy. A cryogenic v3 replay requires the matching stage-0
+tank block and fails closed on invalid models; a storable stage has no block.
+
+**Schema 4 is current.** It appends the flown burn windows, the flameout
+instant and the propellant still aboard, because v4 couples venting into the
+live propellant pool. New server submissions require schema 4 in both modes;
+schemas 1–3 stay independently replayable and keep their frozen physics, but
+cannot earn a new receipt. The acceptance rule is pinned by
+`crates/odd-worker/tests/schema_acceptance.rs`. See
+[fdr-schema-changelog.md](fdr-schema-changelog.md).
 
 ## Server-authoritative Astro-Elo
 
@@ -101,6 +107,18 @@ correctness. No production deployment is implied.
   applied as thrust in the chemical contracts. Scoring still compares its fuel
   threshold and prediction against the catalog baseline dry mass rather than
   the fitted stage; re-baselining scoring is a separate versioned change.
+  `crates/odd-contracts/tests/v4_scoring_baseline.rs` measures the error, which
+  has **no single sign**:
+  * a stage lighter than the catalogue — 5185.938 kg with a zero-layer blanket
+    against 5200.017 kg — is declared a fuel failure at a 0.0 score while
+    7.040 kg is still aboard; one kilogram more clears it;
+  * a stage heavier than the catalogue is scored on an *exactly correct*
+    prediction 0.9796× as well at +264 kg dry, because `mass − catalog_dry`
+    invents the purchased hardware as propellant the pilot failed to predict.
+
+  So a heavier redesign loses prediction credit and a lighter one can lose the
+  whole mission, which is why this needs a versioned migration rather than a
+  one-line substitution of the fitted mass.
 - **Practical consequence of coupling:** commands are delta-v setpoints flown
   as fixed burn *durations* sized from the design mass at compile time. Venting
   mass during the coast therefore makes the same commanded burn impart less
