@@ -148,6 +148,16 @@ free-tier timing guarantee or `?seg=i` implementation. The test named
 `oracle_chunked_segment_verification_parity` proves integrity and receipt
 parity of this full-replay path only.
 
+The v4 helpers for the *next* step exist and are tested, but nothing in
+production calls them: `verify_resumable_segment`, `validate_resumable` and
+`SegmentRateLimiter` in `odd-worker::segment`. `oracle_true_single_segment_resumption_cost`
+proves the coupled propagator reproduces a single-pass flight from a checkpoint
+and charges only the requested window. Shipping that as a protocol is blocked
+on a security question rather than a numerical one: a verifier standing at a
+segment boundary can only audit the transition it starts from, so resuming from
+a client-supplied checkpoint would trust that client for every boundary but the
+launch. Authority-issued links or chained proofs have to come first.
+
 ## Transactions and deployment boundary
 
 SQLite uses `BEGIN IMMEDIATE` for the entire read/compute/write operation.

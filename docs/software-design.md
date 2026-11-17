@@ -88,7 +88,11 @@ correctness. No production deployment is implied.
   not an identity or security boundary.
 - **Not incremental:** checkpoint submission replays the full flight first,
   then checks storable checkpoint metadata against it. Cryogenic checkpoints
-  are rejected; there is no per-segment CPU budget or free-tier guarantee.
+  are rejected; there is no per-segment CPU budget or free-tier guarantee. The
+  v4 resumable helpers (`verify_resumable_segment`, `validate_resumable`,
+  `SegmentRateLimiter`) are implemented and oracle-tested but have no
+  production caller, so they buy no CPU today; making them a protocol needs a
+  way for the authority to audit a boundary it did not itself issue.
 - **Thermal coupling (v4):** boil-off is drawn from the same propellant pool
   the engine burns, so venting reduces both the remaining fuel and the mass
   every acceleration divides by; a pool emptied by boil-off truncates thrust

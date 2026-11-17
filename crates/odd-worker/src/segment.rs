@@ -1,10 +1,20 @@
 //! Checkpoint hash-chain verification (blueprint §6.4).
 //!
-//! Checkpoints are verified against a complete authoritative replay; this
-//! is not yet incremental execution and does not reduce Worker CPU time.
-//! Every link, time, state, propellant mass and (for storable stages) zero
-//! tank-temperature sentinel is checked. Cryogenic checkpoint temperatures
-//! cannot yet be sampled from a replay and are rejected by the engine.
+//! Two paths live here, and only one of them is wired into the authority.
+//!
+//! * [`verify_chain`] is the shipping one. `/api/v1/submit` and
+//!   `/submit-segment` replay the whole flight, then check the presented chain
+//!   against it. Every link, time, state, propellant mass and (for storable
+//!   stages) zero tank-temperature sentinel must match. This is **integrity,
+//!   not savings**: the authority still pays for the full flight.
+//! * [`verify_resumable_segment`] is the v4 *cost* path. It is implemented and
+//!   oracle-tested, but **no production code calls it**: the engine, both HTTP
+//!   adapters and the Cloudflare shell all go through [`verify_chain`] today.
+//!   It is not a shipped feature, and it cannot become one without deciding
+//!   which window it is charging for — see the note on that function.
+//!
+//! Cryogenic checkpoint temperatures cannot yet be sampled from a replay and
+//! segmented cryogenic records are rejected by the engine.
 
 use crate::protocol::{put_f64, put_i64, Hash, SegmentCheckpoint, ServerError};
 use sha2::{Digest, Sha256};
@@ -209,6 +219,22 @@ pub fn validate_resumable(cp: &SegmentCheckpoint) -> Result<(), ServerError> {
 /// propagator resumed at `cp` and this function compares the result. The
 /// segment's terminal state and hash must then match what the segment claims,
 /// and the terminal hash must be the signed final-state hash of the record.
+///
+/// # Open design question — do not wire this up as-is
+///
+/// A verifier standing at a segment boundary cannot audit the segment it just
+/// charged for. At `t_us` the new segment's initial state is the point it must
+/// *prove*, and the previous segment's terminal state is checkable but its own
+/// start is not. The only genuinely checkable transition in this chain is the
+/// first one, from the launch state the signed record already fixes.
+///
+/// The v4 oracle measures the *physics* — a resumed leg reproduces the
+/// single-pass flight and costs a fraction of it — and that claim holds. But a
+/// protocol that resumed from a client-supplied checkpoint would be trusting
+/// the client for every boundary but the launch, so the CPU saving on offer
+/// here is not yet a security property. Resolving that (chained proofs, or an
+/// authority-issued link) is the prerequisite for shipping incremental
+/// replay; until then the engine's full-replay path is the honest one.
 pub fn verify_resumable_segment<F>(
     cp: &SegmentCheckpoint,
     previous_link: Option<&Hash>,
