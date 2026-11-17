@@ -851,3 +851,147 @@ fn lesson_6_is_only_honest_because_it_fits_no_hardware() {
         "lesson 6's honesty argument requires a stage that fits no hardware"
     );
 }
+// ---------------------------------------------------------------------------
+// The harness must measure what the browser measures
+//
+// This is a browser game. `odd_view::mission_bridge` builds `FlightSettings`
+// with `thermal: Some(...)` whenever the stage carries propellant, using the
+// card's engine spec and `ThermalDesign::baseline()` with the Chief AI off. The
+// harness above passes `thermal: None`. Those are different settings, so the
+// numbers in `docs/onboarding.md` are only honest if the difference is shown to
+// be inert for every lesson — which is what this test establishes, rather than
+// assuming.
+// ---------------------------------------------------------------------------
+
+/// The settings the browser actually hands the evaluator for a manual flight.
+fn browser_settings_for(contract: &Contract) -> FlightSettings {
+    let mut settings = settings_for(contract);
+    settings.thermal = Some(odd_verify::ThermalInputs {
+        engine_spec: contract.engine_spec,
+        design: odd_contracts::ThermalDesign::baseline(),
+        load_kg: contract.initial.mass - contract.dry_mass_kg,
+    });
+    settings
+}
+
+fn flight_with(settings: &FlightSettings, nodes: &[ManeuverNode]) -> [f64; 58] {
+    let eph = Ephemeris::bundled().unwrap();
+    let contract = Contract::get(settings.contract_id).unwrap();
+    let plan = Plan::compile(
+        contract.initial,
+        MU,
+        contract.duration_us,
+        contract.dry_mass_kg,
+        contract.engine,
+        nodes,
+    )
+    .expect("the plan must compile");
+    odd_verify::compute(settings, &plan, None, &eph)
+        .expect("the flight must compute")
+        .report
+}
+
+/// Lesson 1 and lessons 4/5 sit on different cards, and the tank model treats
+/// them differently. Measured here rather than reasoned about:
+///
+/// - **101 is storable.** `FlightSettings::thermal`'s own doc comment says a
+///   storable stage carries no tank model "so boil-off is identically zero", and
+///   the probe confirms 0.0000 kg lost. Lesson 1 and lesson 6 are therefore
+///   bit-identical under the browser's settings, which is why lesson 6's 0.9238
+///   stands as published.
+/// - **103 is cryogenic.** It loses 5.116 kg of LH2 over its 10,000-minute
+///   window, so the browser's tug starts at 17,994.884 kg and not 18,000 kg.
+///   The orbit is unchanged (the same 200 km circular, apoapsis 200 km), so
+///   lesson 5's numbers hold; only the quoted start mass is wrong in §3.
+#[test]
+fn every_lesson_number_is_the_same_under_the_browsers_own_settings() {
+    for id in [101u32, 102, 103] {
+        let contract = Contract::get(id).unwrap();
+        let browser = browser_settings_for(&contract);
+        let native = flight_with(&settings_for(&contract), &[]);
+        let with_tank = flight_with(&browser, &[]);
+        let boiled = native[0] - with_tank[0];
+        println!(
+            "browser parity / contract {id}: start mass {:.3} kg in the game vs {:.3} kg \
+             with no tank model (boil-off {boiled:.3} kg), apoapsis {:.1} km, periapsis {:.1} km",
+            with_tank[0],
+            native[0],
+            km(with_tank[APOAPSIS]),
+            km(with_tank[PERIAPSIS])
+        );
+        println!(
+            "browser parity /   apsis change from the tank model: apoapsis {:+.6} m, \
+             periapsis {:+.6} m",
+            with_tank[APOAPSIS] - native[APOAPSIS],
+            with_tank[PERIAPSIS] - native[PERIAPSIS]
+        );
+        // The geometry must be untouched in any way a player could see, or the
+        // lessons are wrong. It is not *bit*-identical on 103: solar radiation
+        // pressure divides by mass, so a 5.1 kg lighter tug accelerates a hair
+        // more. A millimetre of apsis drift over a 10,000-minute window is the
+        // measured size of that effect and is far below the ~100 km scale any
+        // lesson reports.
+        for field in [APOAPSIS, PERIAPSIS] {
+            assert!(
+                (native[field] - with_tank[field]).abs() < 1.0,
+                "contract {id} field {field} must not depend on the tank model beyond \
+                 a metre: {:.4} vs {:.4}",
+                native[field],
+                with_tank[field]
+            );
+        }
+        if id != 103 {
+            assert!(
+                boiled.abs() < 1e-9,
+                "contract {id} is storable and must not boil off, lost {boiled:.4} kg"
+            );
+        } else {
+            assert!(
+                (4.0..6.0).contains(&boiled),
+                "the cryogenic tug's boil-off is a measured quantity; got {boiled:.3} kg"
+            );
+        }
+    }
+}
+
+/// Lesson 6's published score, recomputed under the browser's settings. If this
+/// ever diverges from `lesson_6_the_reference_rescue_earns_a_real_score`, the
+/// document's score is measuring a game nobody plays.
+#[test]
+fn lesson_6_scores_identically_in_the_browser() {
+    let contract = Contract::get(101).unwrap();
+    let eph = Ephemeris::bundled().unwrap();
+    let nodes = lesson_1_fix();
+    let plan = Plan::compile(
+        contract.initial,
+        MU,
+        contract.duration_us,
+        contract.dry_mass_kg,
+        contract.engine,
+        &nodes,
+    )
+    .unwrap();
+    let prediction = lesson_6_prediction(&contract);
+    let lock = LockedMission::new(plan.clone(), prediction, contract.dry_mass_kg).unwrap();
+    let in_browser =
+        odd_verify::compute(&browser_settings_for(&contract), &plan, Some(&lock), &eph)
+            .expect("the browser path must score this flight");
+    let native = odd_verify::compute(&settings_for(&contract), &plan, Some(&lock), &eph).unwrap();
+    println!(
+        "browser parity / lesson 6 score {:.4} in the game vs {:.4} in the harness; \
+         prediction {:.4}, objectives {:.4}",
+        in_browser.report[SCORE],
+        native.report[SCORE],
+        in_browser.report[SCORE_PREDICTION],
+        in_browser.report[SCORE_OBJECTIVES]
+    );
+    assert!(
+        (in_browser.report[SCORE] - native.report[SCORE]).abs() < 1e-12,
+        "the documented score must be the one the browser produces"
+    );
+    assert!(
+        (in_browser.report[SCORE] - 0.9238).abs() < 5e-5,
+        "docs/onboarding.md publishes 0.9238 for this flight, got {:.4}",
+        in_browser.report[SCORE]
+    );
+}

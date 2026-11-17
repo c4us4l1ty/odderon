@@ -5,6 +5,12 @@ reviewed. Every lesson below is backed by a measured kernel run in
 `crates/odd-verify/tests/onboarding_lessons.rs`; where the kernel refused the
 story, the story changed.
 
+The target is the **browser** build (WebGL2 + `web/*.js` + `odd_view.wasm`), so
+the harness also flies each lesson under the settings `odd_view::mission_bridge`
+really passes, including the tank model the native path omits. Every number in
+this document is identical under both paths to within 7.5 mm of apsis, and
+lesson 6's score is identical to four decimals (§3, §6.2).
+
 ---
 
 ## 0. What this document replaces, and why
@@ -299,6 +305,23 @@ Stages: 101/102 are the same catalog stage (dry 1 020.015 kg, 180 kg propellant,
 Isp 310.6 s, 2 397 N). 103 is the 18 000 kg tug (dry 5 200 kg, 12 800 kg
 propellant, Isp 449.9 s, 18 087 N, TWR 0.10).
 
+**Starting mass as the game actually reports it.** This is a browser game, and
+the game hands the evaluator a tank model that the harness originally omitted
+(`odd_view::mission_bridge` always passes `thermal: Some(...)` when the stage
+carries propellant). Measured under the game's own settings
+(`every_lesson_number_is_the_same_under_the_browsers_own_settings`):
+
+| Contract | Game start mass | No-tank-model mass | Difference |
+| --- | --- | --- | --- |
+| 101 | 1 200.015 kg | 1 200.015 kg | **0.000 kg** — storable, no tank model |
+| 102 | 1 200.015 kg | 1 200.015 kg | **0.000 kg** — storable |
+| 103 | 17 994.884 kg | 18 000.017 kg | **5.132 kg** of LH2 boil-off |
+
+The tug really does start 5 kg light, and the design should say so rather than
+quote 18 000 kg. Its orbit is unaffected in any way a player can see: the apsides
+move by **7.5 mm** (solar radiation pressure divided by a slightly smaller mass),
+which is four orders of magnitude below the ~100 km scale every lesson reports.
+
 **Every one starts above 100 km.** This is the fact that makes the whole
 first-30-minutes flow possible without ascent physics, and it should be treated
 as load-bearing: any future contract added to the intro path must preserve it.
@@ -444,6 +467,15 @@ This does not hurt lesson 6 **today**, and the reason is measured:
 **1 020.015 kg** equals fitted dry **1 020.015 kg** — delta **0.000 kg** — because
 the catalog stage fits no hardware at all. Lesson 6's scored vehicle is the flown
 vehicle by accident of the card, not by design.
+
+**Boil-off does not leak into this term, measured.** The obvious worry is that
+the cryogenic tug's 5.132 kg of boil-off would corrupt the
+`remaining_propellant_kg` comparison. It cannot: the term compares the
+prediction against the *final* state's `mass − dry_mass`, and the efficiency
+denominator is `initial − dry`, both of which are card constants that the tank
+model does not move. `lesson_6_scores_identically_in_the_browser` recomputes the
+published 0.9238 under the game's own settings and gets **0.9238** to four
+decimals, so the score in §2 is the score a player sees.
 
 **Proposal (versioned, not implemented):** score the prediction against the
 vehicle's *catalog* dry mass, or explicitly document the prediction term as
