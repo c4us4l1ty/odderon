@@ -70,7 +70,7 @@ schema, contract count and onboarding lesson count, and checks every workflow's
 canceling concurrency policy so those product facts cannot drift silently.
 
 Local acceptance remains `./scripts/gate.sh`. On 2026-11-17 the complete gate
-passed on branch commit `7c44847`: formatting, clippy, workspace and named v4
+passed on branch commit `6a995d9`: formatting, clippy, workspace and named v4/v5
 oracles, native/WASM/Chrome parity, browser and idle checks, assembly, native
 SQLite authority, workerd D1/R2 authority and concurrency/fault tests. A green
 gate covers implemented contracts and selected browser/runtime paths; it is not
