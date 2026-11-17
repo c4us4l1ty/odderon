@@ -82,6 +82,9 @@ of real-world flight accuracy, distributed production behavior or all hardware.
 
 ## Deliberate sacrifices and known defects
 
+- The title route is now recognizably a game and deployment-neutral, but the
+  Flight Deck remains a long-form engineering workspace rather than the planned
+  unified single-viewport mission-control screen.
 - Scientific models are deterministic and inspectable rather than operationally
   complete. Ephemeris coverage, orientation, atmosphere, tanks and propulsion
   have documented bounds.

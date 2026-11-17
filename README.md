@@ -22,6 +22,8 @@ bun run dev
 Open the local URL printed by the server. Odderon opens at its game menu;
 `observatory.html` remains available as an in-game reference screen. The core
 game build is static and does not depend on a storefront or Cloudflare Pages.
+See the [portable game-shell boundary](docs/game-shell.md) for player routes,
+packaging constraints and browser acceptance coverage.
 
 ## Current implementation
 
