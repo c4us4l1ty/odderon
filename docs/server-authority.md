@@ -69,9 +69,13 @@ security limits, not a claim of hindsight-proof or Sybil-proof play.
 
 ## Replay, thermal validation and Elo
 
-New authority submissions require **FDR schema 3**, in both modes. Schemas 1
-and 2 remain independently readable and replayable offline but lack the v3
-thermal/delegation proof and cannot receive new server receipts. For v3 a
+New authority submissions require the **current FDR schema, 4**, in both
+modes. Schemas 1 and 2 remain independently readable and replayable offline
+but lack the thermal/delegation proof and cannot receive new server receipts.
+Schema 3 also cannot be rated as a new flight: it carries no coupled
+propellant state, so the authority refuses it rather than certify a model it
+no longer flies. The rule is pinned by
+`crates/odd-worker/tests/schema_acceptance.rs`. For any accepted record a
 storable stage must have no cryogenic block; a cryogenic stage must have
 exactly one stage-0 block with matching propellant and bit-exact derived tank
 volumes. The verifier checks the tank model and declared bus inputs, fixes the

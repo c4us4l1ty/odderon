@@ -49,12 +49,18 @@ margin. The practice splitter targets the assembled stage, not the catalog
 baseline. See [thermal.md](thermal.md) for the model, measured examples and
 important one-way coupling limitation.
 
-FDR schema 3 and its 58 report fields remain frozen. It signs the physical
-engine and thermal specifications, delegation mask, exact vent history,
-per-tank loss and cooler energy. A cryogenic v3 replay requires the matching
-stage-0 tank block and fails closed on invalid models; a storable stage has no
-block. Old schema 1/2 records remain independently replayable, but new server
-submissions require v3. See [fdr-schema-changelog.md](fdr-schema-changelog.md).
+FDR schema 3 and its 58 report fields are frozen: it signs the physical engine
+and thermal specifications, delegation mask, exact vent history, per-tank
+loss and cooler energy. A cryogenic v3 replay requires the matching stage-0
+tank block and fails closed on invalid models; a storable stage has no block.
+
+**Schema 4 is current.** It appends the flown burn windows, the flameout
+instant and the propellant still aboard, because v4 couples venting into the
+live propellant pool. New server submissions require schema 4 in both modes;
+schemas 1–3 stay independently replayable and keep their frozen physics, but
+cannot earn a new receipt. The acceptance rule is pinned by
+`crates/odd-worker/tests/schema_acceptance.rs`. See
+[fdr-schema-changelog.md](fdr-schema-changelog.md).
 
 ## Server-authoritative Astro-Elo
 
