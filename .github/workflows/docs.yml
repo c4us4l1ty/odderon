@@ -1,6 +1,7 @@
 name: Status documentation
 on:
   push:
+    branches: [main]
     paths:
       - 'docs/**'
       - '**/*.md'
