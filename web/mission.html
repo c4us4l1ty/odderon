@@ -10,6 +10,17 @@
   <header class="topbar"><a class="brand" href="./"><span class="brand-mark">◒</span><span>ODDERON<small>SPACE ENGINEERING, MADE TANGIBLE</small></span></a><div class="topbar-right"><button type="button" id="open-leaderboard" class="profile-button" aria-haspopup="dialog"><span class="profile-button-label">LEADERBOARD</span></button><button type="button" id="open-verify" class="profile-button" aria-haspopup="dialog"><span class="profile-button-label">VERIFY / REPLAY</span></button><button type="button" id="open-profile" class="profile-button" aria-haspopup="dialog"><span class="profile-button-label">FLIGHT LICENSE</span><strong id="topbar-callsign">—</strong><span class="profile-elo-chip">ELO <b id="topbar-elo">—</b></span></button><a class="back" href="./">← Earth–Moon observatory</a></div></header>
   <main class="mission-main">
     <div class="intro"><div><div class="eyebrow">MISSION PLANNING / WORK PACKAGES 1.3–1.5</div><h1>Give an orbit <em>new life.</em></h1><p>Design maneuvers, lock a prediction, and see what changes when burns take time. Hover any underlined term or handle for a live physics projection.</p></div></div>
+    <section id="onboarding" class="onboarding-card" aria-labelledby="onboarding-heading">
+      <div class="onboarding-head"><div><div class="section-label">FIRST 30 MINUTES</div><h2 id="onboarding-heading">Learn by changing the real flight.</h2></div><button id="onboarding-close" class="quiet" aria-label="Close guide">Close</button></div>
+      <p>No scripted outcomes and no separate tutorial physics. Each lesson reads the same plan, engine and debrief as the contracts below.</p>
+      <label class="onboarding-save"><input id="onboarding-save" type="checkbox"> Save lesson progress on this device <small>local only; nothing is sent</small></label>
+      <div id="onboarding-welcome" class="button-row"><button id="onboarding-start" class="primary">Start guided flight</button><button id="onboarding-skip" class="quiet">I have done this before</button></div>
+      <div id="onboarding-lesson" hidden>
+        <div id="onboarding-progress" class="section-label"></div><h3 id="onboarding-title"></h3><p id="onboarding-copy"></p>
+        <p id="onboarding-status" class="onboarding-status" role="status"></p>
+        <div class="button-row"><button id="onboarding-hint" class="quiet" data-level="0">Show a hint</button><button id="onboarding-next" disabled>Next lesson</button></div>
+      </div>
+    </section>
     <div class="mission-grid">
       <section class="planner-card" aria-label="Orbit planning diagram">
         <div class="planner-head"><div><span id="mission-rank" class="section-label">CONTRACT 101 / CADET</span><h2 id="mission-title">Orbit rescue</h2></div><span class="mission-chip">EXPERIMENTAL</span></div>

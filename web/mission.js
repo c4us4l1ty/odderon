@@ -11,6 +11,7 @@ import * as authority from './authority.js';
 import { verifyReceipt } from './authority-crypto.js';
 import { initLeaderboard } from './leaderboard.js';
 import { readMissionNodes } from './mission-nodes.js';
+import { createOnboarding } from './onboarding.js';
 const $=id=>document.getElementById(id);
 const MU=3.986004418e14,R=6378137,G0=9.80665;
 let INITIAL=R+260000,TARGET=R+550000,DURATION=10800,DRY=1020,plane=[1,0],scenario='101',contractId=101;
@@ -23,7 +24,7 @@ const clampNodeTime=t=>{const [lo,hi]=nodeTimeRange();return Math.max(lo,Math.mi
 let setup=[820497600,DURATION,1200,DRY,2400,310,INITIAL,0,0,0,Math.sqrt(MU/INITIAL),0];
 const canvas=$('plan-canvas'),ctx=canvas.getContext('2d');
 const lensCanvas=$('lens-canvas'),lensCtx=lensCanvas.getContext('2d');
-let wasm,nodes=[],compiledOrder=[],selected=-1,preview=[],lunarPreview=[],actual=null,lastReport=null,lastLunarInfo=null,lastBplaneInfo=null,worker=null,locked=null,drag=null,draws=0,messages=0,sequence=0;
+let wasm,nodes=[],compiledOrder=[],selected=-1,preview=[],lunarPreview=[],actual=null,lastReport=null,lastLunarInfo=null,lastBplaneInfo=null,worker=null,locked=null,drag=null,draws=0,messages=0,sequence=0,onboarding=null;
 // A local, best-effort guard against using numerical practice as a ranked
 // planning preview. The server cannot inspect or trust a user's browser.
 const practiceSimulated=new Set();
@@ -207,7 +208,7 @@ function startFlight(version,flightContext){
   current.onmessage=({data})=>{messages++;if(worker!==current||version!==sequence)return;current.terminate();worker=null;
     if(data.error){$('plan-status').textContent=data.error;$('plan-status').classList.add('failure');$('execute-status').textContent=data.error;return;}
     actual=data.points;lastReport=data.report;lastCapture=data.capture??null;lastBoilOff=data.boilOff??null;lastDelegationMask=data.delegationMask??0;lastRecorder=null;lastComputeMs=Number.isFinite(data.computeMs)?data.computeMs:null;lastLunarInfo=data.lunarInfo?.[0]?data.lunarInfo:null;if(data.lunar?.length)lunarPreview=data.lunar;updateCausal();draw();$('plan-status').textContent='Flight model ready. No simulation runs while idle.';annotateAcronyms($('plan-status'));
-    showDebrief(data.report,flightContext,version);
+    showDebrief(data.report,flightContext,version);onboarding?.update();
   };
   current.onerror=()=>{if(worker!==current)return;worker.terminate();worker=null;$('plan-status').textContent='Flight worker failed.';$('execute-status').textContent='Flight worker failed.';};
   const payload=workerPayload();
@@ -643,6 +644,33 @@ function updateAttemptMode(reset=false){
   const split=$('split-kick');
   if(split){split.disabled=!!locked||(scenario==='103'&&select.value==='ranked');split.title=scenario==='103'&&select.value==='ranked'?'Numerical targeting runs the flight model and is available only in practice.':'';}
 }
+function onboardingSnapshot(){
+  const required=['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time'];
+  const predictionReady=required.every(id=>$(id).value.trim()!==''&&Number.isFinite(Number($(id).value)));
+  const engine=engineLab?.diagnostics();
+  return {
+    contract:contractId,
+    nodes:nodes.length,
+    maxPlaneChange:nodes.reduce((max,node)=>Math.max(max,Math.abs(node.dv[2])),0),
+    predictionReady,
+    engineAltitudeKm:Number($('engine-altitude').value),
+    engineSeparated:Number.isFinite(engine?.solution?.separationX),
+    score:lastReport?.[4],
+  };
+}
+function activateOnboardingLesson(lesson){
+  if(locked)$('unlock').click();
+  if(String(lesson.contract)!==scenario){
+    $('mission-select').value=String(lesson.contract);
+    $('mission-select').dispatchEvent(new Event('change',{bubbles:true}));
+  }
+  if(lesson.contract===103&&lesson.focus==='#split-kick'){
+    $('attempt-mode').value='practice';updateAttemptMode();
+  }
+  const target=document.querySelector(lesson.focus);
+  target?.scrollIntoView({block:'center',behavior:'auto'});
+  target?.focus?.({preventScroll:true});
+}
 identity.onChange(()=>updateAttemptMode());
 $('attempt-mode').addEventListener('change',()=>{updateAttemptMode();});
 $('mission-select').addEventListener('change',()=>{
@@ -744,4 +772,6 @@ assembly=createAssembly({wasm,isLocked:()=>!!locked,annotate:annotateAcronyms,on
   $('debrief').hidden=true;engineLab?.setLocked();updatePreview();
 }});
 if(wasm.mission_contract(contractId)){engineLab.loadBaseline();engineLab.setLocked();assembly.sync();assembly.setLocked();}
-annotateAcronyms(document.querySelector('.mission-main'));syncFields();updatePreview();}catch(e){$('plan-status').classList.add('failure');$('plan-status').textContent=String(e.message||e);annotateAcronyms($('plan-status'));}
+annotateAcronyms(document.querySelector('.mission-main'));syncFields();updatePreview();
+onboarding=createOnboarding({snapshot:onboardingSnapshot,activate:activateOnboardingLesson});
+}catch(e){$('plan-status').classList.add('failure');$('plan-status').textContent=String(e.message||e);annotateAcronyms($('plan-status'));}

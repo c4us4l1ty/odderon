@@ -86,3 +86,17 @@
 /* A delegated control shows the chief's own number and cannot be edited. */
 .engine-controls input.chief-owned,.engine-controls input:disabled{opacity:.72;border-style:dashed;border-color:#7d6a45}
 .chief-choice{color:#e1bc76}
+
+/* Event-driven onboarding: no keyframes or recurring timers. */
+.onboarding-card{border:1px solid #4c604f;background:#162620;padding:20px 24px;margin:0 0 16px}
+.onboarding-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}
+.onboarding-card h2{margin:7px 0 0;font:26px Georgia,serif;color:#e7d9ae}
+.onboarding-card h3{margin:8px 0;font:22px Georgia,serif}
+.onboarding-card p{max-width:72ch;line-height:1.55}
+.onboarding-save{display:flex;gap:8px;align-items:center;font-size:12px;color:#c4d1c3;margin:12px 0}
+.onboarding-save small{color:#87998d}
+.onboarding-status{border-left:2px solid #7f7051;padding-left:10px;color:#b9c8ba}
+.onboarding-status.is-complete{border-color:#69c8b3;color:#8fdec9}
+#onboarding-hint[data-level="4"]{border-color:#d2b77e;color:#ead9ae}
+@media(max-width:600px){.onboarding-card{padding:16px}.onboarding-head{align-items:center}.onboarding-save{align-items:flex-start}}
+@media print{.onboarding-card{display:none!important}}
