@@ -1,7 +1,7 @@
 # First 30 Minutes: Onboarding Design
 
 Status: **initial browser implementation with a measured design backlog.** The
-mission page now ships an opt-in six-lesson guide, four-rung hints, event-driven
+mission page now ships an opt-in seven-lesson guide, four-rung hints, event-driven
 completion checks and optional local-only progress. It uses the real contract,
 engine and debrief controls and never scripts an outcome. The detailed visual
 storyboard, placement test and playtest protocol below remain acceptance work,

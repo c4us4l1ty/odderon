@@ -14,9 +14,18 @@
       <div class="onboarding-head"><div><div class="section-label">FIRST 30 MINUTES</div><h2 id="onboarding-heading">Learn by changing the real flight.</h2></div><button id="onboarding-close" class="quiet" aria-label="Close guide">Close</button></div>
       <p>No scripted outcomes and no separate tutorial physics. Each lesson reads the same plan, engine and debrief as the contracts below.</p>
       <label class="onboarding-save"><input id="onboarding-save" type="checkbox"> Save lesson progress on this device <small>local only; nothing is sent</small></label>
-      <div id="onboarding-welcome" class="button-row"><button id="onboarding-start" class="primary">Start guided flight</button><button id="onboarding-skip" class="quiet">I have done this before</button></div>
+      <label class="onboarding-save"><input id="playtest-consent" type="checkbox"> Opt-in: Record local playtest observation log to help improve Odderon <small>stored only on your device until you export</small></label>
+      <div class="button-row"><button id="playtest-export" class="quiet" disabled>Export Playtest Observation JSON</button><button id="playtest-clear" class="quiet" disabled>Clear Playtest Data</button></div>
+      <div id="onboarding-welcome" class="button-row"><button id="onboarding-start" class="primary">Start guided flight</button><button id="placement-start" class="quiet">Find My Starting Point</button><button id="onboarding-skip" class="quiet">Skip for now</button></div>
+      <div id="placement-diagnostic" hidden>
+        <div class="section-label">2-MINUTE HANDS-ON PLACEMENT</div>
+        <p id="placement-copy">Check 1: place a node that raises the ideal apoapsis to at least 500 km, then measure it.</p>
+        <div id="placement-choices" class="button-row"><button id="placement-measure">Measure my orbit</button></div>
+        <p id="placement-status" role="status"></p>
+      </div>
       <div id="onboarding-lesson" hidden>
         <div id="onboarding-progress" class="section-label"></div><h3 id="onboarding-title"></h3><p id="onboarding-copy"></p>
+        <p id="onboarding-mass-ledger" class="onboarding-status" hidden></p>
         <p id="onboarding-status" class="onboarding-status" role="status"></p>
         <div class="button-row"><button id="onboarding-hint" class="quiet" data-level="0">Show a hint</button><button id="onboarding-next" disabled>Next lesson</button></div>
       </div>

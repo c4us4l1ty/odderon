@@ -42,4 +42,4 @@ for workflow in workflow_files:
 
 if errors:
     raise SystemExit("status sync failed:\n- " + "\n- ".join(errors))
-print(f"status sync ok: schema={schema}, contracts={contract_count}, lessons={lessons}, workflows={len(workflow_files)}")
+print(f"oracle_status_doc_and_workflow_sync ok: schema={schema}, contracts={contract_count}, lessons={lessons}, workflows={len(workflow_files)}")
