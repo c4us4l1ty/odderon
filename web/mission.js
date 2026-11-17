@@ -102,6 +102,18 @@ function reapplyEngine(w){
   if(w.mission_engine_solve(e.propellant,e.of,e.pc,e.throat,e.exit,e.length,0)!==1)return false;
   return w.mission_engine_apply()===1;
 }
+// The bridge refuses a plan with a stable code; say which failure it was
+// instead of one sentence naming all of them. Kept in step with
+// mission_compile_error() in crates/odd-view/src/mission_bridge.rs.
+function refusal(w){
+  return {
+    1:'Those maneuver numbers are not usable.',
+    2:'That maneuver cannot be flown on this orbit.',
+    3:'The flight could not be computed from those maneuvers.',
+    4:'That needs more fuel than this stage carries.',
+    5:'That burn falls outside the mission window. Move it earlier.',
+  }[w.mission_compile_error()]||'The flight could not be compiled.';
+}
 function configure(w,items){
   if(contractId){if(!w.mission_contract(contractId))return false;if(!applyAssembly(w,assemblyDesign))return false;if(!reapplyEngine(w))return false;}
   else if(!w.mission_setup(...setup))return false;
@@ -159,7 +171,7 @@ function syncFields(){
 function updatePreview(){
   if(!wasm)return;
   cancelFlight();sequence++;syncFields();actual=null;lastReport=null;lastLunarInfo=null;lunarPreview=[];
-  if(!configure(wasm,nodes)){$('plan-status').textContent='Unable to compile: check timing, overlapping burns, or available propellant.';$('plan-status').classList.add('failure');preview=[];$('prefill').disabled=true;$('execute').disabled=true;
+  if(!configure(wasm,nodes)){$('plan-status').textContent=refusal(wasm);$('plan-status').classList.add('failure');preview=[];$('prefill').disabled=true;$('execute').disabled=true;
   updateAttemptMode();updateCausal();draw();cancelFlight();return;}
   $('plan-status').classList.remove('failure');$('plan-status').textContent='Ideal orbit ready. The modeled flight runs only after the prediction is locked.';
   preview=Array.from({length:481},(_,i)=>({time:DURATION*i/480,state:readState(wasm,DURATION*i/480)}));
@@ -422,7 +434,7 @@ $('split-kick').addEventListener('click',()=>{
   const original=nodes[selected];if(!original||original.dv[0]<=0)return;
   const old=nodes.map(n=>({time:n.time,dv:[...n.dv]}));
   original.dv[0]*=0.5;
-  if(!configure(wasm,nodes)){nodes=old;updatePreview();return;}
+  if(!configure(wasm,nodes)){nodes=old;updatePreview();$('plan-status').textContent=refusal(wasm);$('plan-status').classList.add('failure');return;}
   const state=readState(wasm,original.time),radius=Math.hypot(...state.slice(0,3)),speed2=state.slice(3,6).reduce((a,b)=>a+b*b,0),energy=speed2/2-MU/radius;
   if(!(energy<0)){nodes=old;updatePreview();$('plan-status').textContent='A second pass cannot be estimated for an unbound intermediate orbit.';return;}
   const a=-MU/(2*energy),period=2*Math.PI*Math.sqrt(a*a*a/MU),second=original.time+period;
@@ -664,7 +676,7 @@ canvas.addEventListener('pointermove',e=>{
 function endDrag(e){if(drag&&drag.pointer===e.pointerId){drag=null;stopLens();}}
 canvas.addEventListener('pointerup',endDrag);canvas.addEventListener('pointercancel',endDrag);canvas.addEventListener('lostpointercapture',endDrag);canvas.addEventListener('pointerleave',e=>{if(!drag&&!intoLens(e))stopLens();});
 new ResizeObserver(draw).observe(canvas.parentElement);
-window.missionDiagnostics=Object.freeze({wasm:()=>wasm,recorder:()=>lastRecorder,verification:()=>verificationResult(),openVerify,profile:()=>identity.profile(),isRanked:id=>identity.isRanked(id),openProfile,get nodeTimeRange(){return nodeTimeRange();},clampNodeTime,get nodeMarker(){const n=nodes[selected];if(!n||!wasm)return null;const s=readState(wasm,n.time);return s.some(x=>!Number.isFinite(x))?null:toCanvas(s);},get pathEnds(){return preview.length?[toCanvas(preview[0].state),toCanvas(preview[preview.length-1].state)]:null;},get nodes(){return nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));},get pending(){return !!worker||authorityPending>0;},get draws(){return draws;},get messages(){return messages;},get locked(){return !!locked;},get report(){return lastReport?[...lastReport]:null;},get computeMs(){return lastComputeMs;},get lunarInfo(){return lastLunarInfo?[...lastLunarInfo]:null;},get lens(){return activeLens;},get lensDraws(){return lensDraws;},get lensPending(){return lensGovernor.frame!==null;},get engine(){return engineLab?engineLab.diagnostics():null;},get appliedEngine(){return appliedEngine?{...appliedEngine}:null;},get assembly(){return assembly?assembly.diagnostics():null;},get boilOff(){return lastBoilOff;},get flownDelegationMask(){return lastDelegationMask;},get causalValid(){return wasm?wasm.mission_causal_valid()===1&&wasm.mission_engine_causal_valid()===1:false;},get acronymViolations(){return acronymViolations();},get handles(){if(selected<0||!wasm)return [];const state=readState(wasm,nodes[selected].time);return handles(toCanvas(state),state).map(h=>({key:h.key,end:h.end}));}});
+window.missionDiagnostics=Object.freeze({wasm:()=>wasm,recorder:()=>lastRecorder,verification:()=>verificationResult(),openVerify,profile:()=>identity.profile(),isRanked:id=>identity.isRanked(id),openProfile,get nodeTimeRange(){return nodeTimeRange();},clampNodeTime,get nodeMarker(){const n=nodes[selected];if(!n||!wasm)return null;const s=readState(wasm,n.time);return s.some(x=>!Number.isFinite(x))?null:toCanvas(s);},get pathEnds(){return preview.length?[toCanvas(preview[0].state),toCanvas(preview[preview.length-1].state)]:null;},get nodes(){return nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));},get pending(){return !!worker||authorityPending>0;},get draws(){return draws;},get messages(){return messages;},get locked(){return !!locked;},get report(){return lastReport?[...lastReport]:null;},get computeMs(){return lastComputeMs;},get lunarInfo(){return lastLunarInfo?[...lastLunarInfo]:null;},get lens(){return activeLens;},get lensDraws(){return lensDraws;},get lensPending(){return lensGovernor.frame!==null;},get engine(){return engineLab?engineLab.diagnostics():null;},get appliedEngine(){return appliedEngine?{...appliedEngine}:null;},get assembly(){return assembly?assembly.diagnostics():null;},get boilOff(){return lastBoilOff;},get flownDelegationMask(){return lastDelegationMask;},get causalValid(){return wasm?wasm.mission_causal_valid()===1&&wasm.mission_engine_causal_valid()===1:false;},get acronymViolations(){return acronymViolations();},get handles(){if(selected<0||!wasm)return [];const state=readState(wasm,nodes[selected].time);return handles(toCanvas(state),state).map(h=>({key:h.key,end:h.end}));},get refusal(){return wasm?refusal(wasm):null;}});
 try{const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error('The physics module is not available. Build it first.');({instance:{exports:wasm}}=await WebAssembly.instantiate(await response.arrayBuffer(),{}));identity.init(wasm);initProfile();initVerify(wasm);initLeaderboard();updateAttemptMode(true);loadGlossary(wasm);
 // The lab reads canonical stage numbers back after a redesign so the planner,
 // the worker payload and the signed recorder cannot disagree about the engine.

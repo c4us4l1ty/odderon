@@ -3,6 +3,15 @@
 import { applyAssembly } from './assembly.js';
 import { configured, serverKey, receiptBytes, verifyReceipt } from './authority-crypto.js';
 import { stringifySigned } from './recorder.js';
+// Refusal copy by stable code from mission_compile_error(). Must stay in step
+// with the table in mission.js and with crates/odd-view/src/mission_bridge.rs.
+const REFUSAL={
+  1:'Those maneuver numbers are not usable.',
+  2:'That maneuver cannot be flown on this orbit.',
+  3:'The flight could not be computed from those maneuvers.',
+  4:'That needs more fuel than this stage carries.',
+  5:'That burn falls outside the mission window. Move it earlier.',
+};
 self.onmessage=async ({data})=>{
   try{
     const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error('Flight physics module unavailable.');
@@ -89,7 +98,7 @@ self.onmessage=async ({data})=>{
       if(n.guidance&&!w.mission_add_guidance(index,...n.guidance))throw Error('Invalid guidance state.');
       index++;
     }
-    if(!w.mission_compile())throw Error('Maneuvers overlap, exceed the fuel budget, or fall outside the mission.');
+    if(!w.mission_compile())throw Error(REFUSAL[w.mission_compile_error()]||'The flight could not be compiled.');
     if(!w.mission_lock(...data.locked))throw Error('Invalid locked prediction.');
     const computeStart=performance.now();
     if(!w.mission_execute())throw Error('Flight could not be evaluated.');

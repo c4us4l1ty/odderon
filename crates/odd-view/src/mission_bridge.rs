@@ -10,7 +10,7 @@ use odd_core::frames::State;
 use odd_sim::{
     encounter::LunarPatch,
     mission::{LockedMission, PredictionBaseline},
-    planner::{ManeuverNode, Plan},
+    planner::{ManeuverNode, Plan, PlanError},
     targeting::next_radial_turn,
     Engine,
 };
@@ -115,7 +115,32 @@ fn microseconds(seconds: f64) -> Option<i64> {
     }
     Some((seconds * 1e6).round() as i64)
 }
+/// Why the last `mission_compile` returned 0, as a stable code rather than a
+/// translatable string. The browser maps codes to copy, so a new variant here
+/// cannot silently become an unexplained sentence in front of a player (Law 6).
+/// Zero means "no failure recorded".
+static COMPILE_ERROR: Mutex<u8> = Mutex::new(0);
+
+/// Stable codes for `mission_compile`'s refusal. `PlanError::Command` is folded
+/// into `NUMERIC` because the browser has nothing different to say about it.
+const COMPILE_REFUSAL_INVALID_INPUT: u8 = 1;
+const COMPILE_REFUSAL_UNSUPPORTED_CONIC: u8 = 2;
+const COMPILE_REFUSAL_NUMERIC: u8 = 3;
+const COMPILE_REFUSAL_PROPELLANT: u8 = 4;
+const COMPILE_REFUSAL_OUTSIDE_PLAN: u8 = 5;
+
+fn refusal_code(error: PlanError) -> u8 {
+    match error {
+        PlanError::InvalidInput => COMPILE_REFUSAL_INVALID_INPUT,
+        PlanError::UnsupportedConic => COMPILE_REFUSAL_UNSUPPORTED_CONIC,
+        PlanError::NumericalRange | PlanError::Command(_) => COMPILE_REFUSAL_NUMERIC,
+        PlanError::PropellantDeficit => COMPILE_REFUSAL_PROPELLANT,
+        PlanError::BurnOutsidePlan => COMPILE_REFUSAL_OUTSIDE_PLAN,
+    }
+}
+
 fn clear_results() {
+    *COMPILE_ERROR.lock().unwrap() = 0;
     *PLAN.lock().unwrap() = None;
     *LOCKED.lock().unwrap() = None;
     *EXECUTION.lock().unwrap() = None;
@@ -322,7 +347,7 @@ pub extern "C" fn mission_compile() -> i32 {
     let Some(s) = SETTINGS.lock().unwrap().clone() else {
         return 0;
     };
-    let Ok(result) = Plan::compile_guided(
+    let result = match Plan::compile_guided(
         s.initial,
         MU,
         s.duration_us,
@@ -330,8 +355,12 @@ pub extern "C" fn mission_compile() -> i32 {
         s.engine,
         &s.nodes,
         &s.guidance,
-    ) else {
-        return 0;
+    ) {
+        Ok(result) => result,
+        Err(error) => {
+            *COMPILE_ERROR.lock().unwrap() = refusal_code(error);
+            return 0;
+        }
     };
     if s.contract_id == 103 {
         if let Some(eph) = EPHEMERIS.get_or_init(|| Ephemeris::bundled().ok()).as_ref() {
@@ -344,6 +373,14 @@ pub extern "C" fn mission_compile() -> i32 {
     }
     *PLAN.lock().unwrap() = Some(result);
     1
+}
+
+/// Why the last `mission_compile` refused the plan, as a stable code:
+/// 0 none, 1 invalid input, 2 unsupported conic, 3 numeric range,
+/// 4 propellant deficit, 5 burn outside the mission window.
+#[no_mangle]
+pub extern "C" fn mission_compile_error() -> u32 {
+    *COMPILE_ERROR.lock().unwrap() as u32
 }
 
 #[no_mangle]
@@ -1731,6 +1768,55 @@ mod tests {
         );
         assert!(mission_preview(1000.0, 0).is_nan());
     }
+    /// A refusal must say *why*. Before this, `mission_compile` returned 0 for
+    /// five different failures and the browser turned all of them into "Maneuvers
+    /// overlap, exceed the fuel budget, or fall outside the mission." — one
+    /// sentence that named none of them.
+    #[test]
+    fn compile_refusals_report_their_reason() {
+        let _guard = TEST_LOCK.lock().unwrap();
+
+        // 101 is the storable rescue stage: 495.1 m/s of budget on 180 kg.
+        assert_eq!(mission_contract(101), 1);
+        // A burn past the budget that still fits inside the window: 600 m/s
+        // needs ~216 kg from tanks that hold 180 kg, and lasts ~274 s of the
+        // 10,800 s window, so the *tank* is what stops it.
+        assert_eq!(mission_add_node(200.0, 600.0, 0.0, 0.0), 1);
+        assert_eq!(mission_compile(), 0);
+        assert_ne!(
+            mission_compile_error(),
+            0,
+            "a refusal must carry a reason code"
+        );
+        let costly = mission_compile_error();
+        assert_eq!(costly, 4, "an unaffordable burn must report a fuel refusal");
+
+        // A modest burn, but burning it at t=20 s: burns are *centred* on their
+        // node, so the first half of this one starts before the mission does.
+        // This is the case that first showed up as a mystery `BurnOutsidePlan`.
+        assert_eq!(mission_contract(101), 1);
+        assert_eq!(mission_add_node(20.0, 100.0, 0.0, 0.0), 1);
+        assert_eq!(mission_compile(), 0);
+        let early = mission_compile_error();
+        assert_eq!(
+            early, 5,
+            "a burn outside the window must report a window refusal"
+        );
+        assert_ne!(
+            early, costly,
+            "a burn outside the window must not report the same reason as an              unaffordable one ({early} vs {costly})"
+        );
+
+        // A clean plan clears the reason rather than leaving the last one behind.
+        assert_eq!(mission_contract(101), 1);
+        assert_eq!(mission_compile(), 1);
+        assert_eq!(
+            mission_compile_error(),
+            0,
+            "a successful compile must clear the refusal code"
+        );
+    }
+
     #[test]
     fn contract_103_loss_and_shapley_report() {
         let _guard = TEST_LOCK.lock().unwrap();
