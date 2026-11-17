@@ -10,6 +10,7 @@ import { initVerify, openVerify, result as verificationResult } from './verify.j
 import * as authority from './authority.js';
 import { verifyReceipt } from './authority-crypto.js';
 import { initLeaderboard } from './leaderboard.js';
+import { readMissionNodes } from './mission-nodes.js';
 const $=id=>document.getElementById(id);
 const MU=3.986004418e14,R=6378137,G0=9.80665;
 let INITIAL=R+260000,TARGET=R+550000,DURATION=10800,DRY=1020,plane=[1,0],scenario='101',contractId=101;
@@ -459,6 +460,16 @@ $('target-bplane').addEventListener('click',()=>{
   practiceSimulated.add(contractId);updateAttemptMode();
   const ok=wasm.mission_target_bplane(btN,brN);
   if(!ok){$('plan-status').textContent='B-plane target could not be reached (insufficient sensitivity).';return;}
+  // Rust owns the targeting solve. Pull its adjusted commands back before
+  // updatePreview reconfigures the bridge; otherwise stale page nodes erase
+  // the solution immediately.
+  try{
+    nodes=readMissionNodes(wasm);
+    selected=Math.min(Math.max(selected,0),nodes.length-1);
+  }catch(error){
+    $('plan-status').textContent=String(error.message||error);
+    return;
+  }
   updatePreview();
   $('plan-status').textContent='Maneuver nodes adjusted for B-plane target. Recompile and fly to verify.';
 });
