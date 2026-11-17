@@ -62,7 +62,7 @@ failure, not a test failure, but it means that merge has no independent hosted
 acceptance result. Restore Actions billing and rerun the workflow.
 
 Local acceptance remains `./scripts/gate.sh`. On 2026-11-17 the complete gate
-passed on branch commit `57920b0`: formatting, clippy, workspace and named v4
+passed on branch commit `7c44847`: formatting, clippy, workspace and named v4
 oracles, native/WASM/Chrome parity, browser and idle checks, assembly, native
 SQLite authority, workerd D1/R2 authority and concurrency/fault tests. A green
 gate covers implemented contracts and selected browser/runtime paths; it is not
