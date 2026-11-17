@@ -30,7 +30,7 @@
         <label for="node-w">Out of orbital plane <small>meters per second</small></label><input id="node-w" type="number" step="1" value="0" disabled>
         <button id="remove-node" class="quiet" disabled>Remove maneuver</button>
         <div class="lens" aria-live="polite"><div class="section-label">PHYSICS LENS</div><canvas id="lens-canvas" width="280" height="150" aria-label="Live physics projection for the hovered term or handle"></canvas><p id="lens-text">A maneuver is a change in velocity. Hover a TNW handle or any underlined term such as TWR, ISP, RAAN, AOP or SOI for a live projection.</p><p id="lens-projection" class="lens-projection" hidden></p><div class="lens-close-slot"><button id="lens-close" class="quiet" hidden>Close projection</button></div></div>
-        <div class="causal" aria-live="polite"><div class="section-label">CAUSE &amp; EFFECT CHECK</div><div id="causal-text">The checks update as you design and simulate a plan.</div><button id="split-kick" class="quiet" hidden>Split into perigee kicks</button></div>
+        <div class="causal" aria-live="polite"><div class="section-label">CAUSE &amp; EFFECT CHECK</div><div id="causal-text">The checks update as you design and simulate a plan.</div><button id="split-kick" class="quiet" hidden>Split into perigee kicks</button><button id="target-bplane" class="quiet" hidden>Target B-plane</button></div>
       </aside>
     </div>
     <section class="engine-card" id="engine-lab" aria-labelledby="engine-title">

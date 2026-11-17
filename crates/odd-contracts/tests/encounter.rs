@@ -35,7 +35,9 @@ fn numerical_soi_entry_and_patch_round_trip() {
             velocity_m_s: [0.0; 3],
         })
     };
-    let entry = find_entry(&path, 20_000.0, moon).unwrap().expect("entry");
+    let entry = find_entry(&path, 20_000.0, MOON_MU, moon)
+        .unwrap()
+        .expect("entry");
     assert!((entry.time_s - 79.999).abs() < 1e-3);
     assert!((entry.vehicle_primary.position_m[0] - 80_000.0).abs() < 1.0);
     // Ideal plan patch: a coasting craft passes the same SOI.

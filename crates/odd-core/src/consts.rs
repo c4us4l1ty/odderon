@@ -19,3 +19,5 @@ pub const STANDARD_GRAVITY_M_S2: f64 = 9.806_65;
 pub const STEFAN_BOLTZMANN_W_M2_K4: f64 = 5.670_374_419e-8;
 /// Molar gas constant, J mol⁻¹ K⁻¹ (CODATA 2018, rounded).
 pub const MOLAR_GAS_CONSTANT_J_MOL_K: f64 = 8.314_462_618_153_24;
+/// Earth's sidereal rotation rate, rad/s (IAU 2009, nominal).
+pub const EARTH_ROTATION_RATE_RAD_S: f64 = 7.292_115e-5;

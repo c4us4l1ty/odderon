@@ -136,6 +136,7 @@ fn flight_guided(
         contract.engine,
         nodes,
         guidance.as_deref().unwrap_or(&[]),
+        None,
     )?;
     odd_verify::compute(&settings_for(contract), &plan, None, &eph)
         .map(|o| o.report)

@@ -22,7 +22,7 @@ const clampNodeTime=t=>{const [lo,hi]=nodeTimeRange();return Math.max(lo,Math.mi
 let setup=[820497600,DURATION,1200,DRY,2400,310,INITIAL,0,0,0,Math.sqrt(MU/INITIAL),0];
 const canvas=$('plan-canvas'),ctx=canvas.getContext('2d');
 const lensCanvas=$('lens-canvas'),lensCtx=lensCanvas.getContext('2d');
-let wasm,nodes=[],compiledOrder=[],selected=-1,preview=[],lunarPreview=[],actual=null,lastReport=null,lastLunarInfo=null,worker=null,locked=null,drag=null,draws=0,messages=0,sequence=0;
+let wasm,nodes=[],compiledOrder=[],selected=-1,preview=[],lunarPreview=[],actual=null,lastReport=null,lastLunarInfo=null,lastBplaneInfo=null,worker=null,locked=null,drag=null,draws=0,messages=0,sequence=0;
 // A local, best-effort guard against using numerical practice as a ranked
 // planning preview. The server cannot inspect or trust a user's browser.
 const practiceSimulated=new Set();
@@ -166,11 +166,11 @@ function syncFields(){
   for(const control of [...Object.values(fields),$('node-select'),$('remove-node')])control.disabled=!n||!!locked;
   fields.time.min=String(nodeTimeRange()[0]);fields.time.max=String(nodeTimeRange()[1]);
   if(n){fields.time.value=String(Math.round(n.time));fields.t.value=String(+n.dv[0].toFixed(2));fields.n.value=String(+n.dv[1].toFixed(2));fields.w.value=String(+n.dv[2].toFixed(2));}
-  $('add-node').disabled=!wasm||!!locked||nodes.length>=12;$('example').disabled=!wasm||!!locked;$('mission-select').disabled=!wasm||!!locked;$('split-kick').disabled=!!locked;
+  $('add-node').disabled=!wasm||!!locked||nodes.length>=12;$('example').disabled=!wasm||!!locked;$('mission-select').disabled=!wasm||!!locked;$('split-kick').disabled=!!locked;$('target-bplane').disabled=!!locked||!lastBplaneInfo;
 }
 function updatePreview(){
   if(!wasm)return;
-  cancelFlight();sequence++;syncFields();actual=null;lastReport=null;lastLunarInfo=null;lunarPreview=[];
+  cancelFlight();sequence++;syncFields();actual=null;lastReport=null;lastLunarInfo=null;lastBplaneInfo=null;lunarPreview=[];
   if(!configure(wasm,nodes)){$('plan-status').textContent=refusal(wasm);$('plan-status').classList.add('failure');preview=[];$('prefill').disabled=true;$('execute').disabled=true;
   updateAttemptMode();updateCausal();draw();cancelFlight();return;}
   $('plan-status').classList.remove('failure');$('plan-status').textContent='Ideal orbit ready. The modeled flight runs only after the prediction is locked.';
@@ -179,6 +179,10 @@ function updatePreview(){
     const valid=wasm.mission_lunar_info(0);
     lastLunarInfo=valid?[wasm.mission_lunar_info(1),wasm.mission_lunar_info(2)]:null;
     if(valid)lunarPreview=Array.from({length:481},(_,i)=>readStatePatched(wasm,DURATION*i/480)).filter(s=>s.every(Number.isFinite));
+    const bvalid=wasm.mission_bplane_info(0);
+    lastBplaneInfo=bvalid?[wasm.mission_bplane_info(1),wasm.mission_bplane_info(2),wasm.mission_bplane_info(3)]:null;
+  } else {
+    lastBplaneInfo=null;
   }
   if(preview.some(p=>p.state.some(x=>!Number.isFinite(x)))){preview=[];$('plan-status').textContent='The ideal orbit could not be sampled.';cancelFlight();draw();return;}
   $('prefill').disabled=false;$('execute').disabled=nodes.length===0||!!locked;
@@ -412,7 +416,9 @@ function updateCausal(){
   }
   if(scenario==='103'&&nodes.length===1&&nodes[0].dv[0]>2500&&!locked)$('split-kick').hidden=false;
   if(scenario==='103'){$('split-kick').disabled=!!locked||$('attempt-mode').value==='ranked';$('split-kick').title=$('attempt-mode').value==='ranked'?'Numerical targeting runs the flight model and is available only in practice.':'';}
+  if(scenario==='103'&&lastBplaneInfo){$('target-bplane').hidden=false;$('target-bplane').disabled=!!locked;}else{$('target-bplane').hidden=true;}
   if(scenario==='103'&&lastLunarInfo){const row=document.createElement('div');row.className='cause-chain';row.textContent=`Lunar sphere-of-influence entry: ideal patched preview enters at ${Math.round(lastLunarInfo[0])} s. The ${Math.round(lastLunarInfo[1]/1000)} km boundary is a preview aid, not a gravity discontinuity; the gold path keeps continuous third-body gravity.`;target.append(row);}
+  if(scenario==='103'&&lastBplaneInfo){const row=document.createElement('div');row.className='cause-chain';row.textContent=`B-plane at entry: miss ${lastBplaneInfo[0].toFixed(0)} m, B·T ${lastBplaneInfo[1].toFixed(0)} m (along-track), B·R ${lastBplaneInfo[2].toFixed(0)} m (cross-track). Target a B-plane point to adjust the maneuver nodes.`;target.append(row);}
   if(!target.childNodes.length)target.textContent='No rule currently triggered. This is a limited check, not a safety certification.';
   annotateAcronyms(target);
 }
@@ -441,6 +447,20 @@ $('split-kick').addEventListener('click',()=>{
   if(!Number.isFinite(second)||second>=DURATION-1){nodes=old;updatePreview();$('plan-status').textContent='The next ideal periapsis falls outside the current mission duration.';return;}
   nodes.push({time:second,dv:[original.dv[0],0,0]});selected=nodes.length-1;updatePreview();
   $('plan-status').textContent='Second push placed at the next ideal periapsis. The finite-burn trajectory may reach periapsis at a different time; check the gold path.';
+});
+$('target-bplane').addEventListener('click',()=>{
+  if(scenario!=='103'||!lastBplaneInfo||locked)return;
+  const bt=prompt('Target B·T (along-track, m). Current: '+lastBplaneInfo[1].toFixed(0),lastBplaneInfo[1].toFixed(0));
+  if(bt===null)return;
+  const br=prompt('Target B·R (cross-track, m). Current: '+lastBplaneInfo[2].toFixed(0),lastBplaneInfo[2].toFixed(0));
+  if(br===null)return;
+  const btN=Number(bt),brN=Number(br);
+  if(!Number.isFinite(btN)||!Number.isFinite(brN)){$('plan-status').textContent='Invalid B-plane target.';return;}
+  practiceSimulated.add(contractId);updateAttemptMode();
+  const ok=wasm.mission_target_bplane(btN,brN);
+  if(!ok){$('plan-status').textContent='B-plane target could not be reached (insufficient sensitivity).';return;}
+  updatePreview();
+  $('plan-status').textContent='Maneuver nodes adjusted for B-plane target. Recompile and fly to verify.';
 });
 function toCanvas(point){const rect=canvas.getBoundingClientRect(),span=2.45*TARGET;return [rect.width/2+point[0]*rect.height/span,rect.height/2-(point[1]*plane[0]+point[2]*plane[1])*rect.height/span];}
 function draw(){

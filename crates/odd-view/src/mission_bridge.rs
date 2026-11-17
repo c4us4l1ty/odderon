@@ -2,6 +2,7 @@
 //! runs in a one-shot worker; this module schedules no frames or timers.
 use super::{Ephemeris, EPHEMERIS};
 use odd_astro::{
+    bplane::target_bplane,
     patched_conics::sphere_of_influence,
     spline::{Keyframe, TrajectorySpline},
 };
@@ -355,6 +356,7 @@ pub extern "C" fn mission_compile() -> i32 {
         s.engine,
         &s.nodes,
         &s.guidance,
+        None,
     ) {
         Ok(result) => result,
         Err(error) => {
@@ -441,6 +443,143 @@ pub extern "C" fn mission_lunar_info(index: u32) -> f64 {
         }
         _ => f64::NAN,
     }
+}
+
+/// B-plane info at the lunar encounter.
+/// 0 valid (1 if encounter with a computable B-plane), 1 miss distance m,
+/// 2 B·T m (along-track), 3 B·R m (cross-track), 4-6 S unit vector (asymptote),
+/// 7-9 R unit vector (cross-track basis), 10-12 T unit vector (along-track basis).
+#[no_mangle]
+pub extern "C" fn mission_bplane_info(index: u32) -> f64 {
+    let patch = PATCH.lock().unwrap();
+    let Some(p) = patch.as_ref() else {
+        return if index == 0 { 0.0 } else { f64::NAN };
+    };
+    let Some(bp) = p.entry.bplane else {
+        return if index == 0 { 0.0 } else { f64::NAN };
+    };
+    match index {
+        0 => 1.0,
+        1 => bp.miss_distance_m,
+        2 => bp.b_t,
+        3 => bp.b_r,
+        4 => bp.s[0],
+        5 => bp.s[1],
+        6 => bp.s[2],
+        7 => bp.r_hat[0],
+        8 => bp.r_hat[1],
+        9 => bp.r_hat[2],
+        10 => bp.t_hat[0],
+        11 => bp.t_hat[1],
+        12 => bp.t_hat[2],
+        _ => f64::NAN,
+    }
+}
+
+/// Target the B-plane at the lunar encounter. Adjusts node TNW values so the
+/// encounter's B-plane coordinates move toward (target_bt, target_br).
+/// Sensitivity is computed by finite differences over the patched-conic preview:
+/// each node component is perturbed by 0.1 m/s, the plan is recompiled, the
+/// encounter is refound, and the B-plane is recomputed.
+///
+/// Returns 1 on success, 0 if there is no encounter, no nodes, or the system
+/// is singular (insufficient sensitivity).
+#[no_mangle]
+pub extern "C" fn mission_target_bplane(target_bt: f64, target_br: f64) -> i32 {
+    if !target_bt.is_finite() || !target_br.is_finite() {
+        return 0;
+    }
+    let Some(s) = SETTINGS.lock().unwrap().clone() else {
+        return 0;
+    };
+    if s.contract_id != 103 {
+        return 0;
+    }
+    let Some(eph) = EPHEMERIS.get_or_init(|| Ephemeris::bundled().ok()).as_ref() else {
+        return 0;
+    };
+    let Some(patch) = PATCH.lock().unwrap().clone() else {
+        return 0;
+    };
+    let Some(current_bp) = patch.entry.bplane else {
+        return 0;
+    };
+
+    let n = s.nodes.len();
+    if n == 0 || n > 12 {
+        return 0;
+    }
+
+    let current_bt = current_bp.b_t;
+    let current_br = current_bp.b_r;
+
+    // Sensitivity by finite differences: perturb each node component,
+    // recompile the patched-conic plan, refind the encounter, recompute B-plane.
+    const DELTA: f64 = 0.1;
+    let mut sens = [[[0.0; 2]; 3]; 12];
+    for (i, node) in s.nodes.iter().take(n).enumerate() {
+        for (c, _) in node.tnw_m_s.iter().enumerate().take(3) {
+            let mut perturbed = s.nodes.clone();
+            perturbed[i].tnw_m_s[c] += DELTA;
+            let Ok(perturbed_plan) = Plan::compile_guided(
+                s.initial,
+                MU,
+                s.duration_us,
+                s.dry_mass,
+                s.engine,
+                &perturbed,
+                &s.guidance,
+                None,
+            ) else {
+                continue;
+            };
+            let Ok(Some(perturbed_patch)) =
+                LunarPatch::find(&perturbed_plan, MOON_MU, lunar_soi(), 300_000_000, |t| {
+                    moon_state(eph, s.epoch, t)
+                })
+            else {
+                continue;
+            };
+            let Some(bp) = perturbed_patch.entry.bplane else {
+                continue;
+            };
+            sens[i][c][0] = (bp.b_t - current_bt) / DELTA;
+            sens[i][c][1] = (bp.b_r - current_br) / DELTA;
+        }
+    }
+
+    let mut any_sens = false;
+    for node_sens in sens.iter().take(n) {
+        for comp_sens in node_sens.iter() {
+            if comp_sens[0].abs() > 1e-9 || comp_sens[1].abs() > 1e-9 {
+                any_sens = true;
+            }
+        }
+    }
+    if !any_sens {
+        return 0;
+    }
+
+    let node_tnw: Vec<[f64; 3]> = s.nodes.iter().map(|node| node.tnw_m_s).collect();
+    let Some(adjustments) = target_bplane(&current_bp, target_bt, target_br, &node_tnw, &sens[..n])
+    else {
+        return 0;
+    };
+
+    let mut guard = SETTINGS.lock().unwrap();
+    let Some(settings) = guard.as_mut() else {
+        return 0;
+    };
+    for (i, adj) in adjustments.iter().enumerate() {
+        if let Some(node) = settings.nodes.get_mut(i) {
+            node.tnw_m_s[0] += adj[0];
+            node.tnw_m_s[1] += adj[1];
+            node.tnw_m_s[2] += adj[2];
+        }
+    }
+    *PLAN.lock().unwrap() = None;
+    *PATCH.lock().unwrap() = None;
+    1
 }
 
 /// Lock the compiled plan and player prediction before execution. SI units.

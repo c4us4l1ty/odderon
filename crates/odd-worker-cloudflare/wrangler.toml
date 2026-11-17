@@ -1,6 +1,6 @@
 name = "odderon-authority"
 main = "src/index.js"
-compatibility_date = "2026-01-01"
+compatibility_date = "2026-11-17"
 
 [build]
 command = "cargo build --locked --release -p odd-authority-wasm --target wasm32-unknown-unknown && cp target/wasm32-unknown-unknown/release/odd_authority_wasm.wasm crates/odd-worker-cloudflare/src/authority.wasm"
@@ -9,12 +9,16 @@ cwd = "."
 [[d1_databases]]
 binding = "DB"
 database_name = "odderon"
+# PRODUCTION: replace with the real D1 database ID from your Cloudflare account.
+# Create the database first:  npx wrangler d1 create odderon
+# Then apply migrations remotely: npx wrangler d1 migrations apply odderon --remote --config crates/odd-worker-cloudflare/wrangler.toml
 database_id = "REPLACE_WITH_YOUR_D1_ID"
 migrations_dir = "migrations"
 
 [[r2_buckets]]
 binding = "FDRS"
 bucket_name = "odderon-fdrs"
+# PRODUCTION: create the bucket first:  npx wrangler r2 bucket create odderon-fdrs
 
 # Configure the private 32-byte hex seed out of band:
 #   wrangler secret put SERVER_SEED --config crates/odd-worker-cloudflare/wrangler.toml
