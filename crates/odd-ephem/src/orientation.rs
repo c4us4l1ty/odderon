@@ -256,6 +256,56 @@ pub fn earth_orientation(
     })
 }
 
+/// J2000 state of a launch site at a given epoch.
+///
+/// Combines the site's Earth-fixed position (from geodetic coordinates) with
+/// the full ITRF-to-ICRF orientation (including UT1-based Earth rotation and
+/// polar motion) to produce the site's position and velocity in J2000 axes.
+/// The site is stationary in the Earth-fixed frame, so its J2000 velocity is
+/// purely the rotational velocity `omega x r`.
+///
+/// Suitable as the `initial` state of a surface-launch contract.
+pub fn launch_site_state_j2000(
+    site: &odd_core::frames::LaunchSite,
+    epoch: Epoch,
+    params: EarthOrientationParams,
+) -> Result<odd_core::frames::State, OrientationError> {
+    let r_ecef = site.earth_fixed_position_m();
+    let orientation = earth_orientation(epoch, params)?;
+
+    let r_j2000 = [
+        orientation.body_to_j2000[0][0] * r_ecef[0]
+            + orientation.body_to_j2000[0][1] * r_ecef[1]
+            + orientation.body_to_j2000[0][2] * r_ecef[2],
+        orientation.body_to_j2000[1][0] * r_ecef[0]
+            + orientation.body_to_j2000[1][1] * r_ecef[1]
+            + orientation.body_to_j2000[1][2] * r_ecef[2],
+        orientation.body_to_j2000[2][0] * r_ecef[0]
+            + orientation.body_to_j2000[2][1] * r_ecef[1]
+            + orientation.body_to_j2000[2][2] * r_ecef[2],
+    ];
+
+    // v_j2000 = R x (omega x r_ecef), omega = [0, 0, omega_E] in ECEF.
+    let omega = odd_core::consts::EARTH_ROTATION_RATE_RAD_S;
+    let omega_cross_r = [-omega * r_ecef[1], omega * r_ecef[0], 0.0];
+    let v_j2000 = [
+        orientation.body_to_j2000[0][0] * omega_cross_r[0]
+            + orientation.body_to_j2000[0][1] * omega_cross_r[1]
+            + orientation.body_to_j2000[0][2] * omega_cross_r[2],
+        orientation.body_to_j2000[1][0] * omega_cross_r[0]
+            + orientation.body_to_j2000[1][1] * omega_cross_r[1]
+            + orientation.body_to_j2000[1][2] * omega_cross_r[2],
+        orientation.body_to_j2000[2][0] * omega_cross_r[0]
+            + orientation.body_to_j2000[2][1] * omega_cross_r[1]
+            + orientation.body_to_j2000[2][2] * omega_cross_r[2],
+    ];
+
+    Ok(odd_core::frames::State {
+        position_m: r_j2000,
+        velocity_m_s: v_j2000,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -382,6 +432,102 @@ mod tests {
         for epoch in [before, end] {
             assert_eq!(
                 earth_orientation(epoch, EarthOrientationParams::default()),
+                Err(OrientationError::OutsideModelRange)
+            );
+        }
+    }
+
+    #[test]
+    fn launch_site_state_equator_at_epoch() {
+        // Kennedy Space Center-ish: 28.5° N, 80.6° W, sea level, at J2000+1e7 s.
+        // Position magnitude should equal Earth radius + altitude.
+        // Velocity magnitude should equal omega_E * r * cos(latitude).
+        let site =
+            odd_core::frames::LaunchSite::new(28.5_f64.to_radians(), (-80.6_f64).to_radians(), 0.0)
+                .unwrap();
+        let epoch = Epoch::new(820_497_600, 0.0).unwrap();
+        let state =
+            launch_site_state_j2000(&site, epoch, EarthOrientationParams::default()).unwrap();
+
+        let r_mag = (state.position_m[0].powi(2)
+            + state.position_m[1].powi(2)
+            + state.position_m[2].powi(2))
+        .sqrt();
+        let r_expected = odd_core::frames::LaunchSite::EARTH_EQUATORIAL_RADIUS_M;
+        // At 28.5° latitude, geocentric radius is slightly less than equatorial.
+        assert!(
+            (r_mag - r_expected).abs() < r_expected * 1e-3,
+            "radius {r_mag} vs {r_expected}"
+        );
+
+        let v_mag = (state.velocity_m_s[0].powi(2)
+            + state.velocity_m_s[1].powi(2)
+            + state.velocity_m_s[2].powi(2))
+        .sqrt();
+        let v_expected =
+            odd_core::consts::EARTH_ROTATION_RATE_RAD_S * r_expected * 28.5_f64.to_radians().cos();
+        assert!(
+            (v_mag - v_expected).abs() < v_expected * 1e-3,
+            "speed {v_mag} vs {v_expected}"
+        );
+
+        // Velocity should be perpendicular to position (circular rotation).
+        let dot = state.position_m[0] * state.velocity_m_s[0]
+            + state.position_m[1] * state.velocity_m_s[1]
+            + state.position_m[2] * state.velocity_m_s[2];
+        assert!(
+            dot.abs() < 1.0,
+            "position-velocity dot product {dot} not ~0"
+        );
+    }
+
+    #[test]
+    fn launch_site_state_north_pole_has_no_rotational_velocity() {
+        // At the pole, rotational velocity is zero.
+        let site =
+            odd_core::frames::LaunchSite::new(std::f64::consts::FRAC_PI_2, 0.0, 0.0).unwrap();
+        let epoch = Epoch::new(820_497_600, 0.0).unwrap();
+        let state =
+            launch_site_state_j2000(&site, epoch, EarthOrientationParams::default()).unwrap();
+        let v_mag = (state.velocity_m_s[0].powi(2)
+            + state.velocity_m_s[1].powi(2)
+            + state.velocity_m_s[2].powi(2))
+        .sqrt();
+        assert!(v_mag < 1.0, "pole speed {v_mag} not ~0");
+    }
+
+    #[test]
+    fn launch_site_state_ut1_changes_velocity() {
+        // Different UT1-UTC changes ERA and thus the J2000 position.
+        let site = odd_core::frames::LaunchSite::new(0.0, 0.0, 0.0).unwrap();
+        let epoch = Epoch::new(820_497_600, 0.0).unwrap();
+        let s1 = launch_site_state_j2000(&site, epoch, EarthOrientationParams::default()).unwrap();
+        let s2 = launch_site_state_j2000(
+            &site,
+            epoch,
+            EarthOrientationParams {
+                ut1_minus_utc_s: 1.0,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut differ = false;
+        for i in 0..3 {
+            if (s1.position_m[i] - s2.position_m[i]).abs() > 1e-3 {
+                differ = true;
+            }
+        }
+        assert!(differ, "UT1 shift did not change J2000 position");
+    }
+
+    #[test]
+    fn launch_site_state_outside_range() {
+        let site = odd_core::frames::LaunchSite::new(0.0, 0.0, 0.0).unwrap();
+        let before = Epoch::new(631_108_799, 0.999).unwrap();
+        let end = Epoch::new(1_136_030_400, 0.0).unwrap();
+        for epoch in [before, end] {
+            assert_eq!(
+                launch_site_state_j2000(&site, epoch, EarthOrientationParams::default()),
                 Err(OrientationError::OutsideModelRange)
             );
         }

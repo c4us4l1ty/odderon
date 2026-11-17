@@ -684,3 +684,134 @@ impl PreciseState {
         Ok(result)
     }
 }
+
+/// A launch site on a planetary surface, specified by geodetic coordinates.
+///
+/// Latitude and longitude are radians (latitude positive north, longitude
+/// positive east). Altitude is meters above the reference ellipsoid.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LaunchSite {
+    pub latitude_rad: f64,
+    pub longitude_rad: f64,
+    pub altitude_m: f64,
+}
+
+/// Error constructing or using a launch site.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LaunchSiteError {
+    NonFinite,
+    LatitudeOutOfRange,
+    AltitudeOutOfRange,
+}
+
+impl LaunchSite {
+    /// WGS84-equivalent reference ellipsoid (Earth).
+    pub const EARTH_EQUATORIAL_RADIUS_M: f64 = 6_378_137.0;
+    pub const EARTH_POLAR_RADIUS_M: f64 = 6_356_752.314_2;
+
+    /// Create a launch site from geodetic coordinates.
+    ///
+    /// Latitude must be in [-π/2, π/2]; altitude must be >= 0 and finite.
+    pub fn new(
+        latitude_rad: f64,
+        longitude_rad: f64,
+        altitude_m: f64,
+    ) -> Result<Self, LaunchSiteError> {
+        if !latitude_rad.is_finite() || !longitude_rad.is_finite() || !altitude_m.is_finite() {
+            return Err(LaunchSiteError::NonFinite);
+        }
+        if !(-std::f64::consts::FRAC_PI_2..=std::f64::consts::FRAC_PI_2).contains(&latitude_rad) {
+            return Err(LaunchSiteError::LatitudeOutOfRange);
+        }
+        if altitude_m < 0.0 {
+            return Err(LaunchSiteError::AltitudeOutOfRange);
+        }
+        Ok(Self {
+            latitude_rad,
+            longitude_rad,
+            altitude_m,
+        })
+    }
+
+    /// Earth-fixed (ECEF) position of the site, in meters.
+    ///
+    /// Uses the reference ellipsoid: the prime vertical radius of curvature
+    /// accounts for the site's geodetic latitude.
+    pub fn earth_fixed_position_m(&self) -> [f64; 3] {
+        let (sin_lat, cos_lat) = (libm::sin(self.latitude_rad), libm::cos(self.latitude_rad));
+        let (sin_lon, cos_lon) = (libm::sin(self.longitude_rad), libm::cos(self.longitude_rad));
+
+        let e2 = 1.0
+            - (Self::EARTH_POLAR_RADIUS_M * Self::EARTH_POLAR_RADIUS_M)
+                / (Self::EARTH_EQUATORIAL_RADIUS_M * Self::EARTH_EQUATORIAL_RADIUS_M);
+        let n = Self::EARTH_EQUATORIAL_RADIUS_M / (1.0 - e2 * sin_lat * sin_lat).sqrt();
+
+        let x = (n + self.altitude_m) * cos_lat * cos_lon;
+        let y = (n + self.altitude_m) * cos_lat * sin_lon;
+        let z = (n * (1.0 - e2) + self.altitude_m) * sin_lat;
+
+        [x, y, z]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn launch_site_constructor_rejects_invalid_inputs() {
+        assert!(LaunchSite::new(f64::NAN, 0.0, 0.0).is_err());
+        assert!(LaunchSite::new(0.0, f64::NAN, 0.0).is_err());
+        assert!(LaunchSite::new(0.0, 0.0, f64::NAN).is_err());
+        assert!(LaunchSite::new(std::f64::consts::PI, 0.0, 0.0).is_err()); // latitude > pi/2
+        assert!(LaunchSite::new(-std::f64::consts::PI, 0.0, 0.0).is_err()); // latitude < -pi/2
+        assert!(LaunchSite::new(0.0, 0.0, -1.0).is_err()); // negative altitude
+
+        assert!(LaunchSite::new(0.0, 0.0, 0.0).is_ok());
+        assert!(LaunchSite::new(std::f64::consts::FRAC_PI_2, 0.0, 0.0).is_ok()); // north pole
+        assert!(LaunchSite::new(-std::f64::consts::FRAC_PI_2, 0.0, 0.0).is_ok());
+        // south pole
+    }
+
+    #[test]
+    fn launch_site_earth_fixed_position_equator() {
+        // On the equator at the prime meridian, position is [R + h, 0, 0].
+        let site = LaunchSite::new(0.0, 0.0, 0.0).unwrap();
+        let p = site.earth_fixed_position_m();
+        assert!((p[0] - LaunchSite::EARTH_EQUATORIAL_RADIUS_M).abs() < 1.0);
+        assert!(p[1].abs() < 1e-6);
+        assert!(p[2].abs() < 1e-6);
+    }
+
+    #[test]
+    fn launch_site_earth_fixed_position_north_pole() {
+        // At the north pole, position is [0, 0, polar_radius + h].
+        let site = LaunchSite::new(std::f64::consts::FRAC_PI_2, 0.0, 0.0).unwrap();
+        let p = site.earth_fixed_position_m();
+        assert!(p[0].abs() < 1e-6);
+        assert!(p[1].abs() < 1e-6);
+        assert!((p[2] - LaunchSite::EARTH_POLAR_RADIUS_M).abs() < 1.0);
+    }
+
+    #[test]
+    fn launch_site_earth_fixed_position_altitude() {
+        // Altitude adds radially outward.
+        let site0 = LaunchSite::new(0.0, 0.0, 0.0).unwrap();
+        let site1 = LaunchSite::new(0.0, 0.0, 100_000.0).unwrap();
+        let p0 = site0.earth_fixed_position_m();
+        let p1 = site1.earth_fixed_position_m();
+        assert!((p1[0] - p0[0] - 100_000.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn launch_site_longitude_rotates_position() {
+        // 90 degrees east longitude moves position from +X to +Y.
+        let site0 = LaunchSite::new(0.0, 0.0, 0.0).unwrap();
+        let site90 = LaunchSite::new(0.0, std::f64::consts::FRAC_PI_2, 0.0).unwrap();
+        let p0 = site0.earth_fixed_position_m();
+        let p90 = site90.earth_fixed_position_m();
+        assert!((p90[0]).abs() < 1e-6);
+        assert!((p90[1] - p0[0]).abs() < 1.0);
+        assert!(p90[2].abs() < 1e-6);
+    }
+}
