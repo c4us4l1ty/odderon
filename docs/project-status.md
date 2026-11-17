@@ -55,11 +55,17 @@ A static deployment is practice-only. Miniflare/workerd tests and Wrangler
 
 ## Verification state
 
-The latest merge to `main`, `1002748d8a40490996b3a507dad830d7143b52e7`,
-was not executed by GitHub Actions: GitHub refused to start the job because the
-account's payment or spending limit needs attention. This is an infrastructure
-failure, not a test failure, but it means that merge has no independent hosted
-acceptance result. Restore Actions billing and rerun the workflow.
+The latest accepted merge to `main`,
+`d8a8fba4f55e51cc76c22686250929030a7c45a6` (PR #20), was not executed by
+GitHub Actions: the repository was private, its free minute allocation was
+exhausted and the spending limit was zero. The repository is now public while
+its existing copyright and license terms remain unchanged. Public-repository
+Actions do not consume the private-repository minute allocation; rerun the
+workflow to obtain an independent hosted result.
+
+`scripts/check-status-sync.py` machine-checks this page against the shipped FDR
+schema, contract count and onboarding lesson count, and checks every workflow's
+canceling concurrency policy so those product facts cannot drift silently.
 
 Local acceptance remains `./scripts/gate.sh`. On 2026-11-17 the complete gate
 passed on branch commit `7c44847`: formatting, clippy, workspace and named v4

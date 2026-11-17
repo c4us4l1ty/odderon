@@ -1,8 +1,18 @@
 name: Rust foundation
 on:
   push:
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -12,10 +22,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Check shipped status constants
+        run: python3 scripts/check-status-sync.py
       - name: Verify bundled ephemeris checksum
         run: echo '8f651100deaaffbae85ae4dac2a577b805993e8e4cfbe7dd8b710913ece36335  data/packed/de440s-2020-2036.ephb' | sha256sum --check
       - name: Run workspace tests
