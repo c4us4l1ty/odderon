@@ -68,7 +68,7 @@ const lens={
   mli:'Each film layer re-radiates heat to the next, so the leak falls as layers are added. The projection shows the outer skin running hot while only a small fraction reaches the liquid. Past about twenty layers the support struts, not the blanket, set the floor.',
   cop:'A cryocooler lifts heat from the cold tank and rejects it, plus the electricity it consumed, through a warm radiator. The projection compares heat lifted with power drawn: at 20 K against a 300 K sink the electricity is one to two orders of magnitude larger, and the Carnot ceiling caps the ratio.',
   gnc:'Guidance decides where to point, navigation decides where you are, and control moves the actuators. The projection shows the attitude hardware drawing from the same electrical bus that feeds the cooler and the propulsion.',
-  'boil-off':'Heat leaking into a cryogenic tank vaporizes liquid. Below the relief setting the tank self-pressurizes; at relief it vents and the model reports the estimated loss. This version does not feed that loss back into orbital mass or the fuel budget. The projection shows the liquid level falling as heat arrives.',
+  'boil-off':'Heat leaking into a cryogenic tank vaporizes liquid. Below the relief setting the tank self-pressurizes; at relief it vents. In schema 4, venting and burns draw from one propellant pool, so loss changes vehicle mass and can cause flameout. The projection shows the liquid level falling as heat arrives.',
   t:'A push along the direction of travel changes orbital energy. Near the closest point, a forward push raises the farthest point of the orbit; a backward push lowers it. The projection shows kinetic-energy gain or loss and the opposite side breathing outward or inward.',
   n:'This sideways push stays in the orbital plane and is perpendicular to the direction of travel. Near an apsis it points roughly inward or outward; away from one it is not exactly radial. The projection rotates the eccentricity vector.',
   w:'This push is perpendicular to the orbital plane. It changes the direction of the orbit’s angular momentum and tilts the plane about the line of nodes. The projection shows torque as radius crossed with force.',
@@ -86,6 +86,7 @@ const lens={
   apoapsis:'Concentrate pushes near periapsis to raise the farthest point efficiently.',
   impact:'The trajectory reached the reference surface. Raise periapsis before the burn.',
   'split-kick':'Split one long burn into shorter perigee kicks to reduce steering and gravity loss.',
+  'plane-turn':'A push along motion changes orbital energy. Use the out-of-plane handle to rotate angular momentum and tilt the orbital plane.',
   impact:'The trajectory crossed Earth’s reference surface. Propagation stops there; no underground flight is drawn.',
   propellant:'The rocket equation ties speed change to propellant mass. The projection compares required propellant with the tank budget.',
   periapsis:'Raise the closest point above the atmosphere to avoid drag and impact. The projection compares periapsis with the 120 km reference.',
@@ -353,7 +354,8 @@ const CAUSAL_EVIDENCE=[
   i=>`The ideal rocket equation estimates ${i.needed.toFixed(1)} kg required.`,
   i=>`The ideal farthest altitude exceeds the modeled result by ${i.shortfallKm.toFixed(1)} km.`,
   ()=>'No underground flight or late-epoch attribution is reported.',
-  i=>`The commanded burns sweep ${i.sweep.toFixed(1)}° in the isolated two-body model.`
+  i=>`The commanded burns sweep ${i.sweep.toFixed(1)}° in the isolated two-body model.`,
+  i=>`Inclination changed ${i.inclinationChangeDeg.toFixed(4)}° while the contract asks for ${i.requestedInclinationChangeDeg.toFixed(2)}°.`
 ];
 function causalInputs(){
   const planned=nodes.reduce((sum,n)=>sum+Math.hypot(...n.dv),0);
@@ -368,7 +370,12 @@ function causalInputs(){
   if(lastReport&&Number.isFinite(lastReport[57]))sweep=lastReport[57]*180/Math.PI;
   if(lastReport&&Number.isFinite(lastReport[20])&&lastReport[20]>0)lossFraction=Math.max(0,lastReport[22]/lastReport[20]);
   if(lastReport&&preview.length){const ideal=orbitMetrics(preview[preview.length-1].state);if(ideal&&ideal.apo>0){shortfallKm=ideal.apo-lastReport[1]/1000;shortfall=shortfallKm/ideal.apo;}}
-  return {twr:setup[4]/(setup[2]*G0),thrust:setup[4],mass:setup[2],needed,propellantDeficit:needed>setup[2]-DRY,minPeri,sweep,lossFraction,shortfall,shortfallKm,impacted:lastReport?.[30]===1};
+  const r=setup.slice(6,9),v=setup.slice(9,12),h=[r[1]*v[2]-r[2]*v[1],r[2]*v[0]-r[0]*v[2],r[0]*v[1]-r[1]*v[0]],hmag=Math.hypot(...h);
+  const startInclinationDeg=hmag>0?Math.acos(Math.max(-1,Math.min(1,h[2]/hmag)))*180/Math.PI:NaN;
+  const finalInclinationDeg=lastReport&&Number.isFinite(lastReport[26])?lastReport[26]*180/Math.PI:NaN;
+  const inclinationChangeDeg=Number.isFinite(finalInclinationDeg)?Math.abs(finalInclinationDeg-startInclinationDeg):NaN;
+  const requestedInclinationChangeDeg=scenario==='102'?Math.abs(98.60-startInclinationDeg):0;
+  return {twr:setup[4]/(setup[2]*G0),thrust:setup[4],mass:setup[2],needed,propellantDeficit:needed>setup[2]-DRY,minPeri,sweep,lossFraction,shortfall,shortfallKm,impacted:lastReport?.[30]===1,inclinationChangeDeg,requestedInclinationChangeDeg};
 }
 // Engine warnings carry their own evidence, read from the solved design so
 // the browser never restates a threshold Rust owns.
@@ -401,7 +408,7 @@ function updateCausal(){
   const target=$('causal-text');target.replaceChildren();$('split-kick').hidden=true;
   if(!wasm)return;
   const inputs=causalInputs();
-  const count=wasm.mission_diagnose(inputs.twr,inputs.minPeri*1000,120000,inputs.lossFraction,inputs.propellantDeficit?1:0,inputs.shortfall,inputs.impacted?1:0,inputs.sweep);
+  const count=wasm.mission_diagnose(inputs.twr,inputs.minPeri*1000,120000,inputs.lossFraction,inputs.propellantDeficit?1:0,inputs.shortfall,inputs.impacted?1:0,inputs.sweep,inputs.inclinationChangeDeg,inputs.requestedInclinationChangeDeg);
   for(let c=0;c<count;c++){
     const warning=wasm.mission_causal_warning(c),demo=wasmString(wasm.mission_causal_demo_len(c),j=>wasm.mission_causal_demo_byte(c,j));
     const row=document.createElement('div');row.className='cause-chain';row.dataset.demo=demo;row.dataset.warning=String(warning);
