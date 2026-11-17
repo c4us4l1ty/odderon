@@ -104,11 +104,11 @@ correctness. No production deployment is implied.
   every acceleration divides by; a pool emptied by boil-off truncates thrust
   and is signed as a flameout. v1–v3 records keep the old one-way behaviour and
   still replay bit-for-bit. Electric-propulsion surplus is calculated but not
-  applied as thrust in the chemical contracts. Scoring still compares its fuel
-  threshold and prediction against the catalog baseline dry mass rather than
-  the fitted stage; re-baselining scoring is a separate versioned change.
-  `crates/odd-contracts/tests/v4_scoring_baseline.rs` measures the error, which
-  has **no single sign**:
+  applied as thrust in the chemical contracts. Frozen schema 4 compares its
+  fuel threshold and prediction against catalog baseline dry mass rather than
+  the fitted stage. Current schema 5 versions that scoring law and uses verified
+  fitted mass. `crates/odd-contracts/tests/v4_scoring_baseline.rs` preserves the
+  old error and proves the corrected result. The v4 error has **no single sign**:
   * a stage lighter than the catalogue — 5185.938 kg with a zero-layer blanket
     against 5200.017 kg — is declared a fuel failure at a 0.0 score while
     7.040 kg is still aboard; one kilogram more clears it;
@@ -116,9 +116,9 @@ correctness. No production deployment is implied.
     prediction 0.9796× as well at +264 kg dry, because `mass − catalog_dry`
     invents the purchased hardware as propellant the pilot failed to predict.
 
-  So a heavier redesign loses prediction credit and a lighter one can lose the
-  whole mission, which is why this needs a versioned migration rather than a
-  one-line substitution of the fitted mass.
+  Thus a heavier redesign lost prediction credit and a lighter one could lose
+  the whole mission. Schema 5 is the required versioned migration; schema 4 is
+  not silently rewritten.
 - **Practical consequence of coupling:** commands are delta-v setpoints flown
   as fixed burn *durations* sized from the design mass at compile time. Venting
   mass during the coast therefore makes the same commanded burn impart less

@@ -207,9 +207,9 @@ timeline to deplete the two thermal tanks. A post-hoc rocket-equation margin
 subtracting the total loss was therefore only an idealized check, not a fully
 coupled feasibility proof or a bound on trajectory error.
 
-### Still true in v4: the scoring baseline
+### Frozen in v4, corrected in v5: the scoring baseline
 
-The scoring fuel-failure threshold and prediction term still use propagated
+Schema-4 scoring fuel-failure threshold and prediction term use propagated
 mass minus the **catalog baseline** dry mass, whereas the browser's displayed
 remaining fuel uses the actual fitted dry mass. Measured in
 `crates/odd-contracts/tests/v4_scoring_baseline.rs`, the error runs both ways:
@@ -220,8 +220,9 @@ remaining fuel uses the actual fitted dry mass. Measured in
   the catalogue stage's value for an *exactly correct* prediction, because
   `mass − catalog_dry` invents purchased hardware as unpredicted propellant.
 
-Correcting this requires an explicit versioned scoring migration rather than
-silently changing signed results, because it would rescale every redesign.
+Schema 5 is that explicit migration: both terms use verified fitted dry mass.
+Schema-4 certificates preserve these catalog-mass results rather than silently
+changing signed outcomes.
 
 For new v3 certificates, storable stages have no thermal block; cryogenic
 stages must carry exactly one stage-0 block with the engine's propellant and

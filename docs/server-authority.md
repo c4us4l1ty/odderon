@@ -93,21 +93,21 @@ ranked submission; Practice does not change either. The formulas and bit-level
 parity tests live in `crates/odd-contracts/src/elo.rs` and
 `crates/odd-contracts/tests/elo_parity.rs`.
 
-The physics remains a simplified model. Schema 4 **does** couple venting into
-the flight: vented mass leaves one shared propellant pool, so it is subtracted
-from orbital mass and burn fuel, and a dry pool truncates thrust as a
-flameout. The v1–v3 one-way behaviour is frozen and applies only to records
-that declare those schemas; the old v3 ullage/envelope inconsistency is
-likewise historical (see [thermal.md](thermal.md)).
+The physics remains a simplified model. Schemas 4–5 couple venting into the
+flight: vented mass leaves one shared propellant pool, so it is subtracted from
+orbital mass and burn fuel, and a dry pool truncates thrust as a flameout. The
+v1–v3 one-way behaviour is frozen and applies only to records that declare
+those schemas; the old v3 ullage/envelope inconsistency is likewise historical
+(see [thermal.md](thermal.md)).
 
-What is **still** uncorrected is the scoring baseline: the fuel-failure
-threshold and prediction term use the catalog dry mass rather than the fitted
-stage's, while the debrief's displayed remaining propellant uses the fitted
-one. A zero-layer stage is declared out of fuel with 7.040 kg still aboard, and
-a +264 kg stage is scored 0.9796× on an exactly correct prediction. Both are
-measured in `crates/odd-contracts/tests/v4_scoring_baseline.rs`. These behaviors preserve the
-frozen replay and score pins; see [thermal.md](thermal.md). A receipt certifies this model's
-replay, not real-world mission feasibility.
+Frozen schema 4 uses catalog dry mass for its fuel threshold and prediction
+term: a zero-layer stage can be declared out of fuel with 7.040 kg aboard, and
+a +264 kg stage receives 0.9796× prediction credit for an exact prediction.
+Current schema 5 uses verified fitted dry mass for both terms. The authority
+accepts only schema 5 for new receipts while old records remain offline-
+verifiable under their original law. Both outcomes are pinned in
+`crates/odd-contracts/tests/v4_scoring_baseline.rs`. A receipt certifies this
+model's replay, not real-world mission feasibility.
 
 ## Receipts, trust and dossiers
 

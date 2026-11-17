@@ -11,7 +11,8 @@ systems; this page says what a player and an operator can actually use.
   numerical perigee targeting, prediction locking, causal explanations and
   exact four-player Shapley attribution.
 - Physical engine design, cryogenic fit-out, instantaneous electrical-bus
-  allocation, Chief-AI delegation and v4 coupled propellant/thermal flight.
+  allocation, Chief-AI delegation, v4 coupled propellant/thermal flight and v5
+  fitted-mass scoring.
 - Browser-local pilot identity, signed FDRs, replay verification and dossiers.
 - Server-authoritative attempt commitments, receipts, Elo, callsigns,
   leaderboard and public replay, with native SQLite and Cloudflare-compatible
@@ -30,7 +31,7 @@ staging, throttle program, ascent UI or signed ascent replay. Describe this as
 an **ascent foundation**, not a shipped launch system.
 
 The Level-1 conic planner intentionally excludes thermal loss. Level 3 and FDR
-schema 4 integrate tanks, venting and engine depletion in one coupled state.
+schemas 4–5 integrate tanks, venting and engine depletion in one coupled state.
 There is no second callback-based approximation in the preview; the modeled
 flight is the authority on thermal feasibility.
 
@@ -79,9 +80,10 @@ hardware.
   proof nor proof that no external simulator was used before commitment.
 - Incremental authority replay was dropped. `/submit-segment` performs a full
   replay before checkpoint-chain checks.
-- The frozen score uses catalog dry mass in its fuel threshold and prediction
-  term. Fitted hardware can therefore create a measured score/display mismatch.
-  Fixing it requires a versioned scoring migration, not a silent formula edit.
+- Frozen schema-4 certificates use catalog dry mass in their fuel threshold and
+  prediction term and therefore retain the measured score/display mismatch.
+  Current schema 5 fixes both terms with verified fitted mass while preserving
+  schema-4 replay and signatures.
 - Production operations and the broader campaign/economy remain out of scope.
 
 ## Ordered next work
@@ -89,10 +91,9 @@ hardware.
 1. Restore hosted CI and obtain a real green run.
 2. Keep auditing new kernels through the shipped browser and signed-record path;
    direct library tests alone are not acceptance.
-3. Complete and playtest the detailed onboarding storyboard. Keep its scored
-   lesson on the unchanged baseline Contract 101 until scoring semantics are
-   explicitly versioned; do not teach redesign scores through the known
-   catalog-dry-mass defect.
+3. Complete and playtest the detailed onboarding storyboard. The shipped scored
+   lesson remains on baseline Contract 101; any future redesign lesson must test
+   schema-5 fitted-mass scoring explicitly rather than inherit schema-4 claims.
 4. Use local, opt-in observations to refine that path before adding another
    major physics subsystem.
 5. Choose one operational direction: deploy ranked authority with a real

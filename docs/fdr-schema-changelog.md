@@ -179,9 +179,9 @@ labelled legacy.
 
 ---
 
-## v4 — coupled propellant: venting draws from the burnt pool (CURRENT)
+## v4 — coupled propellant: venting draws from the burnt pool (FROZEN)
 
-**Current schema.** `SCHEMA_VERSION = 4`; signing domain
+**Frozen schema.** Signing domain
 `odderon-flight-data-recorder-v4\0`, kept distinct from v3 so a v3 certificate
 can never be replayed as a v4 flight or the reverse. They describe different
 physics.
@@ -228,18 +228,47 @@ under `FrozenUncoupled` exactly as it always did, schema 4 under
 
 - v1/v2/v3 records keep their frozen bytes, geometry and one-way behaviour and
   still replay bit for bit (`oracle_v1_v2_v3_backward_compatibility`).
-- The **authority** accepts only schema 4 for a new submission in either mode;
-  v1–v3 remain independently readable and replayable offline but cannot earn a
-  new receipt (`a_pre_cryogenic_record_can_never_earn_a_receipt`).
+- The authority no longer issues schema 4. It remains independently readable,
+  signature-verifiable and replayable with its original catalog-mass score, but
+  cannot earn a new receipt.
 - This is a **physics re-baseline, not a scoring change**: the objective term
   on Contract 103's un-cooled reference split moved from 0.813 to 0.358
   because the vented mass now leaves the vehicle. The score's fuel threshold
   and prediction term still compare against the catalog baseline dry mass;
-  re-baselining those is a separate versioned change and has not happened.
+  that re-baseline does not occur until v5.
 
 ### Known limits
 
 The coupled loop has no central-body event detector of its own; it reports
-impact as "the trajectory stops early". Scoring still uses the catalog
+impact as "the trajectory stops early". Schema 4 scoring still uses the catalog
 baseline dry mass while the UI displays the fitted one, so a lighter fitted
-stage can score a fuel failure with fuel aboard.
+stage can score a fuel failure with fuel
+aboard. Schema 5 corrects this without changing schema 4 replay.
+
+---
+
+## v5 — fitted-mass scoring (CURRENT)
+
+`SCHEMA_VERSION = 5`; signing domain
+`odderon-flight-data-recorder-v5\0`. Schema 5 reuses the complete v4 field
+layout and coupled flight physics. It changes only the versioned scoring law:
+fuel validity and remaining-propellant prediction error use the verified fitted
+`dry_mass_kg`, rather than the contract catalog baseline.
+
+No new mass field is required: fitted dry mass has been signed since v1 and is
+recomputed from certified engine, thermal fit-out and delegation during replay.
+`PhysicsRevision::FittedScoring` is the sole selector for the corrected score.
+
+Compatibility is deliberate:
+
+- schema 4 dispatches to `CoupledFitted` and `score_delegated`, preserving every
+  existing score;
+- schema 5 dispatches to `FittedScoring` and `score_delegated_fitted`;
+- v4 and v5 share field order but have distinct signing domains, so changing a
+  version cannot silently change a certificate's scoring law;
+- the authority issues receipts only for current schema 5. Older records remain
+  locally parseable, signature-verifiable and replayable.
+
+The migration is pinned by `v4_scoring_baseline`, the v4/v5 domain/transport
+case in `odd-report/tests/tamper_proof.rs`, browser numeric-transport coverage,
+and `odd-worker/tests/schema_acceptance.rs`.
