@@ -5,6 +5,8 @@ systems; this page says what a player and an operator can actually use.
 
 ## Shipped in the repository
 
+- A full-screen, deployment-neutral game menu that launches the flight deck,
+  Academy and Observatory without depending on a storefront or hosting vendor.
 - An Earth–Moon observatory and three browser mission contracts.
 - Deterministic Rust physics shared by native, WebAssembly and authority replay.
 - Multi-node planning, finite-burn propagation, perturbations, impact/entry,
