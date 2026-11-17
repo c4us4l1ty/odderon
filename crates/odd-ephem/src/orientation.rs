@@ -1,10 +1,17 @@
-//! Approximate IAU body orientation and IAU 2006 Earth mean sidereal angle.
+//! Body orientation for the Sun, Moon and Earth.
 //!
 //! The Sun and Moon pole/prime-meridian series are from NAIF pck00011.tpc
 //! (2022), IAU 2015/2009 respectively. The Moon series describes IAU_MOON,
 //! not the higher-accuracy DE440 lunar principal-axes or mean-Earth frames.
-//! Earth needs measured UT1 and terrestrial/celestial pole offsets for precision;
-//! the functions below are not a full ITRF-to-ICRF transformation.
+//!
+//! Earth orientation is offered at two fidelities:
+//!   - `earth_approx_orientation`: IAU 2009 mean model, no UT1 or polar motion.
+//!     Suitable for visualization; NAIF warns its prime-meridian error is at
+//!     least 150 arcseconds.
+//!   - `earth_orientation`: full ITRF-to-ICRF transformation using measured
+//!     Earth Orientation Parameters (UT1-UTC and polar motion x_pole, y_pole).
+//!     Callers supply EOP values from IERS bulletins; this crate does not ship
+//!     EOP data.
 
 use odd_core::epoch::Epoch;
 use std::f64::consts::{PI, TAU};
@@ -13,6 +20,32 @@ use std::f64::consts::{PI, TAU};
 pub enum OrientationError {
     OutsideModelRange,
     NonFinite,
+}
+
+/// Earth Orientation Parameters for a given epoch.
+///
+/// Callers obtain UT1-UTC, x_pole and y_pole from IERS Bulletins A/B and
+/// supply them here. Values are in seconds and radians respectively.
+/// When all fields are zero, `earth_orientation` reduces to the mean model
+/// (equivalent to `earth_approx_orientation` within numerical noise).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EarthOrientationParams {
+    /// UT1 minus UTC, in seconds. Positive means UT1 runs ahead of UTC.
+    pub ut1_minus_utc_s: f64,
+    /// Polar motion x-coordinate (toward the Greenwich meridian), radians.
+    pub x_pole_rad: f64,
+    /// Polar motion y-coordinate (toward 90° west longitude), radians.
+    pub y_pole_rad: f64,
+}
+
+impl Default for EarthOrientationParams {
+    fn default() -> Self {
+        Self {
+            ut1_minus_utc_s: 0.0,
+            x_pole_rad: 0.0,
+            y_pole_rad: 0.0,
+        }
+    }
 }
 
 /// Approximate IAU orientation, with columns equal to the body-fixed unit
@@ -147,4 +180,210 @@ pub fn earth_mean_angles(ut1_days: f64, tt_days: f64) -> Result<(f64, f64), Orie
         (era + gmst_arcsec * PI / (180.0 * 3600.0)).rem_euclid(TAU),
         obliq_arcsec * PI / (180.0 * 3600.0),
     ))
+}
+
+/// Multiply two 3x3 matrices (row-major).
+fn mat3_mul(a: [[f64; 3]; 3], b: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
+    std::array::from_fn(|i| {
+        std::array::from_fn(|j| a[i][0] * b[0][j] + a[i][1] * b[1][j] + a[i][2] * b[2][j])
+    })
+}
+
+/// Rotation about the z-axis by `angle` radians.
+fn rot3_z(angle: f64) -> [[f64; 3]; 3] {
+    let (s, c) = (libm::sin(angle), libm::cos(angle));
+    [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]]
+}
+
+/// Polar motion matrix: ITRF to mean pole system, from x_pole and y_pole.
+/// First-order IERS convention; x_pole and y_pole in radians.
+fn polar_motion(x_pole_rad: f64, y_pole_rad: f64) -> [[f64; 3]; 3] {
+    let (cx, sx) = (libm::cos(x_pole_rad), libm::sin(x_pole_rad));
+    let (cy, sy) = (libm::cos(y_pole_rad), libm::sin(y_pole_rad));
+    // R_y(-y_p) * R_x(-x_p)
+    [
+        [cy, 0.0, -sy],
+        [sx * sy, cx, sx * cy],
+        [cx * sy, -sx, cx * cy],
+    ]
+}
+
+/// Full ITRF-to-ICRF Earth orientation using Earth Orientation Parameters.
+///
+/// Combines the IAU 2009 mean celestial pole direction with a diurnal
+/// rotation determined by UT1 (via the Earth Rotation Angle) and a polar
+/// motion correction from x_pole and y_pole. Callers supply measured EOP
+/// from IERS Bulletins A/B.
+///
+/// When `params` are all zero, the result matches `earth_approx_orientation`
+/// to within numerical noise (both use the same mean pole model).
+pub fn earth_orientation(
+    epoch: Epoch,
+    params: EarthOrientationParams,
+) -> Result<BodyOrientation, OrientationError> {
+    if !params.ut1_minus_utc_s.is_finite()
+        || !params.x_pole_rad.is_finite()
+        || !params.y_pole_rad.is_finite()
+    {
+        return Err(OrientationError::NonFinite);
+    }
+
+    // Mean orientation: pole direction (RA/Dec) and approximate prime meridian.
+    let mean = earth_approx_orientation(epoch)?;
+    let d = bounded_days(epoch)?;
+
+    // Mean prime meridian angle from the IAU 2009 model, in radians.
+    let w_mean = (190.147 + 360.9856235 * d).to_radians();
+
+    // Earth Rotation Angle from UT1 = UTC + (UT1 - UTC).
+    let ut1_days = d + params.ut1_minus_utc_s / 86_400.0;
+    let era = TAU
+        * (0.779_057_273_264_0 + 0.002_737_811_911_354_48 * ut1_days + ut1_days.rem_euclid(1.0));
+
+    // Replace the mean-model prime-meridian rotation with the UT1-based ERA:
+    //   body_to_j2000 = M_mean × R3_z(ERA - w_mean) × M_polar
+    let delta_w = era - w_mean;
+    let body_to_j2000 = mat3_mul(
+        mat3_mul(mean.body_to_j2000, rot3_z(delta_w)),
+        polar_motion(params.x_pole_rad, params.y_pole_rad),
+    );
+
+    Ok(BodyOrientation {
+        pole_ra_rad: mean.pole_ra_rad,
+        pole_dec_rad: mean.pole_dec_rad,
+        prime_meridian_rad: era,
+        body_to_j2000,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn earth_orientation_zero_params_preserves_pole() {
+        // With zero EOP, earth_orientation and earth_approx_orientation share
+        // the same celestial pole direction (column 2 of body_to_j2000).
+        // The rotation about the pole differs because ERA (UT1-based) and the
+        // mean-model prime meridian angle have different zero points.
+        let epoch = Epoch::new(820_497_600, 0.0).unwrap();
+        let approx = earth_approx_orientation(epoch).unwrap();
+        let eop = earth_orientation(epoch, EarthOrientationParams::default()).unwrap();
+        for i in 0..3 {
+            assert!(
+                (approx.body_to_j2000[i][2] - eop.body_to_j2000[i][2]).abs() < 1e-12,
+                "pole component {i} differs: {} vs {}",
+                approx.body_to_j2000[i][2],
+                eop.body_to_j2000[i][2]
+            );
+        }
+    }
+
+    #[test]
+    fn earth_orientation_is_valid_rotation() {
+        // The output matrix must be orthonormal with determinant +1.
+        let epoch = Epoch::new(820_497_600, 0.0).unwrap();
+        let params = EarthOrientationParams {
+            ut1_minus_utc_s: 0.42,
+            x_pole_rad: 0.1 * PI / 180.0 / 3600.0, // 0.1 arcsec
+            y_pole_rad: -0.2 * PI / 180.0 / 3600.0, // -0.2 arcsec
+        };
+        let ori = earth_orientation(epoch, params).unwrap();
+        let m = ori.body_to_j2000;
+
+        // Columns must be unit vectors.
+        for col in [0, 1, 2] {
+            let mag =
+                (m[0][col] * m[0][col] + m[1][col] * m[1][col] + m[2][col] * m[2][col]).sqrt();
+            assert!((mag - 1.0).abs() < 1e-12, "column {col} not unit: {mag}");
+        }
+
+        // Columns must be mutually orthogonal.
+        for (a, b) in [(0, 1), (0, 2), (1, 2)] {
+            let dot = m[0][a] * m[0][b] + m[1][a] * m[1][b] + m[2][a] * m[2][b];
+            assert!(dot.abs() < 1e-12, "columns {a},{b} not orthogonal: {dot}");
+        }
+
+        // Determinant must be +1.
+        let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+            - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+        assert!((det - 1.0).abs() < 1e-12, "determinant {det} not +1");
+    }
+
+    #[test]
+    fn earth_orientation_ut1_changes_rotation() {
+        // Changing UT1-UTC must rotate the body-fixed axes about the pole.
+        let epoch = Epoch::new(820_497_600, 0.0).unwrap();
+        let base = earth_orientation(epoch, EarthOrientationParams::default()).unwrap();
+        let shifted = earth_orientation(
+            epoch,
+            EarthOrientationParams {
+                ut1_minus_utc_s: 1.0,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        // The matrices must differ (1 s of UT1 changes ERA by ~15 microradians).
+        let mut differ = false;
+        for i in 0..3 {
+            for j in 0..3 {
+                if (base.body_to_j2000[i][j] - shifted.body_to_j2000[i][j]).abs() > 1e-9 {
+                    differ = true;
+                }
+            }
+        }
+        assert!(differ, "UT1 shift did not change orientation");
+    }
+
+    #[test]
+    fn earth_orientation_polar_motion_changes_matrix() {
+        // Non-zero polar motion must change the matrix.
+        let epoch = Epoch::new(820_497_600, 0.0).unwrap();
+        let base = earth_orientation(epoch, EarthOrientationParams::default()).unwrap();
+        let shifted = earth_orientation(
+            epoch,
+            EarthOrientationParams {
+                x_pole_rad: 0.5 * PI / 180.0 / 3600.0, // 0.5 arcsec
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut differ = false;
+        for i in 0..3 {
+            for j in 0..3 {
+                if (base.body_to_j2000[i][j] - shifted.body_to_j2000[i][j]).abs() > 1e-12 {
+                    differ = true;
+                }
+            }
+        }
+        assert!(differ, "polar motion did not change orientation");
+    }
+
+    #[test]
+    fn earth_orientation_rejects_non_finite() {
+        let epoch = Epoch::new(820_497_600, 0.0).unwrap();
+        assert_eq!(
+            earth_orientation(
+                epoch,
+                EarthOrientationParams {
+                    ut1_minus_utc_s: f64::NAN,
+                    ..Default::default()
+                },
+            ),
+            Err(OrientationError::NonFinite)
+        );
+    }
+
+    #[test]
+    fn earth_orientation_outside_range() {
+        let before = Epoch::new(631_108_799, 0.999).unwrap();
+        let end = Epoch::new(1_136_030_400, 0.0).unwrap();
+        for epoch in [before, end] {
+            assert_eq!(
+                earth_orientation(epoch, EarthOrientationParams::default()),
+                Err(OrientationError::OutsideModelRange)
+            );
+        }
+    }
 }
