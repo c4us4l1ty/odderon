@@ -22,7 +22,7 @@ Lens and causal warning DAG, multi-node maneuver planning, locked predictions,
 impact handling, numerical perigee-kick targeting, exact Shapley error
 attribution, isolated finite-burn loss and three playable mission scenarios,
 including the cislunar Contract 103. The mission page includes an opt-in,
-event-driven six-lesson guide whose completion checks read the real controls;
+event-driven seven-lesson guide whose completion checks read the real controls;
 progress stays off until the player consents to local storage. A patched
 encounter preview exposes lunar B-plane coordinates and a practice targeting
 aid. It remains a simplified prototype—not a lunar-capture optimizer—with

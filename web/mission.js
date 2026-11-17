@@ -6,12 +6,12 @@ import { createAssembly, assemblyPayload, applyAssembly } from './assembly.js';
 import * as identity from './identity.js';
 import { initProfile, openProfile, syncProfile } from './profile.js';
 import * as recorder from './recorder.js';
-import { initVerify, openVerify, result as verificationResult } from './verify.js';
+import { initVerify, onVerification, openVerify, result as verificationResult } from './verify.js';
 import * as authority from './authority.js';
 import { verifyReceipt } from './authority-crypto.js';
 import { initLeaderboard } from './leaderboard.js';
 import { readMissionNodes } from './mission-nodes.js';
-import { createOnboarding } from './onboarding.js';
+import { createOnboarding, createPlaytestRecorder, placementRoute } from './onboarding.js';
 const $=id=>document.getElementById(id);
 const MU=3.986004418e14,R=6378137,G0=9.80665;
 let INITIAL=R+260000,TARGET=R+550000,DURATION=10800,DRY=1020,plane=[1,0],scenario='101',contractId=101;
@@ -24,7 +24,8 @@ const clampNodeTime=t=>{const [lo,hi]=nodeTimeRange();return Math.max(lo,Math.mi
 let setup=[820497600,DURATION,1200,DRY,2400,310,INITIAL,0,0,0,Math.sqrt(MU/INITIAL),0];
 const canvas=$('plan-canvas'),ctx=canvas.getContext('2d');
 const lensCanvas=$('lens-canvas'),lensCtx=lensCanvas.getContext('2d');
-let wasm,nodes=[],compiledOrder=[],selected=-1,preview=[],lunarPreview=[],actual=null,lastReport=null,lastLunarInfo=null,lastBplaneInfo=null,worker=null,locked=null,drag=null,draws=0,messages=0,sequence=0,onboarding=null;
+let wasm,nodes=[],compiledOrder=[],selected=-1,preview=[],lunarPreview=[],actual=null,lastReport=null,lastLunarInfo=null,lastBplaneInfo=null,worker=null,locked=null,drag=null,draws=0,messages=0,sequence=0,onboarding=null,delegatedBaselineDryKg=NaN,catalogDryKg=NaN;
+const playtest=createPlaytestRecorder();
 // A local, best-effort guard against using numerical practice as a ranked
 // planning preview. The server cannot inspect or trust a user's browser.
 const practiceSimulated=new Set();
@@ -206,9 +207,9 @@ function workerPayload(){
 function startFlight(version,flightContext){
   cancelFlight();worker=new Worker('./mission-worker.js',{type:'module'});const current=worker;
   current.onmessage=({data})=>{messages++;if(worker!==current||version!==sequence)return;current.terminate();worker=null;
-    if(data.error){$('plan-status').textContent=data.error;$('plan-status').classList.add('failure');$('execute-status').textContent=data.error;return;}
+    if(data.error){playtest.retry();$('plan-status').textContent=data.error;$('plan-status').classList.add('failure');$('execute-status').textContent=data.error;return;}
     actual=data.points;lastReport=data.report;lastCapture=data.capture??null;lastBoilOff=data.boilOff??null;lastDelegationMask=data.delegationMask??0;lastRecorder=null;lastComputeMs=Number.isFinite(data.computeMs)?data.computeMs:null;lastLunarInfo=data.lunarInfo?.[0]?data.lunarInfo:null;if(data.lunar?.length)lunarPreview=data.lunar;updateCausal();draw();$('plan-status').textContent='Flight model ready. No simulation runs while idle.';annotateAcronyms($('plan-status'));
-    showDebrief(data.report,flightContext,version);onboarding?.update();
+    showDebrief(data.report,flightContext,version);onboarding?.update();if(onboarding?.active&&$('onboarding-next').disabled)playtest.retry();
   };
   current.onerror=()=>{if(worker!==current)return;worker.terminate();worker=null;$('plan-status').textContent='Flight worker failed.';$('execute-status').textContent='Flight worker failed.';};
   const payload=workerPayload();
@@ -411,7 +412,7 @@ function updateCausal(){
   const inputs=causalInputs();
   const count=wasm.mission_diagnose(inputs.twr,inputs.minPeri*1000,120000,inputs.lossFraction,inputs.propellantDeficit?1:0,inputs.shortfall,inputs.impacted?1:0,inputs.sweep,inputs.inclinationChangeDeg,inputs.requestedInclinationChangeDeg);
   for(let c=0;c<count;c++){
-    const warning=wasm.mission_causal_warning(c),demo=wasmString(wasm.mission_causal_demo_len(c),j=>wasm.mission_causal_demo_byte(c,j));
+    const warning=wasm.mission_causal_warning(c),demo=wasmString(wasm.mission_causal_demo_len(c),j=>wasm.mission_causal_demo_byte(c,j));playtest.causal(`rule-${warning}`);
     const row=document.createElement('div');row.className='cause-chain';row.dataset.demo=demo;row.dataset.warning=String(warning);
     const n=wasm.mission_causal_node_count(c);
     for(let j=0;j<n;j++){
@@ -644,14 +645,23 @@ function updateAttemptMode(reset=false){
   const split=$('split-kick');
   if(split){split.disabled=!!locked||(scenario==='103'&&select.value==='ranked');split.title=scenario==='103'&&select.value==='ranked'?'Numerical targeting runs the flight model and is available only in practice.':'';}
 }
+function currentRecorderVerified(){
+  const result=verificationResult();
+  if(result?.code!==1||!lastRecorder||!result.json)return false;
+  try{return JSON.parse(result.json).canonical_digest===lastRecorder.document.canonical_digest;}catch{return false;}
+}
 function onboardingSnapshot(){
   const required=['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time'];
   const predictionReady=required.every(id=>$(id).value.trim()!==''&&Number.isFinite(Number($(id).value)));
   const engine=engineLab?.diagnostics();
+  const stage=assembly?.diagnostics();
   const ideal=preview.length?orbitMetrics(preview[preview.length-1].state):null;
+  const remaining=lastReport&&stage?lastReport[0]-stage.dryMass:NaN;
+  const predictionError=locked&&Number.isFinite(remaining)?Math.abs(remaining-locked.prediction.fuel):NaN;
   return {
     contract:contractId,
     nodes:nodes.length,
+    firstTangentialDv:nodes[0]?.dv[0],
     predictionReady,
     idealApoapsisKm:ideal?.apo,
     idealPeriapsisKm:ideal?.peri,
@@ -665,16 +675,32 @@ function onboardingSnapshot(){
     score:lastReport?.[4],
     inclinationDeg:lastReport?.[26]*180/Math.PI,
     impacted:lastReport?.[30]===1,
+    schemaVersion:lastRecorder?.document?.schema_version??5,
+    verified:currentRecorderVerified(),
+    fittedDryKg:stage?.dryMass,
+    wetMassKg:stage?.wetMass,
+    initialPropellantKg:stage?stage.wetMass-stage.dryMass:NaN,
+    delegatedBaselineDryKg,
+    predictionErrorKg:predictionError,
+    predictionErrorBeforeKg:Number.isFinite(predictionError)?predictionError:Math.abs(delegatedBaselineDryKg-catalogDryKg),
+    efficiency:lastReport?.[36],
+    objectivePassed:lastReport?.[30]===0&&Math.abs(lastReport?.[40])<=15_000_000,
   };
 }
 function activateOnboardingLesson(lesson){
   if(locked)$('unlock').click();
-  if(String(lesson.contract)!==scenario){
+  if(String(lesson.contract)!==scenario||lesson.reset){
     $('mission-select').value=String(lesson.contract);
     $('mission-select').dispatchEvent(new Event('change',{bubbles:true}));
   }
   if(lesson.contract===103&&lesson.focus==='#split-kick'){
     $('attempt-mode').value='practice';updateAttemptMode();
+  }
+  if(lesson.schema5){
+    $('attempt-mode').value='practice';updateAttemptMode();
+    catalogDryKg=assembly?.diagnostics().dryMass??NaN;
+    for(let i=0;i<4;i++){const toggle=$(`delegate-${i}`);if(toggle&&!toggle.checked)toggle.click();}
+    delegatedBaselineDryKg=assembly?.diagnostics().dryMass??NaN;
   }
   const target=document.querySelector(lesson.focus);
   target?.scrollIntoView({block:'center',behavior:'auto'});
@@ -751,6 +777,25 @@ canvas.addEventListener('pointermove',e=>{
 function endDrag(e){if(drag&&drag.pointer===e.pointerId){drag=null;stopLens();}}
 canvas.addEventListener('pointerup',endDrag);canvas.addEventListener('pointercancel',endDrag);canvas.addEventListener('lostpointercapture',endDrag);canvas.addEventListener('pointerleave',e=>{if(!drag&&!intoLens(e))stopLens();});
 new ResizeObserver(draw).observe(canvas.parentElement);
+function beginPlacement(){
+  const box=$('placement-diagnostic'),copy=$('placement-copy'),choices=$('placement-choices'),status=$('placement-status');
+  $('onboarding-welcome').hidden=true;box.hidden=false;let checks={apsis:false,phasing:false,massPrediction:false};playtest.startLesson(0);
+  const route=()=>{const destination=placementRoute(checks);playtest.complete();box.hidden=true;if(destination==='ranked'){$('onboarding').hidden=true;if($('onboarding-save').checked){try{localStorage.setItem('odderon:onboarding:v1',JSON.stringify({version:1,lesson:6,complete:true}));}catch{}}}else onboarding.begin(destination);};
+  $('placement-measure').onclick=()=>{
+    const state=onboardingSnapshot();checks.apsis=state.nodes>=1&&state.idealApoapsisKm>=500;
+    if(!checks.apsis){status.textContent='The measured apoapsis missed the target ring. Starting with Lesson 1.';route();return;}
+    copy.textContent='Check 2: a target is 15 degrees ahead in the same orbit. Choose the first phasing burn.';status.textContent='Apsis control passed.';choices.replaceChildren();
+    for(const direction of ['Prograde','Retrograde']){const button=document.createElement('button');button.textContent=direction;button.onclick=()=>{playtest.setPhasingDirection(direction);checks.phasing=direction==='Retrograde';if(!checks.phasing){status.textContent='A prograde burn falls behind. Starting at the catch-up lesson.';route();return;}copy.textContent='Check 3: manual redesign removes 150 kg dry mass. For a 100 m/s burn near 450 seconds specific impulse, what happens to remaining propellant?';choices.replaceChildren();
+      for(const [label,correct] of [['It increases by about 3 kg',true],['It decreases by about 3 kg',false],['It does not change',false]]){const answer=document.createElement('button');answer.textContent=label;answer.onclick=()=>{checks.massPrediction=correct;route();};choices.append(answer);}};choices.append(button);}
+  };
+}
+function setupPlaytestControls(){
+  const consent=$('playtest-consent'),exportButton=$('playtest-export'),clearButton=$('playtest-clear');
+  consent.addEventListener('change',()=>{playtest.setConsent(consent.checked);exportButton.disabled=!consent.checked;clearButton.disabled=!consent.checked;});
+  exportButton.addEventListener('click',()=>{const json=playtest.exportJson();if(json)recorder.download('odderon-playtest-session.json',`${json}\n`,'application/json');});
+  clearButton.addEventListener('click',()=>{playtest.clear();});
+  $('placement-start').addEventListener('click',beginPlacement);
+}
 window.missionDiagnostics=Object.freeze({wasm:()=>wasm,recorder:()=>lastRecorder,verification:()=>verificationResult(),openVerify,profile:()=>identity.profile(),isRanked:id=>identity.isRanked(id),openProfile,get nodeTimeRange(){return nodeTimeRange();},clampNodeTime,get nodeMarker(){const n=nodes[selected];if(!n||!wasm)return null;const s=readState(wasm,n.time);return s.some(x=>!Number.isFinite(x))?null:toCanvas(s);},get pathEnds(){return preview.length?[toCanvas(preview[0].state),toCanvas(preview[preview.length-1].state)]:null;},get nodes(){return nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));},get pending(){return !!worker||authorityPending>0;},get draws(){return draws;},get messages(){return messages;},get locked(){return !!locked;},get report(){return lastReport?[...lastReport]:null;},get computeMs(){return lastComputeMs;},get lunarInfo(){return lastLunarInfo?[...lastLunarInfo]:null;},get lens(){return activeLens;},get lensDraws(){return lensDraws;},get lensPending(){return lensGovernor.frame!==null;},get engine(){return engineLab?engineLab.diagnostics():null;},get appliedEngine(){return appliedEngine?{...appliedEngine}:null;},get assembly(){return assembly?assembly.diagnostics():null;},get boilOff(){return lastBoilOff;},get flownDelegationMask(){return lastDelegationMask;},get causalValid(){return wasm?wasm.mission_causal_valid()===1&&wasm.mission_engine_causal_valid()===1:false;},get acronymViolations(){return acronymViolations();},get handles(){if(selected<0||!wasm)return [];const state=readState(wasm,nodes[selected].time);return handles(toCanvas(state),state).map(h=>({key:h.key,end:h.end}));},get refusal(){return wasm?refusal(wasm):null;}});
 try{const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error('The physics module is not available. Build it first.');({instance:{exports:wasm}}=await WebAssembly.instantiate(await response.arrayBuffer(),{}));identity.init(wasm);initProfile();initVerify(wasm);initLeaderboard();updateAttemptMode(true);loadGlossary(wasm);
 // The lab reads canonical stage numbers back after a redesign so the planner,
@@ -782,5 +827,5 @@ assembly=createAssembly({wasm,isLocked:()=>!!locked,annotate:annotateAcronyms,on
 }});
 if(wasm.mission_contract(contractId)){engineLab.loadBaseline();engineLab.setLocked();assembly.sync();assembly.setLocked();}
 annotateAcronyms(document.querySelector('.mission-main'));syncFields();updatePreview();
-onboarding=createOnboarding({snapshot:onboardingSnapshot,activate:activateOnboardingLesson});
+onboarding=createOnboarding({snapshot:onboardingSnapshot,activate:activateOnboardingLesson,recorder:playtest});onVerification(()=>onboarding?.update());setupPlaytestControls();
 }catch(e){$('plan-status').classList.add('failure');$('plan-status').textContent=String(e.message||e);annotateAcronyms($('plan-status'));}

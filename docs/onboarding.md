@@ -1,13 +1,11 @@
 # First 30 Minutes: Onboarding Design
 
-Status: **initial browser implementation with a measured design backlog.** The
-mission page now ships an opt-in six-lesson guide, four-rung hints, event-driven
-completion checks and optional local-only progress. It uses the real contract,
-engine and debrief controls and never scripts an outcome. The detailed visual
-storyboard, placement test and playtest protocol below remain acceptance work,
-not a claim that every screen has shipped. Every lesson is backed by a measured kernel run in
-`crates/odd-verify/tests/onboarding_lessons.rs`; where the kernel refused the
-story, the story changed.
+Status: **seven lessons, placement routing and consent-gated local observations
+are implemented.** The mission page uses real contract, engine and debrief
+controls and never scripts an outcome. The authoritative shipped specification
+is [`onboarding-storyboard.md`](onboarding-storyboard.md); where the historical
+measurements and rejected alternatives below conflict with it, the shipped
+storyboard and oracle tests win. Structured external playtesting remains next.
 
 The target is the **browser** build (WebGL2 + `web/*.js` + `odd_view.wasm`), so
 the harness also flies each lesson under the settings `odd_view::mission_bridge`
@@ -49,15 +47,17 @@ first 30 minutes.
 | # | Minutes | Lesson | Contract | Concept earned | Discovery |
 | --- | --- | --- | --- | --- | --- |
 | 1 | 0–5 | **Your satellite is falling** | 101 | Apoapsis, periapsis, prograde | One burn raises one side only; a second burn is needed |
-| 2 | 5–10 | **Guess first** | 101 | Prediction, delta-v | Your guess and the truth are two different curves |
+| 2 | 5–10 | **Catch up by falling behind** | 101 | Phasing, retrograde | A lower orbit moves ahead faster |
 | 3 | 10–15 | **Tilting the orbit** | 102 | Inclination, node, plane change | Height and plane are separate; the turn is cheapest high |
 | 4 | 15–22 | **The shaking engine** | 103 engine | Flow separation, ambient pressure, Isp | The same bell is a different engine in air |
 | 5 | 22–27 | **The long-burn trap** | 103 | Gravity loss, gravity turn | A slow burn near periapsis throws itself away |
 | 6 | 27–30 | **First real contract** | 101 scored | Score, prediction term, dossier | Prediction is 25% of your score |
+| 7 | 30–40 | **The mass budget** | 103 | Fitted dry mass, coupled propellant | Hardware mass changes burn and prediction outcomes |
 
 The rule behind the order: **each lesson spends the vocabulary the previous one
-earned.** Lesson 2 does not name "prediction baseline" until the player has
-already made a prediction and been wrong in lesson 1. Lesson 5 does not say
+earned.** Lesson 2 turns Lesson 1's tangential control into phasing intuition;
+Lesson 6 introduces scored prediction before Lesson 7 applies it to fitted mass.
+Lesson 5 does not say
 "gravity loss" until lesson 4 has shown that `Isp` is a *rate of spending fuel*,
 not a magic quality score.
 
@@ -132,9 +132,15 @@ present a lever that the kernel will refuse.** The prograde arrow's range is
 clamped to the remaining budget, and the refusal is measured here so the clamp
 has a number behind it.
 
-### Lesson 2 — Guess first (5–10 min)
+### Lesson 2 — Catch up by falling behind (5–10 min)
 
-- **[visible]** The same orbit, the same arrow, plus a **dashed gold marker** on
+The shipped lesson resets Contract 101, asks for a lower/faster phasing orbit,
+and passes only for a retrograde first burn with ideal periapsis in the measured
+120–240 km band. See the authoritative storyboard. The prediction-marker draft
+below is retained as superseded design history; prediction is now taught by
+Lesson 6.
+
+- **[historical visible]** The same orbit, the same arrow, plus a **dashed gold marker** on
   the orbit where the player predicts apoapsis will land. The previous flight's
   trace is still on screen in faint grey.
 - **[copy]** Pre-action, **22 words**:

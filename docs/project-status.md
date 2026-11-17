@@ -35,11 +35,13 @@ schemas 4–5 integrate tanks, venting and engine depletion in one coupled state
 There is no second callback-based approximation in the preview; the modeled
 flight is the authority on thermal feasibility.
 
-The mission page now includes the initial measured six-lesson onboarding flow:
-it is opt-in, checks real mission state, offers four hint rungs and stores
-progress only after explicit local consent. The full visual storyboard,
-placement test and playtest protocol in [`onboarding.md`](onboarding.md) remain
-unimplemented acceptance work.
+The mission page includes a measured seven-lesson onboarding flow, a three-check
+hands-on placement diagnostic and the Schema-5 fitted-mass redesign lesson. It
+checks real mission state, offers four hint rungs and stores progress only after
+explicit local consent. A separate, default-off playtest consent gate records
+local observations for explicit export; [`onboarding-storyboard.md`](onboarding-storyboard.md)
+pins every screen, threshold and recovery path. Structured external playtesting
+has not yet occurred.
 
 ## Deployment boundary
 
@@ -55,14 +57,20 @@ A static deployment is practice-only. Miniflare/workerd tests and Wrangler
 
 ## Verification state
 
-The latest merge to `main`, `1002748d8a40490996b3a507dad830d7143b52e7`,
-was not executed by GitHub Actions: GitHub refused to start the job because the
-account's payment or spending limit needs attention. This is an infrastructure
-failure, not a test failure, but it means that merge has no independent hosted
-acceptance result. Restore Actions billing and rerun the workflow.
+The latest accepted merge to `main`,
+`d8a8fba4f55e51cc76c22686250929030a7c45a6` (PR #20), was not executed by
+GitHub Actions: the repository was private, its free minute allocation was
+exhausted and the spending limit was zero. The repository is now public while
+its existing copyright and license terms remain unchanged. Public-repository
+Actions do not consume the private-repository minute allocation; rerun the
+workflow to obtain an independent hosted result.
+
+`scripts/check-status-sync.py` machine-checks this page against the shipped FDR
+schema, contract count and onboarding lesson count, and checks every workflow's
+canceling concurrency policy so those product facts cannot drift silently.
 
 Local acceptance remains `./scripts/gate.sh`. On 2026-11-17 the complete gate
-passed on branch commit `7c44847`: formatting, clippy, workspace and named v4
+passed on branch commit `6a995d9`: formatting, clippy, workspace and named v4/v5
 oracles, native/WASM/Chrome parity, browser and idle checks, assembly, native
 SQLite authority, workerd D1/R2 authority and concurrency/fault tests. A green
 gate covers implemented contracts and selected browser/runtime paths; it is not
@@ -91,10 +99,10 @@ hardware.
 1. Restore hosted CI and obtain a real green run.
 2. Keep auditing new kernels through the shipped browser and signed-record path;
    direct library tests alone are not acceptance.
-3. Complete and playtest the detailed onboarding storyboard. The shipped scored
-   lesson remains on baseline Contract 101; any future redesign lesson must test
-   schema-5 fitted-mass scoring explicitly rather than inherit schema-4 claims.
-4. Use local, opt-in observations to refine that path before adding another
+3. Run the completed placement, seven-lesson storyboard and Schema-5 redesign
+   lesson with external players; aggregate only their explicitly exported local
+   observations with the Rust summary analyzer.
+4. Use those opt-in observations to refine the path before adding another
    major physics subsystem.
 5. Choose one operational direction: deploy ranked authority with a real
    runbook, or remain practice-only while building the full ascent work package.

@@ -60,6 +60,13 @@ node tools/core-oracle/check-parity.mjs
 step "node unit tests"
 npm test
 
+step "WP 1.12 onboarding, privacy, analyzer and status oracles"
+cargo test --locked --offline -p odd-app --lib \
+    oracle_playtest_consent_privacy_and_export_analyzer
+node --test --test-name-pattern='oracle_(lesson7_schema5_redesign_threshold|placement_diagnostic_routing|playtest_consent_privacy_and_export)' \
+    tests/browser/onboarding.test.js
+python3 scripts/check-status-sync.py
+
 step "browser E2E + idle gate"
 npm run test:browser
 

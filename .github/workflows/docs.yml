@@ -1,0 +1,34 @@
+name: Status documentation
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - '**/*.md'
+      - 'scripts/check-status-sync.py'
+      - '.github/workflows/**'
+      - 'web/onboarding.js'
+      - 'crates/odd-report/src/fdr.rs'
+      - 'crates/odd-contracts/src/lib.rs'
+  pull_request:
+    paths:
+      - 'docs/**'
+      - '**/*.md'
+      - 'scripts/check-status-sync.py'
+      - '.github/workflows/**'
+      - 'web/onboarding.js'
+      - 'crates/odd-report/src/fdr.rs'
+      - 'crates/odd-contracts/src/lib.rs'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  status-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check shipped status constants
+        run: python3 scripts/check-status-sync.py

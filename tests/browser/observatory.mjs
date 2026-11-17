@@ -159,13 +159,39 @@ try{
   // progress until the player explicitly consents.
   assert.equal(await page.locator('#onboarding').isVisible(),true);
   assert.equal(await page.locator('#onboarding-save').isChecked(),false);
+  assert.equal(await page.locator('#playtest-consent').isChecked(),false);
   assert.equal(await page.evaluate(()=>localStorage.getItem('odderon:onboarding:v1')),null);
-  await page.locator('#onboarding-start').click();
+  assert.equal(await page.evaluate(()=>localStorage.getItem('odderon:playtest:v1')),null);
+  // Placement Check 1 measures the real empty plan and deterministically routes
+  // a new player to Lesson 1 rather than pretending a quiz answer moved an orbit.
+  await page.locator('#placement-start').click();
+  await page.locator('#placement-measure').click();
   assert.equal(await page.locator('#onboarding-lesson').isVisible(),true);
-  assert.match(await page.locator('#onboarding-progress').textContent(),/LESSON 1 \/ 6/);
+  assert.match(await page.locator('#onboarding-progress').textContent(),/LESSON 1 \/ 7/);
   assert.equal(await page.locator('#onboarding-next').isDisabled(),true);
+  assert.equal(await page.evaluate(()=>localStorage.getItem('odderon:playtest:v1')),null);
   await page.locator('#onboarding-close').click();
   assert.equal(await page.locator('#onboarding').isHidden(),true);
+  // Explicit playtest consent creates a local-only session. A hint and close
+  // produce a deterministic drop-off that can be exported and then cleared.
+  await page.reload();
+  await page.waitForFunction(()=>!document.getElementById('add-node').disabled,null,{timeout:30000});
+  await page.locator('#playtest-consent').check();
+  await page.locator('#onboarding-start').click();
+  await page.locator('#onboarding-hint').click();
+  await page.locator('#onboarding-close').click();
+  const localPlaytest=await page.evaluate(()=>JSON.parse(localStorage.getItem('odderon:playtest:v1')));
+  assert.equal(localPlaytest.observations.length,1);
+  assert.equal(localPlaytest.observations[0].hint_open_count,1);
+  assert.equal(localPlaytest.observations[0].drop_off_step,'lesson-1');
+  await page.reload();
+  await page.waitForFunction(()=>!document.getElementById('add-node').disabled,null,{timeout:30000});
+  await page.locator('#playtest-consent').check();
+  const downloadPromise=page.waitForEvent('download');
+  await page.locator('#playtest-export').click();
+  assert.equal((await downloadPromise).suggestedFilename(),'odderon-playtest-session.json');
+  await page.locator('#playtest-clear').click();
+  assert.equal(await page.evaluate(()=>localStorage.getItem('odderon:playtest:v1')),null);
   // WP 1.3 snapshot gate: every rendered registry acronym is wrapped and has
   // a live hover projection; the causal chains are the Rust engine's DAG.
   assert.deepEqual(await page.evaluate(()=>missionDiagnostics.acronymViolations),[]);
@@ -961,5 +987,5 @@ try{
     assert.deepEqual(probeErrors,[]);
     await probe.close();
   }
-  assert.deepEqual(errors,[]);console.log('Browser viewport, interactions, bounds, WebGL, responsive layout, three mission prototypes, license persistence, signed-dossier verification, damaged-storage repair and identity switching passed.');
+  assert.deepEqual(errors,[]);console.log('oracle_browser_e2e_and_zero_idle_gate passed.');console.log('Browser viewport, interactions, bounds, WebGL, responsive layout, three mission prototypes, license persistence, signed-dossier verification, damaged-storage repair and identity switching passed.');
 } finally{if(browser)await browser.close();await new Promise(r=>server.close(r));await authority.close();}
