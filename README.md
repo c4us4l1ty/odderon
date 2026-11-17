@@ -10,6 +10,19 @@ boundary is summarized in [current project status](docs/project-status.md).
 
 # One principle should govern: Odderon's ambition is civilization-scale. Its execution must be bottleneck-scale.
 
+## Play locally
+
+```sh
+git clone https://github.com/c4us4l1ty/odderon.git
+cd odderon
+./scripts/provision.sh   # first clone only
+bun run dev
+```
+
+Open the local URL printed by the server. Odderon opens at its game menu;
+`observatory.html` remains available as an in-game reference screen. The core
+game build is static and does not depend on a storefront or Cloudflare Pages.
+
 ## Current implementation
 
 Phase 0 is accepted as a foundation with explicit scientific, scope, and
