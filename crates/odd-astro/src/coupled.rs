@@ -397,10 +397,23 @@ where
 }
 
 /// The signed checkpoint at the end of a propagated window.
-pub fn checkpoint_at(outcome: &CoupledOutcome, time_s: f64) -> Option<CoupledCheckpoint> {
-    let frame = outcome.trajectory.sample(time_s).ok()?;
+///
+/// Every field must describe the *same* instant. The terminal state and the
+/// pool do — the integrator stops at `end_s` and reports both from there — so
+/// this takes no time argument. It used to accept one, which let a caller
+/// build a checkpoint whose position came from an interpolated spline instant
+/// while its propellant, tank columns and cooler draw came from the end of the
+/// leg. That is not a state the vehicle was ever in, and it is exactly the
+/// kind of "two truths about one vehicle" that `validate_resumable` rejects
+/// from a client.
+///
+/// A checkpoint at an interior instant is therefore not produced here at all:
+/// a segment boundary is defined by where propagation stopped.
+pub fn checkpoint_at_end(outcome: &CoupledOutcome) -> Option<CoupledCheckpoint> {
+    let last = outcome.trajectory.len().checked_sub(1)?;
+    let frame = outcome.trajectory.keyframe(last)?;
     Some(CoupledCheckpoint {
-        time_s,
+        time_s: frame.time,
         position: frame.position,
         velocity: frame.velocity,
         pool: outcome.pool,
