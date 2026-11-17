@@ -44,6 +44,7 @@ export function createPlaytestRecorder({ storage = localStorage, now = () => Dat
     },
     hint() { if (current) current.hint_open_count += 1; },
     retry() { if (current) current.retry_count += 1; },
+    setPhasingDirection(direction) { if (current && current.first_burn_direction_on_phasing === null) current.first_burn_direction_on_phasing = direction; },
     causal(rule) { if (current && rule && !current.causal_rules_triggered.includes(rule)) current.causal_rules_triggered.push(rule); },
     complete(values = {}) {
       if (!current || !ensure()) return;
@@ -214,7 +215,7 @@ export function createOnboarding({ snapshot, activate, storage = localStorage, r
     active = true; lesson = at; recordedComplete = false;
     start.hidden = true; skip.hidden = true; lessonUi.hidden = false;
     activate(LESSONS[lesson], lesson);
-    recorder?.startLesson(lesson + 1, { predictionError: snapshot().predictionErrorKg });
+    recorder?.startLesson(lesson + 1, { predictionError: snapshot().predictionErrorBeforeKg });
     render(); persist();
   };
   start.addEventListener('click', () => begin(0));
@@ -242,7 +243,7 @@ export function createOnboarding({ snapshot, activate, storage = localStorage, r
       next.hidden = true; persist(); return;
     }
     lesson += 1; recordedComplete = false; activate(LESSONS[lesson], lesson);
-    recorder?.startLesson(lesson + 1, { predictionError: snapshot().predictionErrorKg });
+    recorder?.startLesson(lesson + 1, { predictionError: snapshot().predictionErrorBeforeKg });
     render(); persist();
   });
   close.addEventListener('click', () => { recorder?.dropOff(`lesson-${lesson + 1}`); panel.hidden = true; });

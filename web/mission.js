@@ -24,7 +24,7 @@ const clampNodeTime=t=>{const [lo,hi]=nodeTimeRange();return Math.max(lo,Math.mi
 let setup=[820497600,DURATION,1200,DRY,2400,310,INITIAL,0,0,0,Math.sqrt(MU/INITIAL),0];
 const canvas=$('plan-canvas'),ctx=canvas.getContext('2d');
 const lensCanvas=$('lens-canvas'),lensCtx=lensCanvas.getContext('2d');
-let wasm,nodes=[],compiledOrder=[],selected=-1,preview=[],lunarPreview=[],actual=null,lastReport=null,lastLunarInfo=null,lastBplaneInfo=null,worker=null,locked=null,drag=null,draws=0,messages=0,sequence=0,onboarding=null,delegatedBaselineDryKg=NaN;
+let wasm,nodes=[],compiledOrder=[],selected=-1,preview=[],lunarPreview=[],actual=null,lastReport=null,lastLunarInfo=null,lastBplaneInfo=null,worker=null,locked=null,drag=null,draws=0,messages=0,sequence=0,onboarding=null,delegatedBaselineDryKg=NaN,catalogDryKg=NaN;
 const playtest=createPlaytestRecorder();
 // A local, best-effort guard against using numerical practice as a ranked
 // planning preview. The server cannot inspect or trust a user's browser.
@@ -207,9 +207,9 @@ function workerPayload(){
 function startFlight(version,flightContext){
   cancelFlight();worker=new Worker('./mission-worker.js',{type:'module'});const current=worker;
   current.onmessage=({data})=>{messages++;if(worker!==current||version!==sequence)return;current.terminate();worker=null;
-    if(data.error){$('plan-status').textContent=data.error;$('plan-status').classList.add('failure');$('execute-status').textContent=data.error;return;}
+    if(data.error){playtest.retry();$('plan-status').textContent=data.error;$('plan-status').classList.add('failure');$('execute-status').textContent=data.error;return;}
     actual=data.points;lastReport=data.report;lastCapture=data.capture??null;lastBoilOff=data.boilOff??null;lastDelegationMask=data.delegationMask??0;lastRecorder=null;lastComputeMs=Number.isFinite(data.computeMs)?data.computeMs:null;lastLunarInfo=data.lunarInfo?.[0]?data.lunarInfo:null;if(data.lunar?.length)lunarPreview=data.lunar;updateCausal();draw();$('plan-status').textContent='Flight model ready. No simulation runs while idle.';annotateAcronyms($('plan-status'));
-    showDebrief(data.report,flightContext,version);onboarding?.update();
+    showDebrief(data.report,flightContext,version);onboarding?.update();if(onboarding?.active&&$('onboarding-next').disabled)playtest.retry();
   };
   current.onerror=()=>{if(worker!==current)return;worker.terminate();worker=null;$('plan-status').textContent='Flight worker failed.';$('execute-status').textContent='Flight worker failed.';};
   const payload=workerPayload();
@@ -676,6 +676,7 @@ function onboardingSnapshot(){
     initialPropellantKg:stage?stage.wetMass-stage.dryMass:NaN,
     delegatedBaselineDryKg,
     predictionErrorKg:predictionError,
+    predictionErrorBeforeKg:Number.isFinite(predictionError)?predictionError:Math.abs(delegatedBaselineDryKg-catalogDryKg),
     efficiency:lastReport?.[36],
     objectivePassed:lastReport?.[35]>0.65,
   };
@@ -691,6 +692,7 @@ function activateOnboardingLesson(lesson){
   }
   if(lesson.schema5){
     $('attempt-mode').value='practice';updateAttemptMode();
+    catalogDryKg=assembly?.diagnostics().dryMass??NaN;
     for(let i=0;i<4;i++){const toggle=$(`delegate-${i}`);if(toggle&&!toggle.checked)toggle.click();}
     delegatedBaselineDryKg=assembly?.diagnostics().dryMass??NaN;
   }
@@ -771,13 +773,13 @@ canvas.addEventListener('pointerup',endDrag);canvas.addEventListener('pointercan
 new ResizeObserver(draw).observe(canvas.parentElement);
 function beginPlacement(){
   const box=$('placement-diagnostic'),copy=$('placement-copy'),choices=$('placement-choices'),status=$('placement-status');
-  $('onboarding-welcome').hidden=true;box.hidden=false;let checks={apsis:false,phasing:false,massPrediction:false};
-  const route=()=>{const destination=placementRoute(checks);box.hidden=true;if(destination==='ranked'){$('onboarding').hidden=true;if($('onboarding-save').checked)localStorage.setItem('odderon:onboarding:v1',JSON.stringify({version:1,lesson:6,complete:true}));}else onboarding.begin(destination);};
+  $('onboarding-welcome').hidden=true;box.hidden=false;let checks={apsis:false,phasing:false,massPrediction:false};playtest.startLesson(0);
+  const route=()=>{const destination=placementRoute(checks);playtest.complete();box.hidden=true;if(destination==='ranked'){$('onboarding').hidden=true;if($('onboarding-save').checked)localStorage.setItem('odderon:onboarding:v1',JSON.stringify({version:1,lesson:6,complete:true}));}else onboarding.begin(destination);};
   $('placement-measure').onclick=()=>{
     const state=onboardingSnapshot();checks.apsis=state.nodes>=1&&state.idealApoapsisKm>=500;
     if(!checks.apsis){status.textContent='The measured apoapsis missed the target ring. Starting with Lesson 1.';route();return;}
     copy.textContent='Check 2: a target is 15 degrees ahead in the same orbit. Choose the first phasing burn.';status.textContent='Apsis control passed.';choices.replaceChildren();
-    for(const direction of ['Prograde','Retrograde']){const button=document.createElement('button');button.textContent=direction;button.onclick=()=>{checks.phasing=direction==='Retrograde';if(!checks.phasing){status.textContent='A prograde burn falls behind. Starting at the catch-up lesson.';route();return;}copy.textContent='Check 3: manual redesign removes 150 kg dry mass. For a 100 m/s burn near 450 seconds specific impulse, what happens to remaining propellant?';choices.replaceChildren();
+    for(const direction of ['Prograde','Retrograde']){const button=document.createElement('button');button.textContent=direction;button.onclick=()=>{playtest.setPhasingDirection(direction);checks.phasing=direction==='Retrograde';if(!checks.phasing){status.textContent='A prograde burn falls behind. Starting at the catch-up lesson.';route();return;}copy.textContent='Check 3: manual redesign removes 150 kg dry mass. For a 100 m/s burn near 450 seconds specific impulse, what happens to remaining propellant?';choices.replaceChildren();
       for(const [label,correct] of [['It increases by about 3 kg',true],['It decreases by about 3 kg',false],['It does not change',false]]){const answer=document.createElement('button');answer.textContent=label;answer.onclick=()=>{checks.massPrediction=correct;route();};choices.append(answer);}};choices.append(button);}
   };
 }

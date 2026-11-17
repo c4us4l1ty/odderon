@@ -86,11 +86,14 @@ test('oracle_playtest_consent_privacy_and_export', () => {
   recorder.startLesson(7, { predictionError: 15 }); recorder.hint(); recorder.causal('PropellantDeficit'); recorder.complete({ massDelta: -180, predictionError: 1.5 });
   assert.equal(writes, 0); assert.equal(recorder.count, 0); assert.equal(recorder.exportJson(), null);
   recorder.setConsent(true); recorder.startLesson(7, { predictionError: 15 }); clock = 350;
-  recorder.hint(); recorder.causal('PropellantDeficit'); recorder.complete({ massDelta: -180, predictionError: 1.5 });
+  recorder.hint(); recorder.retry(); recorder.setPhasingDirection('Retrograde'); recorder.causal('PropellantDeficit'); recorder.complete({ massDelta: -180, predictionError: 1.5 });
   const exported = JSON.parse(recorder.exportJson());
   assert.equal(exported.observations.length, 1);
   assert.deepEqual(exported.observations[0].causal_rules_triggered, ['PropellantDeficit']);
   assert.equal(exported.observations[0].time_to_threshold_ms, 250);
+  assert.equal(exported.observations[0].retry_count, 1);
+  assert.equal(exported.observations[0].first_burn_direction_on_phasing, 'Retrograde');
+  assert.equal(exported.observations[0].prediction_error_before_redesign_kg, 15);
   assert.equal(exported.observations[0].schema5_mass_delta_kg, -180);
   assert.equal(exported.observations[0].prediction_error_final_kg, 1.5);
   assert.ok(writes > 0);
