@@ -19,8 +19,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -112,7 +112,7 @@ jobs:
           cargo build --locked --release -p odd-view --target wasm32-unknown-unknown
           cp target/wasm32-unknown-unknown/release/odd_view.wasm web/odd_view.wasm
       - name: Upload browser ephemeris module
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: odd-view-wasm
           path: web/odd_view.wasm
