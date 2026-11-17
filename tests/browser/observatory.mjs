@@ -198,6 +198,9 @@ try{
   assert.equal(await page.evaluate(()=>localStorage.getItem('odderon:playtest:v1')),null);
   await page.locator('#onboarding-close').click();
   assert.equal(await page.locator('#onboarding').isHidden(),true);
+  await page.locator('[data-flight-mode="academy"]').click();
+  assert.equal(await page.locator('#onboarding').isVisible(),true,'Academy station must reopen a closed lesson dock');
+  await page.locator('#onboarding-close').click();
   // Explicit playtest consent creates a local-only session. A hint and close
   // produce a deterministic drop-off that can be exported and then cleared.
   await page.reload();

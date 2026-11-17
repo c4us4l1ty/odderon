@@ -11,6 +11,9 @@ const labels = {
 
 function activate(mode, updateHash = true) {
   if (!labels[mode] || (mode === 'debrief' && debrief.hidden)) mode = 'flight';
+  // Closing the lesson dock is temporary; selecting ACD must always reopen it
+  // without forcing a page reload or losing the current vehicle and plan.
+  if (mode === 'academy') document.getElementById('onboarding').hidden = false;
   main.dataset.mode = mode;
   station.textContent = labels[mode];
   for (const button of buttons) {
