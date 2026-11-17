@@ -143,7 +143,6 @@ fn main() {
                     engine,
                     &nodes,
                     &guidance,
-                    None,
                 )
                 .unwrap();
                 let burns = plan.timeline.burns(&[engine]).unwrap();
@@ -187,7 +186,6 @@ fn main() {
                 engine,
                 &nodes,
                 &guidance,
-                None,
             )
             .unwrap();
             let burns = plan.timeline.burns(&[engine]).unwrap();

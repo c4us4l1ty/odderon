@@ -6,7 +6,10 @@
 //! error, and the transport forms (JSON, #verify= fragment, QR) round-trip.
 use odd_identity::License;
 use odd_report::dossier::{BurnRow, Geometry};
-use odd_report::{dossier, AttemptMode, Command, Fdr, FdrError, METRIC_COUNT, SCHEMA_VERSION};
+use odd_report::{
+    dossier, AttemptMode, Command, Fdr, FdrError, COUPLED_SCHEMA_VERSION, METRIC_COUNT,
+    SCHEMA_VERSION,
+};
 
 fn flight() -> Fdr {
     let mut metrics = [f64::NAN; METRIC_COUNT];
@@ -72,6 +75,24 @@ fn flight() -> Fdr {
         propellant_remaining_kg: None,
         public_key: [0; 32],
         signature: [0; 64],
+    }
+}
+
+#[test]
+fn schema_four_and_five_share_fields_but_not_scoring_domains() {
+    let license = License::from_entropy([7; 16]);
+    let mut v5 = flight();
+    v5.sign(&license).unwrap();
+    let mut v4 = flight();
+    v4.schema_version = COUPLED_SCHEMA_VERSION;
+    v4.sign(&license).unwrap();
+    assert_ne!(v4.sign_domain(), v5.sign_domain());
+    assert_ne!(v4.digest(), v5.digest());
+    for record in [v4, v5] {
+        let parsed = Fdr::from_verify_payload(&record.verify_payload()).unwrap();
+        assert_eq!(parsed.schema_version, record.schema_version);
+        assert_eq!(parsed.flown_burn_windows, record.flown_burn_windows);
+        parsed.verify_signature().unwrap();
     }
 }
 

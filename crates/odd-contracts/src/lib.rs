@@ -567,7 +567,60 @@ pub fn score_delegated(
     impacted: bool,
     delegation: DelegationMask,
 ) -> Result<MissionScore, IntegrationError> {
-    let fuel_ok = state.mass >= contract.dry_mass_kg && state.mass.is_finite();
+    score_delegated_with_dry_mass(
+        contract,
+        state,
+        evaluation_s,
+        prediction,
+        commanded_delta_v_m_s,
+        impacted,
+        delegation,
+        contract.dry_mass_kg,
+    )
+}
+
+/// Corrected score for a redesigned vehicle. Unlike the frozen schema-4 rule,
+/// fuel validity and the remaining-propellant prediction use the dry mass that
+/// actually flew. The caller must supply a verified/recomputed fitted mass;
+/// never accept a client claim here.
+#[allow(clippy::too_many_arguments)]
+pub fn score_delegated_fitted(
+    contract: &Contract,
+    state: Keyframe,
+    evaluation_s: f64,
+    prediction: PredictionBaseline,
+    commanded_delta_v_m_s: f64,
+    impacted: bool,
+    delegation: DelegationMask,
+    fitted_dry_mass_kg: f64,
+) -> Result<MissionScore, IntegrationError> {
+    if !fitted_dry_mass_kg.is_finite() || fitted_dry_mass_kg <= 0.0 {
+        return Err(IntegrationError::InvalidInput);
+    }
+    score_delegated_with_dry_mass(
+        contract,
+        state,
+        evaluation_s,
+        prediction,
+        commanded_delta_v_m_s,
+        impacted,
+        delegation,
+        fitted_dry_mass_kg,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn score_delegated_with_dry_mass(
+    contract: &Contract,
+    state: Keyframe,
+    evaluation_s: f64,
+    prediction: PredictionBaseline,
+    commanded_delta_v_m_s: f64,
+    impacted: bool,
+    delegation: DelegationMask,
+    scoring_dry_mass_kg: f64,
+) -> Result<MissionScore, IntegrationError> {
+    let fuel_ok = state.mass >= scoring_dry_mass_kg && state.mass.is_finite();
     let deadline_ok = evaluation_s <= contract.duration_us as f64 / 1e6;
     if impacted || !fuel_ok || !deadline_ok || !evaluation_s.is_finite() {
         return Ok(MissionScore {
@@ -623,7 +676,7 @@ pub fn score_delegated(
     let error = (pred.delta_v_m_s - commanded_delta_v_m_s).abs() / commanded_delta_v_m_s.max(1.0)
         + (pred.apoapsis_altitude_m - ap.apoapsis_altitude_m).abs() / 1_000_000.0
         + (pred.periapsis_altitude_m - ap.periapsis_altitude_m).abs() / 1_000_000.0
-        + (pred.remaining_propellant_kg - (state.mass - contract.dry_mass_kg)).abs()
+        + (pred.remaining_propellant_kg - (state.mass - scoring_dry_mass_kg)).abs()
             / (contract.initial.mass - contract.dry_mass_kg).max(1.0)
         + (pred.time_of_flight_s - evaluation_s).abs() / evaluation_s.max(1.0);
     let prediction_score = libm::exp(-error);
@@ -710,7 +763,6 @@ pub fn split_tug_for_stage(
             contract.engine,
             &nodes,
             &guidance,
-            None,
         )
         .map_err(|_| odd_sim::targeting::TargetError::InvalidInput)?;
         let burns = plan
@@ -746,7 +798,6 @@ pub fn split_tug_for_stage(
         contract.engine,
         &nodes,
         &guidance,
-        None,
     )
     .map_err(|_| odd_sim::targeting::TargetError::InvalidInput)?;
     Ok(SplitPlan {

@@ -105,7 +105,7 @@ fn settings_for(contract: &Contract) -> FlightSettings {
         node_metric: false,
         thermal: None,
         delegation: DelegationMask::MANUAL,
-        revision: odd_core::PhysicsRevision::CoupledFitted,
+        revision: odd_core::PhysicsRevision::FittedScoring,
     }
 }
 
@@ -136,7 +136,6 @@ fn flight_guided(
         contract.engine,
         nodes,
         guidance.as_deref().unwrap_or(&[]),
-        None,
     )?;
     odd_verify::compute(&settings_for(contract), &plan, None, &eph)
         .map(|o| o.report)

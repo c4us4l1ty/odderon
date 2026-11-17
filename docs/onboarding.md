@@ -1,7 +1,11 @@
 # First 30 Minutes: Onboarding Design
 
-Status: **design, not implementation.** Nothing here ships until this document is
-reviewed. Every lesson below is backed by a measured kernel run in
+Status: **initial browser implementation with a measured design backlog.** The
+mission page now ships an opt-in six-lesson guide, four-rung hints, event-driven
+completion checks and optional local-only progress. It uses the real contract,
+engine and debrief controls and never scripts an outcome. The detailed visual
+storyboard, placement test and playtest protocol below remain acceptance work,
+not a claim that every screen has shipped. Every lesson is backed by a measured kernel run in
 `crates/odd-verify/tests/onboarding_lessons.rs`; where the kernel refused the
 story, the story changed.
 
@@ -25,8 +29,10 @@ lesson 6's score is identical to four decimals (§3, §6.2).
 | Gravity turn to close the orbit | Pitch-over handle, atmospheric flight, drag | **No** |
 | Prediction contract + Astro-Elo + dossier | Locked prediction, debrief, dossier | **Yes** |
 
-Three of the four beats need systems that are not built: surface launch, ascent,
-gravity turn, launch-site physics. The fifth thing they need — a reason to care
+Three of the four beats need product systems that are not built: a surface
+launch contract, coupled ascent/staging and a gravity-turn UI. Launch-site state
+and gravity-turn guidance kernels now exist, but no production flow calls them;
+they do not make the lesson playable. The fifth thing the beats need — a reason to care
 about TWR — is also the one thing our contracts cannot currently show, because
 **every shipped contract starts already in orbit** (measured:
 `every_lesson_contract_starts_already_in_orbit`).
@@ -428,10 +434,14 @@ would contradict lesson 6.
 
 ---
 
-## 6. Scoring dependency: do not ship lesson 6 as-is
+## 6. Scoring dependency and the shipped containment
 
-Lesson 6 is the first lesson that shows a score. Two measured problems make it
-unsafe to ship before a versioned scoring change.
+Lesson 6 is the first lesson that shows a score. The initial browser guide
+contains the historical schema-4 risk: it enters lesson 6 from Contract 103 by
+reloading baseline Contract 101, requires a real locked prediction, and does not
+fit hardware for the player. Schema 5 now corrects redesign scoring, but the
+existing lesson deliberately remains on this measured baseline until a separate
+redesign lesson is designed and tested.
 
 ### 6.1 The discontinuity: 0.0 versus NaN versus "a good score"
 
@@ -445,13 +455,11 @@ So the player crosses from "no number at all" to "a number", and then from
 whose stated point is *prediction is 25% of your score*, the first score a
 player sees must not be a cliff.
 
-**Proposal (versioned, not implemented):** add a documented *pre-scoring*
-state. Before a prediction is locked, the debrief shows **five measured numbers
-and no score**, with the words "lock a prediction to score this flight". After a
-lock, the score is always finite — including 0.0 — so the number never appears
-or disappears, it only moves. Bump the scoring revision and record the change in
-the changelog; existing certificates keep their revision and re-score
-identically.
+The shipped containment is a documented *pre-scoring* state: before a
+prediction is locked, the debrief has measured outcomes but no score and the
+lesson says to lock a prediction. After a valid lock, the score is finite,
+including a legitimate 0.0. Schema 5 fixes the fitted-mass cliff; existing
+schema-4 certificates retain their revision and re-score identically.
 
 ### 6.2 The prediction-term penalty for fitting hardware
 
@@ -477,15 +485,14 @@ model does not move. `lesson_6_scores_identically_in_the_browser` recomputes the
 published 0.9238 under the game's own settings and gets **0.9238** to four
 decimals, so the score in §2 is the score a player sees.
 
-**Proposal (versioned, not implemented):** score the prediction against the
-vehicle's *catalog* dry mass, or explicitly document the prediction term as
-vehicle-dependent and surface the penalty in the debrief. Choose one *before*
-any lesson lets the player fit an engine, or lesson 6's 1.0000 prediction score
-becomes unreachable for reasons the player cannot see.
+**Implemented in schema 5:** fuel validity and the remaining-propellant
+prediction use verified fitted dry mass. Schema 4 retains catalog-mass semantics
+for certificate compatibility. The old and corrected outcomes are measured on
+the same inputs in `v4_scoring_baseline.rs` and recorded in the FDR changelog.
 
-**Sequencing rule:** lesson 6 may not ship in the same version as any change to
-the prediction term's definition. Measure the score under the old and new
-definition on the same flight and put both numbers in the changelog.
+**Sequencing rule for a future redesign lesson:** exercise schema 5 explicitly,
+show fitted dry mass beside remaining propellant, and pin both the fuel boundary
+and exact-prediction behavior in browser acceptance before shipping it.
 
 ---
 
@@ -495,11 +502,11 @@ definition on the same flight and put both numbers in the changelog.
 | --- | --- | --- | --- |
 | Accept "launch a CubeSat" contract | Contract authoring for a surface-to-orbit objective | S (card only) | Not built |
 | Chief AI on thermal/power/avionics, player on staging | Delegation mask exists; per-discipline staging UI does not | M | Partial |
-| `[TEST IGNITION]` on the pad | Pad state, hold-down, sea-level thrust, launch-site gravity | M | Not built |
+| `[TEST IGNITION]` on the pad | Pad state, hold-down, sea-level thrust, launch-site gravity | M | Foundation only; no caller |
 | Fuel slider until TWR > 1.35 | Pad TWR solver (the engine solver exists) | S | Not built |
 | Inspect nozzle during ascent | Engine lab | **Built** (lesson 4 uses it) | Done |
 | Ascent to 300 km | Ascent propagator with atmosphere and drag | **L** | Not built |
-| Pitch-over / gravity-turn handle | Gravity turn guidance, atmospheric flight | **L** | Not built |
+| Pitch-over / gravity-turn handle | Gravity turn guidance, atmospheric flight | **L** | Guidance kernel only; no UI/ascent |
 | `v_horizontal` vs `v_orbit` gauge | Cheap once ascent exists | S | Blocked on ascent |
 | Prediction + debrief + Elo + dossier | Locked missions, scoring, dossier | **Built** | Done |
 

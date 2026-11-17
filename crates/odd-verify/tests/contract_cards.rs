@@ -39,7 +39,7 @@ fn fly(
         engine: vehicle.engine,
         node_metric: contract.id == 102,
         delegation: mask,
-        revision: odd_core::PhysicsRevision::CoupledFitted,
+        revision: odd_core::PhysicsRevision::FittedScoring,
         thermal: Some(ThermalInputs {
             engine_spec: flown.engine,
             design: flown.thermal,
@@ -242,7 +242,6 @@ fn baseline_targeted_cooled_tug_preserves_thermal_physics_pin() {
         vehicle.engine,
         &baseline.nodes,
         &baseline.guidance,
-        None,
     )
     .unwrap();
     let settings = FlightSettings {
@@ -254,7 +253,7 @@ fn baseline_targeted_cooled_tug_preserves_thermal_physics_pin() {
         engine: vehicle.engine,
         node_metric: false,
         delegation: DelegationMask::MANUAL,
-        revision: odd_core::PhysicsRevision::CoupledFitted,
+        revision: odd_core::PhysicsRevision::FittedScoring,
         thermal: Some(ThermalInputs {
             engine_spec: vehicle.effective.engine,
             design: vehicle.effective.thermal,

@@ -77,7 +77,7 @@ impl Settings {
             delegation: self.delegation,
             // The live designer draws and signs v4 records, so a new flight is
             // computed under the coupled, fitted-mass physics.
-            revision: odd_core::PhysicsRevision::CoupledFitted,
+            revision: odd_core::PhysicsRevision::FittedScoring,
             thermal: self.thermal_inputs(),
             contract_id: self.contract_id,
             epoch: self.epoch,
@@ -356,7 +356,6 @@ pub extern "C" fn mission_compile() -> i32 {
         s.engine,
         &s.nodes,
         &s.guidance,
-        None,
     ) {
         Ok(result) => result,
         Err(error) => {
@@ -529,7 +528,6 @@ pub extern "C" fn mission_target_bplane(target_bt: f64, target_br: f64) -> i32 {
                 s.engine,
                 &perturbed,
                 &s.guidance,
-                None,
             ) else {
                 continue;
             };
@@ -732,6 +730,8 @@ pub extern "C" fn mission_diagnose(
     apoapsis_shortfall_fraction: f64,
     impacted: f64,
     burn_sweep_deg: f64,
+    inclination_change_deg: f64,
+    requested_inclination_change_deg: f64,
 ) -> u32 {
     let inputs = odd_app::causal::Inputs {
         thrust_to_weight,
@@ -742,6 +742,8 @@ pub extern "C" fn mission_diagnose(
         apoapsis_shortfall_fraction,
         impacted: impacted != 0.0,
         burn_sweep_deg,
+        inclination_change_deg,
+        requested_inclination_change_deg,
     };
     let chains = odd_app::causal::diagnose(&inputs);
     let len = chains.len() as u32;
@@ -2009,8 +2011,10 @@ mod tests {
         let past = mission_acronym_count();
         assert_eq!(mission_acronym_key_len(past), 0);
         assert!(mission_acronym_key_byte(past, 0).is_nan());
-        let count = mission_diagnose(0.5, 50_000.0, 120_000.0, 0.30, 1.0, 0.10, 1.0, 40.0);
-        assert_eq!(count, 7);
+        let count = mission_diagnose(
+            0.5, 50_000.0, 120_000.0, 0.30, 1.0, 0.10, 1.0, 40.0, 0.0089, 2.6,
+        );
+        assert_eq!(count, 8);
         assert_eq!(mission_causal_valid(), 1);
         assert_eq!(mission_causal_node_count(0), 4);
         assert_eq!(mission_causal_node_kind(0, 3), 3);

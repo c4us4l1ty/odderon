@@ -155,6 +155,17 @@ try{
   await page.setViewportSize({width:1440,height:1000});
   await page.goto(`http://127.0.0.1:${server.address().port}/mission.html`);
   await page.waitForFunction(()=>!document.getElementById('add-node').disabled,null,{timeout:30000});
+  // Onboarding is opt-in, uses the real mission controls, and writes no local
+  // progress until the player explicitly consents.
+  assert.equal(await page.locator('#onboarding').isVisible(),true);
+  assert.equal(await page.locator('#onboarding-save').isChecked(),false);
+  assert.equal(await page.evaluate(()=>localStorage.getItem('odderon:onboarding:v1')),null);
+  await page.locator('#onboarding-start').click();
+  assert.equal(await page.locator('#onboarding-lesson').isVisible(),true);
+  assert.match(await page.locator('#onboarding-progress').textContent(),/LESSON 1 \/ 6/);
+  assert.equal(await page.locator('#onboarding-next').isDisabled(),true);
+  await page.locator('#onboarding-close').click();
+  assert.equal(await page.locator('#onboarding').isHidden(),true);
   // WP 1.3 snapshot gate: every rendered registry acronym is wrapped and has
   // a live hover projection; the causal chains are the Rust engine's DAG.
   assert.deepEqual(await page.evaluate(()=>missionDiagnostics.acronymViolations),[]);
@@ -533,7 +544,7 @@ try{
   const rankedDownload=page.waitForEvent('download');
   await page.locator('#export-fdr').click();
   const rankedFdr=JSON.parse(await readFile(await (await rankedDownload).path(),'utf8'));
-  assert.equal(rankedFdr.schema_version,4);
+  assert.equal(rankedFdr.schema_version,5);
   // FDR v4 extends the v3 layout: the delegation bitmask and tank block still
   // travel in the signed bytes. Contract 101 flies storables, so it has no
   // tank model and no vent events — but the fields must still be present and

@@ -5,7 +5,8 @@ The current code includes an interactive Earth–Moon observatory and an
 experimental orbit-rescue planning prototype; the full game is not yet complete.
 The project vision and proposed design live in [BRAINSTORM.md](BRAINSTORM.md),
 [ARCHITECTURE_LAWS.md](ARCHITECTURE_LAWS.md), [blueprint.md](blueprint.md),
-[UI.md](UI.md), and [ELO.md](ELO.md).
+[UI.md](UI.md), and [ELO.md](ELO.md). The implementation and deployment
+boundary is summarized in [current project status](docs/project-status.md).
 
 # One principle should govern: Odderon's ambition is civilization-scale. Its execution must be bottleneck-scale.
 
@@ -20,7 +21,11 @@ The WP 1.3/1.4 experimental mission loop adds a Rust-backed Visual Physics
 Lens and causal warning DAG, multi-node maneuver planning, locked predictions,
 impact handling, numerical perigee-kick targeting, exact Shapley error
 attribution, isolated finite-burn loss and three playable mission scenarios,
-including the cislunar Contract 103. It remains a simplified prototype with
+including the cislunar Contract 103. The mission page includes an opt-in,
+event-driven six-lesson guide whose completion checks read the real controls;
+progress stays off until the player consents to local storage. A patched
+encounter preview exposes lunar B-plane coordinates and a practice targeting
+aid. It remains a simplified prototype—not a lunar-capture optimizer—with
 explicit model, performance and scoring limits; see
 [mission-planning feasibility](docs/mission-planning-feasibility.md).
 
@@ -71,7 +76,9 @@ Work Package 0.2 adds a bounded real JPL Earth–Moon ephemeris and a
 lower-accuracy long-range analytical fallback; see
 [ephemeris notes](docs/ephemeris.md) for data provenance, validation, and
 orientation limitations. `crates/odd-astro` separately provides ideal two-body orbit calculations and
-numerical propagation. These are simplified models, not a flight simulator.
+numerical propagation. Launch-site state and gravity-turn guidance kernels now
+exist, but no surface-launch contract or ascent product calls them. These are
+simplified models, not a flight simulator.
 
 With Rust and the `wasm32-unknown-unknown` target installed:
 

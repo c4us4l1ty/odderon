@@ -407,7 +407,11 @@ pub fn html_with_receipt(
         &prediction_rows,
         "prediction-table",
     ));
-    body.push_str("<p id=\"score-dry-mass-note\">The realized remaining propellant in this table uses the fitted dry mass. For frozen replay compatibility, the score's fuel threshold and prediction term use the catalog baseline dry mass instead; its fuel result can therefore differ from this table.</p>");
+    if fdr.schema_version >= crate::fdr::SCHEMA_VERSION {
+        body.push_str("<p id=\"score-dry-mass-note\">The realized remaining propellant, score fuel threshold and prediction term all use the verified fitted dry mass.</p>");
+    } else {
+        body.push_str("<p id=\"score-dry-mass-note\">The realized remaining propellant in this table uses the fitted dry mass. For frozen replay compatibility, the schema-4 score's fuel threshold and prediction term use the catalog baseline dry mass instead; its fuel result can therefore differ from this table.</p>");
+    }
     let mut shapley_rows = Vec::new();
     for (player, label) in PLAYERS.iter().enumerate() {
         shapley_rows.push(vec![
@@ -754,7 +758,7 @@ fn thermal_annex(fdr: &Fdr) -> String {
         // v4 couples the vent into the flight, so the old "we do not subtract
         // it" and "the tanks do not fit the airframe" disclaimers are no longer
         // true. A v1–v3 certificate keeps its original wording below.
-        if fdr.schema_version >= crate::fdr::SCHEMA_VERSION {
+        if fdr.schema_version >= crate::fdr::COUPLED_SCHEMA_VERSION {
             out.push_str("<p id=\"thermal-coupling-note\">Vented mass is drawn from the same propellant pool the engine burns, so it reduces both the remaining fuel and the mass every acceleration divides by. A pool emptied by boil-off truncates thrust and is signed as a flameout.</p>");
             out.push_str("<p id=\"tank-volume-note\">Tank volume, mixture split and ullage come from the geometry the contract card sizes the airframe with, so the signed stage fits the vehicle it describes.</p>");
         } else {
@@ -1043,6 +1047,18 @@ mod tests {
     }
 
     #[test]
+    fn score_mass_copy_follows_the_signed_schema() {
+        let geometry = geometry();
+        let mut current = sample();
+        let current_html = html(&current, &geometry, &current.verify_payload()).unwrap();
+        assert!(current_html.contains("all use the verified fitted dry mass"));
+        current.schema_version = crate::fdr::COUPLED_SCHEMA_VERSION;
+        let frozen_html = html(&current, &geometry, &current.verify_payload()).unwrap();
+        assert!(frozen_html.contains("schema-4 score's fuel threshold"));
+        assert!(frozen_html.contains("catalog baseline dry mass"));
+    }
+
+    #[test]
     fn dossier_is_byte_identical_across_runs() {
         let fdr = sample();
         let geometry = geometry();
@@ -1086,7 +1102,7 @@ mod tests {
         }
         assert!(document.contains("id=\"score-dry-mass-note\""));
         assert!(document.contains(
-            "score's fuel threshold and prediction term use the catalog baseline dry mass"
+            "score fuel threshold and prediction term all use the verified fitted dry mass"
         ));
         assert_eq!(
             document.matches("<svg").count(),

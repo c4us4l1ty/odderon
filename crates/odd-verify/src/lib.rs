@@ -318,16 +318,29 @@ pub fn compute(
         report[33] = enc.soi_radius_m;
     }
     let mission_score = locked.and_then(|lock| {
-        odd_contracts::score_delegated(
-            &contract,
-            final_state,
-            evaluation_s,
-            lock.prediction(),
-            plan.requested_delta_v_m_s,
-            impacted,
-            s.delegation,
-        )
-        .ok()
+        let score = if s.revision.scores_fitted_mass() {
+            odd_contracts::score_delegated_fitted(
+                &contract,
+                final_state,
+                evaluation_s,
+                lock.prediction(),
+                plan.requested_delta_v_m_s,
+                impacted,
+                s.delegation,
+                s.dry_mass,
+            )
+        } else {
+            odd_contracts::score_delegated(
+                &contract,
+                final_state,
+                evaluation_s,
+                lock.prediction(),
+                plan.requested_delta_v_m_s,
+                impacted,
+                s.delegation,
+            )
+        };
+        score.ok()
     });
     if let Some(score) = mission_score {
         report[4] = score.s;
@@ -629,7 +642,6 @@ pub fn replay_flight(spec: &FlightSpec) -> Option<ReplayOutcome> {
         settings.engine,
         &nodes,
         &guidance,
-        None,
     )
     .ok()?;
     // A recorded prediction means the flight was locked; without one the

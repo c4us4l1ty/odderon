@@ -18,9 +18,8 @@ use odd_identity::{License, LicenseError};
 use odd_propulsion::{EngineSpec, Propellant};
 use sha2::{Digest, Sha256};
 
-/// Schema 3 is the only schema this build issues. It adds the physical
-/// cryogenic fit-out, the Chief-AI delegation bitmask and the exact vent
-/// history to the signed bytes.
+/// Current issued schema. Schema 5 keeps schema 4's wire fields and coupled
+/// flight physics, but versions the score to use verified fitted dry mass.
 ///
 /// **This schema is frozen.** `odd-worker` and every later work package build
 /// against it; no field may be added, removed or reordered without a new
@@ -28,7 +27,10 @@ use sha2::{Digest, Sha256};
 ///
 /// Older records still parse and verify: schema 2 carries a certified engine
 /// but no tanks, schema 1 carries neither and is labelled legacy.
-pub const SCHEMA_VERSION: u16 = 4;
+pub const SCHEMA_VERSION: u16 = 5;
+/// First schema carrying the coupled-mass state block. Schema 5 reuses this
+/// layout unchanged and differs only in versioned scoring semantics/domain.
+pub const COUPLED_SCHEMA_VERSION: u16 = 4;
 /// Last schema before the coupled-mass migration. Records carrying it replay
 /// under `PhysicsRevision::FrozenUncoupled`, exactly as they always did.
 pub const FROZEN_V3_SCHEMA_VERSION: u16 = 3;
@@ -44,6 +46,9 @@ pub const SIGN_DOMAIN: &[u8] = b"odderon-flight-data-recorder-v3\0";
 /// v3 certificate can never be replayed as a v4 flight, or the other way
 /// round — the two describe different physics.
 pub const COUPLED_SIGN_DOMAIN: &[u8] = b"odderon-flight-data-recorder-v4\0";
+/// Domain of schema-5 records. The fields are v4-compatible, but a distinct
+/// domain prevents changing a record's scoring law by editing its version.
+pub const FITTED_SCORE_SIGN_DOMAIN: &[u8] = b"odderon-flight-data-recorder-v5\0";
 /// Domain of schema-2 records (engine, no tanks). Kept distinct so a v2
 /// signature can never be replayed as a v3 signature.
 pub const ENGINE_SIGN_DOMAIN: &[u8] = b"odderon-flight-data-recorder-v2\0";
@@ -436,7 +441,7 @@ impl Fdr {
                 put_f64(&mut out, event.temperature_k);
             }
         }
-        if self.schema_version >= SCHEMA_VERSION {
+        if self.schema_version >= COUPLED_SCHEMA_VERSION {
             // --- v4 BLOCK. Appended after the v3 block, in this order. ---
             put_u16(&mut out, self.flown_burn_windows.len() as u16);
             for (start, end) in &self.flown_burn_windows {
@@ -467,7 +472,8 @@ impl Fdr {
             0..=LEGACY_SCHEMA_VERSION => LEGACY_SIGN_DOMAIN,
             ENGINE_SCHEMA_VERSION => ENGINE_SIGN_DOMAIN,
             FROZEN_V3_SCHEMA_VERSION => SIGN_DOMAIN,
-            _ => COUPLED_SIGN_DOMAIN,
+            COUPLED_SCHEMA_VERSION => COUPLED_SIGN_DOMAIN,
+            _ => FITTED_SCORE_SIGN_DOMAIN,
         }
     }
 
@@ -487,6 +493,7 @@ impl Fdr {
             LEGACY_SCHEMA_VERSION
                 | ENGINE_SCHEMA_VERSION
                 | FROZEN_V3_SCHEMA_VERSION
+                | COUPLED_SCHEMA_VERSION
                 | SCHEMA_VERSION
         ) {
             return Err(FdrError::UnsupportedSchema(self.schema_version));
@@ -577,7 +584,7 @@ impl Fdr {
         } else if !self.thermal_specs.is_empty() || !self.vent_events.is_empty() {
             return Err(FdrError::Malformed("pre-v3 record carries tanks"));
         }
-        if self.schema_version >= SCHEMA_VERSION {
+        if self.schema_version >= COUPLED_SCHEMA_VERSION {
             if self.flown_burn_windows.len() > MAX_COMMANDS {
                 return Err(FdrError::Malformed("too many flown burn windows"));
             }
@@ -805,8 +812,10 @@ impl Fdr {
             ENGINE_SIGN_DOMAIN
         } else if bytes.starts_with(SIGN_DOMAIN) {
             SIGN_DOMAIN
-        } else {
+        } else if bytes.starts_with(COUPLED_SIGN_DOMAIN) {
             COUPLED_SIGN_DOMAIN
+        } else {
+            FITTED_SCORE_SIGN_DOMAIN
         };
         reader.expect(domain)?;
         let schema_version = reader.u16()?;
@@ -815,6 +824,7 @@ impl Fdr {
             LEGACY_SCHEMA_VERSION
                 | ENGINE_SCHEMA_VERSION
                 | FROZEN_V3_SCHEMA_VERSION
+                | COUPLED_SCHEMA_VERSION
                 | SCHEMA_VERSION
         ) {
             return Err(FdrError::UnsupportedSchema(schema_version));
@@ -824,7 +834,8 @@ impl Fdr {
             LEGACY_SCHEMA_VERSION => LEGACY_SIGN_DOMAIN,
             ENGINE_SCHEMA_VERSION => ENGINE_SIGN_DOMAIN,
             FROZEN_V3_SCHEMA_VERSION => SIGN_DOMAIN,
-            _ => COUPLED_SIGN_DOMAIN,
+            COUPLED_SCHEMA_VERSION => COUPLED_SIGN_DOMAIN,
+            _ => FITTED_SCORE_SIGN_DOMAIN,
         };
         if domain != expected_domain {
             return Err(FdrError::Malformed("schema and signing domain disagree"));
@@ -964,7 +975,7 @@ impl Fdr {
             };
         // --- v4 BLOCK ---
         let (flown_burn_windows, flameout_time_s, propellant_remaining_kg) =
-            if schema_version >= SCHEMA_VERSION {
+            if schema_version >= COUPLED_SCHEMA_VERSION {
                 let count = reader.u16()? as usize;
                 if count > MAX_COMMANDS {
                     return Err(FdrError::Malformed("too many flown burn windows"));

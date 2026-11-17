@@ -73,6 +73,25 @@ fn score(
     .expect("the terms evaluate")
 }
 
+fn fitted_score(
+    contract: &Contract,
+    dry: f64,
+    remaining: f64,
+    prediction: PredictionBaseline,
+) -> MissionScore {
+    odd_contracts::score_delegated_fitted(
+        contract,
+        state_with(dry, remaining),
+        6.0 * 86_400.0,
+        prediction,
+        contract.reference_delta_v_m_s,
+        false,
+        DelegationMask::MANUAL,
+        dry,
+    )
+    .expect("the fitted terms evaluate")
+}
+
 /// The fitted dry mass for a given blanket, from the shipped mass accounting.
 fn fitted_dry(layers: u32) -> f64 {
     let contract = Contract::get(103).unwrap();
@@ -165,6 +184,43 @@ fn a_lighter_stage_can_be_declared_out_of_fuel_while_fuel_remains() {
         "the same vehicle with 1 kg more scores above zero, got {:.6}",
         cleared.s
     );
+}
+
+/// Corrected scoring removes fitted hardware from the fuel prediction term.
+#[test]
+fn corrected_scoring_uses_the_vehicle_that_flew() {
+    let contract = Contract::get(103).unwrap();
+    let remaining = 1_000.0;
+    let reference = fitted_score(
+        &contract,
+        contract.dry_mass_kg,
+        remaining,
+        prediction(remaining),
+    );
+    for dry in [
+        fitted_dry(0),
+        contract.dry_mass_kg,
+        contract.dry_mass_kg + 264.0,
+    ] {
+        let result = fitted_score(&contract, dry, remaining, prediction(remaining));
+        assert_eq!(
+            result.prediction.to_bits(),
+            reference.prediction.to_bits(),
+            "an exact fuel prediction must not move with fitted dry mass {dry}"
+        );
+        assert!(result.s > 0.0);
+    }
+}
+
+#[test]
+fn corrected_fuel_gate_accepts_real_propellant_on_a_lighter_stage() {
+    let contract = Contract::get(103).unwrap();
+    let lighter = fitted_dry(0);
+    let remaining = (contract.dry_mass_kg - lighter) / 2.0;
+    let frozen = score(&contract, lighter, remaining, prediction(remaining));
+    let corrected = fitted_score(&contract, lighter, remaining, prediction(remaining));
+    assert_eq!(frozen.s, 0.0, "schema-4 baseline must stay frozen");
+    assert!(corrected.s > 0.0, "the fitted vehicle still has propellant");
 }
 
 /// The objective term never reads dry mass, whatever the stage weighs.

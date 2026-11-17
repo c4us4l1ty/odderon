@@ -60,7 +60,7 @@ fn rescue_settings(design: &ThermalDesign) -> FlightSettings {
         engine: vehicle.engine,
         node_metric: false,
         delegation: DelegationMask::MANUAL,
-        revision: odd_core::PhysicsRevision::CoupledFitted,
+        revision: odd_core::PhysicsRevision::FittedScoring,
         thermal: Some(odd_verify::ThermalInputs {
             engine_spec: vehicle.effective.engine,
             design: vehicle.effective.thermal,
@@ -96,7 +96,7 @@ fn tug_trade(design: &ThermalDesign) -> Trade {
         engine: vehicle.engine,
         node_metric: false,
         delegation: DelegationMask::MANUAL,
-        revision: odd_core::PhysicsRevision::CoupledFitted,
+        revision: odd_core::PhysicsRevision::FittedScoring,
         thermal: Some(odd_verify::ThermalInputs {
             engine_spec: vehicle.effective.engine,
             design: vehicle.effective.thermal,

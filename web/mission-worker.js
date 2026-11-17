@@ -3,6 +3,7 @@
 import { applyAssembly } from './assembly.js';
 import { configured, serverKey, receiptBytes, verifyReceipt } from './authority-crypto.js';
 import { stringifySigned } from './recorder.js';
+import { readMissionNodes } from './mission-nodes.js';
 // Refusal copy by stable code from mission_compile_error(). Must stay in step
 // with the table in mission.js and with crates/odd-view/src/mission_bridge.rs.
 const REFUSAL={
@@ -64,11 +65,7 @@ self.onmessage=async ({data})=>{
         if(w.mission_engine_apply()!==1)throw Error('The engine cannot fly this contract.');
       }
       if(!w.mission_split_tug(data.kicks,data.total,data.first))throw Error('Numerical perigee targeting failed.');
-      const nodes=Array.from({length:w.mission_node_count()},(_,i)=>({
-        time:w.mission_node_time(i),
-        dv:[w.mission_node_dv(i,0),w.mission_node_dv(i,1),w.mission_node_dv(i,2)],
-        guidance:w.mission_node_guided(i)?Array.from({length:6},(_,j)=>w.mission_node_guidance(i,j)):null
-      }));
+      const nodes=readMissionNodes(w);
       self.postMessage({nodes});return;
     }
     // No unlocked modeled-flight preview: ranked must commit before this

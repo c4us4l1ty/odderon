@@ -23,7 +23,7 @@ fn settings(contract: &Contract, mask: DelegationMask) -> FlightSettings {
         node_metric: contract.id == 102,
         thermal: None,
         delegation: mask,
-        revision: odd_core::PhysicsRevision::CoupledFitted,
+        revision: odd_core::PhysicsRevision::FittedScoring,
     }
 }
 
@@ -178,7 +178,7 @@ fn the_cap_is_recomputed_from_the_signed_mask() {
     let outcome = compute(&settings(&rescue, mask), &plan, Some(&locked), &eph).unwrap();
 
     let mut spec = odd_verify::FlightSpec {
-        revision: odd_core::PhysicsRevision::CoupledFitted,
+        revision: odd_core::PhysicsRevision::FittedScoring,
         contract_id: rescue.id,
         epoch_s: odd_contracts::START_EPOCH,
         duration_us: rescue.duration_us,

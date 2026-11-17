@@ -20,7 +20,7 @@ fn settings(contract: &Contract, thermal: Option<ThermalInputs>) -> FlightSettin
         engine: contract.engine,
         node_metric: contract.id == 102,
         delegation: odd_contracts::DelegationMask::MANUAL,
-        revision: odd_core::PhysicsRevision::CoupledFitted,
+        revision: odd_core::PhysicsRevision::FittedScoring,
         thermal,
     }
 }

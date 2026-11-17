@@ -15,6 +15,7 @@ pub enum Warning {
     FlowSeparationAtAltitude,
     ThroatThermalOverload,
     StoichiometricTemperatureSpike,
+    PlaneUnchangedByProgradeBurn,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,6 +51,8 @@ pub struct Inputs {
     pub apoapsis_shortfall_fraction: f64,
     pub impacted: bool,
     pub burn_sweep_deg: f64,
+    pub inclination_change_deg: f64,
+    pub requested_inclination_change_deg: f64,
 }
 
 fn chain(
@@ -153,6 +156,15 @@ pub fn diagnose(i: &Inputs) -> Vec<CausalChain> {
             "Finite burns and perturbations change the outcome",
             "Energy was added away from the optimal point or removed by modeled forces",
             "apoapsis",
+        ));
+    }
+    if i.requested_inclination_change_deg > 0.5 && i.inclination_change_deg < 0.02 {
+        out.push(chain(
+            Warning::PlaneUnchangedByProgradeBurn,
+            "The orbital plane did not move",
+            "A push along the direction of travel changes speed, not the plane normal",
+            "The maneuver has too little out-of-plane velocity change",
+            "plane-turn",
         ));
     }
     out
@@ -259,9 +271,11 @@ mod tests {
             apoapsis_shortfall_fraction: 0.10,
             impacted: true,
             burn_sweep_deg: 40.0,
+            inclination_change_deg: 0.0089,
+            requested_inclination_change_deg: 2.6,
         };
         let chains = diagnose(&i);
-        assert_eq!(chains.len(), 7);
+        assert_eq!(chains.len(), 8);
         assert!(is_valid_dag(&chains));
         for c in &chains {
             assert!(!c.demo.is_empty());
@@ -280,6 +294,8 @@ mod tests {
             apoapsis_shortfall_fraction: 0.0,
             impacted: false,
             burn_sweep_deg: 2.0,
+            inclination_change_deg: 2.6,
+            requested_inclination_change_deg: 2.6,
         };
         assert!(diagnose(&i).is_empty());
     }
@@ -346,5 +362,6 @@ mod discriminant_tests {
         assert_eq!(Warning::FlowSeparationAtAltitude as u32, 7);
         assert_eq!(Warning::ThroatThermalOverload as u32, 8);
         assert_eq!(Warning::StoichiometricTemperatureSpike as u32, 9);
+        assert_eq!(Warning::PlaneUnchangedByProgradeBurn as u32, 10);
     }
 }

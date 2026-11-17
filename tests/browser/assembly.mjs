@@ -151,7 +151,7 @@ const rec = await page.evaluate(() => {
 check('recorder captured', rec !== null);
 if (rec?.json) {
   const parsed = JSON.parse(rec.json);
-  check('signed schema is v4', parsed.schema_version === 4, String(parsed.schema_version));
+  check('signed schema is v5', parsed.schema_version === 5, String(parsed.schema_version));
   check('signed mask is the flown mask', parsed.delegation_mask === 0b1111, String(parsed.delegation_mask));
 }
 
@@ -171,9 +171,9 @@ check('the scan target carries the verify fragment', scanUrl.includes('#verify='
 check('the scan target points at this page', scanUrl.startsWith(`${new URL(page.url()).origin}/mission.html#verify=`));
 check('the dossier no longer prints a relative placeholder', !/relative to the serving origin/i.test(scanLine));
 check('the dossier prints the cryogenic annex', verified.dossier.includes('id="annex-c"'));
-check('the storable dossier discloses the baseline dry mass used for scoring',
+check('the storable dossier discloses fitted dry mass scoring',
   /id="score-dry-mass-note"/.test(verified.dossier)
-  && /fuel threshold and prediction term use the catalog baseline dry mass/.test(verified.dossier));
+  && /score fuel threshold and prediction term all use the verified fitted dry mass/.test(verified.dossier));
 check('the dossier names the delegated disciplines', /Delegation bitmask/.test(verified.dossier)
   && /capped at 0.65/.test(verified.dossier));
 
@@ -331,15 +331,15 @@ check('the dossier states v4 couples venting into the flight', /id="thermal-coup
   && /drawn from the same propellant pool the engine burns/.test(cryoVerified.dossier));
 check('the dossier states the tanks fit the airframe they were sized for', /id="tank-volume-note"/.test(cryoVerified.dossier)
   && /fits the vehicle it describes/.test(cryoVerified.dossier));
-check('the cryogenic dossier discloses the baseline dry mass used for scoring',
-  /id="score-dry-mass-note"/.test(cryoVerified.dossier));
+check('the cryogenic dossier discloses fitted dry mass scoring',
+  /id="score-dry-mass-note"/.test(cryoVerified.dossier)
+  && /all use the verified fitted dry mass/.test(cryoVerified.dossier));
 const debriefDisclaimer = await page.locator('#debrief .disclaimer').textContent();
 check('the debrief states venting reduces mass and fuel', /reduces both the remaining fuel and the mass/.test(debriefDisclaimer));
 check('the debrief states the tanks fit the airframe', /fits the airframe it was sized for/.test(debriefDisclaimer));
-// Scoring still compares against the catalog dry mass; that re-baseline is a
-// separate versioned change, so the debrief must keep saying so.
+// The debrief must distinguish frozen schema-4 scoring from current schema 5.
 check('the debrief discloses the score fuel threshold',
-  /fuel threshold still compares against the catalog baseline dry mass/.test(debriefDisclaimer));
+  /schema 4 keeps catalog-dry-mass scoring, and current schema 5 scores fuel and prediction against verified fitted dry mass/.test(debriefDisclaimer));
 // The practice targeter now follows the assembled stage, so this is a new
 // trajectory rather than the older baseline-targeted physics-pin fixture.
 // Compare the dossier to the actual worker output at printed precision; the
