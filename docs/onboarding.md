@@ -25,8 +25,10 @@ lesson 6's score is identical to four decimals (§3, §6.2).
 | Gravity turn to close the orbit | Pitch-over handle, atmospheric flight, drag | **No** |
 | Prediction contract + Astro-Elo + dossier | Locked prediction, debrief, dossier | **Yes** |
 
-Three of the four beats need systems that are not built: surface launch, ascent,
-gravity turn, launch-site physics. The fifth thing they need — a reason to care
+Three of the four beats need product systems that are not built: a surface
+launch contract, coupled ascent/staging and a gravity-turn UI. Launch-site state
+and gravity-turn guidance kernels now exist, but no production flow calls them;
+they do not make the lesson playable. The fifth thing the beats need — a reason to care
 about TWR — is also the one thing our contracts cannot currently show, because
 **every shipped contract starts already in orbit** (measured:
 `every_lesson_contract_starts_already_in_orbit`).
@@ -495,11 +497,11 @@ definition on the same flight and put both numbers in the changelog.
 | --- | --- | --- | --- |
 | Accept "launch a CubeSat" contract | Contract authoring for a surface-to-orbit objective | S (card only) | Not built |
 | Chief AI on thermal/power/avionics, player on staging | Delegation mask exists; per-discipline staging UI does not | M | Partial |
-| `[TEST IGNITION]` on the pad | Pad state, hold-down, sea-level thrust, launch-site gravity | M | Not built |
+| `[TEST IGNITION]` on the pad | Pad state, hold-down, sea-level thrust, launch-site gravity | M | Foundation only; no caller |
 | Fuel slider until TWR > 1.35 | Pad TWR solver (the engine solver exists) | S | Not built |
 | Inspect nozzle during ascent | Engine lab | **Built** (lesson 4 uses it) | Done |
 | Ascent to 300 km | Ascent propagator with atmosphere and drag | **L** | Not built |
-| Pitch-over / gravity-turn handle | Gravity turn guidance, atmospheric flight | **L** | Not built |
+| Pitch-over / gravity-turn handle | Gravity turn guidance, atmospheric flight | **L** | Guidance kernel only; no UI/ascent |
 | `v_horizontal` vs `v_orbit` gauge | Cheap once ascent exists | S | Blocked on ascent |
 | Prediction + debrief + Elo + dossier | Locked missions, scoring, dossier | **Built** | Done |
 

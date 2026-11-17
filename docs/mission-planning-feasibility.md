@@ -36,14 +36,16 @@ physical design solved from chamber conditions and nozzle geometry, the
 browser exposes it as a draggable CAD and Schlieren lab, and the signed
 recorder carries the design rather than a claimed thrust.
 
-`crates/odd-systems` (WP 1.6) has shipped: cryogenic tanks are integrated by
-the same adaptive Dormand-Prince stepper as the trajectory, driven by actual
-sun/planet vectors and eclipse state, with active cooling drawing from the
-electrical bus ahead of potential electric propulsion. Thermal loss is reported
-along the flown spline but is not fed back into orbital or burn mass; the
-current missions use chemical propulsion. Three numbers in that work-package
-card were physically impossible as written; the corrections and their
-derivations are in `docs/thermal.md`.
+`crates/odd-systems` (WP 1.6) has shipped: cryogenic tanks use the same adaptive
+Dormand-Prince tableau as the trajectory, driven by actual sun/planet vectors
+and eclipse state, with active cooling drawing from the electrical bus ahead of
+potential electric propulsion. Under current schema 4, venting and engine burns
+draw from one propellant pool and every acceleration uses fitted dry mass plus
+live propellant; depletion can produce a signed flameout. The Level-1 conic
+preview deliberately remains nonthermal rather than inventing a second loss
+model. Schemas 1–3 retain their frozen one-way behavior. Three numbers in the
+original work-package card were physically impossible as written; the
+corrections and derivations are in `docs/thermal.md`.
 
 `odd-contracts::chief_ai` (WP 1.7) has shipped: four deterministic department
 heads with a per-discipline `[AUTO-DELEGATED]`/`[MANUAL]` toggle, +35% mass and
@@ -169,8 +171,10 @@ The full-force flight always keeps continuous Sun/Moon third-body gravity.
 `find_entry` brackets a downward SOI crossing on an accepted numerical path;
 `LunarPatch::find` searches the ideal plan at a caller-supplied step and then
 propagates a Moon-centered conic after entry, translating it back to Earth for
-display. It does not target a B-plane, guarantee capture, or optimize a launch
-window.
+display. A practice tool computes B·T/B·R at a hyperbolic entry and adjusts
+maneuver components from finite-difference preview sensitivities. It does not
+guarantee the full-force flight reaches that target, guarantee capture or
+optimize a launch window.
 
 At the Contract 103 reference epoch (2026-01-01 TDB start), the 3,240 m/s
 three-kick trajectory reaches the requested apoapsis radius but **does not enter
@@ -347,8 +351,8 @@ receipt status and a print-styled PDR export button. That button is the quick
 print-to-PDF summary. The full dossier is a separate export owned by
 `crates/odd-report`: it is issued only after a successful verify-and-replay and
 carries the canonical digest, the metric tables and the vector verification
-QR. Cryogenic boil-off is reported and verified but is not fed back into the
-orbital or burn mass.
+QR. Schema-4 cryogenic boil-off is reported, verified and coupled into orbital
+mass, burn fuel and flameout; historical schemas replay their original rule.
 
 Heavy propagation, targeting and counterfactuals run in one-shot workers; the
 idle gate remains zero animation callbacks and zero worker messages over two
@@ -478,8 +482,10 @@ terminal-state hash to reproduce bit for bit.
 ## Remaining limitations
 
 This is an experimental prototype. There is no launch-window optimizer,
-B-plane targeting, lunar orbit insertion, terrain/landing model, space-weather
-atmosphere or thrust steering law. Under schema 4 cryogenic loss is **coupled**:
+lunar orbit insertion, terrain/landing model or space-weather atmosphere. A
+B-plane practice corrector and gravity-turn guidance kernel exist, but neither
+is a full mission optimizer and gravity-turn guidance has no shipped ascent
+contract or production caller. Under schema 4 cryogenic loss is **coupled**:
 venting and burning share one propellant pool, so loss is subtracted from
 orbital mass and burn fuel and a dry pool truncates thrust. The one-way
 behaviour and the ullage/envelope inconsistency describe the frozen v1–v3

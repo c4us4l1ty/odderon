@@ -138,9 +138,10 @@ correctness. No production deployment is implied.
   account, revocation, Sybil prevention or custody system. A private server
   seed, static key pin and explicit rotation strategy are operator duties.
 - **Scope:** quasi-1D perfect-gas propulsion and a lumped thermal model are
-  approximations. There is no launch-window optimizer, B-plane targeting,
-  lunar orbit insertion, terrain/landing or space-weather atmosphere model.
-  Numerical three-kick targeting is a bounded practice aid, not an optimizer.
+  approximations. There is no launch-window optimizer, lunar orbit insertion,
+  terrain/landing or space-weather atmosphere model. B-plane correction and
+  numerical three-kick targeting are bounded practice aids, not optimizers.
+  Launch-site and gravity-turn kernels have no shipped ascent caller.
 
 ## Acceptance
 
