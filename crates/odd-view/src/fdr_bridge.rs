@@ -11,10 +11,13 @@
 //! byte channel, and strings leave as length + byte.
 use super::identity_bridge;
 use super::mission_bridge::{self as bridge};
-use odd_report::{AttemptMode, Command, Fdr, FdrError, FROZEN_V3_SCHEMA_VERSION, SCHEMA_VERSION};
+use odd_report::{
+    AttemptMode, Command, Fdr, FdrError, COUPLED_SCHEMA_VERSION, ENGINE_SCHEMA_VERSION,
+    FROZEN_V3_SCHEMA_VERSION, SCHEMA_VERSION,
+};
 
 /// First schema whose record carries the coupled-mass block.
-const V4_SCHEMA_VERSION: u16 = SCHEMA_VERSION;
+const V4_SCHEMA_VERSION: u16 = COUPLED_SCHEMA_VERSION;
 use odd_verify::REPORT_LEN;
 use std::sync::Mutex;
 
@@ -175,7 +178,7 @@ pub extern "C" fn mission_fdr_digest_byte(index: u32) -> f64 {
 /// document carries NaN there and parses to `None`.
 fn engine_from_fields(fields: &[f64]) -> Option<Option<odd_propulsion::EngineSpec>> {
     let schema = integer(fields[0])?;
-    if schema < i64::from(SCHEMA_VERSION) {
+    if schema < i64::from(ENGINE_SCHEMA_VERSION) {
         return Some(None);
     }
     let propellant = integer(fields[25])?;
@@ -205,8 +208,9 @@ fn parse_fields(fields: &[f64], callsign: &str) -> Option<Fdr> {
     let base_len = metrics_at + REPORT_LEN + 32 + 32 + 64;
     // Pre-v3 records end at the signature; v3 appends a variable-length
     // trailer whose own counts are checked below.
-    if schema >= i64::from(SCHEMA_VERSION) {
-        if fields.len() < base_len + 3 || fields.len() > base_len + V3_TRAILER_MAX {
+    if schema >= i64::from(FROZEN_V3_SCHEMA_VERSION) {
+        if fields.len() < base_len + 3 || fields.len() > base_len + V3_TRAILER_MAX + V4_TRAILER_MAX
+        {
             return None;
         }
     } else if fields.len() != base_len {
@@ -808,7 +812,7 @@ pub extern "C" fn mission_fdr_fields_from_record() -> u32 {
     fields.extend(fdr.final_state_hash.iter().map(|byte| *byte as f64));
     fields.extend(fdr.public_key.iter().map(|byte| *byte as f64));
     fields.extend(fdr.signature.iter().map(|byte| *byte as f64));
-    if fdr.schema_version >= SCHEMA_VERSION {
+    if fdr.schema_version >= FROZEN_V3_SCHEMA_VERSION {
         fields.push(f64::from(fdr.delegation_mask));
         fields.push(fdr.thermal_specs.len() as f64);
         for spec in &fdr.thermal_specs {
@@ -1009,6 +1013,7 @@ mod tests {
     fn the_v4_block_round_trips_a_non_empty_flight() {
         let license = odd_identity::License::from_entropy([5u8; 16]);
         let mut fdr = transport_fixture(&license);
+        fdr.schema_version = COUPLED_SCHEMA_VERSION;
         // 101's window is 10,800 s, so a window past it must be rejected —
         // and one inside it must survive the round trip.
         fdr.flown_burn_windows = vec![(61.0, 160.0), (2_995.0, 2_995.82)];

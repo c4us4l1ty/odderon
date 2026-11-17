@@ -2,11 +2,10 @@
 //!
 //! The prose in `docs/server-authority.md` and `docs/software-design.md` said
 //! "new submissions require FDR schema 3". The engine does not accept schema 3
-//! for a new flight: it requires `SCHEMA_VERSION` (4) and rejects anything
+//! for a new flight: it requires `SCHEMA_VERSION` (5) and rejects anything
 //! older as a verification service rather than a rating. That distinction is
-//! load-bearing — a v3 record carries no coupled propellant state, so
-//! certifying it as a new ranked flight would score a model the authority no
-//! longer flies — so it belongs in a test, not only in a comment.
+//! load-bearing — v4 preserves the catalog-mass scoring defect while v5 scores
+//! the fitted dry mass — so it belongs in a test, not only in a comment.
 //!
 //! The recorder's own guards run *before* the engine's, which is why the
 //! version-only cases below are asserted at the recorder as well: a record
@@ -26,8 +25,8 @@ const PRE_CRYOGENIC: [&str; 2] = [
 fn a_new_submission_must_carry_the_current_schema() {
     assert_eq!(
         odd_report::SCHEMA_VERSION,
-        4,
-        "the coupled v4 law is what new flights are certified under"
+        5,
+        "the fitted-mass v5 law is what new flights are certified under"
     );
 
     let (fdr, license) = signed_rescue(prediction_a());

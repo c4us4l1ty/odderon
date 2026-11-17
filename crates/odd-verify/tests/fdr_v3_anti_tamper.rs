@@ -71,7 +71,7 @@ fn signed_tug(design: &ThermalDesign) -> (Fdr, odd_verify::FlightOutcome) {
         engine: tug.engine,
         node_metric: false,
         delegation: odd_contracts::DelegationMask::MANUAL,
-        revision: odd_core::PhysicsRevision::CoupledFitted,
+        revision: odd_core::PhysicsRevision::FittedScoring,
         thermal: Some(inputs),
     };
     let plan = Plan::compile(
@@ -323,7 +323,7 @@ fn v3_survives_canonical_and_json_transport() {
     // The signed bytes carry the domain of their own schema, so a parser that
     // only knows an older one cannot silently re-interpret the layout.
     assert!(bytes.starts_with(honest.sign_domain()));
-    assert_eq!(honest.sign_domain(), odd_report::COUPLED_SIGN_DOMAIN);
+    assert_eq!(honest.sign_domain(), odd_report::FITTED_SCORE_SIGN_DOMAIN);
 }
 
 /// Malformed v3 blocks are rejected by name, before any expensive replay.

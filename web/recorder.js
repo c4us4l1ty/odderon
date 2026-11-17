@@ -26,7 +26,7 @@ function hexBytes(hex, count) {
 /// Build the transport array from a parsed recorder JSON document.
 export function fieldsFromJson(document) {
   const schema = document?.schema_version;
-  if (schema !== 1 && schema !== 2 && schema !== 3 && schema !== 4) throw Error('unsupported recorder schema');
+  if (![1,2,3,4,5].includes(schema)) throw Error('unsupported recorder schema');
   const mode = document.attempt_mode === 'Ranked' ? 0 : document.attempt_mode === 'Practice' ? 1 : null;
   if (mode === null) throw Error('unknown attempt mode');
   const commands = document.command_timeline;

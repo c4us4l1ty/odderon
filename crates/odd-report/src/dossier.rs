@@ -754,7 +754,7 @@ fn thermal_annex(fdr: &Fdr) -> String {
         // v4 couples the vent into the flight, so the old "we do not subtract
         // it" and "the tanks do not fit the airframe" disclaimers are no longer
         // true. A v1–v3 certificate keeps its original wording below.
-        if fdr.schema_version >= crate::fdr::SCHEMA_VERSION {
+        if fdr.schema_version >= crate::fdr::COUPLED_SCHEMA_VERSION {
             out.push_str("<p id=\"thermal-coupling-note\">Vented mass is drawn from the same propellant pool the engine burns, so it reduces both the remaining fuel and the mass every acceleration divides by. A pool emptied by boil-off truncates thrust and is signed as a flameout.</p>");
             out.push_str("<p id=\"tank-volume-note\">Tank volume, mixture split and ullage come from the geometry the contract card sizes the airframe with, so the signed stage fits the vehicle it describes.</p>");
         } else {

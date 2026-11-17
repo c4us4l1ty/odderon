@@ -151,7 +151,7 @@ const rec = await page.evaluate(() => {
 check('recorder captured', rec !== null);
 if (rec?.json) {
   const parsed = JSON.parse(rec.json);
-  check('signed schema is v4', parsed.schema_version === 4, String(parsed.schema_version));
+  check('signed schema is v5', parsed.schema_version === 5, String(parsed.schema_version));
   check('signed mask is the flown mask', parsed.delegation_mask === 0b1111, String(parsed.delegation_mask));
 }
 

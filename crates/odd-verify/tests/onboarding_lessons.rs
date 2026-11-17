@@ -105,7 +105,7 @@ fn settings_for(contract: &Contract) -> FlightSettings {
         node_metric: false,
         thermal: None,
         delegation: DelegationMask::MANUAL,
-        revision: odd_core::PhysicsRevision::CoupledFitted,
+        revision: odd_core::PhysicsRevision::FittedScoring,
     }
 }
 

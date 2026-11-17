@@ -14,7 +14,8 @@
 //! ```text
 //! v1, v2 → no tank model at all (pre-cryogenic schemas)
 //! v3     → tanks signed and replayed, but loss is reported only
-//! v4     → tanks, fitted dry mass and venting are coupled into the flight
+//! v4     → tanks, fitted dry mass and venting are coupled; catalog scoring
+//! v5     → the same flight physics, scored against verified fitted dry mass
 //! ```
 
 /// One numbered model revision. Wire ids are the schema number the record
@@ -27,10 +28,12 @@ pub enum PhysicsRevision {
     /// and vent history are signed and replayed, but the loss never touches
     /// the propagated mass, the burn fuel or the score.
     FrozenUncoupled,
-    /// Schema 4. The vented mass leaves the vehicle, the dry mass is the
-    /// fitted hardware, and the score is measured against the fitted stage's
-    /// usable propellant.
+    /// Schema 4. The vented mass leaves the vehicle and the dry mass is fitted
+    /// hardware, but scoring retains the catalog dry-mass baseline.
     CoupledFitted,
+    /// Schema 5. Flight physics is unchanged from v4; fuel validity and the
+    /// remaining-propellant prediction are scored against verified fitted mass.
+    FittedScoring,
 }
 
 impl PhysicsRevision {
@@ -42,6 +45,7 @@ impl PhysicsRevision {
             0..=2 => Some(Self::PreThermal),
             3 => Some(Self::FrozenUncoupled),
             4 => Some(Self::CoupledFitted),
+            5 => Some(Self::FittedScoring),
             _ => None,
         }
     }
@@ -49,7 +53,12 @@ impl PhysicsRevision {
     /// True when vented propellant is removed from the flown mass and the
     /// remaining load is what the burns, drag and SRP divide by.
     pub fn couples_vented_mass(self) -> bool {
-        matches!(self, Self::CoupledFitted)
+        matches!(self, Self::CoupledFitted | Self::FittedScoring)
+    }
+
+    /// True when score fuel terms use the verified fitted dry mass.
+    pub fn scores_fitted_mass(self) -> bool {
+        matches!(self, Self::FittedScoring)
     }
 
     /// True when a tank model is signed at all.
@@ -84,7 +93,11 @@ mod tests {
             PhysicsRevision::for_schema(0),
             Some(PhysicsRevision::PreThermal)
         );
-        assert_eq!(PhysicsRevision::for_schema(5), None);
+        assert_eq!(
+            PhysicsRevision::for_schema(5),
+            Some(PhysicsRevision::FittedScoring)
+        );
+        assert_eq!(PhysicsRevision::for_schema(6), None);
     }
 
     #[test]
@@ -92,6 +105,9 @@ mod tests {
         assert!(!PhysicsRevision::PreThermal.couples_vented_mass());
         assert!(!PhysicsRevision::FrozenUncoupled.couples_vented_mass());
         assert!(PhysicsRevision::CoupledFitted.couples_vented_mass());
+        assert!(PhysicsRevision::FittedScoring.couples_vented_mass());
+        assert!(!PhysicsRevision::CoupledFitted.scores_fitted_mass());
+        assert!(PhysicsRevision::FittedScoring.scores_fitted_mass());
         assert!(!PhysicsRevision::PreThermal.has_tanks());
         assert!(PhysicsRevision::FrozenUncoupled.has_tanks());
         assert!(PhysicsRevision::CoupledFitted.has_tanks());

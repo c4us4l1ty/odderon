@@ -544,7 +544,7 @@ try{
   const rankedDownload=page.waitForEvent('download');
   await page.locator('#export-fdr').click();
   const rankedFdr=JSON.parse(await readFile(await (await rankedDownload).path(),'utf8'));
-  assert.equal(rankedFdr.schema_version,4);
+  assert.equal(rankedFdr.schema_version,5);
   // FDR v4 extends the v3 layout: the delegation bitmask and tank block still
   // travel in the signed bytes. Contract 101 flies storables, so it has no
   // tank model and no vent events — but the fields must still be present and
