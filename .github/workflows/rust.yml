@@ -103,6 +103,13 @@ jobs:
         run: |
           cargo build --locked -p odd-worker --features local --bin odderon-authority --example segment_chain
           cargo test --locked -p odd-worker --features local --lib --tests
+          # The browser gate replays a coupled v4 flight, so it runs the
+          # optimized authority: an unoptimized replay of a six-day cryogenic
+          # coast exceeds the client's 30 s submission budget and the gate
+          # would fail for the wrong reason. `tests/browser/support/
+          # authority-server.mjs` prefers target/release when it exists, which
+          # mirrors `./scripts/gate.sh`.
+          cargo build --locked --release -p odd-worker --features local --bin odderon-authority
           cargo build --locked --release -p odd-authority-wasm --target wasm32-unknown-unknown
           cp target/wasm32-unknown-unknown/release/odd_authority_wasm.wasm crates/odd-worker-cloudflare/src/authority.wasm
       - name: Install browser test dependency
