@@ -3,50 +3,70 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#050a0d">
+  <meta name="description" content="Odderon — a browser-native space engineering game.">
   <link rel="icon" href="data:,">
-  <meta name="theme-color" content="#0b1518">
-  <title>Odderon · Earth–Moon observatory</title>
-  <link rel="stylesheet" href="./style.css">
+  <title>Odderon</title>
+  <link rel="preload" href="./assets/title-orbit.jpg" as="image">
+  <link rel="stylesheet" href="./game.css">
 </head>
 <body>
-  <div class="app">
-    <header class="topbar">
-      <a class="brand" href="./" aria-label="Odderon home"><span class="brand-mark">◒</span><span>ODDERON<small>SPACE ENGINEERING, MADE TANGIBLE</small></span></a>
-      <div class="top-meta"><span class="live-dot"></span> OBSERVATORY <span class="divider"></span> FOUNDATION / 0.3</div>
+  <main class="title-screen" aria-labelledby="game-title">
+    <div class="spacecraft" aria-hidden="true"></div>
+    <div class="vignette" aria-hidden="true"></div>
+    <div class="grain" aria-hidden="true"></div>
+
+    <header class="game-header">
+      <div class="wordmark"><span class="wordmark-mark">◒</span><span>ODDERON</span></div>
+      <div class="build-state"><i></i><span id="system-state">FLIGHT COMPUTER INITIALIZING</span></div>
     </header>
-    <main>
-      <div class="intro"><div><div class="eyebrow"><span>01 / THE OBSERVATORY</span><span class="eyebrow-line"></span> EARTH–MOON SYSTEM</div><h1>A little closer to <em>the cosmos.</em></h1><p>Explore our nearest celestial neighbor, grounded in real ephemeris data.</p></div><div class="intro-note"><span>✳</span><p>Real positions.<br><strong>Room to wonder.</strong></p></div></div>
-      <div class="workspace">
-        <section class="viewport-card" aria-label="Earth Moon viewport">
-          <div class="viewport-head"><div><span class="section-label">THE VIEWPORT</span><span class="head-separator">/</span><span class="head-muted">GEOCENTRIC VIEW</span></div><span class="view-badge"><span class="live-dot"></span> J2000 FRAME</span></div>
-          <div id="scene" class="scene" tabindex="0" aria-label="Interactive Earth Moon view. Drag to rotate; use arrow keys to rotate, plus and minus to zoom.">
-            <canvas id="world" aria-hidden="true"></canvas><canvas id="overlay" aria-hidden="true"></canvas>
-            <div class="scene-top"><span>EARTH <span class="muted">↔</span> MOON</span><span>DE440s <span class="muted">/</span> GEOMETRIC</span></div>
-            <div class="scene-bottom"><span><span class="drag-icon">✥</span> DRAG TO ORBIT <span class="scene-hint"> · SCROLL TO ZOOM</span></span><span id="render-status">RENDERING ON DEMAND</span></div>
-            <div id="error" class="error" role="alert" hidden></div>
-          </div>
-          <div class="viewport-foot"><div><span class="scale-icon">◉</span><span><strong>Bodies shown at true scale</strong><small>Surface patterns are illustrative, not mapped terrain.</small></span></div><div class="view-controls"><button id="zoom-out" aria-label="Zoom out">−</button><button id="zoom-in" aria-label="Zoom in">+</button><button id="reset" class="reset">↺ <span>Reset view</span></button></div></div>
-        </section>
-        <aside class="sidebar" aria-label="Observation details">
-          <div class="side-heading"><div><div class="section-label">OBSERVATION 001</div><h2>Our celestial<br><em>neighborhood.</em></h2></div><span class="orbit-icon">✳</span></div>
-          <p class="side-copy">A snapshot of the Moon’s journey around Earth, with sunlight and positions calculated for your chosen date.</p>
-          <div class="rule"></div>
-          <div class="metric-label">EARTH–MOON DISTANCE <span title="Center-to-center geometric distance">ⓘ</span></div><div class="metric"><span id="distance">—</span><small>km</small></div><div class="metric-sub">Center to center <span>↗</span></div>
-          <div class="metric-label second">RELATIVE SPEED <span title="Magnitude of Moon velocity relative to Earth">ⓘ</span></div><div class="metric secondary"><span id="speed">—</span><small>km/s</small></div><div class="metric-sub">Moon relative to Earth <span>↗</span></div>
-          <div class="rule"></div>
-          <label class="toggle-row"><span><strong>Show Moon’s path</strong><small>Sampled geometric positions</small></span><input id="show-path" type="checkbox" checked><span class="switch" aria-hidden="true"></span></label>
-          <label class="toggle-row extra-toggle"><span><strong>Show velocity direction</strong><small>Current Moon motion relative to Earth</small></span><input id="show-velocity" type="checkbox"><span class="switch" aria-hidden="true"></span></label>
-          <label class="toggle-row extra-toggle"><span><strong>Show test orbit</strong><small>Compare two-body and perturbed Earth orbit</small></span><input id="show-orbit" type="checkbox"><span class="switch" aria-hidden="true"></span></label>
-          <div id="trajectory-status" role="status" class="extra-toggle">L3 · NOT CALCULATED</div>
-          <label class="toggle-row extra-toggle"><span><strong>Show vehicle study</strong><small>Enable test orbit; glyph is not to scale</small></span><input id="show-vehicle" type="checkbox"><span class="switch" aria-hidden="true"></span></label>
-          <div class="side-note"><span>✦</span><p><strong>A note on scale</strong><br>Bodies, positions and paths use the same spatial scale. A reticle marks a body when it is too small to see clearly.</p></div>
-        </aside>
-      </div>
-      <section class="timeline" aria-label="Observation date"><div class="time-title"><span class="section-label">TRAVEL THROUGH TIME</span><span class="time-sub">A still moment, anywhere in our dataset</span></div><div class="time-controls"><button id="prev" disabled aria-label="Previous day">←</button><label for="date">OBSERVATION DATE <span class="time-scale">TDB</span></label><input id="date" disabled type="date" value="2026-01-01" min="2020-01-01" max="2035-12-31"><button id="next" disabled aria-label="Next day">→</button><button id="today-reset" disabled class="date-reset">Return to 2026</button></div><p class="time-explain">Dates are midnight in TDB, a time scale used for solar-system calculations—not your local time. Coverage: 2020–2035.</p></section>
-      <p><a href="./mission.html" style="color:#bdd5b6">Try the orbit-rescue planning prototype →</a></p>
-      <footer><span>ODDERON <span class="muted">/</span> A UNIVERSE BUILT ON CURIOSITY</span><a href="https://ssd.jpl.nasa.gov/planets/eph_export.html" target="_blank" rel="noreferrer">ABOUT JPL EPHEMERIDES ↗</a><span>EARLY FOUNDATION · NOT YET A GAME</span></footer>
-    </main>
-  </div>
-  <script type="module" src="./app.js"></script>
+
+    <section class="command-deck">
+      <p class="kicker">SPACE ENGINEERING SIMULATION</p>
+      <h1 id="game-title">ODDERON</h1>
+      <p class="tagline">Design the machine.<br>Predict the flight.<br><strong>Answer to physics.</strong></p>
+
+      <nav class="game-menu" aria-label="Main menu">
+        <a class="menu-item primary" href="./mission.html">
+          <span class="menu-index">01</span><span class="menu-label">ENTER FLIGHT DECK<small>Continue with mission planning</small></span><span class="menu-arrow">›</span>
+        </a>
+        <a class="menu-item" href="./mission.html#onboarding">
+          <span class="menu-index">02</span><span class="menu-label">ACADEMY<small>Placement and guided flight</small></span><span class="menu-arrow">›</span>
+        </a>
+        <a class="menu-item" href="./observatory.html">
+          <span class="menu-index">03</span><span class="menu-label">OBSERVATORY<small>Explore the Earth–Moon system</small></span><span class="menu-arrow">›</span>
+        </a>
+        <button class="menu-item" id="open-settings" type="button">
+          <span class="menu-index">04</span><span class="menu-label">SETTINGS<small>Display and accessibility</small></span><span class="menu-arrow">›</span>
+        </button>
+      </nav>
+    </section>
+
+    <aside class="mission-brief" aria-label="Current operation">
+      <p class="brief-label">CURRENT OPERATION</p>
+      <div class="brief-rule"></div>
+      <p class="brief-code">CONTRACT 101</p>
+      <h2>ORBIT RESCUE</h2>
+      <p>Recover a stranded stage. Build an engine, design the burns, and lock your prediction before flight.</p>
+      <div class="brief-meta"><span>EARTH ORBIT</span><span>CADET</span><span>3 HOURS</span></div>
+    </aside>
+
+    <footer class="game-footer">
+      <span>FOUNDATION 0.3 <b>•</b> LOCAL PRACTICE</span>
+      <span>BUILD c37fc0f</span>
+      <span class="key-hint"><kbd>↵</kbd> SELECT</span>
+    </footer>
+  </main>
+
+  <dialog id="settings-dialog" class="settings-dialog">
+    <form method="dialog">
+      <div class="dialog-head"><div><p>ODDERON / SYSTEM</p><h2>Settings</h2></div><button value="close" aria-label="Close settings">×</button></div>
+      <label><span>Interface motion<small>Disable decorative movement</small></span><input id="reduce-motion" type="checkbox"></label>
+      <label><span>Interface contrast<small>Increase menu separation</small></span><input id="high-contrast" type="checkbox"></label>
+      <p class="settings-note">Flight controls and audio settings will appear here as those systems ship. Preferences remain on this device.</p>
+      <button class="settings-done" value="close">RETURN TO COMMAND</button>
+    </form>
+  </dialog>
+  <script type="module" src="./game.js"></script>
 </body>
 </html>

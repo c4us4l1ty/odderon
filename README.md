@@ -109,10 +109,11 @@ cp target/wasm32-unknown-unknown/release/odd_view.wasm web/odd_view.wasm
 python3 -m http.server 8000 --directory web
 ```
 
-Open <http://localhost:8000/>. See [observatory notes](docs/observatory.md)
-for controls, browser tests, rendering choices, and scientific/performance
-limitations. Positions are calculated from DE440s; visible surface features
-and the optional vehicle study are illustrative.
+Open <http://localhost:8000/> for the game menu, or
+<http://localhost:8000/observatory.html> for the observatory. See
+[observatory notes](docs/observatory.md) for controls, browser tests, rendering
+choices, and scientific/performance limitations. Positions are calculated from
+DE440s; visible surface features and the optional vehicle study are illustrative.
 
 After building and serving the WebAssembly module as above, open
 <http://localhost:8000/mission.html> for the three experimental mission
