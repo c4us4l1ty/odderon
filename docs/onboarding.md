@@ -1,8 +1,9 @@
 # First 30 Minutes: Onboarding Design
 
 Status: **seven lessons, placement routing and consent-gated local observations
-are implemented.** The mission page uses real contract, engine and debrief
-controls and never scripts an outcome. The authoritative shipped specification
+are implemented.** The Academy station docks the lesson panel above the live
+Flight Dynamics controls; it uses real contract, engine and debrief state and
+never scripts an outcome. The authoritative shipped specification
 is [`onboarding-storyboard.md`](onboarding-storyboard.md); where the historical
 measurements and rejected alternatives below conflict with it, the shipped
 storyboard and oracle tests win. Structured external playtesting remains next.

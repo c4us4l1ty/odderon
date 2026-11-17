@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Idempotent sandbox provisioning for restricted-egress environments.
+# Idempotent developer and restricted-sandbox provisioning.
 #
-# Restores everything the tracked tree deliberately does not carry: the Rust
-# toolchain, vendored crate sources, node_modules and a headless Chromium.
-# Safe to re-run; each stage is skipped when its output already exists.
+# The default path builds the playable browser WASM with an installed/rustup
+# toolchain and skips test-only browser packages. --full also restores vendored
+# test dependencies and headless Chromium. Safe to re-run.
 #
 #   ./scripts/provision.sh          # provision
 #   source scripts/env.sh           # then put the tools on PATH
@@ -84,7 +84,8 @@ fi
 export CARGO_HOME="$CACHE/cargo"
 mkdir -p "$CARGO_HOME"
 rustc --version
-if ! rustc --print target-libdir --target wasm32-unknown-unknown >/dev/null 2>&1; then
+WASM_LIB="$(rustc --print sysroot)/lib/rustlib/wasm32-unknown-unknown/lib"
+if [ ! -d "$WASM_LIB" ]; then
   if command -v rustup >/dev/null 2>&1; then
     say "Installing the WebAssembly Rust target"
     rustup target add wasm32-unknown-unknown
@@ -93,6 +94,7 @@ if ! rustc --print target-libdir --target wasm32-unknown-unknown >/dev/null 2>&1
     exit 1
   fi
 fi
+unset WASM_LIB
 
 # ------------------------------------------------------------------- vendor
 say "Vendoring crate sources"

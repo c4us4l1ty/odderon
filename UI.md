@@ -1,11 +1,13 @@
 # UI vision and implementation boundary
 
 This document is a forward-looking visual blueprint, not a statement that every
-screen or rendering pass is shipped. The implemented root is now a portable,
-full-screen game menu; the Observatory and current long-form Flight Deck remain
-separate player routes. See [`docs/game-shell.md`](docs/game-shell.md) for the
-exact shipped navigation, hosting boundary and browser gates. The unified
-single-viewport Flight Deck described below is still future UI work.
+screen or rendering pass is shipped. The implemented root is a portable,
+full-screen game menu. The playable Flight Deck now uses a fixed command shell
+with dedicated Flight Dynamics, Academy, Propulsion, Vehicle, Prediction and
+Flight Data Review stations; the Observatory uses the same instrument language.
+See [`docs/game-shell.md`](docs/game-shell.md) for the exact shipped navigation,
+hosting boundary and browser gates. The more ambitious rendering passes below
+remain future visual work.
 
 To make **Odderon** look like a hand-painted masterpiece (like `@BlendiByl`’s *Painted Valley*) while functioning with the mathematical rigor of **NASA JPL Mission Control**—and running at **near-0% idle CPU on a laptop with no dedicated GPU**—we must design a specialized visual and UI architecture.
 

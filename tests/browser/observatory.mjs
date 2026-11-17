@@ -41,7 +41,15 @@ try{
   const menuMobile=await browser.newPage({viewport:{width:390,height:844},deviceScaleFactor:2});
   await menuMobile.goto(`http://127.0.0.1:${server.address().port}/`);await menuMobile.waitForFunction(()=>document.querySelector('#system-state')?.textContent.includes('READY'));
   assert.equal(await menuMobile.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true,'mobile title screen overflows horizontally');
-  assert.equal(await menuMobile.locator('.game-menu').isVisible(),true);await menuMobile.close();
+  assert.equal(await menuMobile.locator('.game-menu').isVisible(),true);
+  await menuMobile.goto(`http://127.0.0.1:${server.address().port}/mission.html`);
+  await menuMobile.waitForFunction(()=>window.odderonFlightShell&&document.getElementById('add-node')&&!document.getElementById('add-node').disabled,null,{timeout:30000});
+  assert.equal(await menuMobile.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'mobile Flight Deck overflows horizontally');
+  assert.equal(await menuMobile.evaluate(()=>getComputedStyle(document.body).overflow),'hidden','Flight Deck must be a fixed game console, not document navigation');
+  await menuMobile.locator('[data-flight-mode="propulsion"]').click();assert.equal(await menuMobile.locator('#engine-lab').isVisible(),true);
+  await menuMobile.locator('[data-flight-mode="prediction"]').click();assert.equal(await menuMobile.locator('#prediction-workspace').isVisible(),true);
+  const mobileRail=await menuMobile.locator('.flight-mode-nav').boundingBox();assert.ok(mobileRail.y>700,'station rail must become a mobile game bar');
+  await menuMobile.close();
   // Capture the actual MediaQueryList objects so we can deliver a monitor
   // change notification even on headless Chrome versions whose CDP metrics
   // override updates matchMedia results without emitting a change event.
