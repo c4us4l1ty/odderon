@@ -57,7 +57,7 @@ A static deployment is practice-only. Miniflare/workerd tests and Wrangler
 
 ## Verification state
 
-The latest accepted merge to `main` is
+The accepted product baseline is main commit
 `ff50973f00a8c87e0d2b6cda039fa03690f708af` (PR #21). Both post-merge hosted
 GitHub Actions workflows passed: the full Rust/browser/authority foundation and
 the status-document synchronization check. The repository is public while its
