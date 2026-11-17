@@ -6,7 +6,7 @@ import { createAssembly, assemblyPayload, applyAssembly } from './assembly.js';
 import * as identity from './identity.js';
 import { initProfile, openProfile, syncProfile } from './profile.js';
 import * as recorder from './recorder.js';
-import { initVerify, openVerify, result as verificationResult } from './verify.js';
+import { initVerify, onVerification, openVerify, result as verificationResult } from './verify.js';
 import * as authority from './authority.js';
 import { verifyReceipt } from './authority-crypto.js';
 import { initLeaderboard } from './leaderboard.js';
@@ -645,6 +645,11 @@ function updateAttemptMode(reset=false){
   const split=$('split-kick');
   if(split){split.disabled=!!locked||(scenario==='103'&&select.value==='ranked');split.title=scenario==='103'&&select.value==='ranked'?'Numerical targeting runs the flight model and is available only in practice.':'';}
 }
+function currentRecorderVerified(){
+  const result=verificationResult();
+  if(result?.code!==1||!lastRecorder||!result.json)return false;
+  try{return JSON.parse(result.json).canonical_digest===lastRecorder.document.canonical_digest;}catch{return false;}
+}
 function onboardingSnapshot(){
   const required=['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time'];
   const predictionReady=required.every(id=>$(id).value.trim()!==''&&Number.isFinite(Number($(id).value)));
@@ -656,6 +661,7 @@ function onboardingSnapshot(){
   return {
     contract:contractId,
     nodes:nodes.length,
+    firstTangentialDv:nodes[0]?.dv[0],
     predictionReady,
     idealApoapsisKm:ideal?.apo,
     idealPeriapsisKm:ideal?.peri,
@@ -670,7 +676,7 @@ function onboardingSnapshot(){
     inclinationDeg:lastReport?.[26]*180/Math.PI,
     impacted:lastReport?.[30]===1,
     schemaVersion:lastRecorder?.document?.schema_version??5,
-    verified:!!lastRecorder,
+    verified:currentRecorderVerified(),
     fittedDryKg:stage?.dryMass,
     wetMassKg:stage?.wetMass,
     initialPropellantKg:stage?stage.wetMass-stage.dryMass:NaN,
@@ -678,12 +684,12 @@ function onboardingSnapshot(){
     predictionErrorKg:predictionError,
     predictionErrorBeforeKg:Number.isFinite(predictionError)?predictionError:Math.abs(delegatedBaselineDryKg-catalogDryKg),
     efficiency:lastReport?.[36],
-    objectivePassed:lastReport?.[35]>0.65,
+    objectivePassed:lastReport?.[30]===0&&Math.abs(lastReport?.[40])<=15_000_000,
   };
 }
 function activateOnboardingLesson(lesson){
   if(locked)$('unlock').click();
-  if(String(lesson.contract)!==scenario){
+  if(String(lesson.contract)!==scenario||lesson.reset){
     $('mission-select').value=String(lesson.contract);
     $('mission-select').dispatchEvent(new Event('change',{bubbles:true}));
   }
@@ -774,7 +780,7 @@ new ResizeObserver(draw).observe(canvas.parentElement);
 function beginPlacement(){
   const box=$('placement-diagnostic'),copy=$('placement-copy'),choices=$('placement-choices'),status=$('placement-status');
   $('onboarding-welcome').hidden=true;box.hidden=false;let checks={apsis:false,phasing:false,massPrediction:false};playtest.startLesson(0);
-  const route=()=>{const destination=placementRoute(checks);playtest.complete();box.hidden=true;if(destination==='ranked'){$('onboarding').hidden=true;if($('onboarding-save').checked)localStorage.setItem('odderon:onboarding:v1',JSON.stringify({version:1,lesson:6,complete:true}));}else onboarding.begin(destination);};
+  const route=()=>{const destination=placementRoute(checks);playtest.complete();box.hidden=true;if(destination==='ranked'){$('onboarding').hidden=true;if($('onboarding-save').checked){try{localStorage.setItem('odderon:onboarding:v1',JSON.stringify({version:1,lesson:6,complete:true}));}catch{}}}else onboarding.begin(destination);};
   $('placement-measure').onclick=()=>{
     const state=onboardingSnapshot();checks.apsis=state.nodes>=1&&state.idealApoapsisKm>=500;
     if(!checks.apsis){status.textContent='The measured apoapsis missed the target ring. Starting with Lesson 1.';route();return;}
@@ -821,5 +827,5 @@ assembly=createAssembly({wasm,isLocked:()=>!!locked,annotate:annotateAcronyms,on
 }});
 if(wasm.mission_contract(contractId)){engineLab.loadBaseline();engineLab.setLocked();assembly.sync();assembly.setLocked();}
 annotateAcronyms(document.querySelector('.mission-main'));syncFields();updatePreview();
-onboarding=createOnboarding({snapshot:onboardingSnapshot,activate:activateOnboardingLesson,recorder:playtest});setupPlaytestControls();
+onboarding=createOnboarding({snapshot:onboardingSnapshot,activate:activateOnboardingLesson,recorder:playtest});onVerification(()=>onboarding?.update());setupPlaytestControls();
 }catch(e){$('plan-status').classList.add('failure');$('plan-status').textContent=String(e.message||e);annotateAcronyms($('plan-status'));}

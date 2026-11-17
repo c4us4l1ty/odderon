@@ -38,9 +38,13 @@ struct Aggregate {
 /// Parse the deliberately small, versioned JSON shape exported by the browser.
 /// Unknown fields are ignored; required fields fail closed.
 pub fn parse_session_json(json: &str) -> Result<PlaytestSessionLog, &'static str> {
-    let schema = number(json, "schema")? as u8;
+    let schema_number = integer(json, "schema")?;
+    if schema_number != 1 {
+        return Err("unsupported playtest schema");
+    }
+    let schema = 1;
     let session_id = string(json, "session_id")?;
-    let started_at_ms = number(json, "started_at_ms")? as u64;
+    let started_at_ms = integer(json, "started_at_ms")?;
     let array = value_after(json, "observations")?;
     let open = array.find('[').ok_or("observations is not an array")?;
     let end = matching(array, open, '[', ']').ok_or("unterminated observations")?;
@@ -51,11 +55,14 @@ pub fn parse_session_json(json: &str) -> Result<PlaytestSessionLog, &'static str
         let stop = matching(array, start, '{', '}').ok_or("unterminated observation")?;
         let object = &array[start..=stop];
         observations.push(LessonObservation {
-            lesson_id: number(object, "lesson_id")? as u8,
+            lesson_id: u8::try_from(integer(object, "lesson_id")?)
+                .map_err(|_| "lesson id out of range")?,
             completed: boolean(object, "completed")?,
-            time_to_threshold_ms: number(object, "time_to_threshold_ms")? as u64,
-            retry_count: number(object, "retry_count")? as u32,
-            hint_open_count: number(object, "hint_open_count")? as u32,
+            time_to_threshold_ms: integer(object, "time_to_threshold_ms")?,
+            retry_count: u32::try_from(integer(object, "retry_count")?)
+                .map_err(|_| "retry count out of range")?,
+            hint_open_count: u32::try_from(integer(object, "hint_open_count")?)
+                .map_err(|_| "hint count out of range")?,
             causal_rules_triggered: string_array(object, "causal_rules_triggered")?,
             first_burn_direction_on_phasing: optional_string(
                 object,
@@ -91,6 +98,13 @@ fn value_after<'a>(json: &'a str, key: &str) -> Result<&'a str, &'static str> {
 fn number(json: &str, key: &str) -> Result<f64, &'static str> {
     optional_number(json, key)?.ok_or("number is null")
 }
+fn integer(json: &str, key: &str) -> Result<u64, &'static str> {
+    let value = number(json, key)?;
+    if !value.is_finite() || value < 0.0 || value.fract() != 0.0 || value > u64::MAX as f64 {
+        return Err("invalid non-negative integer");
+    }
+    Ok(value as u64)
+}
 fn optional_number(json: &str, key: &str) -> Result<Option<f64>, &'static str> {
     let rest = value_after(json, key)?;
     if rest.starts_with("null") {
@@ -100,7 +114,11 @@ fn optional_number(json: &str, key: &str) -> Result<Option<f64>, &'static str> {
         .split(|c: char| c == ',' || c == '}' || c.is_whitespace())
         .next()
         .unwrap_or("");
-    token.parse().map(Some).map_err(|_| "invalid number")
+    let value: f64 = token.parse().map_err(|_| "invalid number")?;
+    if !value.is_finite() {
+        return Err("non-finite number");
+    }
+    Ok(Some(value))
 }
 fn boolean(json: &str, key: &str) -> Result<bool, &'static str> {
     let rest = value_after(json, key)?;

@@ -5,6 +5,7 @@ import { LESSONS, createPlaytestRecorder, lessonComplete, placementRoute } from 
 const base = {
   contract: 101,
   nodes: 0,
+  firstTangentialDv: NaN,
   predictionReady: false,
   idealApoapsisKm: NaN,
   idealPeriapsisKm: NaN,
@@ -41,8 +42,9 @@ test('lesson one requires the measured orbit, not merely two controls', () => {
 });
 
 test('flight lessons require modeled outcomes at their documented thresholds', () => {
-  assert.equal(lessonComplete(1, { ...base, predictionReady: true }), false);
-  assert.equal(lessonComplete(1, { ...base, predictionReady: true, flown: true }), true);
+  assert.equal(lessonComplete(1, { ...base, nodes: 1, firstTangentialDv: 10, idealPeriapsisKm: 220 }), false);
+  assert.equal(lessonComplete(1, { ...base, nodes: 1, firstTangentialDv: -10, idealPeriapsisKm: 240 }), false);
+  assert.equal(lessonComplete(1, { ...base, nodes: 1, firstTangentialDv: -10, idealPeriapsisKm: 220 }), true);
 
   const plane = { ...base, contract: 102, flown: true, inclinationDeg: 98.50, apoapsisKm: 800, periapsisKm: 800 };
   assert.equal(lessonComplete(2, { ...plane, inclinationDeg: 98.499 }), false);

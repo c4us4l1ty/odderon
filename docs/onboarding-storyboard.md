@@ -60,13 +60,15 @@ observatory. The player may instead start Lesson 1 or skip without penalty.
 - Recovery hints: opposite apsis response; two pushes; move to the next low
   point; use two prograde pushes near successive low points.
 
-## Lesson 2 — Guess first
+## Lesson 2 — Catch up by falling behind
 
-- Contract/camera: 101, preserve Lesson 1 framing.
-- Highlight: prediction panel.
-- Pass: all required prediction fields lock before a modeled flight completes.
-- Recovery: identify missing fields, compare cyan ideal path, use then adjust
-  the ideal prediction, lock before flight.
+- Contract/camera: reset Contract 101 and preserve the full-orbit framing.
+- Highlight: the tangential maneuver control.
+- Prompt: a target is 15 degrees ahead; enter a lower, faster phasing orbit.
+- Pass: at least one node, first tangential burn retrograde, and ideal periapsis
+  between 120 km inclusive and 240 km exclusive.
+- Recovery: explain that lower orbits move faster, lower the opposite side,
+  pull the tangential handle backward, then disclose the measured safe band.
 
 ## Lesson 3 — Tilting the orbit
 

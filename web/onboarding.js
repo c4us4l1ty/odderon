@@ -33,7 +33,7 @@ export function createPlaytestRecorder({ storage = localStorage, now = () => Dat
       if (consent) {
         try { const prior = JSON.parse(storage.getItem(PLAYTEST_KEY)); if (prior?.schema === 1 && Array.isArray(prior.observations)) session = prior; } catch {}
         ensure(); persist();
-      } else { session = null; current = null; try { storage.removeItem(PLAYTEST_KEY); } catch {} }
+      } else { session = null; current = null; }
     },
     startLesson(lessonId, initial = {}) {
       if (!ensure()) return;
@@ -76,10 +76,10 @@ export const LESSONS = Object.freeze([
     hints: ['Watch which side of the orbit moves.', 'One push raises the opposite side.', 'Move around the orbit before adding another push.', 'Use two prograde pushes, one near each low point.'],
   }),
   Object.freeze({
-    title: 'Guess first', contract: 101, focus: '#prediction-title',
-    copy: 'Before you push: where will the far side end up? Set your prediction, then make the same burn as last time.',
-    success: 'A prediction was locked and the modeled flight completed.',
-    hints: ['Prediction must happen before the modeled flight.', 'The ideal cyan path is a useful first estimate.', 'Use the ideal-prediction button, then change one value.', 'Fill every required prediction field before locking.'],
+    title: 'Catch up by falling behind', contract: 101, focus: '#node-t', reset: true,
+    copy: 'A target is ahead in the same orbit. Enter a lower, faster phasing orbit first. Which burn direction drops the opposite side without entering the atmosphere?',
+    success: 'The first burn is retrograde and the ideal low side is between 120 and 240 km.',
+    hints: ['A lower orbit moves around Earth faster.', 'The first burn must lower the opposite side.', 'Pull the gold tangential handle backward.', 'Use a retrograde burn until periapsis is below 240 km but above 120 km.'],
   }),
   Object.freeze({
     title: 'Tilting the orbit', contract: 102, focus: '#node-w',
@@ -121,7 +121,11 @@ export function lessonComplete(index, state) {
         && state.idealPeriapsisKm >= 500
         && state.idealEccentricity < 0.02;
     case 1:
-      return state.contract === 101 && state.predictionReady && state.flown;
+      return state.contract === 101
+        && state.nodes >= 1
+        && state.firstTangentialDv < 0
+        && state.idealPeriapsisKm >= 120
+        && state.idealPeriapsisKm < 240;
     case 2:
       return state.contract === 102
         && state.flown
@@ -158,7 +162,8 @@ function safeProgress(storage) {
     const value = JSON.parse(storage.getItem(ONBOARDING_KEY));
     if (value?.version === ONBOARDING_VERSION
         && Number.isInteger(value.lesson)
-        && value.lesson >= 0 && value.lesson < LESSONS.length) return value;
+        && value.lesson >= 0 && value.lesson < LESSONS.length
+        && (value.complete === undefined || typeof value.complete === 'boolean')) return value;
   } catch { /* A malformed local value is not tutorial state. */ }
   return null;
 }
@@ -223,7 +228,8 @@ export function createOnboarding({ snapshot, activate, storage = localStorage, r
   save.addEventListener('change', () => {
     if (save.checked) {
       const prior = safeProgress(storage);
-      if (prior && !active) begin(prior.lesson);
+      if (prior?.complete) panel.hidden = true;
+      else if (prior && !active) begin(prior.lesson);
       else persist();
     } else {
       try { storage.removeItem(ONBOARDING_KEY); } catch { /* no storage */ }
@@ -240,7 +246,9 @@ export function createOnboarding({ snapshot, activate, storage = localStorage, r
     if (!lessonComplete(lesson, snapshot())) return;
     if (lesson === LESSONS.length - 1) {
       status.textContent = 'Guide complete. The contracts are now yours.';
-      next.hidden = true; persist(); return;
+      next.hidden = true;
+      if (save.checked) { try { storage.setItem(ONBOARDING_KEY, JSON.stringify({ version: ONBOARDING_VERSION, lesson, complete: true })); } catch {} }
+      return;
     }
     lesson += 1; recordedComplete = false; activate(LESSONS[lesson], lesson);
     recorder?.startLesson(lesson + 1, { predictionError: snapshot().predictionErrorBeforeKg });
