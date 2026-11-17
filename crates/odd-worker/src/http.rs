@@ -376,6 +376,34 @@ pub fn checkpoint_to_json(c: &SegmentCheckpoint) -> Json {
         Json::Arr(c.tank_temps.iter().map(|v| Json::Num(*v)).collect()),
     );
     o.insert("cum_hash".into(), hex(&c.cum_hash));
+    // The chain link. Always emitted, `null` at the head of a chain: a segment
+    // that names its predecessor cannot be re-used under a different chain, so
+    // omitting it here would silently disable that binding for every HTTP
+    // submission.
+    o.insert(
+        "prev_seg_hash".into(),
+        match &c.prev_seg_hash {
+            Some(hash) => hex(hash),
+            None => Json::Null,
+        },
+    );
+    // The v4 resumable state. Emitted only when the checkpoint actually carries
+    // it, so v1–v3 chains keep the exact wire form they always had: a legacy
+    // checkpoint parses back as `tank_states: None`, `cooler_joules: 0.0`,
+    // `vent_count: 0`, which is what it was.
+    if let Some(tanks) = c.tank_states {
+        o.insert(
+            "tank_states".into(),
+            Json::Arr(
+                tanks
+                    .iter()
+                    .map(|row| Json::Arr(row.iter().map(|v| Json::Num(*v)).collect()))
+                    .collect(),
+            ),
+        );
+        o.insert("cooler_joules".into(), Json::Num(c.cooler_joules));
+        o.insert("vent_count".into(), Json::Num(c.vent_count as f64));
+    }
     Json::Obj(o)
 }
 
@@ -637,4 +665,53 @@ pub fn serve_listener<S: Store>(
         let _ = write_response(&mut stream, &resp);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod v4_wire_tests {
+    use super::*;
+
+    /// `checkpoint_to_json` must emit every field `checkpoint_from_json`
+    /// reads back. A round trip is the only thing that proves it.
+    #[test]
+    fn v4_checkpoint_survives_the_wire() {
+        let mut cp = SegmentCheckpoint::legacy(
+            86_400 * 1_000_000,
+            [7.0e6, 1.0, 2.0, 0.0, 7_600.0, 3.0, 5_182.1 + 6_400.0],
+            6_400.0,
+            [0.0, 0.0],
+            [7u8; 32],
+        );
+        cp.prev_seg_hash = Some([9u8; 32]);
+        cp.tank_states = Some([[20.4, 5_376.0, 12.5], [21.0, 1_024.0, 3.25]]);
+        cp.cooler_joules = 1.5e9;
+        cp.vent_count = 4;
+
+        let wire = checkpoint_to_json(&cp);
+        let back = checkpoint_from_json(&wire)
+            .expect("a checkpoint the authority itself wrote must parse");
+        assert_eq!(
+            back, cp,
+            "the wire format must preserve the whole checkpoint"
+        );
+        assert!(back.is_resumable());
+    }
+
+    /// The fix above must not change the bytes a v1–v3 chain already uses.
+    /// A legacy checkpoint has no v4 block, so it must not gain one.
+    #[test]
+    fn legacy_checkpoints_keep_their_wire_form() {
+        let cp = SegmentCheckpoint::legacy(1_000_000, [1.0; 7], 2.0, [0.0, 0.0], [3u8; 32]);
+        let wire = checkpoint_to_json(&cp);
+        let Json::Obj(map) = &wire else {
+            panic!("a checkpoint is an object");
+        };
+        for absent in ["tank_states", "cooler_joules", "vent_count"] {
+            assert!(
+                !map.contains_key(absent),
+                "{absent} must be omitted for a chain-only checkpoint"
+            );
+        }
+        assert_eq!(checkpoint_from_json(&wire), Some(cp));
+    }
 }

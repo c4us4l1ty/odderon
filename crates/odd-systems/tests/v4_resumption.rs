@@ -179,8 +179,16 @@ fn oracle_true_single_segment_resumption_cost() {
     let full = fly(0.0, end_s, None);
     let first_leg_end = 3.0 * DAY;
     let first_leg = fly(0.0, first_leg_end, None);
-    let checkpoint = odd_astro::coupled::checkpoint_at(&first_leg, first_leg_end)
+    let checkpoint = odd_astro::coupled::checkpoint_at_end(&first_leg)
         .expect("the first leg ends on a keyframe");
+    // The checkpoint must describe one instant: the time it resumes from is
+    // the time propagation actually stopped, and the terminal frame carries
+    // the same mass the pool accounts for.
+    assert_eq!(
+        checkpoint.time_s.to_bits(),
+        first_leg_end.to_bits(),
+        "a checkpoint resumes where the leg stopped, not near it"
+    );
     // The checkpoint is the whole state, not a summary: if any of these were
     // missing, the resumed leg could not reproduce the flight.
     assert!(checkpoint.position.iter().all(|v| v.is_finite()));
@@ -258,12 +266,11 @@ fn oracle_true_single_segment_resumption_cost() {
     // --- 3. Starting later is free for a fixed segment length. ---
     let early_end = 0.5 * DAY;
     let early = fly(0.0, early_end, None);
-    let early_cp = odd_astro::coupled::checkpoint_at(&early, early_end).unwrap();
+    let early_cp = odd_astro::coupled::checkpoint_at_end(&early).unwrap();
     let early_resumed = fly(early_end, early_end + 0.5 * DAY, Some(&early_cp));
 
     let late_start = 3.5 * DAY;
-    let late_cp =
-        odd_astro::coupled::checkpoint_at(&fly(0.0, late_start, None), late_start).unwrap();
+    let late_cp = odd_astro::coupled::checkpoint_at_end(&fly(0.0, late_start, None)).unwrap();
     let late_resumed = fly(late_start, late_start + 0.5 * DAY, Some(&late_cp));
 
     println!(
@@ -284,5 +291,60 @@ fn oracle_true_single_segment_resumption_cost() {
         "the late leg must not pay for the coast it did not replay: {} vs {}",
         late_resumed.rhs_evaluations,
         full.rhs_evaluations
+    );
+}
+
+/// A checkpoint built at an interior instant mixes two moments: the spline
+/// gives position at `interior`, while the outcome only knows the pool and the
+/// tank columns at the end of the flight. Resuming from such a checkpoint
+/// cannot reproduce the single-pass flight, and `checkpoint_at_end` refuses to
+/// build one.
+#[test]
+fn a_checkpoint_at_an_interior_instant_is_not_the_flights_state() {
+    let end_s = 4.0 * DAY + 400.0;
+    let full = fly(0.0, end_s, None);
+    let interior_end = 3.0 * DAY;
+    let leg = fly(0.0, interior_end, None);
+
+    // What the removed `checkpoint_at(&outcome, t)` API produced for t < end:
+    let frame = leg.trajectory.sample(interior_end).unwrap();
+    let mixed = odd_astro::coupled::CoupledCheckpoint {
+        time_s: interior_end,
+        position: frame.position,
+        velocity: frame.velocity,
+        pool: full.pool, // end-of-flight pool
+        tanks: [
+            [
+                full.tank_temperatures_k[0],
+                full.tank_liquid_kg[0],
+                full.vented_kg[0],
+            ],
+            [
+                full.tank_temperatures_k[1],
+                full.tank_liquid_kg[1],
+                full.vented_kg[1],
+            ],
+        ],
+        cooler_joules: full.cooler_joules, // end-of-flight draw
+    };
+
+    // Resuming from it lands somewhere else than the true continuation.
+    let resumed = fly(interior_end, end_s, Some(&mixed));
+    let truth = terminal(&full);
+    let got = terminal(&resumed);
+    let error = relative(got.position, truth.position);
+    println!("mixed-instant checkpoint reproduces the flight to {error:.3e}");
+    assert!(
+        error > 1e-6,
+        "if a mixed-instant checkpoint still reproduced the flight the          distinction would not matter, but it moved the terminal position by          {error:.3e}"
+    );
+
+    // The honest checkpoint does reproduce it.
+    let honest = odd_astro::coupled::checkpoint_at_end(&leg).unwrap();
+    let ok = fly(interior_end, end_s, Some(&honest));
+    let ok_error = relative(terminal(&ok).position, truth.position);
+    assert!(
+        ok_error < 1e-9,
+        "an end-of-leg checkpoint must reproduce the flight, got {ok_error:.3e}"
     );
 }
