@@ -1,6 +1,6 @@
 // Shared canvas typography. Every label painted into a canvas uses the same
 // bundled faces as the DOM, so a scene can never fall back to a system UI font
-// and quietly stop looking like an instrument. Kept separate from ui.css
+// and quietly stop looking like an instrument. Kept separate from hud.css
 // because a canvas cannot inherit a CSS font stack.
 export const CANVAS_MONO = '"Odderon Data","IBM Plex Mono",ui-monospace,monospace';
 export const CANVAS_DISPLAY = '"Odderon Display","Barlow Condensed",ui-sans-serif,sans-serif';

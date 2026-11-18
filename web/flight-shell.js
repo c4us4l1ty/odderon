@@ -1,4 +1,4 @@
-const main = document.querySelector('.mission-main');
+const main = document.getElementById('station-surface');
 const buttons = [...document.querySelectorAll('[data-flight-mode]')];
 const panels = [...document.querySelectorAll('[data-flight-panel]')];
 const station = document.getElementById('active-station');
@@ -27,7 +27,7 @@ function activate(mode, updateHash = true) {
     panel.classList.toggle('is-active', active);
   }
   if (updateHash) history.replaceState(null, '', mode === 'academy' ? '#onboarding' : location.pathname + location.search);
-  document.querySelector('.mission-main').scrollTo({ top: 0, behavior: 'instant' });
+  main.scrollTo({ top: 0, behavior: 'instant' });
 }
 
 for (const button of buttons) button.addEventListener('click', () => activate(button.dataset.flightMode));

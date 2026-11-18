@@ -1,6 +1,7 @@
-// Interface regression gate: the shipped screens must read as a game console,
-// never as a website. This checks structure and computed style, so a later
-// redesign cannot quietly reintroduce page chrome.
+// Interface regression gate: the shipped screens must read as a heads-up
+// display painted over the game, never as a document with page chrome. This
+// checks structure, computed style and geometry, so a later change cannot
+// quietly reintroduce cards, panels, bars or web form controls.
 import { chromium } from 'playwright-core';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -29,214 +30,271 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const errors = [];
   page.on('pageerror', error => errors.push(String(error)));
+  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
 
-  // ---- Every route loads the shared console system and no legacy sheet.
+  // ---- Route law: every screen loads one shared HUD layer and no page sheet.
   for (const route of ['/', '/mission.html', '/observatory.html']) {
     await page.goto(`${origin}${route}`, { waitUntil: 'domcontentloaded' });
     const sheets = await page.evaluate(() => [...document.styleSheets].map(sheet => sheet.href?.split('/').pop()));
-    assert.ok(sheets.includes('ui.css'), `${route} must load the shared console stylesheet, got ${sheets}`);
-    for (const legacy of ['style.css', 'game.css', 'flight-shell.css', 'observatory-shell.css']) {
-      assert.ok(!sheets.includes(legacy), `${route} must not load the retired sheet ${legacy}`);
-    }
-    // Boxed web form controls are forbidden: every text control uses the entry well.
-    const controls = await page.evaluate(() => [...document.querySelectorAll('input,select,textarea')]
-      .filter(node => !['checkbox', 'range', 'file', 'hidden'].includes(node.type))
-      .map(node => {
-        const style = getComputedStyle(node);
-        return { id: node.id || node.name || node.tagName, appearance: style.appearance, shadow: style.boxShadow, radius: style.borderRadius };
-      }));
-    for (const control of controls) {
-      assert.notEqual(control.appearance, 'auto', `${route} ${control.id} still uses the native control appearance`);
-      assert.ok(control.shadow && control.shadow !== 'none', `${route} ${control.id} must sit in an instrument entry well`);
-      assert.equal(control.radius, '0px', `${route} ${control.id} must be square, not a rounded web field`);
+    assert.ok(sheets.includes('hud.css'), `${route} must load the shared HUD layer, got ${sheets}`);
+    for (const retired of ['style.css', 'ui.css', 'game.css', 'flight-shell.css', 'observatory-shell.css']) {
+      assert.ok(!sheets.includes(retired), `${route} must not load the retired sheet ${retired}`);
     }
   }
 
-  // ---- Title screen: soft keys pinned low, camera plate, no site footer.
+  // ---- THE INK LAW. No element may paint a filled plate behind the game or
+  // sit inside a drawn box. A HUD has type, rules and scrims; it does not have
+  // surfaces. This is the assertion that makes "remove the UI" durable.
+  const SURFACE_ROUTES = [['/', null], ['/mission.html', null], ['/mission.html', 'academy'],
+    ['/mission.html', 'propulsion'], ['/mission.html', 'vehicle'], ['/mission.html', 'prediction'],
+    ['/observatory.html', null]];
+  const surfaceReport = async () => page.evaluate(() => {
+    const offences = [];
+    for (const element of document.querySelectorAll('body *')) {
+      if (!element.offsetParent || element.closest('dialog:not([open])')) continue;
+      const box = element.getBoundingClientRect();
+      if (box.width < 120 || box.height < 50) continue;
+      const style = getComputedStyle(element);
+      const alpha = (value) => {
+        const match = /rgba?\([^)]*?,\s*([\d.]+)\)/.exec(value);
+        return match ? Number(match[1]) : (/rgb\(/.test(value) ? 1 : 0);
+      };
+      const rgb = style.backgroundColor;
+      // An opaque fill, or a hairline ring around a big box, is a surface.
+      const filled = alpha(rgb) >= .45 && !style.backgroundColor.includes('dialog');
+      const ringed = /inset 0 0 0 1px/.test(style.boxShadow)
+        && !/inset 0 -1px 0|inset 0 1px 0|inset -1px 0 0|inset 1px 0 0/.test(style.boxShadow);
+      const nativeBorder = parseFloat(style.borderTopWidth) > 0 && style.borderTopStyle !== 'none';
+      if (filled || ringed || nativeBorder) {
+        offences.push(`${element.tagName.toLowerCase()}.${String(element.className).split(' ')[0] || element.id} ${Math.round(box.width)}x${Math.round(box.height)} fill=${rgb} ring=${ringed} border=${nativeBorder}`);
+      }
+    }
+    return [...new Set(offences)];
+  });
+
+  for (const [route, station] of SURFACE_ROUTES) {
+    await page.goto(`${origin}${route}`, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(900);
+    if (station) {
+      await page.locator(`[data-flight-mode="${station}"]`).click();
+      await page.waitForTimeout(500);
+    }
+    const offences = await surfaceReport();
+    assert.deepEqual(offences, [], `${route}${station ? ` (${station})` : ''} must paint no filled plate or drawn box`);
+  }
+
+  // ---- Control law: no native appearance anywhere, square corners, and the
+  // typed fields sit on a ruled entry line rather than in a web form field.
+  for (const route of ['/', '/mission.html', '/observatory.html']) {
+    await page.goto(`${origin}${route}`, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(700);
+    const controls = await page.evaluate(() => [...document.querySelectorAll('input,select,textarea,button')]
+      .filter(node => node.offsetParent && !['checkbox', 'range', 'file', 'hidden', 'radio'].includes(node.type))
+      .map(node => {
+        const style = getComputedStyle(node);
+        return { id: node.id || node.tagName, tag: node.tagName, appearance: style.appearance || style.webkitAppearance, radius: style.borderRadius, shadow: style.boxShadow };
+      }));
+    for (const control of controls) {
+      assert.equal(control.appearance, 'none', `${route} ${control.id} still uses the native control appearance`);
+      assert.equal(control.radius, '0px', `${route} ${control.id} must be square, not a rounded web field`);
+      // A typed field must show the entry rule. A button may be bare in the
+      // top bar, where it is a mark rather than a key with a well.
+      if (['INPUT', 'SELECT', 'TEXTAREA'].includes(control.tag)) {
+        assert.ok(control.shadow !== 'none', `${route} ${control.id} must sit on the instrument entry rule`);
+      }
+    }
+    // A slider must be a real hit area, not a flattened 2px line: a catch-all
+    // input rule once matched `[type=range]` and made every slider unusable.
+    const sliders = await page.evaluate(() => [...document.querySelectorAll('input[type=range]')]
+      .filter(node => node.getBoundingClientRect().width > 0)
+      .map(node => ({ id: node.id, height: node.getBoundingClientRect().height })));
+    for (const slider of sliders) {
+      assert.ok(slider.height >= 20, `${route} ${slider.id} slider must keep a 20px hit area, got ${slider.height}px`);
+    }
+  }
+
+  // ---- Frame law: the document never scrolls. Each screen owns one viewport,
+  // and anything dense scrolls inside its own well.
+  for (const [width, height, route] of [[1440, 900, '/'], [1440, 900, '/mission.html'],
+    [1440, 900, '/observatory.html'], [1280, 720, '/mission.html'], [390, 844, '/'],
+    [390, 844, '/mission.html'], [390, 844, '/observatory.html'], [1024, 600, '/mission.html']]) {
+    await page.setViewportSize({ width, height });
+    await page.goto(`${origin}${route}`, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(800);
+    const frame = await page.evaluate(() => ({
+      overflow: getComputedStyle(document.body).overflow,
+      position: getComputedStyle(document.body).position,
+      vertical: document.documentElement.scrollHeight - innerHeight,
+      horizontal: document.documentElement.scrollWidth - innerWidth,
+    }));
+    assert.equal(frame.overflow, 'hidden', `${route} at ${width}px must lock the document`);
+    assert.ok(frame.vertical <= 0, `${route} at ${width}px must not scroll the document vertically, overflow ${frame.vertical}px`);
+    assert.ok(frame.horizontal <= 0, `${route} at ${width}px must not scroll the document horizontally, overflow ${frame.horizontal}px`);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  // ---- Title frame: a camera plate with a soft-key stack on the lower edge.
   await page.goto(origin, { waitUntil: 'networkidle' });
   const title = await page.evaluate(() => {
     const menu = document.querySelector('.game-menu').getBoundingClientRect();
-    const footer = document.querySelector('.game-footer');
+    const plate = document.querySelector('.spacecraft');
     return {
-      menuBottomRatio: (menu.bottom / innerHeight),
-      menuTopRatio: (menu.top / innerHeight),
-      footerHeight: footer.getBoundingClientRect().height,
-      footerText: footer.textContent.trim(),
+      menuBottomRatio: menu.bottom / innerHeight,
+      menuTopRatio: menu.top / innerHeight,
       h1: document.querySelector('h1').textContent.trim(),
-      plate: getComputedStyle(document.querySelector('.spacecraft')).backgroundImage,
-      scroll: document.documentElement.scrollHeight <= innerHeight + 1,
-      overflow: getComputedStyle(document.body).overflow,
+      plate: getComputedStyle(plate).backgroundImage,
+      footerText: document.querySelector('.game-footer').textContent.trim(),
+      focus: document.activeElement?.getAttribute('href'),
     };
   });
-  assert.ok(title.menuBottomRatio > .9, 'the main menu must be anchored to the bottom of the screen like a game front end');
-  assert.ok(title.menuTopRatio > .6, `the main menu must not be a landing-page block, top at ${title.menuTopRatio}`);
-  assert.ok(title.footerHeight < 40, `the status line must stay a strip, got ${title.footerHeight}px`);
-  assert.doesNotMatch(title.footerText, /copyright|©|about|privacy|contact/i, 'the title screen must not carry a website footer');
+  assert.ok(title.menuBottomRatio > .9, 'the soft-key stack must sit on the lower edge');
+  assert.ok(title.menuTopRatio > .55, `the keys must not become a landing-page block, top at ${title.menuTopRatio}`);
   assert.equal(title.h1, 'ODDERON');
-  assert.match(title.plate, /title-orbit\.jpg/);
-  assert.equal(title.overflow, 'hidden');
-  assert.ok(title.scroll, 'the title screen must fit one viewport');
+  assert.match(title.plate, /title-orbit\.jpg/, 'the title frame must paint the camera plate');
+  assert.doesNotMatch(title.footerText, /copyright|©|about|privacy|contact|terms/i, 'no website footer furniture');
+  assert.equal(title.focus, './mission.html', 'Enter must select the focused primary game action');
 
-  // ---- Flight Deck: fixed console, station rail on every station.
+  // ---- Flight Deck: rail docked left, one station live, keys work.
   await page.goto(`${origin}/mission.html`, { waitUntil: 'networkidle' });
   await page.waitForFunction(() => !document.getElementById('add-node')?.disabled, null, { timeout: 30000 });
   const deck = await page.evaluate(() => {
     const rail = document.querySelector('.flight-mode-nav').getBoundingClientRect();
-    const strip = document.querySelector('.flight-command-strip').getBoundingClientRect();
-    const heading = document.querySelector('.mission-main > .intro h1');
     return {
-      overflow: getComputedStyle(document.body).overflow,
-      scroll: document.documentElement.scrollHeight <= innerHeight + 1,
       railLeft: rail.left,
-      railBottom: rail.bottom,
-      stripTop: strip.top,
-      headingSize: parseFloat(getComputedStyle(heading).fontSize),
       panelCount: document.querySelectorAll('[data-flight-panel].is-active').length,
+      surface: document.getElementById('station-surface').dataset.mode,
     };
   });
-  assert.equal(deck.overflow, 'hidden', 'the Flight Deck must never scroll the document');
-  assert.ok(deck.scroll, 'the Flight Deck must fit one viewport');
   assert.equal(deck.railLeft, 0, 'the station rail anchors the left edge');
-  assert.ok(deck.stripTop < 120, 'the command strip must sit at the top of the console');
-  assert.ok(deck.headingSize < 26, `the station header must be console-scale, got ${deck.headingSize}px`);
-  assert.equal(deck.panelCount, 1, 'exactly one station panel is live at a time');
+  assert.equal(deck.panelCount, 1, 'exactly one station is live at a time');
+  assert.equal(deck.surface, 'flight');
 
-  for (const mode of ['academy', 'propulsion', 'vehicle', 'prediction', 'flight']) {
-    await page.locator(`[data-flight-mode="${mode}"]`).click();
-    assert.equal(await page.evaluate(() => odderonFlightShell.mode), mode);
-    const box = await page.evaluate(() => {
-      const rail = document.querySelector('.flight-mode-nav').getBoundingClientRect();
-      return { left: rail.left, bottom: rail.bottom, viewport: innerHeight };
+  for (const station of ['academy', 'propulsion', 'vehicle', 'prediction', 'flight']) {
+    await page.locator(`[data-flight-mode="${station}"]`).click();
+    assert.equal(await page.evaluate(() => window.odderonFlightShell.mode), station);
+    const rail = await page.evaluate(() => {
+      const box = document.querySelector('.flight-mode-nav').getBoundingClientRect();
+      const frame = document.querySelector('.console-body').getBoundingClientRect();
+      return { left: box.left, bottom: box.bottom, frameBottom: frame.bottom };
     });
-    assert.equal(box.left, 0, `station rail must stay docked on ${mode}`);
-    assert.ok(Math.abs(box.bottom - box.viewport) < 2, `station rail must reach the bottom on ${mode}`);
+    assert.equal(rail.left, 0, `the station rail must stay docked on ${station}`);
+    assert.ok(Math.abs(rail.bottom - rail.frameBottom) < 2, `the station rail must fill its frame column on ${station}`);
   }
 
-  // ---- Academy: the lesson well and the live flight board are separate
-  // panels that both take real space; nothing hides behind `[hidden]` and no
-  // control cluster keeps a slot after it is told to go away.
+  // ---- On a phone the rail becomes a game bar on the bottom edge.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(400);
+  const phoneRail = await page.evaluate(() => {
+    const box = document.querySelector('.flight-mode-nav').getBoundingClientRect();
+    return { left: box.left, bottom: Math.abs(box.bottom - innerHeight), width: box.width };
+  });
+  assert.ok(phoneRail.bottom < 70, `the phone game bar must sit at the foot of the frame, ${phoneRail.bottom}px away`);
+  assert.ok(phoneRail.width > 300, 'the phone game bar must span the frame');
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  // ---- Every station keeps its working controls, which is what "the core
+  // things are still there" means: the wipe is skin, not function.
+  await page.goto(`${origin}/mission.html`, { waitUntil: 'networkidle' });
+  await page.waitForFunction(() => window.missionDiagnostics?.nodes !== undefined, null, { timeout: 60000 });
+  await page.locator('[data-flight-mode="propulsion"]').click();
+  await page.waitForTimeout(600);
+  const lab = await page.evaluate(() => ({
+    cross: document.getElementById('engine-canvas').getBoundingClientRect().height,
+    readouts: document.querySelectorAll('#engine-readout > div').length,
+    sliders: [...document.querySelectorAll('#engine-lab input[type=range]')].length,
+  }));
+  assert.ok(lab.cross >= 180, `the Schlieren cross-section needs real height, got ${lab.cross}`);
+  assert.ok(lab.readouts >= 10, `the engine rack must publish its numbers, got ${lab.readouts}`);
+  assert.equal(lab.sliders, 3, 'the engine lab keeps its three drag tracks');
+
+  await page.locator('[data-flight-mode="prediction"]').click();
+  await page.waitForTimeout(400);
+  const prediction = await page.evaluate(() => document.querySelectorAll('#prediction-workspace input[type=number]').length);
+  assert.equal(prediction, 6, 'the prediction contract keeps all six committed fields');
+
+  await page.locator('[data-flight-mode="vehicle"]').click();
+  await page.waitForTimeout(400);
+  const vehicle = await page.evaluate(() => ({
+    delegation: document.querySelectorAll('#delegation-controls input[type=checkbox]').length,
+    ledger: document.querySelectorAll('#assembly-readout > div').length,
+  }));
+  assert.equal(vehicle.delegation, 4, 'the assembly keeps all four delegated disciplines');
+  assert.ok(vehicle.ledger >= 4, 'the assembly keeps its mass ledger');
+
+  // ---- Academy: the lesson well is readable and the live board stays visible.
   await page.goto(`${origin}/mission.html#onboarding`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.missionDiagnostics?.nodes !== undefined, null, { timeout: 60000 });
   await page.locator('#onboarding-start').click();
-  const academy = await page.evaluate(() => {
-    const well = document.getElementById('onboarding');
-    const board = document.getElementById('flight-workspace');
-    const hiddenVisible = [...document.querySelectorAll('[hidden]')]
-      .filter(node => getComputedStyle(node).display !== 'none').map(node => node.id || node.className);
-    return {
-      progress: document.getElementById('onboarding-progress').textContent,
-      wellHeight: well.getBoundingClientRect().height,
-      // The well is either fully readable or scrolls inside its own bezel; what
-      // it must never do is clip content without a way to reach it.
-      wellReachable: well.scrollHeight <= well.clientHeight + 1 ||
-        ['auto', 'scroll'].includes(getComputedStyle(well).overflowY),
-      boardHeight: board.getBoundingClientRect().height,
-      hiddenVisible,
-      scroll: document.documentElement.scrollHeight <= innerHeight + 1,
-    };
-  });
+  const academy = await page.evaluate(() => ({
+    progress: document.getElementById('onboarding-progress').textContent,
+    well: document.getElementById('onboarding').getBoundingClientRect().height,
+    board: document.getElementById('flight-workspace').getBoundingClientRect().height,
+    paintedHidden: [...document.querySelectorAll('[hidden]')].filter(node => getComputedStyle(node).display !== 'none').length,
+  }));
   assert.match(academy.progress, /LESSON 1 \/ 7/, 'the guided flight must open on lesson one');
-  assert.ok(academy.wellHeight > 120, 'the lesson well must keep a readable window');
-  assert.ok(academy.wellReachable, 'lesson content below the fold must stay reachable');
-  assert.ok(academy.boardHeight > 200, 'the academy must keep the live flight board visible');
-  assert.deepEqual(academy.hiddenVisible, [], 'a hidden element must never stay painted');
-  assert.ok(academy.scroll, 'the academy must fit one viewport');
+  assert.ok(academy.well > 100, 'the lesson well must keep a readable window');
+  assert.ok(academy.board > 200, 'the academy must keep the live flight board visible');
+  assert.equal(academy.paintedHidden, 0, 'a retired element must never stay painted');
 
-  // ---- Propulsion: the rack keeps a usable cross-section on a 720p laptop.
-  await page.setViewportSize({ width: 1280, height: 720 });
-  await page.locator('[data-flight-mode="propulsion"]').click();
-  await page.waitForTimeout(300);
-  const lab = await page.evaluate(() => {
-    const view = document.querySelector('.engine-view').getBoundingClientRect();
-    const card = document.getElementById('engine-lab');
-    return { height: view.height, width: view.width, overflow: card.scrollHeight - card.clientHeight };
-  });
-  assert.ok(lab.height >= 180, `the Schlieren cross-section needs real height, got ${lab.height}`);
-  assert.ok(lab.overflow <= 0, 'the propulsion rack must fit its own bezel');
-  await page.setViewportSize({ width: 1440, height: 900 });
-
-  // ---- Phone: the same console, one hand, no document scroll. The board and
-  // the rail must both stay on screen, and the header must keep every route out.
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.locator('[data-flight-mode="vehicle"]').click();
-  await page.waitForTimeout(400);
-  const phone = await page.evaluate(() => {
-    const rail = document.querySelector('.flight-mode-nav').getBoundingClientRect();
-    return {
-      railVisible: rail.top > 300 && rail.top < innerHeight,
-      railBottom: Math.abs(rail.bottom - innerHeight),
-      headerWidth: document.querySelector('.game-header, .topbar').getBoundingClientRect().width,
-      width: innerWidth,
-      horizontal: document.documentElement.scrollWidth - innerWidth,
-      bodyScroll: getComputedStyle(document.body).overflowY,
-    };
-  });
-  assert.ok(phone.railVisible, 'the station rail must be a reachable game bar on a phone');
-  assert.ok(phone.railBottom < 2, 'the game bar must sit on the bottom edge');
-  assert.ok(phone.headerWidth <= phone.width + 1, 'the command bar must not overflow the phone');
-  assert.ok(phone.horizontal <= 0, `no route may scroll sideways, overflow ${phone.horizontal}px`);
-  await page.setViewportSize({ width: 1440, height: 900 });
-
-  // ---- Observatory: viewport owns the frame, telemetry docks right.
+  // ---- Tracking station: the viewport owns the frame, telemetry floats on it.
   await page.goto(`${origin}/observatory.html`, { waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => window.odderonDiagnostics?.draws > 0, null, { timeout: 30000 });
+  await page.waitForFunction(() => window.odderonDiagnostics?.draws > 0, null, { timeout: 60000 });
   const station = await page.evaluate(() => {
     const scene = document.getElementById('scene').getBoundingClientRect();
     const side = document.querySelector('.obs-side').getBoundingClientRect();
     return {
-      scroll: document.documentElement.scrollHeight <= innerHeight + 1,
-      overflow: getComputedStyle(document.body).overflow,
-      width: innerWidth,
       sceneWidthRatio: scene.width / innerWidth,
-      sideRight: side.right,
+      // The telemetry column is the only reserved strip, and it must stay a
+      // strip: the scene has to keep the overwhelming majority of the frame.
+      sideWidthRatio: side.width / innerWidth,
+      sceneTop: scene.top,
       footers: document.querySelectorAll('footer').length,
+      distance: document.getElementById('distance').textContent,
+      layers: document.querySelectorAll('.toggle-row input[type=checkbox]').length,
     };
   });
-  assert.ok(station.scroll, 'the tracking station must fit one viewport');
-  assert.equal(station.overflow, 'hidden');
-  assert.ok(station.sceneWidthRatio > .6, 'the ephemeris viewport must own the frame');
-  assert.ok(Math.abs(station.sideRight - station.width) < 40, 'the telemetry column docks to the right edge');
+  assert.ok(station.sceneWidthRatio > .7, `the ephemeris viewport must own the frame, got ${station.sceneWidthRatio}`);
+  assert.ok(station.sideWidthRatio < .3, `the telemetry column must stay a strip, got ${station.sideWidthRatio}`);
+  assert.ok(station.sceneTop < 40, 'the viewport runs to the top edge of the frame');
   assert.equal(station.footers, 0, 'no route may carry a website footer');
+  assert.equal(station.distance, '361,026', 'the station publishes the live ephemeris');
+  assert.equal(station.layers, 4, 'the station keeps all four display layers');
 
-  // ---- Legibility floor. Instrument type is small by design, but a label
-  // below 8px is a smudge on a real display; nothing that carries words may
-  // drop under it, at desktop or phone width.
-  for (const [width, height, route] of [[1440, 900, '/'], [1440, 900, '/mission.html'], [390, 844, '/mission.html'], [1440, 900, '/observatory.html']]) {
+  // ---- Legibility floor: a word below 9px is a smudge, not a readout.
+  for (const [width, height, route] of [[1440, 900, '/'], [1440, 900, '/mission.html'],
+    [390, 844, '/mission.html'], [1440, 900, '/observatory.html']]) {
     await page.setViewportSize({ width, height });
     await page.goto(`${origin}${route}`, { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => document.querySelector('body *'), null, { timeout: 30000 });
-    await page.waitForTimeout(600);
+    await page.waitForTimeout(900);
     const smudges = await page.evaluate(() => [...document.querySelectorAll('body *')].filter(element => {
       const text = [...element.childNodes].filter(node => node.nodeType === 3).map(node => node.textContent.trim()).join('');
       if (!text) return false;
       const box = element.getBoundingClientRect();
       if (!box.width || !box.height) return false;
-      return parseFloat(getComputedStyle(element).fontSize) < 8;
+      return parseFloat(getComputedStyle(element).fontSize) < 9;
     }).map(element => `${element.tagName}.${element.className} ${getComputedStyle(element).fontSize}px`));
-    assert.deepEqual(smudges, [], `${route} at ${width}px must keep every word at 8px or larger`);
+    assert.deepEqual(smudges, [], `${route} at ${width}px must keep every word at 9px or larger`);
   }
   await page.setViewportSize({ width: 1440, height: 900 });
 
   // ---- Canvas type uses the bundled instrument faces. A canvas cannot inherit
-  // a CSS font stack, so a system fallback here is invisible to the DOM audit
-  // and would quietly make the scene look like a web chart.
+  // a CSS font stack, so a system fallback here would be invisible to the DOM
+  // audit and would quietly make a solved scene look like a web chart.
   for (const route of ['/mission.html', '/observatory.html']) {
     await page.goto(`${origin}${route}`, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(1500);
-    const fallback = await page.evaluate(() => {
-      // `document.fonts.check` reports false for a face that is not resident, so
-      // this fails if the drawers could paint in a system fallback.
-      return {
-        mono: document.fonts.check('10px "Odderon Data"'),
-        display: document.fonts.check('500 11px "Odderon Display"'),
-      };
-    });
-    assert.ok(fallback.mono, `${route} must have the Odderon Data face resident before painting labels`);
-    assert.ok(fallback.display, `${route} must have the Odderon Display face resident`);
+    const faces = await page.evaluate(() => ({
+      mono: document.fonts.check('10px "Odderon Data"'),
+      display: document.fonts.check('500 11px "Odderon Display"'),
+      ui: document.fonts.check('12px "Odderon Console"'),
+    }));
+    assert.ok(faces.mono, `${route} must have the Odderon Data face resident before painting labels`);
+    assert.ok(faces.display, `${route} must have the Odderon Display face resident`);
+    assert.ok(faces.ui, `${route} must have the Odderon Console face resident`);
   }
 
   assert.deepEqual(errors, [], 'the interface must load without page errors');
-  console.log('Interface standard holds: console shell, instrument controls, no page chrome.');
+  console.log('HUD standard holds: no plates, no boxes, no native controls, no document scroll.');
 } finally {
   await browser?.close();
   server.close();

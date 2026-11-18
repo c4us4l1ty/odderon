@@ -552,7 +552,20 @@ function drawEarth(center,earth,rect){
 }
 function handles(p,state){const v=[state[3],-(state[4]*plane[0]+state[5]*plane[1])],m=Math.hypot(...v)||1,t=v.map(x=>x/m),n=[-t[1],t[0]];return [{key:'t',dir:t,color:'#80d9cb',label:'Along'},{key:'n',dir:n,color:'#e1bc76',label:'Sideways'},{key:'w',dir:[.707,-.707],color:'#bdade0',label:'Plane tilt'}].map(h=>({...h,end:[p[0]+h.dir[0]*42,p[1]+h.dir[1]*42]}));}
 function mousePoint(e){const r=canvas.getBoundingClientRect();return [e.clientX-r.left,e.clientY-r.top];}
-function nearestPath(p){let best=null;for(const item of preview){const d=distance(p,toCanvas(item.state));if(!best||d<best.d)best={d,time:item.time};}return best;}
+// A long coast coils the ground track across itself many times, so several
+// samples can sit under one pointer. Break the tie towards the epoch the node
+// already holds: a drag should nudge the burn along the path, not teleport it
+// to the far end of the same pixel.
+function nearestPath(p,prefer){
+  let best=null;
+  for(const item of preview){
+    const d=distance(p,toCanvas(item.state));
+    const bias=prefer==null?0:Math.abs(item.time-prefer)/DURATION*8;
+    const score=d+bias;
+    if(!best||score<best.score)best={d,score,time:item.time};
+  }
+  return best;
+}
 function setLens(key){$('lens-text').textContent=lens[key]||lens.time;annotateAcronyms($('lens-text'));}
 function startLens(key,term){
   const wanted=term&&GLOSSARY[term]?term:null;
@@ -833,7 +846,7 @@ canvas.addEventListener('pointermove',e=>{
     if(!locked&&preview.length&&nodes[selected]){const p=mousePoint(e),state=readState(wasm,nodes[selected].time),center=toCanvas(state);const h=handles(center,state).find(h=>distance(p,h.end)<12);if(h)startLens(h.key);else if(activeLens&&!e.target.closest?.('.term'))stopLens();}
     return;
   }
-  const p=mousePoint(e),node=nodes[selected];if(drag.key==='time'){const near=nearestPath(p);if(near)node.time=clampNodeTime(near.time);}else{const i={t:0,n:1,w:2}[drag.key];node.dv[i]=drag.initial+2*((p[0]-drag.start[0])*drag.dir[0]+(p[1]-drag.start[1])*drag.dir[1]);}delete node.guidance;updatePreview();
+  const p=mousePoint(e),node=nodes[selected];if(drag.key==='time'){const near=nearestPath(p,node.time);if(near)node.time=clampNodeTime(near.time);}else{const i={t:0,n:1,w:2}[drag.key];node.dv[i]=drag.initial+2*((p[0]-drag.start[0])*drag.dir[0]+(p[1]-drag.start[1])*drag.dir[1]);}delete node.guidance;updatePreview();
 });
 function endDrag(e){if(drag&&drag.pointer===e.pointerId){drag=null;stopLens();}}
 canvas.addEventListener('pointerup',endDrag);canvas.addEventListener('pointercancel',endDrag);canvas.addEventListener('lostpointercapture',endDrag);canvas.addEventListener('pointerleave',e=>{if(!drag&&!intoLens(e))stopLens();});

@@ -1,118 +1,492 @@
 /* ============================================================================
-   ODDERON — FLIGHT DECK (mission.html)
+   ODDERON — FLIGHT DECK
    ----------------------------------------------------------------------------
-   The console body is a fixed grid: top command bar, left station rail, the
-   active station workspace, and a bottom status line. No document scroll, no
-   page footer, no stacked marketing sections. Everything below assumes ui.css.
-   ========================================================================== */
+   One fullscreen frame. A thin legend line across the top, a station rail down
+   the left edge, the live station filling the rest, a status strip at the foot.
 
-html,body{height:100%;overflow:hidden;background:var(--space)}
-.app{height:100%;display:flex;flex-direction:column;overflow:hidden}
+   There are no cards, no panels, no boxes. Work areas are separated by rules and
+   tracking, never by containers: the orbit is plotted straight onto the black
+   and the control column is a stack of labelled readouts.
 
+     legend  34px   brand · operation marks
+     rail    56px   station keys, docked to the left edge
+     frame   1fr    station legend + live station
+     status  20px   build + station keys
+   ========================================================================= */
+
+.app{
+  position:fixed;inset:0;display:grid;
+  grid-template-rows:34px minmax(0,1fr) 20px;
+  grid-template-areas:"top" "body" "status";
+  overflow:hidden;
+}
+
+/* ---------------------------------------------------------------- legend line */
+/* Not a bar. A row of marks laid on the frame: identity at the left, licences
+   and exit at the right, no fill, no height, no rule under it. */
+.topbar{
+  grid-area:top;display:flex;align-items:center;justify-content:space-between;
+  gap:14px;padding:0 12px 0 14px;min-height:0;overflow:hidden;
+  position:relative;z-index:3;
+}
+.brand{
+  display:flex;align-items:center;gap:8px;min-width:0;
+  font-family:var(--font-display);font-size:13px;font-weight:600;
+  letter-spacing:.28em;text-transform:uppercase;color:var(--hud-bright);
+}
+.brand-mark{font-size:12px;color:var(--hud);letter-spacing:0}
+.brand small{
+  font-family:var(--font-data);font-size:9px;font-weight:400;letter-spacing:.18em;
+  color:var(--ink-4);text-transform:uppercase;margin-left:2px;
+}
+.topbar-right{display:flex;align-items:center;gap:2px;min-width:0}
+
+/* A licence key is a mark, not a pill: tracked word, live value, no box. */
+.profile-button{
+  display:inline-flex;align-items:center;gap:6px;
+  min-height:24px;padding:2px 8px;
+  font-family:var(--font-data);font-size:9px;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--ink-3);box-shadow:none;
+}
+.profile-button:hover:not(:disabled){color:var(--hud-bright);background:rgba(127,227,216,.07);box-shadow:none}
+.profile-button strong{
+  font-family:var(--font-data);font-size:9px;letter-spacing:.06em;color:var(--hud);
+  font-weight:500;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.profile-elo-chip{
+  display:flex;align-items:center;gap:3px;font-size:9px;letter-spacing:.14em;
+  color:var(--ink-4);padding-left:7px;box-shadow:inset 1px 0 0 var(--rule-soft);
+}
+.profile-elo-chip b{color:var(--amber);font-weight:500}
+.back{
+  display:inline-flex;align-items:center;min-height:24px;padding:2px 9px;
+  font-family:var(--font-data);font-size:9px;letter-spacing:.2em;text-transform:uppercase;
+  color:var(--ink-3);box-shadow:inset 0 0 0 1px var(--rule-soft);
+}
+.back:hover{color:var(--hud-bright);box-shadow:inset 0 0 0 1px var(--rule-bright)}
+
+/* ------------------------------------------------------------- station rail */
+/* The rail is the physical keyboard of stations: one key per station, the code
+   as its legend. Selection is a lit spine, not a filled button. */
 .console-body{
-  flex:1 1 auto;min-height:0;display:flex;align-items:stretch;overflow:hidden;
+  grid-area:body;display:grid;grid-template-columns:56px minmax(0,1fr);
+  grid-template-rows:minmax(0,1fr);
+  min-height:0;overflow:hidden;
 }
+.console-body > *{min-height:0}
+.flight-mode-nav{
+  grid-column:1;display:flex;flex-direction:column;justify-content:center;gap:2px;
+  align-self:stretch;min-height:0;padding:8px 0;
+  box-shadow:inset -1px 0 0 var(--rule-soft);
+}
+.mode-rail-title,.mode-rail-state{display:none}
+.flight-mode-nav button{
+  position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:1px;height:50px;min-height:0;padding:0;
+  background:transparent;box-shadow:none;color:var(--ink-4);
+  transition:var(--ease);
+}
+.flight-mode-nav button b{
+  font-family:var(--font-display);font-size:15px;font-weight:600;letter-spacing:.14em;
+}
+.flight-mode-nav button span{
+  font-family:var(--font-data);font-size:9px;letter-spacing:.02em;text-transform:uppercase;
+  max-width:100%;overflow:hidden;
+}
+.flight-mode-nav button:hover:not(:disabled){color:var(--hud);background:rgba(127,227,216,.05)}
+.flight-mode-nav button.is-active{color:var(--hud-bright);background:rgba(127,227,216,.09)}
+.flight-mode-nav button.is-active::before{
+  content:'';position:absolute;left:0;top:7px;bottom:7px;width:2px;
+  background:var(--hud-bright);box-shadow:0 0 10px var(--hud);
+}
+.flight-mode-nav button:disabled{opacity:.24}
+
+/* -------------------------------------------------------------- station frame */
 .console-main{
-  flex:1 1 auto;min-width:0;display:flex;flex-direction:column;overflow:hidden;
+  grid-column:2;display:grid;grid-template-rows:auto minmax(0,1fr);
+  min-height:0;min-width:0;overflow:hidden;
 }
 
-/* Bottom status line replaces the old website footer. */
+/* The station legend: what is live, on which operation, in which frame. Marks
+   spaced along the top edge with rules between them — no fill. */
+.flight-command-strip{
+  display:flex;align-items:stretch;min-height:28px;overflow:hidden;
+  box-shadow:inset 0 -1px 0 var(--rule-soft);
+}
+.flight-command-strip > div{
+  display:flex;flex-direction:column;justify-content:center;gap:1px;
+  min-width:0;padding:3px 16px;
+  box-shadow:inset -1px 0 0 var(--rule-soft);
+}
+.flight-command-strip > div:first-child{padding-left:18px}
+.flight-command-strip span{
+  font-family:var(--font-data);font-size:9px;letter-spacing:.22em;text-transform:uppercase;color:var(--ink-4);
+}
+.flight-command-strip strong{
+  font-family:var(--font-display);font-size:12px;font-weight:600;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.flight-command-strip > div:first-child strong{color:var(--hud-bright)}
+
+/* ---------------------------------------------------------- station surface */
+/* A scroll well, not a page: what overflows scrolls inside the frame and the
+   document never moves. Only the armed station is displayed. */
+.mission-main{
+  position:relative;min-height:0;min-width:0;overflow:auto;overscroll-behavior:contain;
+  padding:14px 18px 16px;display:flex;flex-direction:column;gap:12px;
+}
+.mission-main > [data-flight-panel]{display:none}
+.mission-main > [data-flight-panel].is-active{display:flex;flex-direction:column;gap:12px;min-height:0}
+.mission-main > .mission-grid.is-active{display:grid}
+
+/* The station title is a legend line, not a page heading: no lede paragraph. */
+.mission-main > .intro{
+  flex:0 0 auto;display:block;margin:0;
+  padding:0 0 7px;box-shadow:inset 0 -1px 0 var(--rule-soft);
+  font-family:var(--font-display);font-size:16px;font-weight:500;
+  letter-spacing:.22em;text-transform:uppercase;color:var(--ink);white-space:nowrap;
+  line-height:1.1;
+}
+.mission-main > .intro em{color:var(--hud);font-style:normal;font-weight:300;letter-spacing:.12em}
+
+.mission-main[data-mode="academy"] > .intro,
+.mission-main[data-mode="propulsion"] > .intro,
+.mission-main[data-mode="vehicle"] > .intro,
+.mission-main[data-mode="prediction"] > .intro,
+.mission-main[data-mode="debrief"] > .intro{display:none}
+
+/* --------------------------------------------------------- flight station */
+.mission-grid{
+  display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,332px);
+  gap:16px;align-items:stretch;flex:1 1 auto;min-height:0;
+}
+.planner-card,.planner-controls{min-height:0;display:flex;flex-direction:column}
+.planner-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex:0 0 auto}
+.planner-head h2,.engine-card h2,.debrief h2{
+  font-family:var(--font-display);font-size:23px;font-weight:500;letter-spacing:.05em;
+  line-height:1.05;margin:5px 0 0;color:var(--ink);text-transform:uppercase;
+}
+.planner-head h2 em,.engine-card h2 em,.debrief h2 em{
+  color:var(--hud);text-transform:none;font-weight:300;font-size:26px;font-style:normal;
+}
+/* A status chip is a bracketed word, not a badge. */
+.mission-chip{
+  flex:0 0 auto;font-family:var(--font-data);font-size:9px;font-weight:500;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--amber);padding:3px 8px;
+  box-shadow:inset 0 0 0 1px rgba(244,184,96,.42);
+}
+.planner-card .mission-sub{flex:0 0 auto;margin:7px 0 0;max-width:86ch}
+
+/* The orbit instrument: a black well with one hairline. The plotted path floats. */
+.mission-canvas{
+  position:relative;flex:1 1 auto;min-height:220px;margin-top:12px;overflow:hidden;
+  box-shadow:inset 0 0 0 1px var(--rule-soft);
+  background:
+    radial-gradient(circle at 50% 50%,rgba(36,96,104,.16),transparent 62%),
+    radial-gradient(circle at 50% 50%,#061418 0%,#02080c 74%);
+  touch-action:none;
+}
+.mission-canvas > canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+.mission-canvas > span,.mission-canvas::after{
+  position:absolute;z-index:2;pointer-events:none;
+  font-family:var(--font-data);font-size:9px;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--ink-3);
+}
+.mission-canvas > span{left:10px;top:9px}
+.mission-canvas::after{
+  content:'LIVE ORBIT SOLUTION';right:10px;top:9px;color:var(--hud-dim);
+  padding:1px 6px;box-shadow:inset 0 0 0 1px var(--rule-soft);
+}
+.plan-status{
+  flex:0 0 auto;font-family:var(--font-data);font-size:10px;color:var(--hud-dim);
+  margin:9px 0 0;letter-spacing:.03em;
+}
+.mission-legend{
+  flex:0 0 auto;display:flex;flex-wrap:wrap;gap:14px;margin:8px 0 0;
+  font-family:var(--font-data);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);
+}
+.mission-legend span{display:flex;align-items:center;gap:6px}
+.mission-legend i{display:block;width:16px;height:0;border-top:1px dashed currentColor}
+.mission-legend i.cyan{color:var(--hud)}
+.mission-legend i.gold{color:var(--amber)}
+.mission-legend i.violet{color:var(--violet)}
+
+/* The control column: caption, value, rule. No container around it. */
+.planner-controls{overflow:auto;padding-right:2px}
+.planner-controls .panel-title,.engine-controls .panel-title,.commit-notes .panel-title,
+.commit-side .panel-title,.station-head{
+  display:flex;align-items:baseline;justify-content:space-between;gap:8px;
+  padding-bottom:6px;margin-bottom:10px;box-shadow:inset 0 -1px 0 var(--rule-soft);flex:0 0 auto;
+}
+.planner-controls label{margin-bottom:10px;flex:0 0 auto}
+.planner-controls .button-row{margin:2px 0 12px}
+.planner-controls .hint-line{margin:0 0 10px}
+.planner-controls .lens,.planner-controls .causal{
+  margin-top:4px;padding-top:10px;box-shadow:inset 0 1px 0 var(--rule-soft);flex:0 0 auto;
+}
+.planner-controls .lens .panel-title,.planner-controls .causal .panel-title{margin-bottom:8px}
+#lens-canvas{width:100%;height:auto;display:block;box-shadow:inset 0 0 0 1px var(--rule-soft);margin-bottom:8px}
+#lens-text,.lens-projection{
+  font-family:var(--font-ui);font-size:12px;line-height:1.45;color:var(--ink-2);margin:0 0 8px;
+}
+.lens-projection{font-family:var(--font-data);font-size:10px;color:var(--hud-dim)}
+#causal-text{font-family:var(--font-ui);font-size:12px;line-height:1.45;color:var(--ink-2);margin-bottom:8px}
+.cause-chain{
+  display:block;padding:5px 0;box-shadow:inset 0 -1px 0 rgba(127,227,216,.07);
+  font-family:var(--font-ui);font-size:12px;line-height:1.45;color:var(--ink-2);
+}
+.cause-chain strong{color:var(--amber-bright);font-weight:600}
+.cause-chain .demo{margin-left:6px;min-height:24px;padding:3px 8px;font-size:9px;letter-spacing:.1em}
+
+/* ------------------------------------------------------ propulsion station */
+.engine-card{display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
+.engine-grid{
+  display:grid;grid-template-columns:minmax(0,1.5fr) minmax(260px,300px);
+  gap:16px;margin-top:12px;min-height:0;flex:1 1 auto;
+}
+.engine-view{
+  position:relative;min-height:200px;overflow:hidden;
+  box-shadow:inset 0 0 0 1px var(--rule-soft);
+  background:radial-gradient(circle at 46% 50%,#06181d,#02080b 78%);
+}
+.engine-view canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+.engine-view > span{
+  position:absolute;left:12px;top:10px;z-index:2;pointer-events:none;
+  font-family:var(--font-data);font-size:9px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--ink-4);
+}
+.engine-controls{display:flex;flex-direction:column;overflow:auto;min-height:0;padding-right:2px}
+.engine-controls > label{margin-bottom:9px;flex:0 0 auto}
+.engine-controls .button-row{margin:2px 0 10px}
+#engine-status,#thermal-status{
+  font-family:var(--font-data);font-size:10px;line-height:1.5;color:var(--hud);
+  margin:6px 0 0;min-height:15px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 0 auto;
+}
+#engine-chief-note{margin:4px 0 0;font-size:11px}
+#engine-causal{font-family:var(--font-ui);font-size:12px;line-height:1.45;color:var(--ink-2)}
+
+/* The engineering readout rack: a ruled grid of numbers with no cells behind
+   them, so a short row reads as blank rack rather than a broken instrument. */
+.engine-readout{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+  margin:12px 0 0;flex:0 0 auto;
+}
+.engine-readout > div{padding:7px 10px 8px;min-width:0;box-shadow:inset -1px -1px 0 var(--rule-soft)}
+.engine-readout strong{
+  display:block;font-family:var(--font-data);font-size:14.5px;font-weight:500;
+  letter-spacing:.02em;color:var(--hud-bright);overflow-wrap:anywhere;
+}
+.engine-readout span{
+  display:block;font-family:var(--font-data);font-size:9px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--ink-4);margin-top:3px;
+}
+.engine-readout .is-warning strong{color:var(--red)}
+.engine-card > .disclaimer{
+  font-family:var(--font-data);font-size:10px;line-height:1.5;
+  color:var(--ink-4);margin:12px 0 0;max-width:none;flex:0 0 auto;
+}
+
+/* Delegated authority: lamps, not a list of checkboxes in a box. */
+#delegation-controls > label{
+  display:flex;align-items:center;gap:9px;margin-bottom:9px;cursor:pointer;
+  font-family:var(--font-display);font-size:13px;font-weight:500;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--ink);
+}
+#delegation-controls > label small{
+  display:block;font-family:var(--font-data);font-size:9px;letter-spacing:.1em;
+  text-transform:none;color:var(--ink-4);margin-top:2px;
+}
+#delegation-controls > label > span:last-child{flex:1 1 auto;min-width:0}
+#delegation-status{font-family:var(--font-data);font-size:10px;color:var(--ink-3);margin:2px 0 0}
+#delegation-badges{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+/* Badges state what a chief bought, in the solver's own words: no text
+   transform, because the sentences carry units and case that must survive. */
+#delegation-badges > *{
+  font-family:var(--font-data);font-size:9px;line-height:1.5;letter-spacing:.04em;
+  color:var(--amber);padding:3px 8px;box-shadow:inset 2px 0 0 rgba(244,184,96,.45);
+}
+.assembly-ledger{min-height:0}
+
+/* ---------------------------------------------------------- academy station */
+.station-panel{flex:1 1 auto;display:flex;flex-direction:column;gap:10px;min-height:0;overflow:hidden}
+.station-head h2{
+  font-family:var(--font-display);font-size:22px;font-weight:500;letter-spacing:.06em;
+  text-transform:uppercase;margin:4px 0 0;color:var(--amber-bright);box-shadow:none;padding:0;
+}
+.onboarding-card{
+  flex:0 1 auto;min-height:0;overflow:auto;display:flex;flex-direction:column;
+  padding:0 0 4px;
+}
+.onboarding-card .button-row{margin:10px 0}
+.onboarding-save{
+  display:flex;align-items:center;gap:9px;margin:4px 0;cursor:pointer;
+  font-family:var(--font-ui);font-size:12px;color:var(--ink-2);
+}
+.onboarding-save small{display:inline;margin-left:4px}
+#onboarding-progress{margin:2px 0 6px}
+#onboarding-title{
+  font-family:var(--font-display);font-size:18px;font-weight:500;letter-spacing:.08em;
+  text-transform:uppercase;margin:0 0 6px;color:var(--ink);
+}
+#onboarding-copy,#placement-copy{
+  font-family:var(--font-ui);font-size:12.5px;line-height:1.5;color:var(--ink-2);margin:0 0 8px;
+}
+.onboarding-status{
+  font-family:var(--font-data);font-size:10px;line-height:1.5;color:var(--hud-dim);margin:0 0 6px;
+}
+#onboarding-mass-ledger{color:var(--ink-3)}
+#placement-diagnostic{padding-top:8px;box-shadow:inset 0 1px 0 var(--rule-soft)}
+#flight-workspace{margin-top:2px}
+
+/* --------------------------------------------------------- prediction station */
+.contract-card{display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
+.commit-console{
+  display:grid;grid-template-columns:minmax(0,1fr) minmax(270px,.6fr);
+  grid-template-areas:"fields side" "ledger side";
+  grid-template-rows:auto minmax(0,1fr);
+  gap:16px;margin-top:12px;flex:1 1 auto;min-height:0;
+}
+.prediction-grid{
+  grid-area:fields;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:10px 14px;align-content:start;
+}
+.prediction-grid label{margin:0}
+.prediction-grid label small{color:var(--ink-4)}
+.commit-notes{grid-area:ledger;align-self:stretch;min-height:0;overflow:auto;padding-top:10px;
+  box-shadow:inset 0 1px 0 var(--rule-soft)}
+.commit-note{margin:0 0 9px;padding-left:9px;box-shadow:inset 2px 0 0 var(--rule-soft)}
+.commit-note b{
+  display:block;font-family:var(--font-display);font-size:11px;letter-spacing:.16em;
+  color:var(--hud-dim);font-weight:600;margin-bottom:2px;text-transform:uppercase;
+}
+.commit-side{grid-area:side;align-self:start;display:flex;flex-direction:column}
+.commit-side .field-label{margin-bottom:5px}
+#attempt-mode-note{margin:8px 0 0}
+.commit-keys{flex-direction:column;align-items:stretch;margin-top:10px;gap:6px}
+.commit-button{width:100%}
+#execute-status{font-family:var(--font-data);font-size:10px;color:var(--hud-dim);margin:8px 0 0;min-height:14px}
+.plan-check{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));margin:0 0 12px}
+.plan-check-line{
+  display:flex;flex-direction:column;gap:2px;padding:7px 10px 8px;
+  box-shadow:inset -1px -1px 0 var(--rule-soft);
+}
+.plan-check-line span{
+  font-family:var(--font-data);font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-4);
+}
+.plan-check-line b{font-size:13px;font-weight:500;color:var(--hud-bright)}
+
+/* ------------------------------------------------------------------ debrief */
+.debrief{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;overflow:auto}
+.debrief .planner-head{flex:0 0 auto;padding-bottom:8px;box-shadow:inset 0 -1px 0 var(--rule-soft)}
+#debrief-content{flex:0 0 auto;display:flex;flex-direction:column;gap:14px;margin-top:12px}
+.debrief-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.debrief-grid > div{padding:8px 10px;box-shadow:inset -1px 0 0 var(--rule-soft)}
+.debrief-grid strong{display:block;font-family:var(--font-data);font-size:20px;font-weight:500;color:var(--hud-bright)}
+.debrief-grid span{
+  display:block;font-family:var(--font-data);font-size:9px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--ink-4);margin-top:3px;
+}
+/* The comparison table is a measurement sheet: rules only, no zebra fill. */
+.prediction-table,.debrief table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+.prediction-table th,.debrief table th{
+  text-align:left;font-family:var(--font-data);font-size:9px;font-weight:500;
+  letter-spacing:.18em;text-transform:uppercase;color:var(--ink-4);
+  padding:6px 10px;box-shadow:inset 0 -1px 0 var(--rule);
+}
+.prediction-table td,.debrief table td{
+  font-family:var(--font-data);font-size:12px;color:var(--ink);padding:6px 10px;
+  box-shadow:inset 0 -1px 0 var(--rule-soft);
+}
+.debrief h3{
+  font-family:var(--font-display);font-size:15px;font-weight:500;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--hud-dim);margin:6px 0 0;padding-bottom:4px;
+  box-shadow:inset 0 -1px 0 var(--rule-soft);
+}
+.debrief p{font-family:var(--font-ui);font-size:12.5px;line-height:1.5;color:var(--ink-2)}
+.debrief .button-row{margin:4px 0 0}
+.attribution-note,.finite-loss{font-family:var(--font-data);font-size:10px;line-height:1.55;color:var(--ink-3)}
+.sensitivity-list{display:flex;flex-direction:column;gap:3px;font-family:var(--font-data);font-size:10px;color:var(--ink-3)}
+.elo-update{font-family:var(--font-data);font-size:10px;color:var(--amber)}
+.certificate-button,.certificate-verify{min-height:24px;padding:2px 8px;font-size:9px}
+
+/* ------------------------------------------------------------------- status */
 .console-status{
-  flex:0 0 24px;display:flex;align-items:center;justify-content:space-between;gap:14px;
-  padding:0 12px 0 4px;
-  background:linear-gradient(180deg,rgba(2,9,13,.6),rgba(2,9,13,.95));
-  box-shadow:inset 0 1px 0 var(--stroke);
-  font-family:var(--font-data);font-size:8px;letter-spacing:.16em;color:var(--txt-3);
-  text-transform:uppercase;
+  grid-area:status;display:flex;align-items:center;gap:14px;padding:0 16px;
+  font-family:var(--font-data);font-size:9px;letter-spacing:.2em;text-transform:uppercase;
+  color:var(--ink-4);box-shadow:inset 0 1px 0 var(--rule-soft);
+  background:rgba(2,7,10,.8);overflow:hidden;white-space:nowrap;
 }
-.console-status b{color:var(--hud);font-weight:500}
-.status-lamp{display:flex;align-items:center;gap:7px;color:var(--green)}
+.console-status b{color:var(--hud-dim);font-weight:400}
+.status-lamp{display:flex;align-items:center;gap:6px;color:var(--hud-dim)}
 .status-lamp i{width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}
-.status-build{color:var(--txt-3)}
+.status-keys{margin-left:auto;color:var(--ink-4)}
 
-/* The station rail is now a column inside the console body, not a page block. */
-.flight-mode-nav{height:100%;flex:0 0 78px}
-
-/* The assembly rack is taller than a 720p laptop can show: it gets its own
-   scrollbar inside the bezel rather than clipping the mass ledger. */
-#assembly{overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--stroke-2) transparent}
-
-/* Panel-level miniature headings. */
-.planner-head .section-label{display:block}
-.planner-head+*{margin-top:2px}
-
-/* Prediction card: ledger style, one row of six entry wells. */
-#prediction-workspace{flex:1 1 auto;min-height:0}
-#execute-status{
-  font-family:var(--font-data);font-size:10px;letter-spacing:.06em;color:var(--hud);
-  margin:8px 0 0;min-height:14px;
+/* --------------------------------------------------------------- responsive */
+@media (max-width:1180px){
+  /* The one-line station legend can only fit a stump of the brief; the station
+     below already names itself. */
+  .mission-grid{grid-template-columns:minmax(0,1fr) minmax(280px,300px)}
+  .engine-grid{grid-template-columns:minmax(0,1fr) minmax(240px,270px)}
 }
-#attempt-mode-note{color:var(--txt-3)}
-
-/* Debrief expands inside the console, keeping the rail and command strip live. */
-#debrief-content{min-height:0}
-#debrief .planner-head{margin-bottom:6px}
-
-/* Engine lab uses the free vertical space for the canvas. */
-#engine-lab .engine-grid{flex:1 1 auto}
-
-/* The reference/lesson panel leans on the amber caution palette. */
-#onboarding{overflow-y:auto}
-/* Academy is a split station: the lesson well on top, the real flight
-   workspace underneath, so a lesson always runs against live telemetry. The
-   well's height is set in ui.css; on narrow screens it flows in the scroll. */
-
-/* ------------------------------------------------------------------ narrow */
-/* The console keeps its chrome. Only the active workspace scrolls, and the
-   station rail becomes a hardware game bar pinned under the workspace. */
-@media (max-width:900px){
-  .console-body{flex-direction:column;min-height:0}
-  .console-main{order:1;flex:1 1 auto;min-height:0}
-  .flight-mode-nav{
-    order:2;flex:0 0 54px;width:100%;height:54px;flex-direction:row;
-    padding:3px 4px;gap:2px;align-items:stretch;
-    box-shadow:inset 0 1px 0 var(--stroke-2);
-  }
-  .mode-rail-title,.mode-rail-state{display:none}
-  .flight-mode-nav button{flex:1 1 0;height:48px;min-height:48px;clip-path:none}
-  .flight-mode-nav button.is-active::before{left:8px;right:8px;top:auto;bottom:0;width:auto;height:2px}
+@media (max-width:980px){
+  .console-body{grid-template-columns:46px minmax(0,1fr)}
+  .flight-mode-nav button{height:46px}
   .flight-mode-nav button b{font-size:13px}
-  .flight-mode-nav button span{font-size:8px;letter-spacing:.06em}
-
-  .mission-main{display:block;overflow-y:auto;overflow-x:hidden;padding:5px;gap:0}
-  .mission-main>.intro{display:none}
-  .mission-main>[data-flight-panel]{display:none!important}
-  .mission-main>[data-flight-panel].is-active:not([hidden]){display:block!important;height:auto;flex:none}
-  .mission-main>.mission-grid.is-active{display:block!important}
-  .planner-card,.planner-controls,.engine-card,.contract-card,.debrief,.onboarding-card{
-    margin:0 0 5px;height:auto;max-height:none;overflow:visible;padding:11px 12px 13px;
+  .flight-mode-nav button span{font-size:9px}
+  /* Stacked stations are one tall well that the surface scrolls. The rows
+     must be auto: two equal 1fr tracks split the framed height and then the
+     control column spills out of its own row on top of the next section. */
+  .mission-grid,.engine-grid{grid-template-columns:1fr;grid-template-rows:auto auto;flex:0 0 auto}
+  /* Named areas alone are not enough: the desktop two-row template survives
+     and drops `side` into row two beside the ledger. Restate the rows too. */
+  .commit-console{
+    grid-template-columns:1fr;grid-template-areas:"fields" "side" "ledger";
+    grid-template-rows:auto auto auto;
   }
-  .planner-card{display:block}
-  .mission-canvas{height:min(46vh,320px);margin-top:8px}
-  /* Two absolute corners of sub-8px type collide once the instrument narrows:
-     the plate label moves onto its own line under the sensor tag. */
-  .mission-canvas>span{top:30px}
-  .mission-canvas:after{right:10px;top:8px;font-size:8px;letter-spacing:.1em;padding:2px 5px}
-  .planner-controls{display:block}
-  .planner-controls .button-row button{flex:1 1 40%}
-  .engine-grid{display:block}
-  .engine-view{height:min(34vh,260px);margin-bottom:8px}
+  .prediction-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .mission-main{padding:12px 14px 14px}
+  /* Stacked stations scroll as one well; the document still never moves. */
+  /* In one tall scroll well every station block is content, not a pane that
+     may shrink: the workspace below it is 1,500px of controls, and a
+     shrinkable panel divides that away to nothing. */
+  .mission-main > [data-flight-panel]{flex:0 0 auto}
+  .station-panel,.onboarding-card{overflow:visible;flex:0 0 auto}
+  .planner-controls,.engine-controls,.commit-notes{overflow:visible}
+  .mission-canvas{min-height:min(46vh,320px)}
+  .engine-view{min-height:240px}
+  .flight-command-strip > div:nth-child(n+3){display:none}
+  .brand small{display:none}
+  .profile-button-label{display:none}
+}
+@media (max-width:650px){
+  .app{grid-template-rows:40px minmax(0,1fr) 20px}
+  .topbar{padding:0 12px}
+  .brand{font-size:11px;letter-spacing:.2em}
+  /* On a phone the rail becomes a game bar on the bottom edge. */
+  .console-body{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) 52px}
+  .console-main{grid-row:1;grid-column:1}
+  .flight-mode-nav{
+    grid-row:2;grid-column:1;flex-direction:row;align-items:stretch;
+    justify-content:flex-start;padding-bottom:0;
+    box-shadow:inset 0 1px 0 var(--rule-soft);background:rgba(2,7,10,.9);
+  }
+  .flight-mode-nav button{flex:1 1 0;height:52px;min-width:0}
+  .flight-mode-nav button.is-active::before{left:5px;right:5px;top:0;bottom:auto;width:auto;height:2px}
+  .flight-mode-nav button span{font-size:9px}
+  .status-keys,.status-build{display:none}
+  .mission-main{padding:10px 11px 12px}
+  .planner-head h2,.engine-card h2,.debrief h2{font-size:19px}
+  .planner-head h2 em,.engine-card h2 em,.debrief h2 em{font-size:21px}
+  .mission-canvas{min-height:min(40vh,250px)}
+  /* The cross-section is scaled by its own height, so a short well squeezes
+     the nozzle until the drag captions collide with the plume. */
+  .engine-view{min-height:min(48vh,300px)}
+  .mission-canvas::after{font-size:9px;letter-spacing:.1em}
+  .prediction-grid{grid-template-columns:1fr}
+  .plan-check{grid-template-columns:1fr}
   .engine-readout{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .commit-console{display:block}
-  .commit-console .prediction-grid{grid-template-columns:repeat(2,minmax(0,1fr));margin-bottom:8px}
-  .commit-notes{margin-top:8px}
-  #assembly-grid{display:block}
-  #assembly-grid>.engine-controls{margin-bottom:6px}
-  .debrief{overflow:visible}
-  .console-status{flex:0 0 20px}
-}
-@media (max-width:650px){
-  .console-status{font-size:8px;padding:0 8px 0 4px}
-  .status-keys{display:none}
-  .mission-main>.intro{display:none}
-  .publisher-note{display:none}
-}
-@media (max-width:650px){
-  .flight-command-strip{flex:0 0 34px}
-  .mission-canvas{height:min(40vh,270px)}
+  .station-head h2{font-size:18px}
+  .profile-button{padding:2px 5px}
+  .back{padding:2px 7px}
 }
