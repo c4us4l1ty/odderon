@@ -79,7 +79,6 @@
   align-self:stretch;min-height:0;padding:8px 0;
   box-shadow:inset -1px 0 0 var(--rule-soft);
 }
-.mode-rail-title,.mode-rail-state{display:none}
 .flight-mode-nav button{
   position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;
   gap:1px;height:50px;min-height:0;padding:0;
@@ -138,6 +137,9 @@
 .mission-main > [data-flight-panel]{display:none}
 .mission-main > [data-flight-panel].is-active{display:flex;flex-direction:column;gap:12px;min-height:0}
 .mission-main > .mission-grid.is-active{display:grid}
+/* The academy dock: nameplate over a fixed lesson well, above the live flight
+   board. The gap is the split; the well is the only part that scrolls. */
+.lesson-dock{flex:1 1 auto;display:flex;flex-direction:column;gap:10px;min-height:0;overflow:hidden}
 
 /* The station title is a legend line, not a page heading: no lede paragraph. */
 .mission-main > .intro{
@@ -212,9 +214,16 @@
 .mission-legend i.violet{color:var(--violet)}
 
 /* The control column: caption, value, rule. No container around it. */
+/* A plan-check row reports its own state. `updatePlanCheck` toggles the class on
+   the row, and the value is a <b> inside it, so the class has to reach that <b>:
+   colouring the <p> alone is invisible behind the <b>'s own colour. */
+.plan-check-line.is-warning b{color:var(--amber)}
+.plan-check-line.is-bad b{color:var(--red)}
+.plan-check-line.is-bad span{color:var(--red)}
+
 .planner-controls{overflow:auto;padding-right:2px}
 .planner-controls .panel-title,.engine-controls .panel-title,.commit-notes .panel-title,
-.commit-side .panel-title,.station-head{
+.commit-side .panel-title{
   display:flex;align-items:baseline;justify-content:space-between;gap:8px;
   padding-bottom:6px;margin-bottom:10px;box-shadow:inset 0 -1px 0 var(--rule-soft);flex:0 0 auto;
 }
@@ -309,11 +318,7 @@
 .assembly-ledger{min-height:0}
 
 /* ---------------------------------------------------------- academy station */
-.station-panel{flex:1 1 auto;display:flex;flex-direction:column;gap:10px;min-height:0;overflow:hidden}
-.station-head h2{
-  font-family:var(--font-display);font-size:22px;font-weight:500;letter-spacing:.06em;
-  text-transform:uppercase;margin:4px 0 0;color:var(--amber-bright);box-shadow:none;padding:0;
-}
+
 .onboarding-card{
   flex:0 1 auto;min-height:0;overflow:auto;display:flex;flex-direction:column;
   padding:0 0 4px;
@@ -451,7 +456,7 @@
      may shrink: the workspace below it is 1,500px of controls, and a
      shrinkable panel divides that away to nothing. */
   .mission-main > [data-flight-panel]{flex:0 0 auto}
-  .station-panel,.onboarding-card{overflow:visible;flex:0 0 auto}
+  .onboarding-card{overflow:visible;flex:0 0 auto}
   .planner-controls,.engine-controls,.commit-notes{overflow:visible}
   .mission-canvas{min-height:min(46vh,320px)}
   .engine-view{min-height:240px}
@@ -486,7 +491,10 @@
   .prediction-grid{grid-template-columns:1fr}
   .plan-check{grid-template-columns:1fr}
   .engine-readout{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .station-head h2{font-size:18px}
   .profile-button{padding:2px 5px}
   .back{padding:2px 7px}
 }
+
+/* A projection close key is parked in a fixed-height slot so the lens panel
+   does not jump by a row when the key appears. */
+.lens-close-slot{min-height:30px;display:flex;align-items:flex-end}

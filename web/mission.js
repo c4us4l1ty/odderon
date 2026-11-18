@@ -177,7 +177,9 @@ function updatePreview(){
   if(!wasm)return;
   cancelFlight();sequence++;syncFields();actual=null;lastReport=null;lastLunarInfo=null;lastBplaneInfo=null;lunarPreview=[];
   if(!configure(wasm,nodes)){$('plan-status').textContent=refusal(wasm);$('plan-status').classList.add('failure');preview=[];$('prefill').disabled=true;$('execute').disabled=true;
-  updateAttemptMode();updateCausal();draw();cancelFlight();return;}
+  // The check must be re-read here too. Returning without it left the previous
+  // valid plan's delta-v and propellant on screen beside a refusal.
+  updateAttemptMode();updatePlanCheck();updateCausal();draw();cancelFlight();return;}
   $('plan-status').classList.remove('failure');$('plan-status').textContent='Ideal orbit ready. The modeled flight runs only after the prediction is locked.';
   preview=Array.from({length:481},(_,i)=>({time:DURATION*i/480,state:readState(wasm,DURATION*i/480)}));
   if(scenario==='103'){
@@ -199,6 +201,17 @@ function updatePreview(){
 function updatePlanCheck(){
   const box=$('plan-check');if(!box)return;
   const set=(id,text,state)=>{const b=$(id);if(!b)return;b.textContent=text;b.parentElement.classList.toggle('is-warning',state==='warn');b.parentElement.classList.toggle('is-bad',state==='bad');};
+  // A refused plan has no computed cost. Reading the last valid solution here
+  // would print a healthy propellant figure beside a "not enough fuel" refusal,
+  // so the check reports the refusal itself and clears the stale numbers.
+  if(!preview.length){
+    const refused=$('plan-status').classList.contains('failure');
+    for(const id of ['check-dv','check-fuel','check-pad'])set(id,refused?'—':'—',refused?'bad':'warn');
+    if(refused)set('check-nodes',nodes.length?`${nodes.length} burn${nodes.length===1?'':'s'}`:'no burn','bad');
+    else set('check-nodes',`${nodes.length} burn${nodes.length===1?'':'s'}`,nodes.length?'warn':'bad');
+    const code=$('plan-check-code');if(code)code.textContent=refused?'REFUSED':(nodes.length?`${nodes.length} NODE`:'EMPTY');
+    return;
+  }
   const dv=nodes.reduce((a,n)=>a+Math.hypot(...n.dv),0);
   const state=nodes.length?readState(wasm,DURATION):null;
   const fuel=state?state[6]-DRY:null;

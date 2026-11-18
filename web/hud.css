@@ -140,7 +140,7 @@ summary:focus-visible,
 /* --------------------------------------------------------------- utilities */
 
 /* A label. Every caption in the interface is one of these three weights. */
-.hud-label,.section-label,.field-label,.metric-label,.eyebrow,.panel-code{
+.section-label,.field-label,.metric-label,.panel-code{
   font-family:var(--font-data);font-size:9px;font-weight:500;
   letter-spacing:.24em;text-transform:uppercase;color:var(--ink-3);
   font-variant-numeric:tabular-nums;
@@ -148,7 +148,6 @@ summary:focus-visible,
 .section-label{color:var(--hud-dim)}
 .field-label,.metric-label{letter-spacing:.2em;color:var(--ink-3)}
 .panel-code{font-size:9px;letter-spacing:.16em;color:var(--ink-4);padding-left:8px}
-.eyebrow{color:var(--hud-dim);letter-spacing:.3em}
 
 /* Body copy: only where a player must actually read a sentence. Kept narrow so
    it never becomes a paragraph block on a page. */
@@ -394,6 +393,88 @@ dialog > form{padding:20px 22px 22px}
   h1,h2,h3,p,td,th,li,strong,b{color:#000;text-shadow:none}
   a{color:#000;text-decoration:underline}
 }
+
+/* ------------------------------------------------------------------- terms */
+/* A glossary term is explained by the line behind it, so it is marked as
+   hoverable type: a dotted underline in the caution colour, never a chip. */
+abbr.term{
+  text-decoration:underline dotted rgba(244,184,96,.75);text-underline-offset:3px;
+  cursor:help;color:var(--amber-bright);
+}
+abbr.term:focus-visible{outline:1px solid var(--amber);outline-offset:2px}
+
+/* ------------------------------------------------------- preferences, state */
+/* Both settings switches write a class on <body>. These are the rules those
+   classes drive: without them the switches store a preference and change
+   nothing, which reads as a broken control. */
+body.high-contrast{
+  --rule:rgba(150,246,236,.42);
+  --rule-soft:rgba(150,246,236,.26);
+  --ink-2:#b9cfd0;--ink-3:#9db5b7;--ink-4:#7e979b;
+}
+body.high-contrast .console-body,
+body.high-contrast #station-surface{background:#040f14}
+.build-state.ready i{background:var(--green);box-shadow:0 0 10px var(--green)}
+
+/* A verification verdict is a sentence, coloured by its outcome. */
+.verify-verdict{
+  font-family:var(--font-data);font-size:11px;letter-spacing:.08em;margin:6px 0 2px;
+  min-height:1.2em;color:var(--ink-2);
+}
+.verify-verdict.is-verified{color:var(--green)}
+.verify-verdict.is-rejected{color:var(--red)}
+
+/* A secret is a sentence the player must be able to select and copy, so it
+   breaks anywhere and sits in its own ruled well. */
+.secret-block{margin:8px 0}
+.secret-value{
+  display:block;margin-top:4px;padding:7px 9px;box-shadow:inset 0 0 0 1px var(--rule);
+  background:rgba(2,9,12,.8);font-family:var(--font-data);font-size:11px;line-height:1.55;
+  color:var(--hud);word-break:break-word;
+}
+.profile-head{
+  display:flex;align-items:flex-start;justify-content:space-between;gap:14px;
+  padding-bottom:12px;box-shadow:inset 0 -1px 0 var(--rule);
+}
+.profile-head h2{
+  font-family:var(--font-display);font-size:24px;font-weight:500;letter-spacing:.08em;
+  text-transform:uppercase;margin:5px 0 0;color:var(--ink);
+}
+.profile-warning{
+  font-family:var(--font-ui);font-size:12.5px;line-height:1.5;color:var(--amber);
+  padding:8px 10px;margin:8px 0;box-shadow:inset 3px 0 0 var(--amber);
+}
+.profile-restore textarea{width:100%;font-size:11px}
+
+/* A leaderboard row's replay key is a table-cell control, so it is sized to the
+   cell rather than to the dialog's default key. */
+.leaderboard-replay{font-size:10px;padding:4px 8px;min-height:24px}
+
+/* The licence cells: a ruled grid of label-over-value, no card behind it. The
+   identifier is long and unbreakable, so its cell scrolls rather than
+   hyphenating a flight key across two lines like prose. */
+.profile-identity{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:1px;margin:12px 0;background:var(--rule-soft);box-shadow:inset 0 0 0 1px var(--rule-soft);
+}
+.profile-identity > div{
+  background:rgba(4,14,18,.9);padding:8px 10px;
+  display:flex;flex-direction:column;gap:3px;
+}
+.profile-identity strong{font-family:var(--font-data);font-size:15px;color:var(--hud-bright);font-weight:500}
+.profile-identity code{
+  font-size:10.5px;color:var(--hud);white-space:nowrap;overflow-x:auto;
+  scrollbar-width:none;letter-spacing:.01em;
+}
+.profile-identity code::-webkit-scrollbar{display:none}
+.profile-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.profile-row input{flex:1 1 200px;min-width:0}
+.profile-note{font-family:var(--font-data);font-size:10px;line-height:1.5;color:var(--ink-3);margin:6px 0}
+.profile-note.is-valid{color:var(--green)}
+
+/* The dossier is printed from an off-screen frame, so the frame must render
+   while staying out of the view — `display:none` would print blank. */
+.dossier-print-frame{position:fixed;left:-10000px;top:0;width:210mm;height:297mm;border:0}
 
 /* ---------------------------------------------------------------- motion */
 /* The interface never animates itself. Respect a stated preference by removing

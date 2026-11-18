@@ -83,7 +83,6 @@
 .scene-reticle i:nth-child(2){right:0;top:0;border-right:1px solid var(--c);border-top:1px solid var(--c)}
 .scene-reticle i:nth-child(3){left:0;bottom:0;border-left:1px solid var(--c);border-bottom:1px solid var(--c)}
 .scene-reticle i:nth-child(4){right:0;bottom:0;border-right:1px solid var(--c);border-bottom:1px solid var(--c)}
-.hud-corner{display:none}
 
 /* An error is a warning mark on the glass, not a banner. */
 .error{
@@ -100,7 +99,7 @@
   display:flex;align-items:center;justify-content:space-between;gap:10px;
   pointer-events:none;
 }
-.size-rail,.scale-note{
+.scale-note{
   display:flex;align-items:center;gap:7px;pointer-events:auto;
   font-family:var(--font-data);font-size:9px;letter-spacing:.16em;text-transform:uppercase;
   color:var(--ink-3);padding:3px 8px;background:rgba(1,6,9,.5);

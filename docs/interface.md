@@ -150,6 +150,21 @@ tokens, the `[hidden]` law, the control reset, the slider law, the dialog chrome
 focus, print and reduced motion. A route sheet owns that route's layout and
 nothing else.
 
+Deleting a shared sheet is where things break quietly, so two rules apply to
+this file and are asserted by `npm run test:ui`:
+
+- **A class markup or script applies must have a rule behind it.** When `ui.css`
+  was deleted, eleven classes it owned were still being rendered — glossary
+  terms, the licence cell grid, the secret block, the verification verdict, the
+  dossier print frame. They did not error; they silently lost their presentation.
+  The gate now collects every class present in the live DOM and fails if any has
+  no rule in any loaded sheet. Two settings switches were also dead for the same
+  reason: they wrote `reduced-effects` and `high-contrast` onto `<body>` with no
+  rule behind either class, so they stored a preference and changed nothing.
+- **A state class must reach the element that carries the colour.** The plan
+  check toggled `is-bad` on the row while the value lived in a `<b>` inside it,
+  so an empty or refused plan never turned red.
+
 ### Title screen
 
 The camera plate (`./assets/title-orbit.jpg`) fills the frame. On it: a stencil
@@ -206,6 +221,14 @@ Two structural rules follow from that, and both are asserted by
    plus a fixed-height lesson well, sitting *above* the live flight board, which
    is a sibling panel. The lesson therefore always runs against the real plan,
    and the board keeps its own column instead of collapsing under the prose.
+
+**A refused plan reports no numbers.** `updatePreview` returns early when the
+plan cannot compile, and it must still re-read the plan check on the way out.
+Without that call the check kept the last valid solution's delta-v and
+propellant on screen beside the refusal — a healthy 117.2 kg next to "that needs
+more fuel than this stage carries". A refused plan now reads `REFUSED` with the
+figures cleared, and the gate asserts both the cleared value and the failure
+styling.
 
 Two geometry invariants are asserted, because both were broken by a rule that
 looked harmless: the rail must reach the foot of `.console-body` within 2 px

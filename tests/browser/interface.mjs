@@ -293,6 +293,69 @@ try {
     assert.ok(faces.ui, `${route} must have the Odderon Console face resident`);
   }
 
+  // The accessibility preferences are only real if they change the rendered
+  // page. Both switches write a class on <body>; a class with no rule behind it
+  // stores a setting and does nothing, which reads as a broken control.
+  await page.goto(`${origin}/`, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(400);
+  const contrastOff = await page.evaluate(() => ({
+    rule: getComputedStyle(document.body).getPropertyValue('--rule').trim(),
+    grain: getComputedStyle(document.querySelector('.grain')).display,
+  }));
+  await page.evaluate(() => document.getElementById('high-contrast').click());
+  await page.evaluate(() => document.getElementById('reduced-effects').click());
+  await page.waitForTimeout(150);
+  const contrastOn = await page.evaluate(() => ({
+    rule: getComputedStyle(document.body).getPropertyValue('--rule').trim(),
+    grain: getComputedStyle(document.querySelector('.grain')).display,
+  }));
+  assert.notEqual(contrastOn.rule, contrastOff.rule, 'the contrast switch must change the instrument rules');
+  assert.equal(contrastOn.grain, 'none', 'the reduced-effects switch must suppress the grain plate');
+
+  // Every class the scripts apply must have a rule behind it. The wipe removed
+  // a shared sheet; a rule that markup still depends on cannot go with it, and
+  // this catches the next one before it ships.
+  await page.goto(`${origin}/mission.html`, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => !document.getElementById('add-node').disabled, null, { timeout: 30000 });
+  await page.locator('#example').click();
+  await page.waitForTimeout(1200);
+  const orphaned = await page.evaluate(() => {
+    const used = new Set();
+    for (const el of document.querySelectorAll('[class]')) {
+      for (const token of el.classList) used.add(token);
+    }
+    const sheets = [...document.styleSheets].flatMap(sheet => {
+      try { return [...sheet.cssRules].map(rule => rule.cssText); } catch { return []; }
+    }).join('\n');
+    return [...used].filter(token => !new RegExp(`\\.${token}(?![\\w-])`).test(sheets));
+  });
+  assert.deepEqual(orphaned, [], `classes rendered with no rule in any loaded sheet: ${orphaned.join(', ')}`);
+
+  // A refused plan must not report the previous valid plan's numbers beside the
+  // refusal. The check reads the plan, so a plan that cannot compile has none.
+  await page.locator('[data-flight-mode="prediction"]').click();
+  await page.waitForTimeout(300);
+  await page.locator('[data-flight-mode="flight"]').click();
+  await page.waitForTimeout(400);
+  const before = await page.evaluate(() => document.getElementById('check-dv').textContent);
+  assert.notEqual(before, '—', 'a valid plan must report its delta-v cost');
+  await page.evaluate(() => {
+    const field = document.querySelector('#node-t');
+    field.value = '600';
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await page.waitForTimeout(1200);
+  const refused = await page.evaluate(() => ({
+    status: document.getElementById('plan-status').classList.contains('failure'),
+    code: document.getElementById('plan-check-code').textContent,
+    dv: document.getElementById('check-dv').textContent,
+    row: document.getElementById('check-dv').parentElement.className,
+  }));
+  assert.ok(refused.status, 'the unaffordable burn must be refused');
+  assert.equal(refused.code, 'REFUSED', 'the plan check must say the plan was refused');
+  assert.equal(refused.dv, '—', 'a refused plan must not show a stale delta-v');
+  assert.ok(/is-bad/.test(refused.row), 'a refused plan must be styled as a failure');
+
   assert.deepEqual(errors, [], 'the interface must load without page errors');
   console.log('HUD standard holds: no plates, no boxes, no native controls, no document scroll.');
 } finally {

@@ -282,3 +282,7 @@
   .menu-item{min-height:40px;padding:6px 12px}
   .menu-label{font-size:15px}
 }
+
+/* The settings switches write these classes on <body>; on the title screen the
+   grain is the only effect to suppress. */
+body.reduced-effects .grain{display:none}
