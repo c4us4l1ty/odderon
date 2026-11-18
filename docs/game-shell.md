@@ -39,7 +39,9 @@ The top command strip keeps the active station, operation, frame and authority
 mode visible. On narrow screens the station rail becomes a bottom game bar.
 Profile, leaderboard and verification overlays share the same flight-computer
 visual language. The Observatory is also an instrument console and links
-straight back to the game menu and Flight Deck.
+straight back to the game menu and Flight Deck. On desktop, all three primary
+routes remain inside one browser viewport with no document-level scrolling or
+website footer; narrow layouts scroll only inside their active game workspace.
 
 ## Storefront and hosting boundary
 

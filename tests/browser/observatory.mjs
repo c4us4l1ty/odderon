@@ -69,6 +69,9 @@ try{
   await page.locator('.settings-done').click();
   await page.goto(`http://127.0.0.1:${server.address().port}/observatory.html`);
   await page.waitForFunction(()=>window.odderonDiagnostics?.draws>0,{timeout:30000});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollHeight<=innerHeight+2),true,'Observatory must stay inside the game viewport');
+  assert.equal(await page.locator('.obs-actions a[href="./mission.html"]').count(),1,'tracking station must link directly to the Flight Deck');
+  assert.equal(await page.locator('footer').count(),0,'Observatory must not retain a website footer');
   await page.waitForFunction(()=>odderonDiagnostics.quality.includes('RESTING')&&!odderonDiagnostics.pendingFrame,null,{timeout:60000});
   assert.equal(await page.evaluate(()=>window.testWorldPasses),1,'initial view must use one world pass');
   assert.equal(await page.evaluate(()=>window.testInstancedPasses),0,'no brushstroke batches');
@@ -581,6 +584,8 @@ try{
   await page.locator('#execute').click();
   await page.waitForFunction(()=>(!document.getElementById('debrief').hidden||missionDiagnostics.locked)&&!missionDiagnostics.pending,null,{timeout:120000});
   assert.equal(await page.locator('#debrief').isHidden(),false,`mission error: ${await page.locator('#execute-status').textContent()}, page errors: ${errors}`);
+  assert.equal(await page.evaluate(()=>odderonFlightShell.mode),'debrief','completed flight must open the FDR station');
+  assert.equal(await page.locator('#debrief-mode').isEnabled(),true);
   const debrief=await page.locator('#debrief-content').textContent();
   const score=Number(debrief.match(/([0-9.]+)%Mission score/)?.[1]);
   assert.ok(score>80,`rescue score: ${score}; ${debrief}`);
