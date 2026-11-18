@@ -1,3 +1,4 @@
+import { CANVAS_MONO } from './glyphs.js';
 // Engine CAD & Schlieren lab.
 //
 // Every number here comes from odd-propulsion through the scalar wasm bridge.
@@ -232,7 +233,7 @@ export function createLab({ wasm, onApply, onDiagnose, isLocked, annotate }) {
     draws++;
     ctx.fillStyle = '#08110f'; ctx.fillRect(0, 0, rect.width, rect.height);
     if (!solution) {
-      ctx.fillStyle = '#edbc98'; ctx.font = '12px system-ui';
+      ctx.fillStyle = '#edbc98'; ctx.font = `12px ${CANVAS_MONO}`;
       ctx.fillText(PROPULSION_ERRORS[String(lastCode)] ?? 'No solution.', 16, rect.height / 2);
       return;
     }
@@ -275,7 +276,7 @@ export function createLab({ wasm, onApply, onDiagnose, isLocked, annotate }) {
         ctx.stroke();
       }
       ctx.setLineDash([]);
-      ctx.fillStyle = '#edbc98'; ctx.font = '10px system-ui';
+      ctx.fillStyle = '#edbc98'; ctx.font = `10px ${CANVAS_MONO}`;
       const [lx, ly] = toScreen(x, r);
       ctx.fillText(`separation x/L ${solution.separationX.toFixed(3)}`, lx + 6, ly - 6);
     }
@@ -329,7 +330,7 @@ export function createLab({ wasm, onApply, onDiagnose, isLocked, annotate }) {
       const r = wasm.mission_engine_plume_boundary(plume.machDisk);
       ctx.strokeStyle = '#e2bc79'; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.moveTo(...toScreen(x, -r)); ctx.lineTo(...toScreen(x, r)); ctx.stroke();
-      ctx.fillStyle = '#e2bc79'; ctx.font = '10px system-ui';
+      ctx.fillStyle = '#e2bc79'; ctx.font = `10px ${CANVAS_MONO}`;
       ctx.fillText('Mach disk', ...toScreen(x, r * 1.08));
     }
     // Mixture-ratio track above the chamber, with the efficient band shaded.
@@ -347,7 +348,7 @@ export function createLab({ wasm, onApply, onDiagnose, isLocked, annotate }) {
       ctx.strokeStyle = '#80d9cb'; ctx.lineWidth = 4;
       ctx.beginPath(); ctx.moveTo(...toScreen(a, track.r)); ctx.lineTo(...toScreen(b, track.r)); ctx.stroke();
     }
-    ctx.fillStyle = '#849b90'; ctx.font = '10px system-ui';
+    ctx.fillStyle = '#849b90'; ctx.font = `10px ${CANVAS_MONO}`;
     const [olx, oly] = toScreen(track.x0, track.r);
     ctx.fillText(`O/F ${spec.of.toFixed(2)} — drag along the track`, olx, oly - 10);
     const [plx, ply] = toScreen(-solution.chamberLength, 0);
@@ -358,7 +359,7 @@ export function createLab({ wasm, onApply, onDiagnose, isLocked, annotate }) {
       ctx.fillStyle = drag?.key === handle.key ? '#dbebd3' : '#bbd1b3';
       ctx.fill(); ctx.strokeStyle = '#10201a'; ctx.lineWidth = 1.5; ctx.stroke();
     }
-    ctx.fillStyle = '#849b90'; ctx.font = '10px system-ui';
+    ctx.fillStyle = '#849b90'; ctx.font = `10px ${CANVAS_MONO}`;
     ctx.fillText(`${REGIMES[plume.regime] ?? '—'} · exit ${(solution.exitPressure / 1000).toFixed(2)} kPa · ambient ${(solution.ambient / 1000).toFixed(2)} kPa · exit Mach ${solution.exitMach.toFixed(2)}`, 14, rect.height - 12);
   }
 
@@ -377,7 +378,7 @@ export function createLab({ wasm, onApply, onDiagnose, isLocked, annotate }) {
     status.classList.toggle('failure', lastCode === -5);
     status.textContent = lastCode === -5
       ? PROPULSION_ERRORS['-5']
-      : `${LABELS[spec.propellant]} · expansion ratio ${number(solution.expansion, 1)} · ${REGIMES[plume.regime]}. Drag a handle or edit a control to redesign.`;
+      : `${LABELS[spec.propellant]} · ε ${number(solution.expansion, 1)} · ${REGIMES[plume.regime]} · drag a handle to redesign`;
     const cells = [
       ['Thrust on this stand', `${number(solution.thrust / 1000, 2)} kN`, false],
       ['Isp on this stand', `${number(solution.isp, 1)} s`, false],

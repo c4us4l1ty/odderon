@@ -1,6 +1,7 @@
 // Playable mission planning. Scientific calculations are performed by the
 // Rust/WASM planner and one-shot flight workers, not fabricated by canvas.
 import { Governor } from './governor.js';
+import { CANVAS_MONO, loadCanvasFaces } from './glyphs.js';
 import { createLab } from './engine-lab.js';
 import { createAssembly, assemblyPayload, applyAssembly } from './assembly.js';
 import * as identity from './identity.js';
@@ -510,7 +511,7 @@ function draw(){
   if(preview.length)line(preview.map(p=>p.state),'#70d7dc',true);
   if(scenario==='103'&&lunarPreview.length)line(lunarPreview,'#b9a7e8',true);
   if(actual)line(actual,'#e2bc79',false);
-  nodes.forEach((node,i)=>{const state=readState(wasm,node.time);if(state.some(x=>!Number.isFinite(x)))return;const p=toCanvas(state);ctx.fillStyle=i===selected?'#f0ddac':'#a1c2b2';ctx.beginPath();ctx.arc(...p,5,0,Math.PI*2);ctx.fill();ctx.fillStyle='#dbfffa';ctx.font='11px "IBM Plex Mono",ui-monospace,monospace';ctx.fillText(String(i+1),p[0]+9,p[1]-8);if(i===selected){for(const h of handles(p,state)){ctx.strokeStyle=h.color;ctx.beginPath();ctx.moveTo(...p);ctx.lineTo(...h.end);ctx.stroke();ctx.fillStyle=h.color;ctx.beginPath();ctx.arc(...h.end,6,0,Math.PI*2);ctx.fill();ctx.fillText(h.label,h.end[0]+7,h.end[1]-6);}}});
+  nodes.forEach((node,i)=>{const state=readState(wasm,node.time);if(state.some(x=>!Number.isFinite(x)))return;const p=toCanvas(state);ctx.fillStyle=i===selected?'#f0ddac':'#a1c2b2';ctx.beginPath();ctx.arc(...p,5,0,Math.PI*2);ctx.fill();ctx.fillStyle='#dbfffa';ctx.font=`11px ${CANVAS_MONO}`;ctx.fillText(String(i+1),p[0]+9,p[1]-8);if(i===selected){for(const h of handles(p,state)){ctx.strokeStyle=h.color;ctx.beginPath();ctx.moveTo(...p);ctx.lineTo(...h.end);ctx.stroke();ctx.fillStyle=h.color;ctx.beginPath();ctx.arc(...h.end,6,0,Math.PI*2);ctx.fill();ctx.fillText(h.label,h.end[0]+7,h.end[1]-6);}}});
 }
 /// The planet plate behind the orbit. Kept in the console's phosphor palette:
 /// a lit limb on one side, an unlit terminator on the other, a thin atmospheric
@@ -545,7 +546,7 @@ function drawEarth(center,earth,rect){
   ctx.restore();
   // Corner readouts belong to the projection, not the panel.
   ctx.save();
-  ctx.font='9px "IBM Plex Mono",ui-monospace,monospace';ctx.fillStyle='rgba(92,160,158,.85)';ctx.textAlign='right';ctx.textBaseline='alphabetic';
+  ctx.font=`9px ${CANVAS_MONO}`;ctx.fillStyle='rgba(92,160,158,.85)';ctx.textAlign='right';ctx.textBaseline='alphabetic';
   ctx.fillText(`BODY R ${(R/1000).toFixed(0)} KM`,rect.width-14,rect.height-12);
   ctx.restore();
 }
@@ -580,7 +581,7 @@ function drawLens(){
   const cx=w/2,cy=h/2,phase=Math.sin(lensPhase),key=activeLens||'t';
   lensCtx.strokeStyle='#3d5a4e';lensCtx.lineWidth=1;lensCtx.strokeRect(0.5,0.5,w-1,h-1);
   const arrow=(x1,y1,x2,y2,color)=>{lensCtx.strokeStyle=color;lensCtx.fillStyle=color;lensCtx.lineWidth=2;lensCtx.beginPath();lensCtx.moveTo(x1,y1);lensCtx.lineTo(x2,y2);lensCtx.stroke();const a=Math.atan2(y2-y1,x2-x1);lensCtx.beginPath();lensCtx.moveTo(x2,y2);lensCtx.lineTo(x2-8*Math.cos(a-0.4),y2-8*Math.sin(a-0.4));lensCtx.lineTo(x2-8*Math.cos(a+0.4),y2-8*Math.sin(a+0.4));lensCtx.closePath();lensCtx.fill();};
-  lensCtx.fillStyle='#c7d3c4';lensCtx.font='10px system-ui';
+  lensCtx.fillStyle='#c7d3c4';lensCtx.font=`10px ${CANVAS_MONO}`;
   if(key==='t'||key==='time'){
     const breathe=1+0.12*phase;lensCtx.strokeStyle='#70d7dc';lensCtx.setLineDash([4,4]);lensCtx.beginPath();lensCtx.ellipse(cx-20,cy,70,40,0,0,Math.PI*2);lensCtx.stroke();lensCtx.setLineDash([]);
     lensCtx.strokeStyle='#e2bc79';lensCtx.beginPath();lensCtx.ellipse(cx-20,cy,70*breathe,40,0,0,Math.PI*2);lensCtx.stroke();
@@ -857,7 +858,11 @@ function setupPlaytestControls(){
   $('placement-start').addEventListener('click',beginPlacement);
 }
 window.missionDiagnostics=Object.freeze({wasm:()=>wasm,recorder:()=>lastRecorder,verification:()=>verificationResult(),openVerify,profile:()=>identity.profile(),isRanked:id=>identity.isRanked(id),openProfile,get nodeTimeRange(){return nodeTimeRange();},clampNodeTime,get nodeMarker(){const n=nodes[selected];if(!n||!wasm)return null;const s=readState(wasm,n.time);return s.some(x=>!Number.isFinite(x))?null:toCanvas(s);},get pathEnds(){return preview.length?[toCanvas(preview[0].state),toCanvas(preview[preview.length-1].state)]:null;},get nodes(){return nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));},get pending(){return !!worker||authorityPending>0;},get draws(){return draws;},get messages(){return messages;},get locked(){return !!locked;},get report(){return lastReport?[...lastReport]:null;},get computeMs(){return lastComputeMs;},get lunarInfo(){return lastLunarInfo?[...lastLunarInfo]:null;},get lens(){return activeLens;},get lensDraws(){return lensDraws;},get lensPending(){return lensGovernor.frame!==null;},get engine(){return engineLab?engineLab.diagnostics():null;},get appliedEngine(){return appliedEngine?{...appliedEngine}:null;},get assembly(){return assembly?assembly.diagnostics():null;},get boilOff(){return lastBoilOff;},get flownDelegationMask(){return lastDelegationMask;},get causalValid(){return wasm?wasm.mission_causal_valid()===1&&wasm.mission_engine_causal_valid()===1:false;},get acronymViolations(){return acronymViolations();},get handles(){if(selected<0||!wasm)return [];const state=readState(wasm,nodes[selected].time);return handles(toCanvas(state),state).map(h=>({key:h.key,end:h.end}));},get refusal(){return wasm?refusal(wasm):null;}});
-try{const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error('The physics module is not available. Build it first.');({instance:{exports:wasm}}=await WebAssembly.instantiate(await response.arrayBuffer(),{}));identity.init(wasm);initProfile();initVerify(wasm);initLeaderboard();updateAttemptMode(true);loadGlossary(wasm);
+// The face fetch runs alongside the module fetch, so resolving the instrument
+// type costs nothing but still lands before the first instrument frame.
+const facesReady=loadCanvasFaces();
+try{const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error('The physics module is not available. Build it first.');({instance:{exports:wasm}}=await WebAssembly.instantiate(await response.arrayBuffer(),{}));
+await facesReady;identity.init(wasm);initProfile();initVerify(wasm);initLeaderboard();updateAttemptMode(true);loadGlossary(wasm);
 // The lab reads canonical stage numbers back after a redesign so the planner,
 // the worker payload and the signed recorder cannot disagree about the engine.
 engineLab=createLab({wasm,isLocked:()=>!!locked,annotate:annotateAcronyms,onDiagnose:()=>renderEngineCausal(),onApply:baselineOnly=>{

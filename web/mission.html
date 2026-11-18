@@ -15,7 +15,7 @@
       <button type="button" id="open-leaderboard" class="profile-button" aria-haspopup="dialog"><span class="profile-button-label">LEADERBOARD</span></button>
       <button type="button" id="open-verify" class="profile-button" aria-haspopup="dialog"><span class="profile-button-label">VERIFY / REPLAY</span></button>
       <button type="button" id="open-profile" class="profile-button" aria-haspopup="dialog"><span class="profile-button-label">FLIGHT LICENSE</span><strong id="topbar-callsign">—</strong><span class="profile-elo-chip">ELO <b id="topbar-elo">—</b></span></button>
-      <a class="back" href="./">EXIT</a>
+      <a class="back" href="./" aria-label="Exit to main menu">EXIT</a>
     </div>
   </header>
 
@@ -102,7 +102,7 @@
             <div><span class="section-label">02 / PROPULSION · PRP-04</span><h2 id="engine-title">Build the bell, then watch it <em>flow.</em></h2></div>
             <span class="mission-chip">SCHLIEREN LAB</span>
           </div>
-          <p class="mission-sub">Drag the throat, the exit, the bell length, the mixture-ratio track and the injector pressure handle directly on the cross-section. The grey field is the radial density gradient a Schlieren camera would record, computed in Rust from the same solution the flight uses. Nothing here is a lookup table: the signed recorder stores this geometry, and a verifier recomputes thrust from it.</p>
+          <p class="mission-sub">Drag the throat, exit, bell length, mixture track and pressure handle on the cross-section. The Schlieren field is solved in Rust from the same model the flight flies &mdash; never a lookup table.</p>
           <div class="engine-grid">
             <div class="engine-view"><canvas id="engine-canvas" aria-label="Engine cross-section and Schlieren field. Drag the throat, exit or length handle, or use the numeric controls."></canvas><span id="engine-view-label">CHAMBER · THROAT · BELL · FREE JET</span></div>
             <div class="engine-controls">

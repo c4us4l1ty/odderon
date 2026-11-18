@@ -145,8 +145,10 @@ html,body{height:100%;overflow:hidden;background:#01050a}
    lands on the control itself (so both a human and an automated click hit the
    checkbox), while the rocker and caption are painted underneath it. */
 .toggle-row input{
-  position:absolute;left:0;top:50%;transform:translateY(-50%);
-  width:30px;height:16px;margin:0;opacity:0;z-index:2;cursor:pointer;
+  /* A 30x16 rocker is a mouse target; the hit area is a 44px-tall band so a
+     thumb or a shaky pointer can still throw the switch. */
+  position:absolute;left:-6px;top:50%;transform:translateY(-50%);
+  width:42px;height:100%;min-height:44px;margin:0;opacity:0;z-index:2;cursor:pointer;
 }
 .toggle-row>span,.toggle-row .switch{pointer-events:none}
 .toggle-row input:focus-visible ~ .switch{outline:1px solid var(--hud-bright);outline-offset:2px}

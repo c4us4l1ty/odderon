@@ -198,6 +198,43 @@ try {
   assert.ok(Math.abs(station.sideRight - station.width) < 40, 'the telemetry column docks to the right edge');
   assert.equal(station.footers, 0, 'no route may carry a website footer');
 
+  // ---- Legibility floor. Instrument type is small by design, but a label
+  // below 8px is a smudge on a real display; nothing that carries words may
+  // drop under it, at desktop or phone width.
+  for (const [width, height, route] of [[1440, 900, '/'], [1440, 900, '/mission.html'], [390, 844, '/mission.html'], [1440, 900, '/observatory.html']]) {
+    await page.setViewportSize({ width, height });
+    await page.goto(`${origin}${route}`, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => document.querySelector('body *'), null, { timeout: 30000 });
+    await page.waitForTimeout(600);
+    const smudges = await page.evaluate(() => [...document.querySelectorAll('body *')].filter(element => {
+      const text = [...element.childNodes].filter(node => node.nodeType === 3).map(node => node.textContent.trim()).join('');
+      if (!text) return false;
+      const box = element.getBoundingClientRect();
+      if (!box.width || !box.height) return false;
+      return parseFloat(getComputedStyle(element).fontSize) < 8;
+    }).map(element => `${element.tagName}.${element.className} ${getComputedStyle(element).fontSize}px`));
+    assert.deepEqual(smudges, [], `${route} at ${width}px must keep every word at 8px or larger`);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  // ---- Canvas type uses the bundled instrument faces. A canvas cannot inherit
+  // a CSS font stack, so a system fallback here is invisible to the DOM audit
+  // and would quietly make the scene look like a web chart.
+  for (const route of ['/mission.html', '/observatory.html']) {
+    await page.goto(`${origin}${route}`, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(1500);
+    const fallback = await page.evaluate(() => {
+      // `document.fonts.check` reports false for a face that is not resident, so
+      // this fails if the drawers could paint in a system fallback.
+      return {
+        mono: document.fonts.check('10px "Odderon Data"'),
+        display: document.fonts.check('500 11px "Odderon Display"'),
+      };
+    });
+    assert.ok(fallback.mono, `${route} must have the Odderon Data face resident before painting labels`);
+    assert.ok(fallback.display, `${route} must have the Odderon Display face resident`);
+  }
+
   assert.deepEqual(errors, [], 'the interface must load without page errors');
   console.log('Interface standard holds: console shell, instrument controls, no page chrome.');
 } finally {

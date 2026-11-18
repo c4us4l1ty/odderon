@@ -1,4 +1,5 @@
 import { Governor } from './governor.js';
+import { CANVAS_MONO, loadCanvasFaces } from './glyphs.js';
 import { planetShine } from './lighting.js';
 import { Renderer } from './renderer.js';
 import { polyline, vector, reticle, apsis } from './overlay.js';
@@ -7,7 +8,7 @@ import { EARTH_RADIUS_M, MOON_RADIUS_M, projectedRadius, needsReticle, orbitView
 const $=id=>document.getElementById(id);
 const scene=$('scene'), canvas=$('world'), overlay=$('overlay'), date=$('date'), error=$('error');
 const J2000_UNIX_MS=Date.UTC(2000,0,1,12), DAY=86400;
-let renderer, wasm, snapshot, activeOrbit=null, trajectoryWorker=null, contextLost=false, camera={yaw:-1.30,pitch:-.35,zoom:1}, pointer=null, draws=0, overlayDraws=0, worldDirty=true, overlayDirty=true, lastQuality=null;
+let drawnSceneSize='', renderer, wasm, snapshot, activeOrbit=null, trajectoryWorker=null, contextLost=false, camera={yaw:-1.30,pitch:-.35,zoom:1}, pointer=null, draws=0, overlayDraws=0, worldDirty=true, overlayDirty=true, lastQuality=null;
 const showError=message=>{error.hidden=false;error.textContent=message;};
 const governor=new Governor((quality,batch)=>{try{return draw(quality,batch);}catch(e){governor.suspend();showError(`The view could not be rendered: ${e.message}`);return false;}});
 const invalidateWorld=()=>{worldDirty=true;overlayDirty=true;governor.invalidate();};
@@ -91,6 +92,7 @@ function draw(quality){
   if(overlayDirty){drawOverlay(model,rect);overlayDraws++;overlayDirty=false;}
   if(quality==='interactive')$('render-status').textContent='INTERACTIVE QUALITY';
   else if(quality==='final')$('render-status').textContent='RENDERED · RESTING';
+  drawnSceneSize=`${Math.round(rect.width)}x${Math.round(rect.height)}`;
   canvas.style.visibility='';overlay.style.visibility='';return true;
 }
 function drawOverlay(model,rect){
@@ -103,8 +105,8 @@ function drawOverlay(model,rect){
     polyline(ctx,points,{stroke:'#6ad5da',width:1.5,dashed:true});
     if(activeOrbit.perturbed)polyline(ctx,activeOrbit.perturbed.map(p=>pixel(model.project(p))),{stroke:'#e1bd78',width:2});
     for(const marker of activeOrbit.markers)apsis(ctx,pixel(model.project(marker.pos)),marker.name);
-    const craft=pixel(model.project(activeOrbit.position));reticle(ctx,craft,{color:'#e1bd78'});ctx.fillStyle='#e1bd78';ctx.font='10px system-ui';ctx.fillText('TEST CRAFT',craft[0]+9,craft[1]+12);
-    ctx.fillStyle='#e1bd78';ctx.font='10px system-ui';ctx.fillText(activeOrbit.closed?'IDEAL TWO-BODY TEST ORBIT':'IDEAL TWO-BODY · OPEN SEGMENT',20,rect.height-26);
+    const craft=pixel(model.project(activeOrbit.position));reticle(ctx,craft,{color:'#e1bd78'});ctx.fillStyle='#e1bd78';ctx.font=`10px ${CANVAS_MONO}`;ctx.fillText('TEST CRAFT',craft[0]+9,craft[1]+12);
+    ctx.fillStyle='#e1bd78';ctx.font=`10px ${CANVAS_MONO}`;ctx.fillText(activeOrbit.closed?'IDEAL TWO-BODY TEST ORBIT':'IDEAL TWO-BODY · OPEN SEGMENT',20,rect.height-26);
   }
   if($('show-path').checked){
     for(const future of [false,true]){
@@ -118,16 +120,16 @@ function drawOverlay(model,rect){
     const to=pixel(model.project(snapshot.moon.map((x,i)=>x+snapshot.velocity[i]*86400)));
     const visible=vector(ctx,from,to);
     ctx.fillStyle='#e1bd78';
-    ctx.font='10px system-ui';ctx.fillText(visible?'VELOCITY · 1 DAY AT CURRENT SPEED':'VELOCITY · ALMOST ALONG VIEW',20,rect.height-(model.vehicle?62:45));
+    ctx.font=`10px ${CANVAS_MONO}`;ctx.fillText(visible?'VELOCITY · 1 DAY AT CURRENT SPEED':'VELOCITY · ALMOST ALONG VIEW',20,rect.height-(model.vehicle?62:45));
   }
-  if(model.vehicle){ctx.fillStyle='#d5bb80';ctx.font='10px system-ui';ctx.fillText('VEHICLE GLYPH · NOT TO SCALE',20,rect.height-45);}
+  if(model.vehicle){ctx.fillStyle='#d5bb80';ctx.font=`10px ${CANVAS_MONO}`;ctx.fillText('VEHICLE GLYPH · NOT TO SCALE',20,rect.height-45);}
   function label(body,name,detail){
     const [x,y]=pixel(body),radius=body[2]*rect.height/2;
     if(x < -radius||x>rect.width+radius||y < -radius||y>rect.height+radius)return;
     if(needsReticle(body[2],rect.height))reticle(ctx,[x,y]);
     const side=x+radius+140>rect.width?-1:1, tx=x+side*(Math.max(radius,6)+16),ty=Math.max(42,Math.min(rect.height-40,y-radius*.22));
     ctx.textAlign=side===1?'left':'right';ctx.strokeStyle='rgba(205,223,203,.55)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x+side*radius*.76,y-radius*.3);ctx.lineTo(tx-side*5,ty);ctx.stroke();
-    ctx.font='700 10px system-ui';ctx.letterSpacing='1.2px';ctx.fillStyle='#dce8d5';ctx.fillText(name,tx,ty-3);ctx.font='10px system-ui';ctx.letterSpacing='0px';ctx.fillStyle='#91a89a';ctx.fillText(detail,tx,ty+11);ctx.textAlign='left';
+    ctx.font=`600 10px ${CANVAS_MONO}`;ctx.letterSpacing='1.2px';ctx.fillStyle='#dce8d5';ctx.fillText(name,tx,ty-3);ctx.font=`10px ${CANVAS_MONO}`;ctx.letterSpacing='0px';ctx.fillStyle='#91a89a';ctx.fillText(detail,tx,ty+11);ctx.textAlign='left';
   }
   label(model.earth,'EARTH','Our home');label(model.moon,'MOON','Natural satellite');
 }
@@ -141,7 +143,14 @@ scene.addEventListener('wheel',e=>{e.preventDefault();zoom(Math.exp(-Math.max(-1
 scene.addEventListener('keydown',e=>{let used=true;switch(e.key){case 'ArrowLeft':camera.yaw-=.12;break;case 'ArrowRight':camera.yaw+=.12;break;case 'ArrowUp':camera.pitch=Math.max(-1.52,camera.pitch-.12);break;case 'ArrowDown':camera.pitch=Math.min(1.52,camera.pitch+.12);break;case '+':case '=':zoom(1.2);break;case '-':zoom(1/1.2);break;default:used=false;}if(used){e.preventDefault();invalidateWorld();}});
 $('zoom-in').addEventListener('click',()=>zoom(1.2));$('zoom-out').addEventListener('click',()=>zoom(1/1.2));$('reset').addEventListener('click',()=>{camera={yaw:-1.30,pitch:-.35,zoom:1};invalidateWorld();});
 for(const id of ['show-path','show-velocity'])$(id).addEventListener('change',invalidateOverlay);$('show-vehicle').addEventListener('change',invalidateWorld);$('show-orbit').addEventListener('change',()=>{invalidateWorld();if($('show-orbit').checked)startTrajectory();else {if(trajectoryWorker){trajectoryWorker.terminate();trajectoryWorker=null;}if(activeOrbit){activeOrbit.perturbed=null;activeOrbit.finalMass=null;activeOrbit.maxRadius=activeOrbit.idealMaxRadius;}$('trajectory-status').textContent='L3 · NOT CALCULATED';}});date.addEventListener('change',loadDate);$('prev').addEventListener('click',()=>changeDay(-1));$('next').addEventListener('click',()=>changeDay(1));$('today-reset').addEventListener('click',()=>{date.value='2026-01-01';loadDate();});
-new ResizeObserver(invalidateWorld).observe(scene);
+// A ResizeObserver always delivers once on observe, which would schedule a
+// second full world render immediately after the first frame. Only a size that
+// differs from what was actually drawn is a real relayout. */
+new ResizeObserver(entries=>{
+  const box=entries[0].contentRect, size=`${Math.round(box.width)}x${Math.round(box.height)}`;
+  if(size===drawnSceneSize)return;
+  invalidateWorld();
+}).observe(scene);
 // A monitor or browser zoom change can alter pixel density without resizing the
 // CSS box. Re-arm a one-shot media query rather than polling while idle.
 function watchPixelDensity(){
@@ -158,7 +167,13 @@ if(document.hidden)governor.suspend();
 window.odderonDiagnostics=Object.freeze({get draws(){return draws;},get frameCount(){return governor.frameCount;},get trajectory(){return {samples:activeOrbit?.perturbed?.length??0,pending:!!trajectoryWorker,finalMass:activeOrbit?.finalMass??null};},get orbitProjection(){return snapshot&&activeOrbit?geometry().project(activeOrbit.position):null;},get orbit(){return activeOrbit?{samples:activeOrbit.points.length,closed:activeOrbit.closed,markers:activeOrbit.markers.map(m=>m.name)}:null;},get overlayDraws(){return overlayDraws;},get pendingFrame(){return governor.frame!==null;},get quality(){return $('render-status').textContent;},get circles(){if(!snapshot)return null;const g=geometry();return {earth:[...g.earth],moon:[...g.moon]};}});
 try {
   renderer=new Renderer(canvas);
+  // Start the face fetch alongside the module fetch; awaiting it afterwards
+  // costs nothing and still guarantees the faces are resident before the first
+  // frame, so labels are painted once in instrument type rather than once in a
+  // system fallback.
+  const facesReady=loadCanvasFaces();
   const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error(`Ephemeris module not found (${response.status}). Build the browser app first.`);
   ({instance:{exports:wasm}}=await WebAssembly.instantiate(await response.arrayBuffer(),{}));
+  await facesReady;
   date.disabled=false;$('today-reset').disabled=false;setOrbit({position:[7e6,0,0],velocity:[0,7600,2000]},3.986004418e14);loadDate();
 } catch(e){showError(`Unable to start the observatory: ${e.message}`);}

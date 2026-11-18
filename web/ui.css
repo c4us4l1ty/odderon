@@ -157,7 +157,7 @@ abbr.term:focus-visible{outline:1px solid var(--amber);outline-offset:2px}
   box-shadow:inset 0 -1px 0 rgba(103,214,205,.16);
 }
 .panel-code{
-  font-family:var(--font-data);font-size:7.5px;letter-spacing:.14em;color:var(--hud-dim);
+  font-family:var(--font-data);font-size:8px;letter-spacing:.14em;color:var(--hud-dim);
   padding:1px 4px;box-shadow:inset 0 0 0 1px rgba(103,214,205,.2);
 }
 .hint-line{
@@ -292,7 +292,7 @@ label>small{float:right;font-family:var(--font-data);font-size:9.5px;letter-spac
 .wordmark{font-family:var(--font-display);font-size:19px;font-weight:600;letter-spacing:.36em;text-transform:uppercase}
 .brand{font-family:var(--font-display);font-size:16px;font-weight:600;letter-spacing:.3em;text-transform:uppercase;flex-direction:row}
 .brand small{
-  display:block;font-family:var(--font-data);font-size:7px;font-weight:400;line-height:1.2;
+  display:block;font-family:var(--font-data);font-size:8px;font-weight:400;line-height:1.2;
   letter-spacing:.18em;color:var(--txt-3);margin-top:2px;white-space:nowrap;
 }
 .build-state{display:flex;align-items:center;gap:9px;font-family:var(--font-data);font-size:9px;letter-spacing:.18em;color:var(--txt-2)}
@@ -332,7 +332,7 @@ label>small{float:right;font-family:var(--font-data);font-size:9.5px;letter-spac
   box-shadow:inset -1px 0 0 var(--stroke-2);
 }
 .mode-rail-title{
-  font-family:var(--font-data);font-size:7.5px;letter-spacing:.22em;color:var(--txt-3);
+  font-family:var(--font-data);font-size:8px;letter-spacing:.22em;color:var(--txt-3);
   text-align:center;margin:2px 0 6px;
 }
 .flight-mode-nav button{
@@ -342,7 +342,7 @@ label>small{float:right;font-family:var(--font-data);font-size:9.5px;letter-spac
   clip-path:none;position:relative;
 }
 .flight-mode-nav button b{font-family:var(--font-display);font-size:15px;font-weight:600;letter-spacing:.16em}
-.flight-mode-nav button span{font-family:var(--font-data);font-size:7.5px;letter-spacing:.16em}
+.flight-mode-nav button span{font-family:var(--font-data);font-size:8.5px;letter-spacing:.12em}
 .flight-mode-nav button:hover:not(:disabled){background:rgba(34,86,96,.32);color:var(--hud);box-shadow:inset 0 0 0 1px var(--stroke)}
 .flight-mode-nav button.is-active{
   background:linear-gradient(90deg,rgba(84,201,190,.24),rgba(14,44,50,.35));
@@ -356,7 +356,7 @@ label>small{float:right;font-family:var(--font-data);font-size:9.5px;letter-spac
 .flight-mode-nav button:disabled{opacity:.26;cursor:not-allowed}
 .mode-rail-state{
   margin-top:auto;padding-top:10px;box-shadow:inset 0 1px 0 var(--stroke);
-  font-family:var(--font-data);font-size:7.5px;line-height:1.9;letter-spacing:.14em;
+  font-family:var(--font-data);font-size:8px;line-height:1.9;letter-spacing:.14em;
   color:var(--txt-3);text-align:center;
 }
 .mode-rail-state i{
@@ -376,7 +376,7 @@ label>small{float:right;font-family:var(--font-data);font-size:9.5px;letter-spac
   padding:0 16px;box-shadow:inset -1px 0 0 rgba(103,214,205,.10);
 }
 .flight-command-strip span{
-  font-family:var(--font-data);font-size:7.5px;letter-spacing:.22em;color:var(--txt-3);
+  font-family:var(--font-data);font-size:8px;letter-spacing:.2em;color:var(--txt-3);
 }
 .flight-command-strip strong{
   font-family:var(--font-display);font-size:12px;font-weight:600;letter-spacing:.14em;
@@ -407,6 +407,12 @@ label>small{float:right;font-family:var(--font-data);font-size:9.5px;letter-spac
 .mission-main>.intro p{
   font-family:var(--font-data);font-size:9.5px;line-height:1.4;color:var(--txt-3);
   margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+@media (max-width:1180px){
+  /* Below this width the one-line banner can only fit a mid-sentence stump of
+     the brief, which reads like a truncated web lede; the panel below already
+     states the contract. */
+  .mission-main>.intro p{display:none}
 }
 .mission-main[data-mode="academy"]>.intro,
 .mission-main[data-mode="propulsion"]>.intro,
@@ -587,7 +593,7 @@ label>small{float:right;font-family:var(--font-data);font-size:9.5px;letter-spac
   font-size:11.5px;line-height:1.45;color:var(--txt-2);
 }
 .cause-chain strong{color:var(--amber-bright);font-weight:600}
-.cause-chain .demo{margin-left:6px;padding:2px 7px;font-size:10px;min-height:22px}
+.cause-chain .demo{margin-left:6px;padding:3px 8px;font-size:10px;min-height:24px}
 .cause-evidence{display:block;font-family:var(--font-data);font-size:10px;color:var(--txt-3);margin-top:2px}
 
 /* ============================================================ ENGINE LAB */
@@ -595,11 +601,14 @@ label>small{float:right;font-family:var(--font-data);font-size:9.5px;letter-spac
    the cross-section takes the slack, and only the control column scrolls. */
 .engine-card{
   display:grid;gap:0;padding:12px 14px;overflow:hidden;
-  grid-template-rows:auto auto minmax(180px,1fr) auto auto;
+  /* Only the cross-section row may absorb a short rack. Every other row is
+     `auto` and must be allowed to hold its full content, or grid squeezes a
+     two-line brief down to a sliced half-line with the descenders cut off. */
+  grid-template-rows:auto auto minmax(120px,1fr) auto auto;
 }
 .engine-card>.mission-sub{
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
-  overflow:hidden;margin-bottom:4px;
+  overflow:hidden;margin-bottom:4px;flex-shrink:0;
 }
 /* The model disclaimer is a footnote in the rack, not a paragraph of prose. */
 .engine-card>.disclaimer{
@@ -625,17 +634,24 @@ label>small{float:right;font-family:var(--font-data);font-size:9.5px;letter-spac
 .engine-controls .button-row button{flex:1 1 auto;padding:7px 8px;font-size:11px}
 .engine-controls input.chief-owned,.engine-controls input:disabled{opacity:.6;box-shadow:inset 0 0 0 1px rgba(244,184,96,.45)}
 #engine-status,#thermal-status{
+  /* This is a one-line instrument caption on a fixed rack; it must never take
+     a second row, because the rack has already spent its rows on the solver. */
   font-family:var(--font-data);font-size:10px;line-height:1.5;color:var(--hud);
   margin:8px 0 0;min-height:15px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .chief-choice{color:var(--amber)!important;font-size:11px!important}
 .engine-readout{
+  /* The cell count is fixed by the solver, so a fluid column count always leaves
+     a hole somewhere. Rules are drawn per cell instead of by a background gap,
+     which makes that hole read as blank rack rather than a lit empty tile. */
   flex:0 0 auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));
-  gap:1px;margin:8px 0 0;background:var(--stroke);box-shadow:inset 0 0 0 1px var(--stroke);
+  margin:8px 0 0;background:rgba(3,12,16,.9);box-shadow:inset 0 0 0 1px var(--stroke);
 }
 .engine-readout div{
   background:linear-gradient(180deg,rgba(9,26,32,.95),rgba(3,12,16,.95));
   padding:7px 9px 8px;min-width:0;
+  box-shadow:inset -1px -1px 0 var(--stroke);
 }
 .engine-readout strong{overflow-wrap:anywhere}
 .engine-readout strong{
@@ -963,11 +979,29 @@ body.high-contrast .contract-card,body.high-contrast .debrief,body.high-contrast
 
 /* ================================================================= PRINT */
 @media print{
-  html,body{overflow:visible;height:auto;background:#fff;color:#000}
+  /* `html:root` (one element, higher specificity) outranks the route sheet's
+     own `html,body` void lock, which loads after this file; `html body` does
+     not, because it is a two-element selector that loses on specificity. */
+  html:root,html body{overflow:visible;height:auto;background:#fff;color:#000}
   body::before,body::after{display:none}
-  .topbar,.game-header,.flight-mode-nav,.flight-command-strip,.planner-controls,
-  .button-row,#unlock,.mission-canvas,.engine-controls,.engine-view,.onboarding-card,
-  .mission-main>.intro{display:none!important}
+  .topbar,.game-header,.flight-mode-nav,.flight-command-strip,.console-status,.status-lamp,
+  .planner-controls,.button-row,#unlock,.mission-canvas,.engine-controls,.engine-view,
+  .onboarding-card,.mission-main>.intro{display:none!important}
+  /* A debrief sheet on paper: the instrument housings keep their rules, the
+     phosphor palette does not survive on white, and no console chrome prints. */
+  .debrief h2,.contract-card h2,.engine-card h2{color:#000}
+  .debrief h2 em,.engine-card h2 em{color:#000}
+  .section-label,.panel-code,.field-label{color:#444}
+  .metric,.debrief-grid strong,.engine-readout strong{color:#000!important;text-shadow:none}
+  .metric small,.engine-readout span,.debrief-grid span{color:#444}
+  .mission-chip{color:#000;box-shadow:inset 0 0 0 1px #999;padding:2px 6px}
+  /* Body copy is half-tone on glass; on paper it has to be ink. */
+  .debrief p,.contract-card p,.mission-sub,.disclaimer,.commit-note,.sensitivity-list,
+  .finite-loss,.elo-update,.attribution-note,.cause-chain,.causal p{
+    color:#222!important;font-family:Georgia,'Times New Roman',serif;
+  }
+  .debrief .verify-verdict{color:#000}
+  .prediction-table th,.prediction-table td{color:#000}
   .app,.mission-main{display:block;height:auto;overflow:visible;padding:0}
   .planner-card,.contract-card,.debrief,.engine-card{
     clip-path:none;background:#fff;color:#000;box-shadow:0 0 0 1px #bbb;margin:0 0 12px;
@@ -999,8 +1033,7 @@ body.high-contrast .contract-card,body.high-contrast .debrief,body.high-contrast
 @media (max-width:650px){
   .engine-readout{grid-template-columns:repeat(2,minmax(0,1fr))}
   .game-header,.topbar{height:46px;padding:0 10px}
-  .topbar-right>a{font-size:0;padding:0 8px}
-  .topbar-right>a::after{content:'EXIT';font-size:9px}
+  .topbar-right>a{font-size:8.5px;letter-spacing:.14em;padding:0 8px}
   .topbar-right{gap:4px}
   .topbar-right .profile-button:not(#open-profile){display:none}
   .profile-button{padding:0 7px}
@@ -1008,7 +1041,7 @@ body.high-contrast .contract-card,body.high-contrast .debrief,body.high-contrast
 
   .flight-mode-nav button{flex:1 1 0;min-width:0;clip-path:none}
   .flight-mode-nav button.is-active::before{left:6px;right:6px;top:auto;bottom:0;width:auto;height:2px}
-  .flight-command-strip span{font-size:6.5px}
+  .flight-command-strip span{font-size:8px;letter-spacing:.14em}
   .flight-command-strip strong{font-size:10px}
   .onboarding-card{padding:10px 12px}
   dialog{width:calc(100vw - 12px);max-height:92vh;padding:14px}

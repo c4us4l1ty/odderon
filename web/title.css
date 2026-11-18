@@ -80,9 +80,10 @@
 .cam-scale{
   position:absolute;right:clamp(18px,3vw,48px);bottom:172px;z-index:2;pointer-events:none;
   display:flex;flex-direction:column;align-items:flex-end;gap:3px;
-  font-family:var(--font-data);font-size:7.5px;letter-spacing:.2em;color:var(--txt-3);
+  font-family:var(--font-data);font-size:8px;letter-spacing:.2em;color:var(--txt-3);
 }
 .cam-scale i{display:block;width:74px;height:7px;border-left:1px solid var(--hud-dim);border-right:1px solid var(--hud-dim);border-bottom:1px solid var(--hud-dim)}
+.cam-scale b{font-family:var(--font-data);font-size:8px;font-weight:500;letter-spacing:.16em;color:var(--txt-2)}
 
 /* ------------------------------------------------------------ header band */
 .title-screen .game-header{
@@ -167,6 +168,12 @@
   outline:none;background:linear-gradient(90deg,rgba(84,201,190,.24),rgba(84,201,190,.02));
   box-shadow:inset 0 0 0 1px rgba(126,232,222,.5);
 }
+/* The primary key is already lit, so keyboard focus needs a second, stronger
+   tell: a full phosphor frame and a bloom, still with no UA outline. */
+.menu-item.primary:focus-visible{
+  box-shadow:inset 0 0 0 1px var(--hud-bright),0 0 22px rgba(127,227,216,.35);
+}
+.menu-item.primary:focus-visible .menu-index{background:var(--hud);color:#04211f}
 .menu-item:hover .menu-label,.menu-item:focus-visible .menu-label{color:var(--hud-bright)}
 .menu-item:hover .menu-mark,.menu-item:focus-visible .menu-mark{color:var(--hud);transform:translateX(2px)}
 .menu-item:hover .menu-index,.menu-item:focus-visible .menu-index{color:var(--hud);box-shadow:inset 0 0 0 1px rgba(126,232,222,.45)}
@@ -196,8 +203,9 @@
 }
 .brief-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .brief-label{font-family:var(--font-data);font-size:8px;letter-spacing:.26em;color:var(--txt-3);text-transform:uppercase;margin:0}
+
 .brief-live{
-  font-family:var(--font-data);font-size:7.5px;letter-spacing:.16em;color:var(--green);
+  font-family:var(--font-data);font-size:8px;letter-spacing:.16em;color:var(--green);
   padding:2px 5px;box-shadow:inset 0 0 0 1px rgba(121,230,164,.4);
 }
 .brief-code{font-family:var(--font-data);font-size:9px;letter-spacing:.2em;color:var(--amber);margin:7px 0 2px}
@@ -224,7 +232,7 @@
   box-shadow:inset -1px 0 0 rgba(127,227,216,.35);
 }
 .hud-readout li{display:flex;flex-direction:column;gap:1px;text-align:right}
-.hud-readout span{font-family:var(--font-data);font-size:7.5px;letter-spacing:.22em;color:var(--txt-3)}
+.hud-readout span{font-family:var(--font-data);font-size:8px;letter-spacing:.2em;color:var(--txt-3)}
 .hud-readout b{font-family:var(--font-display);font-size:12px;font-weight:600;letter-spacing:.14em;color:var(--hud);text-transform:uppercase}
 
 /* --------------------------------------------------------------- status bar */
@@ -242,6 +250,35 @@
 
 /* ------------------------------------------------------------------ dialog */
 .settings-dialog{width:min(520px,calc(100vw - 24px))}
+
+/* Settings are thrown switches, not web checkboxes: the same rocker hardware as
+   the tracking station, so a preference reads as a panel control. */
+.settings-dialog .switch-row{
+  position:relative;display:flex;align-items:center;justify-content:flex-start;gap:11px;
+  margin:0;padding:10px 2px;box-shadow:inset 0 -1px 0 rgba(103,214,205,.12);cursor:pointer;
+}
+.settings-dialog .switch-row>span:last-child{flex:1 1 auto}
+/* The real checkbox is the hit target for the whole row; the rocker below is
+   hardware painted behind it, so a direct `check()` on the input still lands. */
+.settings-dialog .switch-row>input{
+  position:absolute;inset:0;width:100%;height:100%;margin:0;
+  opacity:0;z-index:2;cursor:pointer;
+}
+.settings-dialog .switch{
+  position:relative;flex:0 0 34px;width:34px;height:18px;background:#071820;
+  box-shadow:inset 0 0 0 1px var(--stroke-2);transition:background .12s,box-shadow .12s;
+  pointer-events:none;
+}
+.settings-dialog .switch::after{
+  content:'';position:absolute;top:2px;left:2px;width:14px;height:14px;background:#4b6a6c;
+  transition:transform .12s,background .12s;
+}
+.settings-dialog .switch-row>input:checked+.switch{background:rgba(84,201,190,.28);box-shadow:inset 0 0 0 1px var(--hud)}
+.settings-dialog .switch-row>input:checked+.switch::after{transform:translateX(16px);background:var(--hud-bright);box-shadow:0 0 10px var(--hud)}
+.settings-dialog .switch-row>input:focus-visible+.switch{outline:1px solid var(--hud-bright);outline-offset:2px}
+.settings-dialog .switch-row>span:last-child{min-width:0;font-family:var(--font-display);font-size:13px;font-weight:500;letter-spacing:.08em;color:var(--txt);text-transform:uppercase}
+.settings-dialog .switch-row small{display:block;font-family:var(--font-data);font-size:9px;letter-spacing:.04em;color:var(--txt-3);text-transform:none;margin-top:2px}
+.settings-dialog .switch-row>input:checked~span:last-child{color:var(--hud-bright)}
 
 /* -------------------------------------------------------------- responsive */
 @media (max-width:1120px){
@@ -261,7 +298,15 @@
   .title-stamp{max-width:none}
   .vignette{background:linear-gradient(180deg,rgba(1,5,9,.9),rgba(1,5,9,.4) 44%,rgba(1,5,9,.96))}
 }
+/* Tablet portrait: the plate's own composition leaves the centre of the frame
+   empty, so the camera is pulled so the bell sits under the title stamp. */
+@media (min-width:601px) and (max-width:1024px){
+  .spacecraft{background-position:64% 46%;background-size:auto 132%}
+}
 @media (max-width:600px){
+  /* A phone crop of a 21:9 plate is mostly empty sky, so the camera frame is
+     pushed to the bay itself: the hardware has to sit right behind the menu. */
+  .spacecraft{background-position:72% 58%;background-size:auto 108%}
   .title-screen{grid-template-rows:40px minmax(0,1fr) 236px 30px}
   .title-screen .game-header{height:40px;padding:0 12px}
   .title-stamp{margin:18px 0 0 14px}
@@ -271,11 +316,11 @@
   .game-menu{margin:0 10px}
   .menu-label{font-size:15px;letter-spacing:.13em}
   .menu-label small{font-size:8px;letter-spacing:.08em}
-  .game-footer{padding:0 12px;font-size:7px}
+  .game-footer{padding:0 12px;font-size:8px}
   .game-footer-mid{display:none}
   .cam-tag{
     top:auto;bottom:274px;left:auto;right:12px;transform:none;
-    font-size:6.5px;letter-spacing:.13em;gap:5px;padding:3px 6px;
+    font-size:8px;letter-spacing:.1em;gap:5px;padding:3px 6px;
   }
   .cam-tag .cam-tc{display:none}
   .hud-rim{inset:6px}

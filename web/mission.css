@@ -77,7 +77,7 @@ html,body{height:100%;overflow:hidden;background:var(--space)}
   .flight-mode-nav button{flex:1 1 0;height:48px;min-height:48px;clip-path:none}
   .flight-mode-nav button.is-active::before{left:8px;right:8px;top:auto;bottom:0;width:auto;height:2px}
   .flight-mode-nav button b{font-size:13px}
-  .flight-mode-nav button span{font-size:6.5px}
+  .flight-mode-nav button span{font-size:8px;letter-spacing:.06em}
 
   .mission-main{display:block;overflow-y:auto;overflow-x:hidden;padding:5px;gap:0}
   .mission-main>.intro{display:none}
@@ -89,6 +89,10 @@ html,body{height:100%;overflow:hidden;background:var(--space)}
   }
   .planner-card{display:block}
   .mission-canvas{height:min(46vh,320px);margin-top:8px}
+  /* Two absolute corners of sub-8px type collide once the instrument narrows:
+     the plate label moves onto its own line under the sensor tag. */
+  .mission-canvas>span{top:30px}
+  .mission-canvas:after{right:10px;top:8px;font-size:8px;letter-spacing:.1em;padding:2px 5px}
   .planner-controls{display:block}
   .planner-controls .button-row button{flex:1 1 40%}
   .engine-grid{display:block}
@@ -103,7 +107,7 @@ html,body{height:100%;overflow:hidden;background:var(--space)}
   .console-status{flex:0 0 20px}
 }
 @media (max-width:650px){
-  .console-status{font-size:7px;padding:0 8px 0 4px}
+  .console-status{font-size:8px;padding:0 8px 0 4px}
   .status-keys{display:none}
   .mission-main>.intro{display:none}
   .publisher-note{display:none}

@@ -70,6 +70,24 @@ Steam wrapper unchanged:
 - **Odderon Console** (Rajdhani) — explanatory sentences and control captions,
   only where a player must actually read a paragraph.
 
+Canvas drawers cannot inherit a CSS font stack, so scene labels use
+`web/glyphs.js` (`CANVAS_MONO`, `CANVAS_DISPLAY`, `paintLabel`). A drawer must
+never hard-code a font: a system fallback there is invisible to the DOM audit
+and makes a solved scene look like a web chart. `loadCanvasFaces()` resolves the
+bundled faces before the first frame, so a label is painted once in instrument
+type instead of once in a fallback.
+
+Two hard floors apply to all type:
+
+- **8 px.** No element carrying words may compute below 8 px at any viewport.
+  Instrument type is small by design; under 8 px it is a smudge, not a readout.
+  `tests/browser/interface.mjs` asserts this on every route at desktop and phone
+  width.
+- **No squeezed prose.** A grid row that is `auto` must be allowed to hold its
+  full content. Only the row that owns the live instrument (a canvas) may absorb
+  a short container; otherwise a two-line brief is sliced mid-line with the
+  descenders cut off.
+
 No CSS animation loops or keyframe animations exist anywhere: the governance
 rule in `tests/browser/idle-audit.test.js` forbids `@keyframes` and
 `setInterval`, and the renderer is demand-driven. The interface must look alive

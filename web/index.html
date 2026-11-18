@@ -82,8 +82,16 @@
   <dialog id="settings-dialog" class="settings-dialog">
     <form method="dialog">
       <div class="dialog-head"><div><p>ODDERON / FLIGHT COMPUTER</p><h2>Settings</h2></div><button value="close" aria-label="Close settings">✕</button></div>
-      <label><span>Reduced visual effects<small>Disable film grain and expensive backdrop effects</small></span><input id="reduced-effects" type="checkbox"></label>
-      <label><span>Interface contrast<small>Increase instrument separation</small></span><input id="high-contrast" type="checkbox"></label>
+      <label class="switch-row">
+        <input id="reduced-effects" type="checkbox">
+        <span class="switch" aria-hidden="true"></span>
+        <span>Reduced visual effects<small>Disable film grain and expensive backdrop effects</small></span>
+      </label>
+      <label class="switch-row">
+        <input id="high-contrast" type="checkbox">
+        <span class="switch" aria-hidden="true"></span>
+        <span>Interface contrast<small>Increase instrument separation</small></span>
+      </label>
       <p class="settings-note">Flight controls and audio settings appear here as those systems ship. Preferences remain on this device.</p>
       <button class="settings-done" value="close">Return to command</button>
     </form>
