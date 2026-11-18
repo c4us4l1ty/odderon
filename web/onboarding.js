@@ -182,6 +182,7 @@ export function createOnboarding({ snapshot, activate, storage = localStorage, r
   const hint = document.getElementById('onboarding-hint');
   const next = document.getElementById('onboarding-next');
   const close = document.getElementById('onboarding-close');
+  const welcome = document.getElementById('onboarding-welcome');
   const ledger = document.getElementById('onboarding-mass-ledger');
   let active = false, lesson = 0, hintIndex = 0, recordedComplete = false;
 
@@ -219,6 +220,8 @@ export function createOnboarding({ snapshot, activate, storage = localStorage, r
   const begin = (at = 0) => {
     active = true; lesson = at; recordedComplete = false;
     start.hidden = true; skip.hidden = true; lessonUi.hidden = false;
+    if (welcome) welcome.hidden = true;
+    panel.classList.add('is-lesson');
     activate(LESSONS[lesson], lesson);
     recorder?.startLesson(lesson + 1, { predictionError: snapshot().predictionErrorBeforeKg });
     render(); persist();

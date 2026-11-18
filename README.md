@@ -5,7 +5,8 @@ The current code includes an interactive Earth–Moon observatory and an
 experimental orbit-rescue planning prototype; the full game is not yet complete.
 The project vision and proposed design live in [BRAINSTORM.md](BRAINSTORM.md),
 [ARCHITECTURE_LAWS.md](ARCHITECTURE_LAWS.md), [blueprint.md](blueprint.md),
-[UI.md](UI.md), and [ELO.md](ELO.md). The implementation and deployment
+[UI.md](UI.md), and [ELO.md](ELO.md); the shipped interface is specified in
+[docs/interface.md](docs/interface.md). The implementation and deployment
 boundary is summarized in [current project status](docs/project-status.md).
 
 # One principle should govern: Odderon's ambition is civilization-scale. Its execution must be bottleneck-scale.

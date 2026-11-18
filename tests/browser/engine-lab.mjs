@@ -43,6 +43,14 @@ try {
   await page.waitForFunction(() => window.missionDiagnostics?.engine?.solution, null, { timeout: 60000 });
   assert.deepEqual(errors, [], 'page errors');
 
+  // The flight deck shows one station at a time, so the Propulsion workspace
+  // must be opened before its canvas has a layout box to draw into.
+  await page.locator('[data-flight-mode="propulsion"]').click();
+  await page.waitForFunction(() => {
+    const box = document.getElementById('engine-canvas').getBoundingClientRect();
+    return box.width > 0 && box.height > 0 && missionDiagnostics.engine.raster;
+  }, null, { timeout: 30000 });
+
   const initial = await page.evaluate(() => missionDiagnostics.engine);
   console.log('baseline', JSON.stringify({ code: initial.code, thrust: initial.solution.thrust, isp: initial.solution.isp, regime: initial.plume.regime, stations: initial.stations, raster: initial.raster }));
   assert.equal(initial.code, 1);

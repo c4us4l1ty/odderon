@@ -31,6 +31,29 @@ function activate(mode, updateHash = true) {
 }
 
 for (const button of buttons) button.addEventListener('click', () => activate(button.dataset.flightMode));
+
+// The console advertises station keys in its status line, so they must work:
+// digits select a station, Q/E step along the rail. Typing in a field, an open
+// dialog or a modifier chord is never treated as a station key.
+const MODES = ['flight', 'academy', 'propulsion', 'vehicle', 'prediction', 'debrief'];
+const typing = target => target instanceof Element
+  && (target.closest('input,textarea,select,[contenteditable="true"]') !== null);
+document.addEventListener('keydown', event => {
+  if (event.metaKey || event.ctrlKey || event.altKey || event.repeat) return;
+  if (typing(event.target) || document.querySelector('dialog[open]')) return;
+  const available = MODES.filter(mode => mode !== 'debrief' || !debrief.hidden);
+  if (/^[1-6]$/.test(event.key)) {
+    const mode = MODES[Number(event.key) - 1];
+    if (!available.includes(mode)) return;
+    event.preventDefault(); activate(mode); return;
+  }
+  if (event.key === 'q' || event.key === 'Q' || event.key === 'e' || event.key === 'E') {
+    const index = Math.max(0, available.indexOf(main.dataset.mode));
+    const step = event.key === 'q' || event.key === 'Q' ? -1 : 1;
+    const next = available[(index + step + available.length) % available.length];
+    event.preventDefault(); activate(next);
+  }
+});
 document.getElementById('onboarding-close').addEventListener('click', () => activate('flight'));
 
 // A completed physical flight unlocks and opens the FDR station. Watching the
@@ -42,4 +65,10 @@ new MutationObserver(() => {
 }).observe(debrief, { attributes: true, attributeFilter: ['hidden'] });
 
 activate(location.hash === '#onboarding' ? 'academy' : 'flight', false);
+
+// Deep links stay live: a fragment change on an already-loaded console must move
+// the player to the academy instead of leaving them on the old station.
+window.addEventListener('hashchange', () => {
+  activate(location.hash === '#onboarding' ? 'academy' : 'flight', false);
+});
 window.odderonFlightShell = Object.freeze({ activate, get mode() { return main.dataset.mode; } });
