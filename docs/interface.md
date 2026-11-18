@@ -30,65 +30,83 @@ Concretely, the shipped interface must **not** contain:
 
 …and **must** read as cockpit instrumentation:
 
-- thin, luminous monochrome HUD strokes over near-black space, with one amber
-  and one red caution family and one green "nominal" family;
-- type laid straight on the rendered frame, held by a gradient scrim that fades
-  to nothing at one edge — never type inside a filled plate;
-- stencilled condensed display type for names, monospaced type for every
-  number, and small-caps labels with wide tracking for instrument names;
-- switch-cap keys and rocker switches that light when armed, ruled entry wells,
-  and rotary-style sliders;
-- a persistent command strip (active station, operation, frame, authority) and
-  a persistent station rail, as a real console has;
+- machined plates: near-black gradient bodies, a 1 px lit edge, cut corners,
+  corner brackets and a screw, never a rounded card with a shadow;
+- thin luminous strokes over near-black space, with one amber caution family,
+  one red failure family and one green nominal family — colour is a state,
+  never decoration;
+- stencilled display type for names, monospaced type for every number, and
+  small-caps labels with wide tracking for instrument names;
+- switch-cap keys, gated ON/OFF rockers, ruled entry wells, ticked sliders and
+  rotary-style handles — every control is a physical part of the machine;
+- a persistent command strip (active station, operation, frame, authority), a
+  persistent station rail, and a status rail at the frame foot;
 - live, changing telemetry in the chrome — the software is doing something.
 
-### The four laws
+### The three laws
 
-`tests/browser/interface.mjs` (`npm run test:ui`) enforces these mechanically.
-They are the definition of the standard; the prose below only explains them.
+`tests/browser/interface.mjs` (`npm run test:ui`) enforces these mechanically
+across seven route/station pairs. They are the definition of the standard; the
+prose below only explains them.
 
-1. **Ink law.** No element of 120×50 px or more may carry a filled plate. It
-   fails if its background alpha is ≥ .45, if its only edge is a lone
-   `inset 0 0 0 1px` ring, or if it has a native border. Type sits on a
-   gradient scrim or on the frame itself.
-2. **Control law.** Every visible control computes `appearance:none` and
-   `border-radius:0px`. A typed field must carry a box-shadow entry rule
-   (an underline or a bracket), never a native bevel. A slider's hit area is
-   ≥ 20 px tall.
-3. **Frame law.** `body` is `overflow:hidden` and the document overflows by
-   ≤ 0 px at 1440×900, 1280×720, 1024×600 and 390×844, on all three routes.
-   Scrolling happens inside an instrument's own well, never on the page.
-4. **Type law.** No word computes below **9 px** on any route or station, and
-   both canvases pages resolve all three Odderon faces
-   (`document.fonts.check`) before the first frame is painted.
+1. **Plate law.** A box of 120×50 px or more may be a machined plate or bare
+   glass, never a web card. Rounded corners fail outright; a flat light fill
+   (alpha-weighted lightness above .22) fails, because a bright opaque panel is
+   what a website looks like from across the room. Translated fills, gradients,
+   recessed wells and hairline edges all pass: `dl.brief-spec` is legitimately a
+   translucent tint at 8 % alpha and must stay one.
+2. **Website law.** No prose block may exceed 240 characters or 520 px; no
+   centred copy block may exceed 80 characters; no `h1` outside the title screen
+   may exceed 42 px; the shell may expose at most five anchors; and no route may
+   carry a footer. Console prose is a brief, not an article — reference
+   paragraphs belong in a folded `<details>` strip, which the law exempts,
+   because a pilot opens the manual rather than reading it off the glass.
+3. **Instrument law.** On the Flight Deck the plan canvas must own more than a
+   quarter of the viewport and stand taller than 40 % of it, the station rail
+   must be flush to the frame edge and occupy more than 3 % of the width, and
+   exactly one station panel may be active. A console with no working
+   instrument is a form.
+
+Type, control, frame and idle rules are asserted alongside them:
+
+- **Type law.** No word computes below 9 px on any route or station, both canvas
+  routes resolve all three Odderon faces before the first frame, and a named
+  face must exist in `document.fonts` (a family the browser cannot find still
+  answers `check() === true`, so presence is checked separately).
+- **Control law.** Every visible control computes `appearance:none` and
+  `border-radius:0px`; a typed field carries a box-shadow rule, never a native
+  bevel; a slider's hit area is ≥ 20 px tall; a checkbox inside a rocker row is
+  drawn as a travelling slug, so the rook itself is the control.
+- **Frame law.** `body` is `overflow:hidden` and the document overflows by
+  ≤ 0 px at 1440×900, 1280×720, 1024×600 and 390×844, on all three routes.
+  Scrolling happens inside an instrument's own well, never on the page.
 
 ## 2. Visual language
 
 | Token | Value | Use |
 | --- | --- | --- |
-| `--hud` | `#7fe3d8` | primary instrument phosphor |
-| `--hud-bright` | `#c8fff6` | live readouts, focus |
-| `--hud-dim` | `#4c9d99` | labels, secondary strokes |
-| `--amber` | `#f4b860` | caution, explanatory asides, alternate curves |
-| `--red` | `#ff6f56` | failure and refusal text only |
-| `--green` | `#79e6a4` | nominal state, verified results |
-| `--violet` | `#b79cf7` | patched/derived trajectories |
-| `--space` | `#02060a` | the void behind the glass |
-| `--frame` | `rgba(6,15,21,.93)` | instrument housing fill |
-| `--stroke` | `rgba(103,214,205,.19)` | bezel hairlines |
-| `--txt` | `#cfe3e1` | body copy on instruments |
-| `--txt-2` / `--txt-3` | `#8fa9ab` / `#5d767b` | secondary and tertiary copy |
+| `--void` | `#04070a` | the machine's own black, behind every plate |
+| `--glass` | `rgba(9,16,21,.82)` | instrument glass over rendered scenes |
+| `--glass-hi` | `rgba(17,29,36,.9)` | raised plate, header strip |
+| `--fl` | `#eef6f8` | primary readout ink |
+| `--fl-2` / `--fl-3` / `--fl-4` | `#a9bec6` / `#738d97` / `#4a616b` | secondary, label, engraving |
+| `--cy` / `--cy-hi` | `#63e2f4` / `#c6f7ff` | live phosphor, focus lamp |
+| `--am` / `--am-hi` | `#ffb43f` / `#ffd894` | caution, armed key, delegated authority |
+| `--rd` | `#ff5b45` | refusal and failure only |
+| `--gn` | `#57e39b` | nominal state, verified recorder |
+| `--seam` / `--seam-2` | hairline rules and recessed edges | plate seams |
 
 Typefaces are bundled locally as WOFF2 in `web/assets/fonts` (see the OFL note
 there), so the build has no network dependency and can ship inside a desktop or
 Steam wrapper unchanged:
 
-- **Odderon Display** (Barlow Condensed) — station names, panel titles, numbers
-  that belong to a name plate. Never for body copy.
-- **Odderon Data** (IBM Plex Mono) — every measured value, unit, code, label
-  suffix and status token. This is what makes readouts read as instruments.
-- **Odderon Console** (Rajdhani) — explanatory sentences and control captions,
-  only where a player must actually read a paragraph.
+- **Odderon Gauge** (Oxanium, 500/600/700) — station names, panel titles, gauge
+  numerals, key caps. A wide, angular technical face; it is what makes a heading
+  read as a machined legend rather than a web font.
+- **Odderon Panel** (Rajdhani, 600/700) — control captions and the few sentences
+  a pilot must actually read. Condensed, large x-height, legible at 13 px.
+- **Odderon Data** (Martian Mono, 400/500/700) — every measured value, unit,
+  code, label suffix and status token. Tabular by construction.
 
 Canvas drawers cannot inherit a CSS font stack, so scene labels use
 `web/glyphs.js` (`CANVAS_MONO`, `CANVAS_DISPLAY`, `paintLabel`). A drawer must
@@ -129,12 +147,18 @@ rule in `tests/browser/idle-audit.test.js` forbids `@keyframes` and
 `setInterval`, and the renderer is demand-driven. The interface must look alive
 through *data*, never through motion.
 
-**No `backdrop-filter` anywhere near a canvas.** A backdrop blur over a live
-WebGL surface makes the browser's GPU process redraw the scene every vsync even
-when the game renders zero frames. It is invisible styling with a visible cost:
-it took the idle gate from 0.05 % of a core to 34 %, with the app itself
-correctly reporting no frames and no scheduled work. Plates hold their type with
-a gradient of their own ink; a dialog dims with a flat wash.
+**Nothing is composited above a live canvas.** No `backdrop-filter`, no
+full-viewport gradient layer, no fixed overlay, no text shadow over the glass.
+Any of them forces the browser's GPU process to redraw the scene every vsync even
+when the game renders zero frames: measured on the tracking station, a
+full-screen two-stop gradient took the idle gate from 0.05 % of a core to 4.3 %,
+and a single text-shadow over a gauge to 3.3 %, while the app itself correctly
+reported no frames and no scheduled work. Frame furniture therefore belongs to
+the thing that draws the frame — the world shader's own vignette, the overlay
+canvas's brackets, the plate's CSS bevel — never to a layer stacked on top of
+it. `npm run test:idle` is the guard rail, and it samples CPU as well as
+frames for exactly this reason. A dialog dims with a flat wash on an opaque
+shell.
 
 ## 3. Routes
 
@@ -142,10 +166,10 @@ a gradient of their own ink; a dialog dims with a flat wash.
 | --- | --- | --- |
 | `/` | Title screen: launch manifest and soft-key stack | `hud.css` + `title.css` |
 | `/mission.html` | Flight Deck console; six stations | `hud.css` + `mission.css` |
-| `/mission.html` Academy station | lesson dock above the live flight board | same |
+| `/mission.html` Academy station | instructor's drawer beside the live flight board | same |
 | `/observatory.html` | Earth–Moon tracking station | `hud.css` + `observatory.css` |
 
-`hud.css` is the only shared sheet. It owns the eleven `@font-face` rules, the
+`hud.css` is the only shared sheet. It owns the eight `@font-face` rules, the
 tokens, the `[hidden]` law, the control reset, the slider law, the dialog chrome,
 focus, print and reduced motion. A route sheet owns that route's layout and
 nothing else.
@@ -167,32 +191,34 @@ this file and are asserted by `npm run test:ui`:
 
 ### Title screen
 
-The camera plate (`./assets/title-orbit.jpg`) fills the frame. On it: a stencil
-wordmark plate high-left, the operation card bottom-right, a telemetry column
-top-right, and the main menu as a **soft-key stack pinned bottom-left** with
-function numbers and sub-captions. A ruled HUD rim and a pitch ladder sit over
-the plate, and the plate is labelled as what it is — a live external camera
-(`EXT CAM 03 · DOCKING APPROACH`, timecode, scale bar). The status line under
-the menu is the game's own state (`FOUNDATION 0.3 · LOCAL PRACTICE`), never a
-copyright or site-map band.
+The camera plate (`./assets/title-orbit.jpg`) fills the frame. On it: a wordmark
+plate high-left with mission state under it, the operation card bottom-right, a
+frame/authority column above it, and the main menu as a **soft-key stack pinned
+bottom-left** with function numbers and sub-captions. A ruled HUD rim and a
+pitch ladder sit over the plate, and the plate is labelled as what it is — a
+live external camera (`EXT CAM 03 · DOCKING APPROACH`, timecode). The status line
+under the menu is the game's own state (`FOUNDATION 0.3 · LOCAL PRACTICE`),
+never a copyright or site-map band.
 
 The wordmark block carries no marketing strapline: the line under the title is
 mission state (`Contract 101 staged · Window 03:00:00`), because a launch screen
-inside a game reports the current operation, not the product's pitch.
+inside a game reports the current operation, not the product's pitch. The
+operation card, the frame column and the soft keys are plates on the artwork,
+and the whole screen is read through a drawn HUD rim rather than a page margin.
 
-Each soft key is type on the plate: a gradient scrim fading left to right, with
-the same ramp masking its hairline so the ring does not close into a plate
-outline under the last letter. The stamp is positioned from the top of the void
-cell, not of the frame — its children are absolutely placed inside a grid area,
-so `top:16px` would print the kicker through the wordmark at phone width.
+Each soft key is a machined key on the plate with a cut corner, a function
+number and a sub-caption, the primary key lit amber and armed. The stamp is
+positioned from the top of the void cell, not of the frame — its children are
+absolutely placed inside a grid area, so `top:16px` would print the kicker
+through the wordmark at phone width.
 
 ### Flight Deck
 
 A fixed grid: a top command strip, the console body, and a status line. The
-console body is `grid-template-columns:56px minmax(0,1fr)` with a single
+console body is `grid-template-columns:64px minmax(0,1fr)` with a single
 `minmax(0,1fr)` row, so the station rail is a **vertical rail docked to the left
-edge of the frame, spanning its full height** — a hardware legend strip, not a
-row of tabs. `.console-main` beside it holds the command strip and
+edge of the frame, spanning its full height** — a hardware legend strip with a
+number, a code and a name on each latching key, not a row of tabs. `.console-main` beside it holds the command strip and
 `#station-surface`, the one scrollable well on the screen.
 
 The rail is the physical keyboard of stations:
@@ -200,7 +226,7 @@ The rail is the physical keyboard of stations:
 | Key | Station | Workspace |
 | --- | --- | --- |
 | FDO | Flight | orbit instrument + maneuver control column |
-| ACD | Academy | lesson well above the live flight board (split station) |
+| ACD | Academy | instructor's drawer beside the live flight board |
 | PRP | Engine | Schlieren cross-section + geometry column + readout strip |
 | VHC | Vehicle | discipline authority, cryo fit-out, stage mass ledger |
 | PCL | Predict | six-field commit ledger + attempt authority + commit key |
@@ -217,10 +243,11 @@ Two structural rules follow from that, and both are asserted by
 1. **`hidden` means gone.** The system rule `[hidden]{display:none!important}`
    outranks every author `display` in the sheets, so a container that is hidden
    by script — a control row, a lesson block, a panel — can never keep painting.
-2. **A station either shows or hands over.** The Academy station is a nameplate
-   plus a fixed-height lesson well, sitting *above* the live flight board, which
-   is a sibling panel. The lesson therefore always runs against the real plan,
-   and the board keeps its own column instead of collapsing under the prose.
+2. **A station either shows or hands over.** The Academy station renders as a
+   drawer bolted to the right of the live flight board (below it on a phone), so
+   the lesson always runs against the real plan and the instrument keeps the
+   frame instead of collapsing under prose. The drawer scrolls; the glass does
+   not.
 
 **A refused plan reports no numbers.** `updatePreview` returns early when the
 plan cannot compile, and it must still re-read the plan check on the way out.
@@ -236,6 +263,14 @@ looked harmless: the rail must reach the foot of `.console-body` within 2 px
 child of the console body must be allowed to shrink (`min-height:0`), or the
 rail's content pushes the frame taller than the viewport.
 
+The station glass carries its own symbology on `#plan-hud`, painted by
+`web/instrument.js` from `mission:plan` and `mission:flown`: a machined range
+ring with bearing marks, an unnumbered altitude tape with apsis pennants, a burn
+node rail, a reticle on the selected burn, and two corner stamps (commanded
+delta-v, plan code and burn count). The plate's top edge is a 22 px labelling
+strip, so a caption never lands on the orbit solution; the tape and stamps are
+drawn *inside* the glass, never above it.
+
 Height budgets are set for a 1280×720 laptop as the floor: the propulsion rack
 must keep at least 180 px of cross-section (its readout band reflows, the
 canvas never collapses) and must not overflow its own bezel; the academy well
@@ -247,15 +282,20 @@ value alone (`O/F 2.00`, `Pc 1.50 MPa`) below 560 px of canvas width.
 
 ### Observatory
 
-The ephemeris viewport owns the frame; the telemetry column docks right; the
-time scrubber runs along the bottom. Instruments: distance, relative speed,
-display-layer rockers, the L3 status line and the scale note. No intro block,
-no footer. The gate asserts the scene is > 70 vw and the telemetry column
-< 30 vw.
+The optics own the frame edge to edge: `#world` and `#overlay` fill an absolute
+scene, and the range and range-rate gauges are bolted Windows floating on the
+glass at its top right, each with a value, a unit and an engraved tick rail. A
+control rack docks right (layer rockers, L3 status, epoch well), the drag/zoom
+rail and true-scale note sit at the bottom right of the optics, and a legend
+strip runs across the scene's top edge. No intro block, no footer. The gate
+asserts the scene is > 70 vw, the telemetry column < 30 vw, the optics reach the
+top of the console, exactly four layers exist and the published range matches
+the ephemeris.
 
-At 820 px and under the telemetry moves under the glass as one ruled block above
-the time bar, and the scene keeps the top of the frame. The drag/status chips
-move up off the foot so the scale-and-zoom rail does not print through them.
+At 760 px and under the control rack moves under the optics, and at 420 px the
+two gauges become a bottom row of the scene so the range is never hidden behind
+the frame. The drag/status chips move up off the foot so the scale-and-zoom rail
+does not print through them.
 
 A scene drag is also where the node-time control is exercised: because a coast
 can coil its ground track across itself, the nearest-point search that maps a
@@ -284,12 +324,22 @@ DOM contract. Known load-bearing hooks:
 - `.spacecraft` — must paint the title artwork;
 - `.game-menu`, `.flight-mode-nav`, `.settings-done` — addressed by the gate.
 
+The Flight Deck's canvas symbology lives in three modules that carry no state of
+their own: `web/hud-layer.js` (primitives — `bezel`, `glass`, `consoleFrame`,
+`altitudeTape`, `nodeRail`, `reticle`, `cornerReadout`, `trackingFrame`),
+`web/instrument.js` (the demand-driven `#plan-hud` painter; it arms exactly one
+frame and never starts a loop) and `web/rail.js` (mirrors station, authority,
+plan and execute state into the frame lamps). A new canvas ornament belongs in
+`hud-layer.js` and is called from a painter; nothing draws chrome inside
+`app.js`'s `draw()`, which owns the world solution.
+
 Classes owned by `hud.css` (do not restyle locally): `.panel`, `.panel-title`,
 `.station-panel`, `.station-head`, `.plan-check`, `.plan-check-line`,
 `.panel-code`, `.section-label`, `.field-label`, `.hint-line`, `.metric*`,
 `.hud-chip`, `.status-line`, `.engine-readout`, `.prediction-grid`,
-`.commit-*`, `.toggle-row`, `.switch`, `.causal`, `.lens`, `.onboarding-*`,
-`.profile-*`, `.verify-*`, `.prediction-table`, and all `dialog` chrome.
+`.commit-*`, `.toggle-row`, `.switch`, `.rocker`, `.causal`, `.lens`,
+`.onboarding-*`, `.profile-*`, `.verify-*`, `.prediction-table`, and all
+`dialog` chrome.
 
 ## 5. Storefront boundary
 
@@ -305,7 +355,8 @@ Steam build all serve the same `web/` directory unchanged.
 1. Edit `web/hud.css` for anything shared; edit the route stylesheet only for
    that route's layout.
 2. Keep the colour and type tokens above; add a token rather than a literal.
-3. Never add `@keyframes`, `setInterval`, CDN assets, or a scrolling body.
+3. Never add `@keyframes`, `setInterval`, a composited layer over a canvas,
+   CDN assets, or a scrolling body.
 4. Re-run `node --test tests/browser/idle-audit.test.js`, `npm run test:ui` and
    the browser gates (`npm run test:browser`, `npm run test:idle`) after any
    change to markup, shell, or control styling. `npm run test:ui` is the guard

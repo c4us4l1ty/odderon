@@ -182,6 +182,7 @@ function updatePreview(){
   updateAttemptMode();updatePlanCheck();updateCausal();draw();cancelFlight();return;}
   $('plan-status').classList.remove('failure');$('plan-status').textContent='Ideal orbit ready. The modeled flight runs only after the prediction is locked.';
   preview=Array.from({length:481},(_,i)=>({time:DURATION*i/480,state:readState(wasm,DURATION*i/480)}));
+  emitPlan();
   if(scenario==='103'){
     const valid=wasm.mission_lunar_info(0);
     lastLunarInfo=valid?[wasm.mission_lunar_info(1),wasm.mission_lunar_info(2)]:null;
@@ -198,6 +199,7 @@ function updatePreview(){
 /// The plan check reads the committed plan itself: what the maneuver set costs,
 /// what the stage has in the tanks, and whether the numbers were padded or left
 /// at the ideal solution. Nothing here is a second physics model.
+function emitPlan(){document.dispatchEvent(new CustomEvent('mission:plan'));}
 function updatePlanCheck(){
   const box=$('plan-check');if(!box)return;
   const set=(id,text,state)=>{const b=$(id);if(!b)return;b.textContent=text;b.parentElement.classList.toggle('is-warning',state==='warn');b.parentElement.classList.toggle('is-bad',state==='bad');};
@@ -342,6 +344,9 @@ function showDebrief(report,flightContext,version){
   actions.append(exportButton,dossierButton);
   $('debrief-content').replaceChildren(table,cards,loss,heading,list,cert,elo,signed,actions);
   annotateAcronyms($('debrief-content'));$('debrief').hidden=false;$('execute-status').textContent=impacted?'Flight ended in impact. The prediction remains locked.':'Flight complete. The prediction remains locked.';annotateAcronyms($('execute-status'));
+  // Let the instrument layer restate the result on the glass: the console's
+  // corner stamps and the orbit plate follow the debrief, not a stale plan.
+  document.dispatchEvent(new CustomEvent('mission:flown',{detail:{impacted}}));
   if(flightContext.ticket&&lastRecorder)void settleReceipt(lastRecorder,flightContext,version,cert,elo,actions);
 }
 
@@ -795,13 +800,13 @@ $('mission-select').addEventListener('change',()=>{
   if(locked)return;scenario=$('mission-select').value;contractId=Number(scenario);updateAttemptMode(true);cancelFlight();sequence++;nodes=[];selected=-1;actual=null;lastReport=null;lastLunarInfo=null;lunarPreview=[];
   if(scenario==='102'){
     INITIAL=R+250000;TARGET=R+800000;DURATION=432000;plane=[Math.cos(96*Math.PI/180),Math.sin(96*Math.PI/180)];const a=(INITIAL+TARGET)/2,v=Math.sqrt(MU*(2/INITIAL-1/a));setup=[820497600,DURATION,1200,DRY,2400,310,INITIAL,0,0,0,v*plane[0],v*plane[1]];
-    $('mission-rank').textContent='CONTRACT 102 / FLIGHT DYNAMICS OFFICER · 1250';$('mission-title').textContent='Follow the sunlight';$('mission-description').textContent='Circularize at 800 km and tilt the orbit so its crossing of the equator turns by about 4.93° in five days. Engine and spacecraft mass use the rescue assumptions.';$('example').textContent='Show circularization example';
+    $('mission-rank').textContent='CONTRACT 102 / FLIGHT DYNAMICS OFFICER · 1250';$('mission-title').textContent='Follow the sunlight';$('mission-description').textContent='Circularize at 800 km, then tilt the orbit so its equator crossing turns about 4.93° in five days.';$('mission-brief').textContent='Engine and spacecraft mass carry the rescue assumptions.';$('example').textContent='Show circularization example';
   }else if(scenario==='103'){
     INITIAL=R+200000;TARGET=380000000;DURATION=600000;DRY=5200;plane=[1,0];setup=[820497600,DURATION,18000,DRY,18000,450,INITIAL,0,0,0,Math.sqrt(MU/INITIAL),0];
-    $('mission-rank').textContent='CONTRACT 103 / SENIOR FLIGHT DYNAMICS OFFICER · 1650';$('mission-title').textContent='The perigee-kick trap';$('mission-description').textContent='Raise a 200 km tug orbit toward a 380,000 km apoapsis radius (±15,000 km) using two or three perigee kicks. The single-burn example demonstrates the trap; the splitter targets actual numerical periapses. The violet dashed path is a patched lunar preview, not the continuous-gravity flight.';$('example').textContent='Show single-burn trap';
+    $('mission-rank').textContent='CONTRACT 103 / SENIOR FLIGHT DYNAMICS OFFICER · 1650';$('mission-title').textContent='The perigee-kick trap';$('mission-description').textContent='Kick a 200 km tug orbit up to a 380,000 km apoapsis radius, ±15,000 km, in two or three perigee passes.';$('mission-brief').textContent='One burn looks cheap and fails; the splitter targets numerical periapses. Violet is a patched lunar preview, not the flown trajectory.';$('example').textContent='Show single-burn trap';
   }else{
     INITIAL=R+260000;TARGET=R+550000;DURATION=10800;DRY=1020;plane=[1,0];setup=[820497600,DURATION,1200,DRY,2400,310,INITIAL,0,0,0,Math.sqrt(MU/INITIAL),0];
-    $('mission-rank').textContent='CONTRACT 101 / CADET · 800';$('mission-title').textContent='Orbit rescue';$('mission-description').textContent='Raise a 260 km circular orbit to 550 km, then make it circular within three hours. The dotted cyan path is your instantaneous-push preview; the gold path includes finite burns and modeled forces.';$('example').textContent='Show two-push example';
+    $('mission-rank').textContent='CONTRACT 101 / CADET · 800';$('mission-title').textContent='Orbit rescue';$('mission-description').textContent='Raise a 260 km circular orbit to 550 km and recircularize inside three hours.';$('mission-brief').textContent='Cyan is the instantaneous-push preview; gold adds finite burns and modelled forces.';$('example').textContent='Show two-push example';
   }
   if(engineLab){appliedEngine=null;assemblyDesign=null;lastBoilOff=null;lastDelegationMask=0;wasm.mission_contract(contractId);engineLab.loadBaseline();engineLab.setLocked();if(assembly){assembly.sync();assembly.setLocked();}DRY=wasm.mission_parameter(3);setup=Array.from({length:12},(_,i)=>wasm.mission_parameter(i));}
   fields.time.min=String(nodeTimeRange()[0]);fields.time.max=String(nodeTimeRange()[1]);$('debrief').hidden=true;for(const id of ['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time','predict-miss'])$(id).value='';annotateAcronyms($('mission-description'));annotateAcronyms($('mission-rank'));updatePreview();

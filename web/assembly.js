@@ -84,6 +84,7 @@ export function createAssembly({ wasm, isLocked, annotate, onChange }) {
   const thermalStatus = el('thermal-status');
   const readout = el('assembly-readout');
   const badges = el('delegation-badges');
+  const marginMap = el('margin-map');
 
   function fmt(value, decimals = 2) {
     return Number.isFinite(value)
@@ -149,6 +150,22 @@ export function createAssembly({ wasm, isLocked, annotate, onChange }) {
       span.textContent = label;
       cell.append(strong, span);
       readout.append(cell);
+    }
+
+    // The margin map shows, per discipline, how much dry mass the chief added
+    // as a share of that discipline's own hardware. It reads Rust's decisions,
+    // never a restatement of the rule in the browser.
+    if (marginMap) {
+      for (const cell of marginMap.children) {
+        const bit = Number(cell.dataset.dept);
+        const decision = wasm.mission_delegation_cell(bit, 0);
+        const base = wasm.mission_delegation_cell(bit, 1);
+        const delegated = (mask & (1 << bit)) !== 0;
+        const share = delegated && base > 0 ? Math.min(1, decision / base) : 0;
+        cell.classList.toggle('is-manual', !delegated);
+        cell.style.setProperty('--fill', `${(share * 100).toFixed(1)}%`);
+        cell.querySelector('b').textContent = delegated ? `+${fmt(decision, 1)} kg` : 'MANUAL';
+      }
     }
 
     badges.replaceChildren();

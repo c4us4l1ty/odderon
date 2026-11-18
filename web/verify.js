@@ -158,7 +158,7 @@ function build() {
   dialog.setAttribute('aria-labelledby', 'verify-title');
   dialog.innerHTML = `
     <div class="profile-head">
-      <div><span class="section-label">SIGNED FLIGHT DATA RECORDER</span><h2 id="verify-title">Verify / Replay Dossier</h2></div>
+      <div data-unit="UNIT RCD · REPLAY BENCH · ED25519"><span class="section-label">SIGNED FLIGHT DATA RECORDER</span><h2 id="verify-title">Verify / Replay Dossier</h2></div>
       <button type="button" id="verify-close" aria-label="Close verification">✕</button>
     </div>
     <p class="profile-note">Verification checks the Ed25519 signature over the canonical bytes, then re-runs the Level-3 flight from the command timeline and requires every recorded field and the terminal-state hash to reproduce bit for bit.</p>

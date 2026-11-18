@@ -21,8 +21,11 @@ float fbm(vec3 p){return noise(p)*.55+noise(p*2.03)*.28+noise(p*4.11)*.12;}
 void main(){
  vec2 p=(2.0*gl_FragCoord.xy-uResolution)/uResolution.y;
  // Subtle paper grain only: this is not a synthetic star catalog.
- float grain=(hash(vec3(gl_FragCoord.xy,37.0))-.5)*.003;
- vec3 bg=mix(vec3(.018,.039,.041),vec3(.039,.076,.070),clamp(1.0-length(p)*.65,0.0,1.0))+grain;
+ float grain=(hash(vec3(gl_FragCoord.xy,37.0))-.5)*.026;
+ // Edge vignette, as on a camera feed. It is part of the frame, not an overlay.
+ float vig=smoothstep(1.35,0.35,length(p*vec2(0.86,1.0)))*0.30;
+ vec3 bg=mix(vec3(.016,.030,.036),vec3(.034,.061,.070),clamp(1.0-length(p)*.65,0.0,1.0))+grain;
+ bg*=1.0-vig;
  float de=length(p-uEarth.xy)/uEarth.z, dm=length(p-uMoon.xy)/uMoon.z;
  float halo=exp(-max(de-1.0,0.0)*8.0)*.11*(1.0-smoothstep(.98,1.0,de));
  // An atmosphere glow extends beyond the silhouette.

@@ -183,11 +183,14 @@ export function createLab({ wasm, onApply, onDiagnose, isLocked, annotate }) {
     for (let i = 0; i < count; i++) {
       // Classical greyscale Schlieren: bright where the knife edge passes
       // light, dark where the gradient bends it away.
-      const v = wasm.mission_engine_schlieren_at(i);
-      const level = Math.round(255 * Math.min(1, Math.max(0, v)));
-      image.data[i * 4] = level;
-      image.data[i * 4 + 1] = level;
-      image.data[i * 4 + 2] = Math.round(level * 0.96);
+      const v = Math.min(1, Math.max(0, wasm.mission_engine_schlieren_at(i)));
+      // A knife-edge Schlieren field is mostly dark with bright density
+      // gradients. A gamma stretch keeps that physical contrast while letting
+      // the cell and shock structure read on a dark instrument face.
+      const level = Math.round(255 * Math.pow(v, 0.62));
+      image.data[i * 4] = Math.round(level * 0.86);
+      image.data[i * 4 + 1] = Math.round(level * 0.97);
+      image.data[i * 4 + 2] = level;
       image.data[i * 4 + 3] = 255;
     }
     const buffer = document.createElement('canvas');
@@ -231,7 +234,10 @@ export function createLab({ wasm, onApply, onDiagnose, isLocked, annotate }) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, rect.width, rect.height);
     draws++;
-    ctx.fillStyle = '#08110f'; ctx.fillRect(0, 0, rect.width, rect.height);
+    // Bell-black, with the faint glow of the test-cell's backlight.
+    const ground = ctx.createRadialGradient(rect.width * .52, rect.height * .5, 0, rect.width * .52, rect.height * .5, Math.max(rect.width, rect.height) * .7);
+    ground.addColorStop(0, '#0a1618'); ground.addColorStop(1, '#03080a');
+    ctx.fillStyle = ground; ctx.fillRect(0, 0, rect.width, rect.height);
     if (!solution) {
       ctx.fillStyle = '#edbc98'; ctx.font = `12px ${CANVAS_MONO}`;
       ctx.fillText(PROPULSION_ERRORS[String(lastCode)] ?? 'No solution.', 16, rect.height / 2);
@@ -243,9 +249,13 @@ export function createLab({ wasm, onApply, onDiagnose, isLocked, annotate }) {
       const [x0, y0] = toScreen(view.xMin, view.rMax);
       const [x1, y1] = toScreen(view.xMax, -view.rMax);
       ctx.imageSmoothingEnabled = true;
+      // Additive light so the freestream stays glass-black and the shock cells
+      // read as luminance on the bell, not a grey photograph pasted in.
+      ctx.globalCompositeOperation = 'screen';
       ctx.globalAlpha = 0.92;
       ctx.drawImage(raster, x0, y0, x1 - x0, y1 - y0);
       ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'source-over';
     }
     const length = solution.nozzleLength;
     // Chamber and bell wall, drawn over the field as the CAD outline.

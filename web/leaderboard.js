@@ -40,7 +40,7 @@ function build() {
   dialog = document.createElement('dialog');
   dialog.id = 'leaderboard-dialog'; dialog.setAttribute('aria-labelledby', 'leaderboard-title');
   dialog.innerHTML = `
-    <div class="profile-head"><div><span class="section-label">SERVER-RANKED FLIGHTS</span><h2 id="leaderboard-title">Leaderboard</h2></div><button type="button" id="leaderboard-close" aria-label="Close leaderboard">✕</button></div>
+    <div class="profile-head"><div data-unit="UNIT RANK · SERVER RECEIPTS · PAGED"><span class="section-label">SERVER-RANKED FLIGHTS</span><h2 id="leaderboard-title">Leaderboard</h2></div><button type="button" id="leaderboard-close" aria-label="Close leaderboard">✕</button></div>
     <p class="profile-note">Only ranked receipts appear here. Rankings are server data; open a flight to verify it independently.</p>
     <label class="field-label" for="leaderboard-contract">Contract</label>
     <select id="leaderboard-contract"><option value="">All contracts · by Elo</option><option value="101">101 · Orbit rescue</option><option value="102">102 · Sun-synchronous</option><option value="103">103 · Perigee-kick trap</option></select>

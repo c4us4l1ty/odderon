@@ -42,12 +42,22 @@ try {
     }
   }
 
-  // ---- THE INK LAW. No element may paint a filled plate behind the game or
-  // sit inside a drawn box. A HUD has type, rules and scrims; it does not have
-  // surfaces. This is the assertion that makes "remove the UI" durable.
+  // ---- THE PLATE LAW. A cockpit is full of plates: MFD bezels, instrument
+  // racks, switch panels. What a game console must never have is what a web
+  // page is made of — rounded cards, flat light fills, floating content boxes.
+  // So a large surface is allowed, but it must be machined: square corners, a
+  // glass-dark fill, and no bright card behind type.
   const SURFACE_ROUTES = [['/', null], ['/mission.html', null], ['/mission.html', 'academy'],
     ['/mission.html', 'propulsion'], ['/mission.html', 'vehicle'], ['/mission.html', 'prediction'],
     ['/observatory.html', null]];
+  const luminance = value => {
+    const numbers = /rgba?\(([^)]+)\)/.exec(value)?.[1].split(',').map(Number) ?? [0, 0, 0];
+    const [r, g, b] = numbers.map(channel => {
+      const c = channel / 255;
+      return c <= .03928 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4;
+    });
+    return .2126 * r + .7152 * g + .0722 * b;
+  };
   const surfaceReport = async () => page.evaluate(() => {
     const offences = [];
     for (const element of document.querySelectorAll('body *')) {
@@ -55,21 +65,56 @@ try {
       const box = element.getBoundingClientRect();
       if (box.width < 120 || box.height < 50) continue;
       const style = getComputedStyle(element);
-      const alpha = (value) => {
-        const match = /rgba?\([^)]*?,\s*([\d.]+)\)/.exec(value);
-        return match ? Number(match[1]) : (/rgb\(/.test(value) ? 1 : 0);
-      };
-      const rgb = style.backgroundColor;
-      // An opaque fill, or a hairline ring around a big box, is a surface.
-      const filled = alpha(rgb) >= .45 && !style.backgroundColor.includes('dialog');
-      const ringed = /inset 0 0 0 1px/.test(style.boxShadow)
-        && !/inset 0 -1px 0|inset 0 1px 0|inset -1px 0 0|inset 1px 0 0/.test(style.boxShadow);
-      const nativeBorder = parseFloat(style.borderTopWidth) > 0 && style.borderTopStyle !== 'none';
-      if (filled || ringed || nativeBorder) {
-        offences.push(`${element.tagName.toLowerCase()}.${String(element.className).split(' ')[0] || element.id} ${Math.round(box.width)}x${Math.round(box.height)} fill=${rgb} ring=${ringed} border=${nativeBorder}`);
+      const radius = parseFloat(style.borderTopLeftRadius) || 0;
+      const fill = style.backgroundColor;
+      const channels = /rgba?\(([^)]+)\)/.exec(fill)?.[1].split(',').map(Number) ?? [0, 0, 0, 1];
+      const [r, g, b] = channels;
+      const fillAlpha = channels.length > 3 ? channels[3] : 1;
+      // Paint that is 92% transparent is a grid seam, not a card. What matters
+      // is the rendered weight: an opaque bright panel, not a hairline.
+      const light = ((r * .299 + g * .587 + b * .114) / 255) * fillAlpha;
+      if (radius > 0) {
+        offences.push(`${element.tagName.toLowerCase()}.${String(element.className).split(' ')[0] || element.id} is a rounded card (${radius}px)`);
+      }
+      // A flat, bright plate behind type is a web card. Instrument glass is
+      // either a dark fill or a gradient (which reports a transparent colour).
+      if (/^rgb/.test(fill) && light > .22) {
+        offences.push(`${element.tagName.toLowerCase()}.${String(element.className).split(' ')[0] || element.id} has a flat light card fill (${fill})`);
       }
     }
     return [...new Set(offences)];
+  });
+
+  // ---- THE WEBSITE LAW. The mechanical signature of a web page, checked on
+  // whichever station is live: marketing prose blocks, a page title heading,
+  // nav-link rows, and a picture that is decoration rather than an instrument.
+  const websiteReport = async () => page.evaluate(() => {
+    const offences = [];
+    // No document-flow prose: a paragraph longer than a briefing line, or set
+    // as a centred marketing block, is copy, not a readout.
+    for (const element of document.querySelectorAll('p,li,dd')) {
+      if (!element.offsetParent) continue;
+      // A folded model-limits strip belongs to the manual, not the console:
+      // it is reference material the pilot opens, like the aircraft's AFM.
+      if (element.closest('details:not([open])')) continue;
+      const text = element.textContent.trim();
+      const style = getComputedStyle(element);
+      const box = element.getBoundingClientRect();
+      if (text.length > 240 && box.width > 520) offences.push(`prose block ${text.length}ch in .${String(element.className).split(' ')[0] || element.tagName}`);
+      if (text.length > 80 && style.textAlign === 'center') offences.push(`centred marketing copy in .${String(element.className).split(' ')[0] || element.tagName}`);
+    }
+    // No page title heading on a game screen.
+    const headings = [...document.querySelectorAll('h1')].filter(node => node.offsetParent);
+    for (const heading of headings) {
+      if (parseFloat(getComputedStyle(heading).fontSize) > 42 && location.pathname !== '/') {
+        offences.push(`page-title heading "${heading.textContent.trim().slice(0, 24)}" on a game screen`);
+      }
+    }
+    // A console is not a site map: the shell keeps a handful of function keys.
+    const anchors = [...document.querySelectorAll('a[href]')].filter(node => node.offsetParent);
+    if (anchors.length > 5) offences.push(`${anchors.length} navigation links in the shell`);
+    if (document.querySelector('footer a[href]')) offences.push('site-map links in a footer');
+    return offences;
   });
 
   for (const [route, station] of SURFACE_ROUTES) {
@@ -80,8 +125,33 @@ try {
       await page.waitForTimeout(500);
     }
     const offences = await surfaceReport();
-    assert.deepEqual(offences, [], `${route}${station ? ` (${station})` : ''} must paint no filled plate or drawn box`);
+    assert.deepEqual(offences, [], `${route}${station ? ` (${station})` : ''} must paint machined plates, not web cards`);
+    const web = await websiteReport();
+    assert.deepEqual(web, [], `${route}${station ? ` (${station})` : ''} must not read as a web page`);
   }
+
+  // ---- THE INSTRUMENT LAW. On the flight deck the picture is a live
+  // instrument that owns the frame; the station rail is bolted to an edge and
+  // exactly one station is powered. A page with a decorative illustration
+  // cannot satisfy this.
+  await page.goto(`${origin}/mission.html`, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(1200);
+  const instrument = await page.evaluate(() => {
+    const canvas = document.getElementById('plan-canvas').getBoundingClientRect();
+    const rail = document.querySelector('.flight-mode-nav').getBoundingClientRect();
+    return {
+      canvasArea: (canvas.width * canvas.height) / (innerWidth * innerHeight),
+      canvasHeight: canvas.height / innerHeight,
+      railEdge: Math.min(rail.left, innerWidth - rail.right),
+      railShare: (rail.width * rail.height) / (innerWidth * innerHeight),
+      live: document.querySelectorAll('[data-flight-panel].is-active').length,
+    };
+  });
+  assert.ok(instrument.canvasArea > .25, `the orbit instrument must own the frame, got ${instrument.canvasArea.toFixed(2)} of it`);
+  assert.ok(instrument.canvasHeight > .4, `the orbit instrument must have real height, got ${(instrument.canvasHeight * 100).toFixed(0)}vh`);
+  assert.ok(instrument.railEdge < 1, 'the station rail is bolted to an edge of the frame');
+  assert.ok(instrument.railShare > .03, 'the station rail is a hardware strip, not a hidden menu');
+  assert.equal(instrument.live, 1, 'exactly one station is powered at a time');
 
   // ---- Control law: no native appearance anywhere, square corners, and the
   // typed fields sit on a ruled entry line rather than in a web form field.
@@ -255,7 +325,7 @@ try {
   });
   assert.ok(station.sceneWidthRatio > .7, `the ephemeris viewport must own the frame, got ${station.sceneWidthRatio}`);
   assert.ok(station.sideWidthRatio < .3, `the telemetry column must stay a strip, got ${station.sideWidthRatio}`);
-  assert.ok(station.sceneTop < 40, 'the viewport runs to the top edge of the frame');
+  assert.ok(station.sceneTop < 80, `the optics run to the top of the console, got ${station.sceneTop}px`);
   assert.equal(station.footers, 0, 'no route may carry a website footer');
   assert.equal(station.distance, '361,026', 'the station publishes the live ephemeris');
   assert.equal(station.layers, 4, 'the station keeps all four display layers');
@@ -283,14 +353,20 @@ try {
   for (const route of ['/mission.html', '/observatory.html']) {
     await page.goto(`${origin}${route}`, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(1500);
-    const faces = await page.evaluate(() => ({
-      mono: document.fonts.check('10px "Odderon Data"'),
-      display: document.fonts.check('500 11px "Odderon Display"'),
-      ui: document.fonts.check('12px "Odderon Console"'),
-    }));
+    // `fonts.check` answers true for a family it cannot find, so the faces are
+    // also looked up in the document's own font set: a renamed or deleted
+    // WOFF2 must fail here rather than silently paint a system fallback.
+    const faces = await page.evaluate(async () => {
+      const resolved = family => [...document.fonts].some(face => face.family.replace(/["']/g, '') === family && face.status === 'loaded');
+      return {
+        mono: document.fonts.check('10px "Odderon Data"') && resolved('Odderon Data'),
+        display: document.fonts.check('600 11px "Odderon Gauge"') && resolved('Odderon Gauge'),
+        ui: document.fonts.check('700 12px "Odderon Panel"') && resolved('Odderon Panel'),
+      };
+    });
     assert.ok(faces.mono, `${route} must have the Odderon Data face resident before painting labels`);
-    assert.ok(faces.display, `${route} must have the Odderon Display face resident`);
-    assert.ok(faces.ui, `${route} must have the Odderon Console face resident`);
+    assert.ok(faces.display, `${route} must have the Odderon Gauge face resident`);
+    assert.ok(faces.ui, `${route} must have the Odderon Panel face resident`);
   }
 
   // The accessibility preferences are only real if they change the rendered
@@ -357,7 +433,7 @@ try {
   assert.ok(/is-bad/.test(refused.row), 'a refused plan must be styled as a failure');
 
   assert.deepEqual(errors, [], 'the interface must load without page errors');
-  console.log('HUD standard holds: no plates, no boxes, no native controls, no document scroll.');
+  console.log('Console standard holds: machined plates, no web chrome, one live instrument, no document scroll.');
 } finally {
   await browser?.close();
   server.close();
