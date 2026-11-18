@@ -349,10 +349,15 @@ export function createLab({ wasm, onApply, onDiagnose, isLocked, annotate }) {
       ctx.beginPath(); ctx.moveTo(...toScreen(a, track.r)); ctx.lineTo(...toScreen(b, track.r)); ctx.stroke();
     }
     ctx.fillStyle = '#849b90'; ctx.font = `10px ${CANVAS_MONO}`;
+    // A narrow well leaves the plume sitting where the instruction would run,
+    // so keep the instrument value and drop the coaching words there.
+    const terse = rect.width < 560;
     const [olx, oly] = toScreen(track.x0, track.r);
-    ctx.fillText(`O/F ${spec.of.toFixed(2)} — drag along the track`, olx, oly - 10);
+    ctx.fillText(`O/F ${spec.of.toFixed(2)}${terse ? '' : ' — drag along the track'}`, olx, oly - 10);
     const [plx, ply] = toScreen(-solution.chamberLength, 0);
-    ctx.fillText(`Pc ${(spec.pc / 1e6).toFixed(2)} MPa — drag up/down`, plx + 10, ply - 8);
+    // Above the axis the caption would run through the throat handle, so the
+    // terse form sits under the chamber centreline instead.
+    ctx.fillText(`Pc ${(spec.pc / 1e6).toFixed(2)} MPa${terse ? '' : ' — drag up/down'}`, plx + 10, ply + (terse ? 20 : -8));
     // Draggable CAD handles.
     for (const handle of handles()) {
       ctx.beginPath(); ctx.arc(handle.at[0], handle.at[1], 6, 0, Math.PI * 2);

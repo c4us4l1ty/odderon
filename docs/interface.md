@@ -32,15 +32,35 @@ Concretely, the shipped interface must **not** contain:
 
 - thin, luminous monochrome HUD strokes over near-black space, with one amber
   and one red caution family and one green "nominal" family;
-- instrument housings with cut corners, hairline bezels and index ticks —
-  machined panels, not cards;
+- type laid straight on the rendered frame, held by a gradient scrim that fades
+  to nothing at one edge — never type inside a filled plate;
 - stencilled condensed display type for names, monospaced type for every
   number, and small-caps labels with wide tracking for instrument names;
-- switch-cap buttons, entry wells with scanline fill, rocker switches, and
-  rotary-style sliders;
+- switch-cap keys and rocker switches that light when armed, ruled entry wells,
+  and rotary-style sliders;
 - a persistent command strip (active station, operation, frame, authority) and
   a persistent station rail, as a real console has;
 - live, changing telemetry in the chrome — the software is doing something.
+
+### The four laws
+
+`tests/browser/interface.mjs` (`npm run test:ui`) enforces these mechanically.
+They are the definition of the standard; the prose below only explains them.
+
+1. **Ink law.** No element of 120×50 px or more may carry a filled plate. It
+   fails if its background alpha is ≥ .45, if its only edge is a lone
+   `inset 0 0 0 1px` ring, or if it has a native border. Type sits on a
+   gradient scrim or on the frame itself.
+2. **Control law.** Every visible control computes `appearance:none` and
+   `border-radius:0px`. A typed field must carry a box-shadow entry rule
+   (an underline or a bracket), never a native bevel. A slider's hit area is
+   ≥ 20 px tall.
+3. **Frame law.** `body` is `overflow:hidden` and the document overflows by
+   ≤ 0 px at 1440×900, 1280×720, 1024×600 and 390×844, on all three routes.
+   Scrolling happens inside an instrument's own well, never on the page.
+4. **Type law.** No word computes below **9 px** on any route or station, and
+   both canvases pages resolve all three Odderon faces
+   (`document.fonts.check`) before the first frame is painted.
 
 ## 2. Visual language
 
@@ -79,28 +99,71 @@ type instead of once in a fallback.
 
 Two hard floors apply to all type:
 
-- **8 px.** No element carrying words may compute below 8 px at any viewport.
-  Instrument type is small by design; under 8 px it is a smudge, not a readout.
+- **9 px.** No element carrying words may compute below 9 px at any viewport.
+  Instrument type is small by design; under 9 px it is a smudge, not a readout.
   `tests/browser/interface.mjs` asserts this on every route at desktop and phone
-  width.
+  width. (It began as 8 px and was raised, because a 1×-DPI screenshot proved
+  8 px is legible in the DOM but not on the screen.)
 - **No squeezed prose.** A grid row that is `auto` must be allowed to hold its
   full content. Only the row that owns the live instrument (a canvas) may absorb
   a short container; otherwise a two-line brief is sliced mid-line with the
   descenders cut off.
+
+Three stacking rules exist because each one silently produced overlapping type
+on a phone before it was written down:
+
+- **Stacked stations restate their rows.** A station that goes from two columns
+  to one at narrow width must set `grid-template-rows` as well as
+  `grid-template-columns`. Changing only the columns leaves the desktop row
+  template in place, so the two tracks split the framed height and the second
+  block spills out of its own row across the next section.
+- **Grid areas do not move their children.** A child with `grid-row:3` stays in
+  row 3 even when the template's named areas are reordered; the phone rule must
+  restate the row number too.
+- **A stacked block is content, not a pane.** Inside a single scrolling well,
+  every station block is `flex:0 0 auto`. A block that may shrink divides a
+  1,500 px control column away to nothing.
 
 No CSS animation loops or keyframe animations exist anywhere: the governance
 rule in `tests/browser/idle-audit.test.js` forbids `@keyframes` and
 `setInterval`, and the renderer is demand-driven. The interface must look alive
 through *data*, never through motion.
 
+**No `backdrop-filter` anywhere near a canvas.** A backdrop blur over a live
+WebGL surface makes the browser's GPU process redraw the scene every vsync even
+when the game renders zero frames. It is invisible styling with a visible cost:
+it took the idle gate from 0.05 % of a core to 34 %, with the app itself
+correctly reporting no frames and no scheduled work. Plates hold their type with
+a gradient of their own ink; a dialog dims with a flat wash.
+
 ## 3. Routes
 
 | Route | Player-facing role | Shell |
 | --- | --- | --- |
-| `/` | Title screen: launch manifest and soft-key stack | `ui.css` + `title.css` |
-| `/mission.html` | Flight Deck console; six stations | `ui.css` + `mission.css` |
-| `/mission.html#onboarding` | Academy station inside the same console | same |
-| `/observatory.html` | Earth–Moon tracking station | `ui.css` + `observatory.css` |
+| `/` | Title screen: launch manifest and soft-key stack | `hud.css` + `title.css` |
+| `/mission.html` | Flight Deck console; six stations | `hud.css` + `mission.css` |
+| `/mission.html` Academy station | lesson dock above the live flight board | same |
+| `/observatory.html` | Earth–Moon tracking station | `hud.css` + `observatory.css` |
+
+`hud.css` is the only shared sheet. It owns the eleven `@font-face` rules, the
+tokens, the `[hidden]` law, the control reset, the slider law, the dialog chrome,
+focus, print and reduced motion. A route sheet owns that route's layout and
+nothing else.
+
+Deleting a shared sheet is where things break quietly, so two rules apply to
+this file and are asserted by `npm run test:ui`:
+
+- **A class markup or script applies must have a rule behind it.** When `ui.css`
+  was deleted, eleven classes it owned were still being rendered — glossary
+  terms, the licence cell grid, the secret block, the verification verdict, the
+  dossier print frame. They did not error; they silently lost their presentation.
+  The gate now collects every class present in the live DOM and fails if any has
+  no rule in any loaded sheet. Two settings switches were also dead for the same
+  reason: they wrote `reduced-effects` and `high-contrast` onto `<body>` with no
+  rule behind either class, so they stored a preference and changed nothing.
+- **A state class must reach the element that carries the colour.** The plan
+  check toggled `is-bad` on the row while the value lived in a `<b>` inside it,
+  so an empty or refused plan never turned red.
 
 ### Title screen
 
@@ -117,10 +180,22 @@ The wordmark block carries no marketing strapline: the line under the title is
 mission state (`Contract 101 staged · Window 03:00:00`), because a launch screen
 inside a game reports the current operation, not the product's pitch.
 
+Each soft key is type on the plate: a gradient scrim fading left to right, with
+the same ramp masking its hairline so the ring does not close into a plate
+outline under the last letter. The stamp is positioned from the top of the void
+cell, not of the frame — its children are absolutely placed inside a grid area,
+so `top:16px` would print the kicker through the wordmark at phone width.
+
 ### Flight Deck
 
-A fixed grid: 56 px top command bar, a 78 px station rail, the workspace, and a
-24 px status line. The rail is the physical keyboard of stations:
+A fixed grid: a top command strip, the console body, and a status line. The
+console body is `grid-template-columns:56px minmax(0,1fr)` with a single
+`minmax(0,1fr)` row, so the station rail is a **vertical rail docked to the left
+edge of the frame, spanning its full height** — a hardware legend strip, not a
+row of tabs. `.console-main` beside it holds the command strip and
+`#station-surface`, the one scrollable well on the screen.
+
+The rail is the physical keyboard of stations:
 
 | Key | Station | Workspace |
 | --- | --- | --- |
@@ -131,9 +206,10 @@ A fixed grid: 56 px top command bar, a 78 px station rail, the workspace, and a
 | PCL | Predict | six-field commit ledger + attempt authority + commit key |
 | FDR | Debrief | signed prediction-versus-reality schedule |
 
-Under 900 px the rail becomes a bottom hardware game bar, the command strip
-keeps only its first two blocks, and the active workspace becomes the only
-scrollable surface. The chrome never reflows into a document.
+At 820 px and under, the rail becomes a bottom hardware game bar (≤ 70 px above
+the viewport foot, > 300 px wide), the command strip keeps only its first two
+blocks, and the active workspace becomes the only scrollable surface. The chrome
+never reflows into a document.
 
 Two structural rules follow from that, and both are asserted by
 `npm run test:ui`:
@@ -146,17 +222,46 @@ Two structural rules follow from that, and both are asserted by
    is a sibling panel. The lesson therefore always runs against the real plan,
    and the board keeps its own column instead of collapsing under the prose.
 
+**A refused plan reports no numbers.** `updatePreview` returns early when the
+plan cannot compile, and it must still re-read the plan check on the way out.
+Without that call the check kept the last valid solution's delta-v and
+propellant on screen beside the refusal — a healthy 117.2 kg next to "that needs
+more fuel than this stage carries". A refused plan now reads `REFUSED` with the
+figures cleared, and the gate asserts both the cleared value and the failure
+styling.
+
+Two geometry invariants are asserted, because both were broken by a rule that
+looked harmless: the rail must reach the foot of `.console-body` within 2 px
+(`align-self:stretch`, plus `.console-body > *{min-height:0}`), and every direct
+child of the console body must be allowed to shrink (`min-height:0`), or the
+rail's content pushes the frame taller than the viewport.
+
 Height budgets are set for a 1280×720 laptop as the floor: the propulsion rack
 must keep at least 180 px of cross-section (its readout band reflows, the
 canvas never collapses) and must not overflow its own bezel; the academy well
-must keep a scrollable reading window while the flight board stays ≥ 200 px.
+must keep a scrollable reading window while the flight board stays ≥ 200 px. On
+a phone the cross-section keeps `min(48vh,300px)` for the same reason: the
+engine view scales with its own height, so a short well squeezes the nozzle
+until the drag captions sit in the plume. Canvas captions are dropped to their
+value alone (`O/F 2.00`, `Pc 1.50 MPa`) below 560 px of canvas width.
 
 ### Observatory
 
 The ephemeris viewport owns the frame; the telemetry column docks right; the
 time scrubber runs along the bottom. Instruments: distance, relative speed,
 display-layer rockers, the L3 status line and the scale note. No intro block,
-no footer.
+no footer. The gate asserts the scene is > 70 vw and the telemetry column
+< 30 vw.
+
+At 820 px and under the telemetry moves under the glass as one ruled block above
+the time bar, and the scene keeps the top of the frame. The drag/status chips
+move up off the foot so the scale-and-zoom rail does not print through them.
+
+A scene drag is also where the node-time control is exercised: because a coast
+can coil its ground track across itself, the nearest-point search that maps a
+pointer to a path epoch breaks ties towards the node's *current* epoch. Without
+that bias a drag of a few pixels teleports a burn from the path start to the
+path end.
 
 ## 4. Component contract
 
@@ -179,7 +284,7 @@ DOM contract. Known load-bearing hooks:
 - `.spacecraft` — must paint the title artwork;
 - `.game-menu`, `.flight-mode-nav`, `.settings-done` — addressed by the gate.
 
-Classes owned by `ui.css` (do not restyle locally): `.panel`, `.panel-title`,
+Classes owned by `hud.css` (do not restyle locally): `.panel`, `.panel-title`,
 `.station-panel`, `.station-head`, `.plan-check`, `.plan-check-line`,
 `.panel-code`, `.section-label`, `.field-label`, `.hint-line`, `.metric*`,
 `.hud-chip`, `.status-line`, `.engine-readout`, `.prediction-grid`,
@@ -197,12 +302,15 @@ Steam build all serve the same `web/` directory unchanged.
 
 ## 6. Changing the interface
 
-1. Edit `web/ui.css` for anything shared; edit the route stylesheet only for
+1. Edit `web/hud.css` for anything shared; edit the route stylesheet only for
    that route's layout.
 2. Keep the colour and type tokens above; add a token rather than a literal.
 3. Never add `@keyframes`, `setInterval`, CDN assets, or a scrolling body.
 4. Re-run `node --test tests/browser/idle-audit.test.js`, `npm run test:ui` and
-   the browser gate (`npm run test:browser`) after any change to markup, shell,
-   or control styling. `npm run test:ui` is the guard rail for this document:
-   if it fails, the interface has regressed, not the test.
+   the browser gates (`npm run test:browser`, `npm run test:idle`) after any
+   change to markup, shell, or control styling. `npm run test:ui` is the guard
+   rail for this document: if it fails, the interface has regressed, not the
+   test. `npm run test:idle` is the guard rail for the no-blur rule — it counts
+   frames *and* samples browser CPU, so a styling change that re-arms the GPU
+   shows up there even though the app reports a perfectly idle renderer.
 5. Update this document if the standard itself changes.

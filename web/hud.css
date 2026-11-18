@@ -1,0 +1,485 @@
+/* ============================================================================
+   ODDERON — HUD LAYER
+   ----------------------------------------------------------------------------
+   The interface is a heads-up display, not a document. There is no page: no
+   surface, no card, no panel, no bar, no margin. The game renders the frame;
+   this sheet only paints type, rules, and control affordances directly over it.
+
+   Three laws, in order:
+
+   1. INK FLOATS. Nothing paints a background fill behind the player's view
+      except a scrim, and a scrim exists only so type survives a bright frame.
+      No boxes. No cards. No chrome.
+   2. THE FRAME IS FULLSCREEN. `html`, `body` and the root shell are locked to
+      the viewport at every size. The document never scrolls; a dense readout
+      scrolls inside its own well.
+   3. EVERY WORD IS AN INSTRUMENT. Bundled faces only, 9px floor, tracked upper
+      case for labels, tabular figures for numbers. No system font, ever - not
+      in a page, not in a canvas.
+
+   `tests/browser/interface.mjs` enforces these laws against computed style.
+   ========================================================================= */
+
+/* ------------------------------------------------------------------- faces */
+/* Bundled locally, so the build has no network dependency and ships inside a
+   desktop or Steam wrapper unchanged. These face names are the only fonts the
+   interface may use; `interface.mjs` proves they are resident before paint. */
+@font-face{font-family:'Odderon Display';font-style:normal;font-weight:300;font-display:swap;src:url('./assets/fonts/barlow-condensed-latin-300-normal.woff2') format('woff2')}
+@font-face{font-family:'Odderon Display';font-style:normal;font-weight:400;font-display:swap;src:url('./assets/fonts/barlow-condensed-latin-400-normal.woff2') format('woff2')}
+@font-face{font-family:'Odderon Display';font-style:normal;font-weight:500;font-display:swap;src:url('./assets/fonts/barlow-condensed-latin-500-normal.woff2') format('woff2')}
+@font-face{font-family:'Odderon Display';font-style:normal;font-weight:600;font-display:swap;src:url('./assets/fonts/barlow-condensed-latin-600-normal.woff2') format('woff2')}
+@font-face{font-family:'Odderon Display';font-style:normal;font-weight:700;font-display:swap;src:url('./assets/fonts/barlow-condensed-latin-700-normal.woff2') format('woff2')}
+@font-face{font-family:'Odderon Data';font-style:normal;font-weight:400;font-display:swap;src:url('./assets/fonts/ibm-plex-mono-latin-400-normal.woff2') format('woff2')}
+@font-face{font-family:'Odderon Data';font-style:normal;font-weight:500;font-display:swap;src:url('./assets/fonts/ibm-plex-mono-latin-500-normal.woff2') format('woff2')}
+@font-face{font-family:'Odderon Data';font-style:normal;font-weight:600;font-display:swap;src:url('./assets/fonts/ibm-plex-mono-latin-600-normal.woff2') format('woff2')}
+@font-face{font-family:'Odderon Console';font-style:normal;font-weight:500;font-display:swap;src:url('./assets/fonts/rajdhani-latin-500-normal.woff2') format('woff2')}
+@font-face{font-family:'Odderon Console';font-style:normal;font-weight:600;font-display:swap;src:url('./assets/fonts/rajdhani-latin-600-normal.woff2') format('woff2')}
+@font-face{font-family:'Odderon Console';font-style:normal;font-weight:700;font-display:swap;src:url('./assets/fonts/rajdhani-latin-700-normal.woff2') format('woff2')}
+
+/* ------------------------------------------------------------------ tokens */
+:root{
+  /* Ink. Everything is a tint of the same phosphor, so the frame reads as one
+     optical system rather than a colour scheme. */
+  --hud:#7fe3d8;
+  --hud-bright:#d7fff9;
+  --hud-dim:#4f9d99;
+  --hud-faint:rgba(127,227,216,.34);
+  --amber:#f4b860;
+  --amber-bright:#ffd79a;
+  --red:#ff6f56;
+  --green:#79e6a4;
+  --violet:#b79cf7;
+
+  --ink:#dceceb;
+  --ink-2:#9db6b8;
+  --ink-3:#6d878c;
+  --ink-4:#4b6167;
+
+  /* Ruled hairlines, not borders. A rule is a measurement, never a box. */
+  --rule:rgba(127,227,216,.26);
+  --rule-soft:rgba(127,227,216,.13);
+  --rule-bright:rgba(127,227,216,.55);
+
+  /* Scrim: the only filled surface in the interface. */
+  --scrim:linear-gradient(180deg,rgba(2,7,10,.86),rgba(2,7,10,.62));
+
+  --font-display:"Odderon Display","Barlow Condensed",ui-sans-serif,sans-serif;
+  --font-data:"Odderon Data","IBM Plex Mono",ui-monospace,monospace;
+  --font-ui:"Odderon Console",Rajdhani,system-ui,sans-serif;
+
+  /* No transitions on structural properties: a HUD does not animate its own
+     layout. Colour feedback only, and only on direct manipulation. */
+  --ease:color .1s linear,box-shadow .1s linear,opacity .1s linear;
+}
+
+/* -------------------------------------------------------------------- base */
+*,*::before,*::after{box-sizing:border-box}
+
+html,body{
+  margin:0;padding:0;height:100%;width:100%;
+  overflow:hidden;overscroll-behavior:none;
+  background:#02070a;
+  color:var(--ink);
+  font-family:var(--font-ui);
+  font-size:14px;line-height:1.4;
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+  /* A HUD is not selectable text; selection is a reading affordance, and it
+     fights drag controls. Numbers stay copyable where they matter (inputs). */
+  user-select:none;
+}
+
+body{position:fixed;inset:0}
+
+/* The `[hidden]` law: an element the logic has retired is never painted, and
+   never keeps a slot. This is enforced with the important flag because several
+   display rules in this sheet are more specific than the UA default. */
+[hidden]{display:none!important}
+
+/* Instrument type defaults. Anything that carries words inherits one of these. */
+h1,h2,h3,h4,p,li,td,th,dd,dt,figcaption,label,caption{
+  margin:0;font-family:var(--font-ui);font-weight:400;
+}
+h1,h2,h3,h4{letter-spacing:.04em;line-height:1.05;font-weight:500;color:var(--ink)}
+p{line-height:1.45}
+strong,b{font-weight:600}
+small{font-family:var(--font-data);font-size:9px;letter-spacing:.1em;color:var(--ink-3);text-transform:uppercase}
+code,kbd,samp{font-family:var(--font-data);font-variant-numeric:tabular-nums}
+ul,ol{margin:0;padding:0;list-style:none}
+hr{border:0;height:1px;background:var(--rule-soft);margin:0}
+
+/* No native affordances survive: every control is redrawn by this sheet. */
+button,input,select,textarea{font:inherit;color:inherit;background:none;border:0;border-radius:0}
+button{cursor:pointer}
+a{color:var(--hud);text-decoration:none}
+::selection{background:rgba(127,227,216,.28);color:var(--hud-bright)}
+
+/* One focus language for the whole instrument. The user agent outline is never
+   used, because a stock browser ring reads as a web form — and the ring is only
+   ever drawn on something a player can operate. A region that receives focus
+   programmatically (a lesson dock, a scroll well) must not sprout a box. */
+:focus{outline:none}
+:focus-visible{outline:none}
+button:focus-visible,
+a[href]:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible,
+[role="button"]:focus-visible,
+.file-button:focus-within{
+  outline:1px solid var(--hud-bright);outline-offset:3px;
+}
+
+/* Scrollbars are part of the optics: a hairline rail, no track furniture. */
+*{scrollbar-width:thin;scrollbar-color:var(--hud-faint) transparent}
+*::-webkit-scrollbar{width:6px;height:6px}
+*::-webkit-scrollbar-track{background:transparent}
+*::-webkit-scrollbar-thumb{background:var(--hud-faint)}
+
+/* --------------------------------------------------------------- utilities */
+
+/* A label. Every caption in the interface is one of these three weights. */
+.section-label,.field-label,.metric-label,.panel-code{
+  font-family:var(--font-data);font-size:9px;font-weight:500;
+  letter-spacing:.24em;text-transform:uppercase;color:var(--ink-3);
+  font-variant-numeric:tabular-nums;
+}
+.section-label{color:var(--hud-dim)}
+.field-label,.metric-label{letter-spacing:.2em;color:var(--ink-3)}
+.panel-code{font-size:9px;letter-spacing:.16em;color:var(--ink-4);padding-left:8px}
+
+/* Body copy: only where a player must actually read a sentence. Kept narrow so
+   it never becomes a paragraph block on a page. */
+.mission-sub,.onboarding-setup,.profile-note,.commit-note,.disclaimer,.side-note,
+.plan-status,.time-explain,.hint-line,.cause-evidence,.metric-sub{
+  font-family:var(--font-ui);font-size:12.5px;line-height:1.45;
+  color:var(--ink-2);max-width:78ch;
+}
+.mission-sub{font-size:12.5px}
+.disclaimer,.side-note,.time-explain,.hint-line,.cause-evidence,.metric-sub{
+  font-family:var(--font-data);font-size:10px;line-height:1.55;letter-spacing:.01em;color:var(--ink-3);
+}
+
+/* Numbers. Tabular, tight, bright — a readout is read at a glance. */
+.metric,.metric-block .metric,.engine-readout strong,.debrief-grid strong,
+.plan-check-line b,.profile-identity strong,.metric strong{
+  font-family:var(--font-data);font-variant-numeric:tabular-nums;
+  letter-spacing:.01em;color:var(--hud-bright);font-weight:500;
+}
+
+/* A rule between readouts. Drawn, never a border. */
+.rule{height:1px;background:var(--rule-soft);border:0}
+
+/* ------------------------------------------------------------------ scrims */
+/* Nothing here blurs the frame behind it. A backdrop filter over a live WebGL
+   canvas makes the GPU process redraw the scene every vsync even when the game
+   renders zero frames, which breaks the idle gate. Plates hold type with a
+   gradient of their own ink instead; a dialog dims with a flat wash. */
+
+/* ------------------------------------------------------------- controls */
+
+/* Keys, not buttons. A control is a bracketed label that lights when armed.
+   The bracket is drawn with pseudo-elements so the hit area is the whole word. */
+/* Every control is redrawn by this sheet, so the platform appearance is off
+   everywhere — a stock button is a web affordance. */
+button,[role="button"],.button,input,select,textarea{
+  -webkit-appearance:none;appearance:none;
+}
+button,[role="button"],.button{
+  position:relative;display:inline-flex;align-items:center;justify-content:center;
+  min-height:28px;padding:5px 12px;
+  font-family:var(--font-data);font-size:10px;font-weight:600;
+  letter-spacing:.2em;text-transform:uppercase;
+  color:var(--ink-2);white-space:nowrap;
+  box-shadow:inset 0 0 0 1px var(--rule-soft);
+  transition:var(--ease);
+}
+button:hover:not(:disabled),[role="button"]:hover:not(:disabled),.button:hover{
+  color:var(--hud-bright);
+  box-shadow:inset 0 0 0 1px var(--rule-bright);
+  background:rgba(127,227,216,.07);
+}
+button:active:not(:disabled){background:rgba(127,227,216,.16)}
+button:disabled,.button:disabled{opacity:.3;cursor:not-allowed}
+
+/* The armed key: phosphor fill, dark ink, and a bloom that reads as a lit lamp. */
+.primary,button.primary,.button-row .primary{
+  color:#03211f;
+  background:linear-gradient(180deg,#b6f6ec,#63cec2);
+  box-shadow:inset 0 0 0 1px rgba(215,255,249,.85),0 0 22px rgba(88,201,189,.24);
+}
+.primary:hover:not(:disabled){background:linear-gradient(180deg,#d7fff9,#82e2d5);color:#02201e}
+
+/* The quiet key: a hairline that only asserts itself on hover. */
+.quiet,button.quiet{
+  color:var(--ink-3);
+  box-shadow:inset 0 0 0 1px var(--rule-soft);
+}
+.quiet:hover:not(:disabled){color:var(--hud)}
+
+/* A row of keys. No wrap surprises: keys are sized to their label. */
+.button-row,.commit-keys,.profile-row,.placement-choices,.secret-head,.obs-actions,.view-controls{
+  display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0;
+}
+.button-row{flex:0 0 auto}
+
+/* Text entry: a ruled line, not a field box. The well is a bottom rule plus a
+   faint inner glow, so the value sits on the instrument instead of in a form. */
+/* Every typed field shares one entry-well look. `[type=range]` and the check
+   boxes are excluded explicitly: they are drawn as hardware further down, and a
+   catch-all selector here would flatten them into a 2px rule. */
+input:not([type=range]):not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=file]),
+textarea,select{
+  -webkit-appearance:none;appearance:none;
+  width:100%;min-height:30px;padding:5px 7px;
+  font-family:var(--font-data);font-size:12px;letter-spacing:.05em;
+  color:var(--hud-bright);font-variant-numeric:tabular-nums;
+  background:rgba(4,14,18,.72);
+  box-shadow:inset 0 -1px 0 var(--rule-bright),inset 0 1px 0 rgba(127,227,216,.05);
+  transition:box-shadow .1s linear;
+}
+input:hover:not(:disabled),select:hover:not(:disabled),textarea:hover:not(:disabled){background:rgba(6,20,26,.82)}
+input:focus,textarea:focus,select:focus{
+  box-shadow:inset 0 -1px 0 var(--hud-bright),inset 0 0 0 1px rgba(127,227,216,.28);
+  background:rgba(8,26,32,.9);
+}
+input:disabled,select:disabled,textarea:disabled{opacity:.4;cursor:not-allowed}
+textarea{resize:vertical;min-height:64px;line-height:1.5}
+input[type=number]{-moz-appearance:textfield}
+input[type=number]::-webkit-outer-spin-button,
+input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+::placeholder{color:var(--ink-4);font-style:normal}
+
+/* The select chevron is drawn, not the platform triangle. */
+select{
+  background-image:linear-gradient(45deg,transparent 50%,var(--hud) 50%),
+                   linear-gradient(135deg,var(--hud) 50%,transparent 50%);
+  background-position:calc(100% - 14px) 13px,calc(100% - 9px) 13px;
+  background-size:5px 5px,5px 5px;background-repeat:no-repeat;
+  padding-right:26px;
+}
+select option{background:#04111a;color:var(--ink)}
+
+/* A slider is a machined track with a travelling grip, never a rounded web
+   handle. The input box is the whole hit area — a 2px-tall control is a mouse
+   trap — and the track is painted as a gradient so no extra element is needed. */
+input[type=range]{
+  -webkit-appearance:none;appearance:none;
+  width:100%;height:24px;min-height:24px;margin:2px 0 0;padding:0;
+  background:transparent;
+  cursor:ew-resize;
+}
+input[type=range]::-webkit-slider-runnable-track{
+  height:2px;background:var(--rule);border:0;
+}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:3px;height:18px;margin-top:-8px;
+  background:var(--hud-bright);box-shadow:0 0 10px var(--hud);border:0;border-radius:0;
+}
+input[type=range]:hover::-webkit-slider-thumb{box-shadow:0 0 16px var(--hud-bright)}
+input[type=range]:focus-visible::-webkit-slider-thumb{background:#fff;box-shadow:0 0 16px var(--hud-bright)}
+input[type=range]::-moz-range-track{height:2px;background:var(--rule);border:0}
+input[type=range]::-moz-range-thumb{
+  width:3px;height:18px;border:0;border-radius:0;
+  background:var(--hud-bright);box-shadow:0 0 10px var(--hud);
+}
+
+/* A checkbox is a lamp. The rocker is drawn by the label that owns it. */
+input[type=checkbox],input[type=radio]{
+  -webkit-appearance:none;appearance:none;width:13px;height:13px;min-height:0;
+  box-shadow:inset 0 0 0 1px var(--rule);background:rgba(4,14,18,.7);
+  cursor:pointer;flex:0 0 13px;padding:0;
+}
+input[type=checkbox]:checked,input[type=radio]:checked{
+  background:var(--hud);box-shadow:inset 0 0 0 1px var(--hud-bright),0 0 12px rgba(127,227,216,.5);
+}
+input[type=radio]{border-radius:50%}
+
+/* The throw switch: a machined gate with a travelling slug. */
+.switch{
+  position:relative;display:inline-block;flex:0 0 32px;width:32px;height:16px;
+  background:rgba(4,14,18,.8);box-shadow:inset 0 0 0 1px var(--rule-soft);
+  pointer-events:none;transition:background .1s linear,box-shadow .1s linear;
+}
+.switch::after{
+  content:'';position:absolute;top:2px;left:2px;width:12px;height:12px;
+  background:var(--ink-4);transition:transform .1s linear,background .1s linear;
+}
+input:checked + .switch{background:rgba(84,201,190,.3);box-shadow:inset 0 0 0 1px var(--hud)}
+input:checked + .switch::after{transform:translateX(16px);background:var(--hud-bright);box-shadow:0 0 10px var(--hud)}
+
+/* A labelled control: caption above the value, rule under it. */
+label{display:block;min-width:0}
+label > input,label > select,label > textarea{margin-top:4px}
+label > small{display:block;margin-top:3px}
+label > input[type=checkbox],label > input[type=radio]{margin:0}
+
+/* A file picker disguised as a key. */
+.file-button{
+  display:inline-flex;align-items:center;min-height:28px;padding:5px 12px;
+  font-family:var(--font-data);font-size:10px;letter-spacing:.2em;text-transform:uppercase;
+  color:var(--ink-2);box-shadow:inset 0 0 0 1px var(--rule-soft);cursor:pointer;
+}
+.file-button:hover{color:var(--hud-bright);box-shadow:inset 0 0 0 1px var(--rule-bright)}
+.file-button input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+
+/* The bare icon key on a viewport rail. */
+.view-controls button{
+  min-width:30px;min-height:26px;padding:0 8px;
+  font-size:12px;letter-spacing:0;color:var(--ink-2);
+}
+
+/* ------------------------------------------------------------------ states */
+.is-active{color:var(--hud-bright)}
+.is-complete{color:var(--green)}
+.is-bad,.failure,.warn{color:var(--red)}
+.is-lesson{color:var(--amber)}
+.chief-owned{color:var(--amber)}
+.chief-choice{color:var(--amber)!important}
+.warn{border-left:2px solid var(--red);padding-left:8px}
+
+/* ---------------------------------------------------------------- dialogs */
+/* A dialog is a modal examination pane: a wide scrim over the frozen frame and
+   a ruled sheet floating in it. No rounded corners, no drop shadow. */
+dialog{
+  padding:0;border:0;color:var(--ink);
+  width:min(760px,calc(100vw - 40px));max-height:min(86vh,900px);
+  background:linear-gradient(180deg,rgba(4,16,22,.98),rgba(2,9,13,.99));
+  box-shadow:inset 0 0 0 1px var(--rule),0 0 0 1px rgba(0,0,0,.6),0 40px 120px rgba(0,0,0,.7);
+  overflow:auto;overscroll-behavior:contain;
+}
+dialog::backdrop{background:rgba(1,5,8,.86)}
+dialog > form{padding:20px 22px 22px}
+.dialog-head{
+  display:flex;align-items:flex-start;justify-content:space-between;gap:12px;
+  padding-bottom:12px;box-shadow:inset 0 -1px 0 var(--rule);
+}
+.dialog-head p{font-family:var(--font-data);font-size:9px;letter-spacing:.26em;color:var(--hud-dim);margin:0 0 5px}
+.dialog-head h2{font-family:var(--font-display);font-size:26px;font-weight:500;letter-spacing:.09em;text-transform:uppercase}
+.dialog-head button{min-height:24px;padding:0 8px;font-size:13px;letter-spacing:0;color:var(--ink-3)}
+#profile-dialog,#verify-dialog,#leaderboard-dialog{width:min(760px,calc(100vw - 40px));padding:20px 22px}
+#profile-dialog h3,#verify-dialog h3,.profile-ranked h3,.secret-head h3{
+  font-family:var(--font-display);font-size:15px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--ink);margin:16px 0 4px;padding-bottom:4px;box-shadow:inset 0 -1px 0 var(--rule-soft);
+}
+
+/* A settings row: label left, throw switch right, a rule between rows. */
+.settings-dialog{width:min(520px,calc(100vw - 24px))}
+.settings-dialog label{
+  position:relative;display:flex;align-items:center;gap:11px;
+  padding:10px 2px;cursor:pointer;box-shadow:inset 0 -1px 0 var(--rule-soft);
+  font-family:var(--font-display);font-size:13px;font-weight:500;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--ink);
+}
+.settings-dialog label > span:last-child{flex:1 1 auto}
+.settings-dialog label small{display:block;font-family:var(--font-data);font-size:10px;
+  letter-spacing:.03em;text-transform:none;color:var(--ink-3);margin-top:3px}
+/* The real checkbox is the hit target for the whole row; the rocker beside it
+   is hardware painted behind it. A direct `check()` therefore still lands. */
+.settings-dialog label > input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;z-index:2;cursor:pointer}
+.settings-dialog label > .switch{position:relative;z-index:1}
+.settings-dialog label > input:checked ~ span:last-child{color:var(--hud-bright)}
+.settings-note{font-family:var(--font-data);font-size:10px;line-height:1.55;color:var(--ink-3);margin:12px 0}
+.settings-done{width:100%;padding:11px;margin-top:6px}
+
+/* ------------------------------------------------------------- print law */
+/* Paper is not a display: the frame is white, the ink is black, and no console
+   chrome prints. This is the one place the interface leaves the screen. */
+@media print{
+  html:root,html body{height:auto;overflow:visible;background:#fff;color:#000;user-select:text}
+  body{position:static}
+  [aria-hidden="true"],dialog,button{display:none!important}
+  h1,h2,h3,p,td,th,li,strong,b{color:#000;text-shadow:none}
+  a{color:#000;text-decoration:underline}
+}
+
+/* ------------------------------------------------------------------- terms */
+/* A glossary term is explained by the line behind it, so it is marked as
+   hoverable type: a dotted underline in the caution colour, never a chip. */
+abbr.term{
+  text-decoration:underline dotted rgba(244,184,96,.75);text-underline-offset:3px;
+  cursor:help;color:var(--amber-bright);
+}
+abbr.term:focus-visible{outline:1px solid var(--amber);outline-offset:2px}
+
+/* ------------------------------------------------------- preferences, state */
+/* Both settings switches write a class on <body>. These are the rules those
+   classes drive: without them the switches store a preference and change
+   nothing, which reads as a broken control. */
+body.high-contrast{
+  --rule:rgba(150,246,236,.42);
+  --rule-soft:rgba(150,246,236,.26);
+  --ink-2:#b9cfd0;--ink-3:#9db5b7;--ink-4:#7e979b;
+}
+body.high-contrast .console-body,
+body.high-contrast #station-surface{background:#040f14}
+.build-state.ready i{background:var(--green);box-shadow:0 0 10px var(--green)}
+
+/* A verification verdict is a sentence, coloured by its outcome. */
+.verify-verdict{
+  font-family:var(--font-data);font-size:11px;letter-spacing:.08em;margin:6px 0 2px;
+  min-height:1.2em;color:var(--ink-2);
+}
+.verify-verdict.is-verified{color:var(--green)}
+.verify-verdict.is-rejected{color:var(--red)}
+
+/* A secret is a sentence the player must be able to select and copy, so it
+   breaks anywhere and sits in its own ruled well. */
+.secret-block{margin:8px 0}
+.secret-value{
+  display:block;margin-top:4px;padding:7px 9px;box-shadow:inset 0 0 0 1px var(--rule);
+  background:rgba(2,9,12,.8);font-family:var(--font-data);font-size:11px;line-height:1.55;
+  color:var(--hud);word-break:break-word;
+}
+.profile-head{
+  display:flex;align-items:flex-start;justify-content:space-between;gap:14px;
+  padding-bottom:12px;box-shadow:inset 0 -1px 0 var(--rule);
+}
+.profile-head h2{
+  font-family:var(--font-display);font-size:24px;font-weight:500;letter-spacing:.08em;
+  text-transform:uppercase;margin:5px 0 0;color:var(--ink);
+}
+.profile-warning{
+  font-family:var(--font-ui);font-size:12.5px;line-height:1.5;color:var(--amber);
+  padding:8px 10px;margin:8px 0;box-shadow:inset 3px 0 0 var(--amber);
+}
+.profile-restore textarea{width:100%;font-size:11px}
+
+/* A leaderboard row's replay key is a table-cell control, so it is sized to the
+   cell rather than to the dialog's default key. */
+.leaderboard-replay{font-size:10px;padding:4px 8px;min-height:24px}
+
+/* The licence cells: a ruled grid of label-over-value, no card behind it. The
+   identifier is long and unbreakable, so its cell scrolls rather than
+   hyphenating a flight key across two lines like prose. */
+.profile-identity{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:1px;margin:12px 0;background:var(--rule-soft);box-shadow:inset 0 0 0 1px var(--rule-soft);
+}
+.profile-identity > div{
+  background:rgba(4,14,18,.9);padding:8px 10px;
+  display:flex;flex-direction:column;gap:3px;
+}
+.profile-identity strong{font-family:var(--font-data);font-size:15px;color:var(--hud-bright);font-weight:500}
+.profile-identity code{
+  font-size:10.5px;color:var(--hud);white-space:nowrap;overflow-x:auto;
+  scrollbar-width:none;letter-spacing:.01em;
+}
+.profile-identity code::-webkit-scrollbar{display:none}
+.profile-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.profile-row input{flex:1 1 200px;min-width:0}
+.profile-note{font-family:var(--font-data);font-size:10px;line-height:1.5;color:var(--ink-3);margin:6px 0}
+.profile-note.is-valid{color:var(--green)}
+
+/* The dossier is printed from an off-screen frame, so the frame must render
+   while staying out of the view — `display:none` would print blank. */
+.dossier-print-frame{position:fixed;left:-10000px;top:0;width:210mm;height:297mm;border:0}
+
+/* ---------------------------------------------------------------- motion */
+/* The interface never animates itself. Respect a stated preference by removing
+   the only transitions that exist (colour feedback on controls). */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{transition:none!important}
+}
+body.reduced-effects .grain{display:none}

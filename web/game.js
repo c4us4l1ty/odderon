@@ -27,8 +27,12 @@ document.querySelector('.menu-item.primary').focus({ preventScroll: true });
 
 // Verify the generated flight module without instantiating a second simulation.
 // The menu remains usable if the optional build artifact is absent.
-fetch('./odd_view.wasm', { method: 'HEAD' }).then(response => {
+fetch('./odd_view.wasm', { method: 'HEAD' }).then(async response => {
   if (!response.ok) throw new Error();
+  // Drain the (empty) HEAD body. An unread body leaves the request aborted in
+  // the network log, which reads as a broken module in a desktop wrapper even
+  // though the probe succeeded.
+  await response.arrayBuffer();
   state.textContent = 'FLIGHT COMPUTER READY';
   state.parentElement.classList.add('ready');
 }).catch(() => {
