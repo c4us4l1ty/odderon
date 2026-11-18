@@ -162,6 +162,26 @@ shell.
 
 ## 3. Routes
 
+What the standard looks like on screen (1440×900 unless named otherwise), in
+`docs/shots`:
+
+| Screen | File |
+| --- | --- |
+| Title screen | `title.png` |
+| Flight Deck, FDO | `flight-deck.png` |
+| Flight Deck, ACD drawer | `academy.png` |
+| Flight Deck, PCL commit console | `prediction.png` |
+| Flight Deck, PRP Schlieren lab | `propulsion.png` |
+| Flight Deck, VHC authority racks | `vehicle.png` |
+| Tracking station | `observatory.png` |
+| Flight Deck at 390×844 | `flight-deck-phone.png` |
+| Tracking station at 390×844 | `observatory-phone.png` |
+| Licence hatch | `dialog-license.png` |
+
+These are checked-in references, shot from the built `web/` tree. Re-shoot them
+whenever a route changes materially; a stale reference is worse than none.
+
+
 | Route | Player-facing role | Shell |
 | --- | --- | --- |
 | `/` | Title screen: launch manifest and soft-key stack | `hud.css` + `title.css` |
