@@ -10,7 +10,9 @@
     "test:assembly": "node tests/browser/assembly.mjs",
     "test:authority": "node tests/browser/authority.mjs",
     "test:authority:cloud": "ODDERON_AUTHORITY=cloudflare node tests/browser/authority.mjs",
-    "test:cloud-races": "node tests/browser/cloud-concurrency.mjs"
+    "test:cloud-races": "node tests/browser/cloud-concurrency.mjs",
+    "test:ui": "node tests/browser/interface.mjs",
+    "test:engine": "node tests/browser/engine-lab.mjs"
   },
   "devDependencies": {
     "@sparticuz/chromium": "141.0.0",

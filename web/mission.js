@@ -1,6 +1,7 @@
 // Playable mission planning. Scientific calculations are performed by the
 // Rust/WASM planner and one-shot flight workers, not fabricated by canvas.
 import { Governor } from './governor.js';
+import { CANVAS_MONO, loadCanvasFaces } from './glyphs.js';
 import { createLab } from './engine-lab.js';
 import { createAssembly, assemblyPayload, applyAssembly } from './assembly.js';
 import * as identity from './identity.js';
@@ -190,7 +191,26 @@ function updatePreview(){
   }
   if(preview.some(p=>p.state.some(x=>!Number.isFinite(x)))){preview=[];$('plan-status').textContent='The ideal orbit could not be sampled.';cancelFlight();draw();return;}
   $('prefill').disabled=false;$('execute').disabled=nodes.length===0||!!locked;
-  syncFields();updateCausal();draw();annotateAcronyms($('plan-status'));
+  syncFields();updatePlanCheck();updateCausal();draw();annotateAcronyms($('plan-status'));
+}
+/// The plan check reads the committed plan itself: what the maneuver set costs,
+/// what the stage has in the tanks, and whether the numbers were padded or left
+/// at the ideal solution. Nothing here is a second physics model.
+function updatePlanCheck(){
+  const box=$('plan-check');if(!box)return;
+  const set=(id,text,state)=>{const b=$(id);if(!b)return;b.textContent=text;b.parentElement.classList.toggle('is-warning',state==='warn');b.parentElement.classList.toggle('is-bad',state==='bad');};
+  const dv=nodes.reduce((a,n)=>a+Math.hypot(...n.dv),0);
+  const state=nodes.length?readState(wasm,DURATION):null;
+  const fuel=state?state[6]-DRY:null;
+  const metrics=state?orbitMetrics(state):null;
+  const committed=Number($('predict-apo').value);
+  const pad=metrics&&$('predict-apo').value.trim()!==''&&Number.isFinite(committed)
+    ?Math.abs(committed-metrics.apo):null;
+  set('check-dv',nodes.length?`${dv.toFixed(1)} m/s`:'—',nodes.length?null:'warn');
+  set('check-fuel',fuel===null?'—':`${fuel.toFixed(1)} kg`,fuel!==null&&fuel<0?'bad':null);
+  set('check-pad',pad===null?'—':`${pad.toFixed(1)} km`,pad!==null&&pad>50?'warn':null);
+  set('check-nodes',`${nodes.length} burn${nodes.length===1?'':'s'}`,nodes.length?'warn':'bad');
+  const code=$('plan-check-code');if(code)code.textContent=nodes.length?`${nodes.length} NODE`:'EMPTY';
 }
 function readStatePatched(w,t){return Array.from({length:7},(_,i)=>w.mission_lunar_preview(t,i));}
 function cancelFlight(){if(worker){worker.terminate();worker=null;}}
@@ -486,12 +506,49 @@ function toCanvas(point){const rect=canvas.getBoundingClientRect(),span=2.45*TAR
 function draw(){
   const rect=canvas.getBoundingClientRect();if(!rect.width||!rect.height)return;const dpr=Math.min(devicePixelRatio||1,2);canvas.width=Math.round(rect.width*dpr);canvas.height=Math.round(rect.height*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,rect.width,rect.height);draws++;
   const center=toCanvas([0,0,0]),earth=R*rect.height/(2.45*TARGET);
-  const gradient=ctx.createRadialGradient(center[0]-earth*.25,center[1]-earth*.3,earth*.04,center[0],center[1],earth);gradient.addColorStop(0,'#607f71');gradient.addColorStop(.75,'#254b4a');gradient.addColorStop(1,'#102b33');ctx.beginPath();ctx.arc(...center,earth,0,Math.PI*2);ctx.fillStyle=gradient;ctx.fill();ctx.strokeStyle='#6e9e8c';ctx.lineWidth=1;ctx.stroke();
+  drawEarth(center,earth,rect);
   const line=(pts,color,dashed)=>{if(!pts.length)return;ctx.beginPath();ctx.setLineDash(dashed?[4,5]:[]);ctx.strokeStyle=color;ctx.lineWidth=2;pts.forEach((p,i)=>{const xy=toCanvas(p);if(i)ctx.lineTo(...xy);else ctx.moveTo(...xy);});ctx.stroke();ctx.setLineDash([]);};
   if(preview.length)line(preview.map(p=>p.state),'#70d7dc',true);
   if(scenario==='103'&&lunarPreview.length)line(lunarPreview,'#b9a7e8',true);
   if(actual)line(actual,'#e2bc79',false);
-  nodes.forEach((node,i)=>{const state=readState(wasm,node.time);if(state.some(x=>!Number.isFinite(x)))return;const p=toCanvas(state);ctx.fillStyle=i===selected?'#f0ddac':'#a1c2b2';ctx.beginPath();ctx.arc(...p,5,0,Math.PI*2);ctx.fill();ctx.fillStyle='#e4eada';ctx.font='11px system-ui';ctx.fillText(String(i+1),p[0]+9,p[1]-8);if(i===selected){for(const h of handles(p,state)){ctx.strokeStyle=h.color;ctx.beginPath();ctx.moveTo(...p);ctx.lineTo(...h.end);ctx.stroke();ctx.fillStyle=h.color;ctx.beginPath();ctx.arc(...h.end,6,0,Math.PI*2);ctx.fill();ctx.fillText(h.label,h.end[0]+7,h.end[1]-6);}}});
+  nodes.forEach((node,i)=>{const state=readState(wasm,node.time);if(state.some(x=>!Number.isFinite(x)))return;const p=toCanvas(state);ctx.fillStyle=i===selected?'#f0ddac':'#a1c2b2';ctx.beginPath();ctx.arc(...p,5,0,Math.PI*2);ctx.fill();ctx.fillStyle='#dbfffa';ctx.font=`11px ${CANVAS_MONO}`;ctx.fillText(String(i+1),p[0]+9,p[1]-8);if(i===selected){for(const h of handles(p,state)){ctx.strokeStyle=h.color;ctx.beginPath();ctx.moveTo(...p);ctx.lineTo(...h.end);ctx.stroke();ctx.fillStyle=h.color;ctx.beginPath();ctx.arc(...h.end,6,0,Math.PI*2);ctx.fill();ctx.fillText(h.label,h.end[0]+7,h.end[1]-6);}}});
+}
+/// The planet plate behind the orbit. Kept in the console's phosphor palette:
+/// a lit limb on one side, an unlit terminator on the other, a thin atmospheric
+/// ring, a sub-satellite graticule and a fixed instrument ring — so the
+/// projection reads as a tracking display rather than a web illustration.
+function drawEarth(center,earth,rect){
+  const [cx,cy]=center;
+  const halo=ctx.createRadialGradient(cx,cy,earth*.92,cx,cy,earth*1.22);
+  halo.addColorStop(0,'rgba(96,214,206,.15)');halo.addColorStop(.55,'rgba(59,140,148,.07)');halo.addColorStop(1,'rgba(4,12,16,0)');
+  ctx.beginPath();ctx.arc(cx,cy,earth*1.22,0,Math.PI*2);ctx.fillStyle=halo;ctx.fill();
+  const body=ctx.createRadialGradient(cx-earth*.3,cy-earth*.34,earth*.04,cx,cy,earth);
+  body.addColorStop(0,'#7d9f8c');body.addColorStop(.42,'#3d6a63');body.addColorStop(.8,'#17394a');body.addColorStop(1,'#0a1c26');
+  ctx.beginPath();ctx.arc(cx,cy,earth,0,Math.PI*2);ctx.fillStyle=body;ctx.fill();
+  // Terminator: the dark hemisphere the sun does not reach.
+  ctx.save();ctx.beginPath();ctx.arc(cx,cy,earth,0,Math.PI*2);ctx.clip();
+  const night=ctx.createLinearGradient(cx+earth*.35,cy-earth*.5,cx-earth*.55,cy+earth*.75);
+  night.addColorStop(0,'rgba(2,8,12,0)');night.addColorStop(.55,'rgba(2,8,12,.55)');night.addColorStop(1,'rgba(2,8,12,.92)');
+  ctx.fillStyle=night;ctx.fillRect(cx-earth,cy-earth,earth*2,earth*2);
+  // Latitude bands + meridian curves: a graticule, not a texture map.
+  ctx.strokeStyle='rgba(126,226,214,.10)';ctx.lineWidth=1;
+  for(let i=1;i<6;i++){const y=cy-earth+earth*2*i/6;const half=Math.sqrt(Math.max(0,earth*earth-(y-cy)*(y-cy)));ctx.beginPath();ctx.moveTo(cx-half,y);ctx.lineTo(cx+half,y);ctx.stroke();}
+  for(let i=1;i<8;i++){const k=i/8;ctx.beginPath();ctx.ellipse(cx,cy,earth*Math.abs(Math.cos(k*Math.PI)),earth,0,0,Math.PI*2);ctx.stroke();}
+  ctx.restore();
+  // Limb: cool atmosphere ring inside a fine HUD outline.
+  ctx.beginPath();ctx.arc(cx,cy,earth,0,Math.PI*2);ctx.strokeStyle='rgba(140,238,226,.38)';ctx.lineWidth=1;ctx.stroke();
+  ctx.beginPath();ctx.arc(cx,cy,earth+2.5,0,Math.PI*2);ctx.strokeStyle='rgba(96,214,206,.16)';ctx.stroke();
+  // Fixed calibration ring with ticks, drawn in screen space.
+  const ring=earth+Math.min(26,earth*.16);
+  ctx.save();ctx.strokeStyle='rgba(96,214,206,.18)';ctx.lineWidth=1;
+  ctx.beginPath();ctx.arc(cx,cy,ring,0,Math.PI*2);ctx.stroke();
+  for(let i=0;i<36;i++){const a=i*Math.PI/18,len=i%3===0?7:3;ctx.beginPath();ctx.moveTo(cx+Math.cos(a)*ring,cy+Math.sin(a)*ring);ctx.lineTo(cx+Math.cos(a)*(ring+len),cy+Math.sin(a)*(ring+len));ctx.stroke();}
+  ctx.restore();
+  // Corner readouts belong to the projection, not the panel.
+  ctx.save();
+  ctx.font=`9px ${CANVAS_MONO}`;ctx.fillStyle='rgba(92,160,158,.85)';ctx.textAlign='right';ctx.textBaseline='alphabetic';
+  ctx.fillText(`BODY R ${(R/1000).toFixed(0)} KM`,rect.width-14,rect.height-12);
+  ctx.restore();
 }
 function handles(p,state){const v=[state[3],-(state[4]*plane[0]+state[5]*plane[1])],m=Math.hypot(...v)||1,t=v.map(x=>x/m),n=[-t[1],t[0]];return [{key:'t',dir:t,color:'#80d9cb',label:'Along'},{key:'n',dir:n,color:'#e1bc76',label:'Sideways'},{key:'w',dir:[.707,-.707],color:'#bdade0',label:'Plane tilt'}].map(h=>({...h,end:[p[0]+h.dir[0]*42,p[1]+h.dir[1]*42]}));}
 function mousePoint(e){const r=canvas.getBoundingClientRect();return [e.clientX-r.left,e.clientY-r.top];}
@@ -524,7 +581,7 @@ function drawLens(){
   const cx=w/2,cy=h/2,phase=Math.sin(lensPhase),key=activeLens||'t';
   lensCtx.strokeStyle='#3d5a4e';lensCtx.lineWidth=1;lensCtx.strokeRect(0.5,0.5,w-1,h-1);
   const arrow=(x1,y1,x2,y2,color)=>{lensCtx.strokeStyle=color;lensCtx.fillStyle=color;lensCtx.lineWidth=2;lensCtx.beginPath();lensCtx.moveTo(x1,y1);lensCtx.lineTo(x2,y2);lensCtx.stroke();const a=Math.atan2(y2-y1,x2-x1);lensCtx.beginPath();lensCtx.moveTo(x2,y2);lensCtx.lineTo(x2-8*Math.cos(a-0.4),y2-8*Math.sin(a-0.4));lensCtx.lineTo(x2-8*Math.cos(a+0.4),y2-8*Math.sin(a+0.4));lensCtx.closePath();lensCtx.fill();};
-  lensCtx.fillStyle='#c7d3c4';lensCtx.font='10px system-ui';
+  lensCtx.fillStyle='#c7d3c4';lensCtx.font=`10px ${CANVAS_MONO}`;
   if(key==='t'||key==='time'){
     const breathe=1+0.12*phase;lensCtx.strokeStyle='#70d7dc';lensCtx.setLineDash([4,4]);lensCtx.beginPath();lensCtx.ellipse(cx-20,cy,70,40,0,0,Math.PI*2);lensCtx.stroke();lensCtx.setLineDash([]);
     lensCtx.strokeStyle='#e2bc79';lensCtx.beginPath();lensCtx.ellipse(cx-20,cy,70*breathe,40,0,0,Math.PI*2);lensCtx.stroke();
@@ -761,6 +818,10 @@ async function launchLocked(){
     startFlight(version,context);
   }
 }
+// Editing a prediction field re-reads the plan check, so the pad figure moves
+// with the committed apoapsis instead of waiting for a plan change.
+for(const id of ['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time','predict-miss'])
+  $(id).addEventListener('input',updatePlanCheck);
 $('unlock').addEventListener('click',()=>{locked=null;cancelFlight();sequence++;engineLab?.setLocked();assembly?.setLocked();updateAttemptMode();$('unlock').hidden=true;$('debrief').hidden=true;$('execute-status').textContent='';for(const id of ['predict-dv','predict-apo','predict-peri','predict-fuel','predict-time','predict-miss'])$(id).disabled=false;updatePreview();});
 canvas.addEventListener('pointerdown',e=>{
   if(locked||!preview.length||e.button!==0)return;const p=mousePoint(e),node=nodes[selected];
@@ -797,7 +858,11 @@ function setupPlaytestControls(){
   $('placement-start').addEventListener('click',beginPlacement);
 }
 window.missionDiagnostics=Object.freeze({wasm:()=>wasm,recorder:()=>lastRecorder,verification:()=>verificationResult(),openVerify,profile:()=>identity.profile(),isRanked:id=>identity.isRanked(id),openProfile,get nodeTimeRange(){return nodeTimeRange();},clampNodeTime,get nodeMarker(){const n=nodes[selected];if(!n||!wasm)return null;const s=readState(wasm,n.time);return s.some(x=>!Number.isFinite(x))?null:toCanvas(s);},get pathEnds(){return preview.length?[toCanvas(preview[0].state),toCanvas(preview[preview.length-1].state)]:null;},get nodes(){return nodes.map(n=>({time:n.time,dv:[...n.dv],guidance:n.guidance?[...n.guidance]:null}));},get pending(){return !!worker||authorityPending>0;},get draws(){return draws;},get messages(){return messages;},get locked(){return !!locked;},get report(){return lastReport?[...lastReport]:null;},get computeMs(){return lastComputeMs;},get lunarInfo(){return lastLunarInfo?[...lastLunarInfo]:null;},get lens(){return activeLens;},get lensDraws(){return lensDraws;},get lensPending(){return lensGovernor.frame!==null;},get engine(){return engineLab?engineLab.diagnostics():null;},get appliedEngine(){return appliedEngine?{...appliedEngine}:null;},get assembly(){return assembly?assembly.diagnostics():null;},get boilOff(){return lastBoilOff;},get flownDelegationMask(){return lastDelegationMask;},get causalValid(){return wasm?wasm.mission_causal_valid()===1&&wasm.mission_engine_causal_valid()===1:false;},get acronymViolations(){return acronymViolations();},get handles(){if(selected<0||!wasm)return [];const state=readState(wasm,nodes[selected].time);return handles(toCanvas(state),state).map(h=>({key:h.key,end:h.end}));},get refusal(){return wasm?refusal(wasm):null;}});
-try{const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error('The physics module is not available. Build it first.');({instance:{exports:wasm}}=await WebAssembly.instantiate(await response.arrayBuffer(),{}));identity.init(wasm);initProfile();initVerify(wasm);initLeaderboard();updateAttemptMode(true);loadGlossary(wasm);
+// The face fetch runs alongside the module fetch, so resolving the instrument
+// type costs nothing but still lands before the first instrument frame.
+const facesReady=loadCanvasFaces();
+try{const response=await fetch('./odd_view.wasm');if(!response.ok)throw Error('The physics module is not available. Build it first.');({instance:{exports:wasm}}=await WebAssembly.instantiate(await response.arrayBuffer(),{}));
+await facesReady;identity.init(wasm);initProfile();initVerify(wasm);initLeaderboard();updateAttemptMode(true);loadGlossary(wasm);
 // The lab reads canonical stage numbers back after a redesign so the planner,
 // the worker payload and the signed recorder cannot disagree about the engine.
 engineLab=createLab({wasm,isLocked:()=>!!locked,annotate:annotateAcronyms,onDiagnose:()=>renderEngineCausal(),onApply:baselineOnly=>{

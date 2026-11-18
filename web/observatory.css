@@ -1,0 +1,231 @@
+/* ============================================================================
+   ODDERON — OBSERVATORY (observatory.html)
+   ----------------------------------------------------------------------------
+   A tracking station: the ephemeris viewport fills the screen, the telemetry
+   column docks to the right, the time scrubber runs along the bottom. No page
+   intro, no footer, no scroll.
+   ========================================================================== */
+
+html,body{height:100%;overflow:hidden;background:#01050a}
+.app{height:100%;display:flex;flex-direction:column;overflow:hidden}
+
+.obs-actions{display:flex;align-items:center;gap:5px}
+.obs-station{
+  display:flex;align-items:center;gap:7px;height:28px;padding:0 11px;
+  font-family:var(--font-data);font-size:9px;letter-spacing:.16em;color:var(--hud);
+  box-shadow:inset 0 0 0 1px rgba(127,227,216,.35);background:rgba(10,40,44,.4);
+  clip-path:polygon(7px 0,100% 0,100% calc(100% - 7px),calc(100% - 7px) 100%,0 100%,0 7px);
+}
+.obs-station .live-dot{
+  width:5px;height:5px;border-radius:50%;background:var(--green);
+  box-shadow:0 0 8px var(--green);display:block;
+}
+
+/* ------------------------------------------------------------------ layout */
+.obs-main{
+  flex:1 1 auto;min-height:0;display:grid;
+  grid-template-columns:minmax(0,1fr) 306px;
+  grid-template-rows:minmax(0,1fr) auto;
+  gap:var(--gap);padding:8px 10px 10px;overflow:hidden;
+}
+
+/* ------------------------------------------------------------- viewport */
+.obs-viewport{
+  position:relative;min-height:0;display:grid;grid-template-rows:minmax(0,1fr) 40px;
+  background:radial-gradient(circle at 50% 46%,rgba(30,88,96,.24),transparent 66%),#02080c;
+  box-shadow:inset 0 0 0 1px var(--stroke);
+  clip-path:polygon(0 0,calc(100% - 16px) 0,100% 16px,100% 100%,16px 100%,0 calc(100% - 16px));
+  overflow:hidden;
+}
+.obs-viewport::after{
+  content:'';position:absolute;left:0;top:0;width:110px;height:1px;pointer-events:none;
+  background:linear-gradient(90deg,var(--hud),transparent);
+}
+.scene{position:relative;min-height:0;overflow:hidden;touch-action:none;cursor:grab;outline:none}
+.scene:active{cursor:grabbing}
+.scene canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+#overlay{pointer-events:none}
+.hud-corner{
+  position:absolute;inset:8px;pointer-events:none;opacity:.5;z-index:2;
+  background:
+    linear-gradient(var(--hud-dim),var(--hud-dim)) 0 0/18px 1px no-repeat,
+    linear-gradient(var(--hud-dim),var(--hud-dim)) 0 0/1px 18px no-repeat,
+    linear-gradient(var(--hud-dim),var(--hud-dim)) 100% 0/18px 1px no-repeat,
+    linear-gradient(var(--hud-dim),var(--hud-dim)) 100% 0/1px 18px no-repeat,
+    linear-gradient(var(--hud-dim),var(--hud-dim)) 0 100%/18px 1px no-repeat,
+    linear-gradient(var(--hud-dim),var(--hud-dim)) 0 100%/1px 18px no-repeat,
+    linear-gradient(var(--hud-dim),var(--hud-dim)) 100% 100%/18px 1px no-repeat,
+    linear-gradient(var(--hud-dim),var(--hud-dim)) 100% 100%/1px 18px no-repeat;
+}
+/* Centre-bore reticle: static HUD furniture over the starfield. */
+.scene-reticle{position:absolute;inset:0;pointer-events:none;z-index:1;opacity:.24}
+.scene-reticle i{position:absolute;background:var(--hud)}
+.scene-reticle i:nth-child(1){left:50%;top:14%;width:1px;height:10%}
+.scene-reticle i:nth-child(2){left:50%;bottom:14%;width:1px;height:10%}
+.scene-reticle i:nth-child(3){top:50%;left:6%;height:1px;width:8%}
+.scene-reticle i:nth-child(4){top:50%;right:6%;height:1px;width:8%}
+.scene-top,.scene-bottom{
+  position:absolute;left:16px;right:16px;z-index:3;display:flex;
+  justify-content:space-between;gap:10px;pointer-events:none;
+}
+.scene-top{top:14px}
+.scene-bottom{bottom:12px;align-items:flex-end}
+.hud-chip{
+  font-family:var(--font-data);font-size:8.5px;letter-spacing:.16em;color:var(--txt-2);
+  text-transform:uppercase;padding:3px 7px;background:rgba(2,10,14,.62);
+  box-shadow:inset 0 0 0 1px rgba(103,214,205,.22);
+}
+.hud-chip b{color:var(--hud);font-weight:500;margin:0 3px}
+.drag-icon{color:var(--hud);margin-right:5px}
+
+.scene-rail{
+  display:flex;align-items:center;justify-content:space-between;gap:14px;
+  padding:0 14px;background:linear-gradient(180deg,rgba(7,22,28,.94),rgba(3,11,15,.96));
+  box-shadow:inset 0 1px 0 var(--stroke);
+}
+.scale-note{display:flex;align-items:center;gap:9px;min-width:0}
+.scale-icon{color:var(--hud-dim);font-size:15px}
+.scale-note strong{
+  display:block;font-family:var(--font-display);font-size:11.5px;font-weight:600;
+  letter-spacing:.16em;color:var(--txt);text-transform:uppercase;
+}
+.scale-note small{display:block;font-family:var(--font-data);font-size:8px;letter-spacing:.1em;color:var(--txt-3);margin-top:1px}
+.view-controls{display:flex;gap:4px}
+.view-controls button{min-height:26px;padding:0 10px;font-size:12px;letter-spacing:.08em}
+.view-controls .reset{font-size:10px;letter-spacing:.14em;padding:0 11px}
+
+.error{
+  position:absolute;inset:0;z-index:5;display:grid;place-content:center;text-align:center;
+  padding:2rem;background:rgba(3,11,15,.94);
+  font-family:var(--font-data);font-size:12px;letter-spacing:.06em;color:var(--red);
+}
+.error[hidden]{display:none}
+
+/* --------------------------------------------------------- telemetry column */
+.obs-side{
+  position:relative;min-height:0;display:flex;flex-direction:column;gap:0;
+  padding:12px 13px 12px;overflow-y:auto;
+  scrollbar-width:thin;scrollbar-color:var(--stroke-2) transparent;
+  background:linear-gradient(180deg,rgba(6,20,26,.94),rgba(2,9,13,.96));
+  box-shadow:inset 0 0 0 1px var(--stroke);
+  clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,14px 100%,0 calc(100% - 14px));
+}
+.obs-side::after{
+  content:'';position:absolute;left:0;top:0;width:70px;height:1px;
+  background:linear-gradient(90deg,var(--hud),transparent);
+}
+.metric-block{padding:9px 0 8px;box-shadow:inset 0 -1px 0 rgba(103,214,205,.12)}
+.metric-block:first-child{padding-top:2px}
+.metric-label{
+  display:flex;align-items:center;justify-content:space-between;
+  font-family:var(--font-data);font-size:8px;letter-spacing:.2em;color:var(--txt-3);
+}
+.metric-label span{color:var(--hud-dim);font-size:10px;letter-spacing:0}
+.metric{
+  font-family:var(--font-data);font-size:clamp(22px,1.9vw,27px);font-weight:500;letter-spacing:-.01em;
+  color:var(--hud-bright);margin-top:5px;display:flex;align-items:baseline;gap:5px;
+  text-shadow:0 0 22px rgba(127,227,216,.35);
+}
+.metric.secondary{font-size:23px}
+.metric small{font-family:var(--font-data);font-size:10px;letter-spacing:.14em;color:var(--hud-dim);text-shadow:none}
+.metric-sub{
+  display:flex;justify-content:space-between;margin-top:3px;
+  font-family:var(--font-data);font-size:8.5px;letter-spacing:.12em;color:var(--txt-3);
+  text-transform:uppercase;
+}
+.metric-sub span{color:var(--hud-dim)}
+.layer-title{margin-top:8px}
+
+/* Hardware rocker switches for the display layers. */
+.toggle-row{
+  position:relative;display:flex;align-items:center;gap:9px;padding:6px 0;cursor:pointer;
+  box-shadow:inset 0 -1px 0 rgba(103,214,205,.09);
+}
+/* The real checkbox sits exactly on top of the drawn rocker: pointer hit-testing
+   lands on the control itself (so both a human and an automated click hit the
+   checkbox), while the rocker and caption are painted underneath it. */
+.toggle-row input{
+  /* A 30x16 rocker is a mouse target; the hit area is a 44px-tall band so a
+     thumb or a shaky pointer can still throw the switch. */
+  position:absolute;left:-6px;top:50%;transform:translateY(-50%);
+  width:42px;height:100%;min-height:44px;margin:0;opacity:0;z-index:2;cursor:pointer;
+}
+.toggle-row>span,.toggle-row .switch{pointer-events:none}
+.toggle-row input:focus-visible ~ .switch{outline:1px solid var(--hud-bright);outline-offset:2px}
+.switch{
+  position:relative;flex:0 0 30px;width:30px;height:16px;background:#071820;
+  box-shadow:inset 0 0 0 1px var(--stroke-2);transition:background .12s,box-shadow .12s;
+}
+.switch:after{
+  content:'';position:absolute;top:2px;left:2px;width:12px;height:12px;background:#4b6a6c;
+  transition:transform .12s,background .12s;
+}
+.toggle-row input:checked+.switch{background:rgba(84,201,190,.28);box-shadow:inset 0 0 0 1px var(--hud)}
+.toggle-row input:checked+.switch:after{transform:translateX(14px);background:var(--hud-bright);box-shadow:0 0 10px var(--hud)}
+.toggle-row input:focus-visible+.switch{outline:1px solid var(--hud-bright);outline-offset:2px}
+.toggle-row>span:last-child{min-width:0}
+.toggle-row strong{
+  display:block;font-family:var(--font-display);font-size:13px;font-weight:500;
+  letter-spacing:.1em;color:var(--txt);text-transform:uppercase;
+}
+.toggle-row small{display:block;font-family:var(--font-data);font-size:8px;letter-spacing:.08em;color:var(--txt-3);margin-top:1px}
+.toggle-row input:checked ~ span strong{color:var(--hud-bright)}
+.status-line{
+  font-family:var(--font-data);font-size:8.5px;letter-spacing:.14em;color:var(--amber);
+  padding:6px 0 2px;
+}
+.side-note{
+  margin-top:auto;padding:8px 9px;font-family:var(--font-data);font-size:9px;line-height:1.55;
+  color:var(--txt-3);background:rgba(4,14,18,.7);box-shadow:inset 2px 0 0 rgba(244,184,96,.4);
+}
+.side-note strong{display:block;color:var(--amber);letter-spacing:.14em;font-size:8px;margin-bottom:2px}
+
+/* ------------------------------------------------------------ time control */
+.obs-time{
+  grid-column:1;grid-row:2;display:flex;align-items:center;gap:18px;flex-wrap:wrap;
+  padding:9px 14px;background:linear-gradient(180deg,rgba(7,22,28,.94),rgba(3,11,15,.96));
+  box-shadow:inset 0 0 0 1px var(--stroke);
+  clip-path:polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,12px 100%,0 calc(100% - 12px));
+}
+.time-title{flex:0 0 auto}
+.time-sub{display:block;font-family:var(--font-data);font-size:8px;letter-spacing:.1em;color:var(--txt-3);margin-top:2px}
+.time-controls{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.time-controls label{
+  font-family:var(--font-data);font-size:8px;letter-spacing:.2em;color:var(--txt-3);
+  margin-right:2px;display:flex;align-items:center;gap:5px;
+}
+.time-scale{color:var(--amber)}
+.time-controls button{min-height:30px;padding:0 11px;font-size:13px;letter-spacing:0}
+.time-controls input{width:auto;min-width:150px;min-height:30px;padding:4px 9px;font-size:12px}
+.time-controls .date-reset{font-size:10px;letter-spacing:.12em;padding:0 12px}
+.time-explain{
+  flex:1 1 220px;font-family:var(--font-data);font-size:8.5px;line-height:1.5;
+  color:var(--txt-3);margin:0;
+}
+
+/* -------------------------------------------------------------- responsive */
+@media (max-width:1100px){
+  .obs-main{grid-template-columns:minmax(0,1fr) 268px}
+}
+@media (max-width:900px){
+  .obs-main{grid-template-columns:1fr;grid-template-rows:minmax(220px,1fr) minmax(0,auto) auto;overflow-y:auto}
+  .obs-side{max-height:none;overflow:visible}
+  .obs-time{grid-column:1;grid-row:3}
+  .time-explain{display:none}
+}
+@media (max-width:650px){
+  .obs-station{display:none}
+  .obs-main{padding:5px;gap:5px}
+  .obs-viewport{min-height:240px}
+  .scene-rail{height:34px;padding:0 8px}
+  .scale-note small{display:none}
+  .obs-time{padding:7px 9px;gap:6px;flex-wrap:nowrap}
+  .time-title{display:none}
+  .time-controls{flex-wrap:nowrap;gap:4px;width:100%}
+  .time-controls label{display:none}
+  .time-controls input{min-width:0;flex:1 1 auto;font-size:11px}
+  .time-controls button{padding:0 9px}
+  .time-controls .date-reset{padding:0 9px;font-size:9px}
+  .side-note{margin-top:10px}
+  .topbar .obs-actions>a{padding:0 8px;font-size:8px}
+}

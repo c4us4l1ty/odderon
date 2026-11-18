@@ -1,8 +1,11 @@
 # Portable game shell
 
 Odderon's root route is the game, not a storefront or product landing page. The
-current shell is a full-viewport title and command screen with no document
-scroll, recurring timer, animation loop or hosting-provider dependency.
+current shell is a full-viewport launch console with no document scroll,
+recurring timer, animation loop or hosting-provider dependency. The shipped
+visual standard — palette, typefaces, instrument components and the rules that
+keep the screens from regressing into a website — is specified in
+[interface.md](interface.md); read it before changing anything in `web/`.
 
 ## Player routes
 
@@ -13,11 +16,14 @@ scroll, recurring timer, animation loop or hosting-provider dependency.
 | `/mission.html#onboarding` | Academy entry point |
 | `/observatory.html` | Earth–Moon Observatory reference screen |
 
-The title screen exposes Enter Flight Deck, Academy, Observatory and Settings.
+The title screen is a launch manifest: the camera plate with a stencilled hull
+wordmark, the current operation card, a telemetry column, and the main menu as a
+soft-key stack pinned to the bottom left with function numbers and
+sub-captions. It exposes Enter Flight Deck, Academy, Observatory and Settings.
 The primary action receives initial keyboard focus, so Enter opens the Flight
 Deck without a pointer. Settings are local-device preferences. Reduced visual
-effects removes the grain and backdrop filters; high contrast increases menu
-separation. Neither setting writes to a server.
+effects removes the grain and backdrop filters; high contrast increases
+instrument separation. Neither setting writes to a server.
 
 The title screen checks whether `odd_view.wasm` is present and reports the
 flight computer as ready or not built. It does not instantiate a second physics
@@ -28,15 +34,18 @@ runtime. A missing module does not disguise itself as a successful build.
 The Flight Deck is a fixed-height command console rather than a stacked web
 page. Its left station rail switches one active operational workspace at a time:
 
-- **FDO / Flight:** contract selection, orbit viewport and maneuver controls;
-- **ACD / Academy:** placement and lessons docked above the live flight controls;
+- **FDO / Flight:** contract selection, orbit instrument and maneuver controls;
+- **ACD / Academy:** a split station — the lesson well and its placement controls above the live flight board, so every lesson reads the same plan and telemetry the contracts use;
 - **PRP / Engine:** engine geometry, Schlieren view and fitted performance;
 - **VHC / Vehicle:** delegation, tanks, thermal hardware and electrical sizing;
 - **PCL / Predict:** prediction contract and launch commitment;
 - **FDR / Debrief:** unlocked after execution and opened automatically.
 
 The top command strip keeps the active station, operation, frame and authority
-mode visible. On narrow screens the station rail becomes a bottom game bar.
+mode visible, and a bottom status line carries the flight-computer lamp and the
+station keys (digits select a station, Q/E step along the rail). On narrow
+screens the station rail becomes a bottom game bar underneath the workspace, and
+only the active station scrolls.
 Profile, leaderboard and verification overlays share the same flight-computer
 visual language. The Observatory is also an instrument console and links
 straight back to the game menu and Flight Deck. On desktop, all three primary
@@ -81,6 +90,12 @@ cp target/wasm32-unknown-unknown/release/odd_view.wasm web/odd_view.wasm
 ```
 
 ## Acceptance boundary
+
+`npm run test:ui` additionally holds the interface standard: every route loads
+the shared console sheet and none of the retired ones, no text control keeps a
+native appearance or a rounded web border, the title menu is anchored to the
+bottom of the screen, the Flight Deck never scrolls the document and keeps its
+station rail on all six stations, and no route carries a website footer.
 
 The browser gate verifies the title route in real Chromium before entering the
 Observatory and Flight Deck. It checks:

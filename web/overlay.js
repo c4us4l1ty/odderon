@@ -1,3 +1,4 @@
+import { CANVAS_MONO } from './glyphs.js';
 // Reusable Canvas2D telemetry primitives. Callers must supply real computed
 // geometry and labels; nothing here creates an orbit, apsis, or B-plane.
 const finitePoint=p=>Array.isArray(p)&&p.length===2&&p.every(Number.isFinite);
@@ -17,7 +18,7 @@ export function vector(ctx, from, to, {color='#e1bd78'}={}) {
 // Apsis is a supplied screen position and label, not detected by drawing code.
 export function apsis(ctx, point, label, {color='#d5bb80'}={}) {
   if(!finitePoint(point)||typeof label!=='string')return;
-  ctx.save();ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=1;ctx.beginPath();ctx.arc(point[0],point[1],3,0,Math.PI*2);ctx.stroke();ctx.font='10px system-ui';ctx.fillText(label,point[0]+7,point[1]-7);ctx.restore();
+  ctx.save();ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=1;ctx.beginPath();ctx.arc(point[0],point[1],3,0,Math.PI*2);ctx.stroke();ctx.font=`10px ${CANVAS_MONO}`;ctx.fillText(label,point[0]+7,point[1]-7);ctx.restore();
 }
 // Diagram in caller-supplied pixel coordinates; target is optional. The caller
 // supplies all scaling, B-plane basis, units and actual trajectory solutions.
@@ -27,7 +28,7 @@ export function bPlane(ctx, center, radius, {target=null, label='B-plane', color
   for(const r of [radius*.5,radius]){ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.stroke();}
   ctx.beginPath();ctx.moveTo(x-radius,y);ctx.lineTo(x+radius,y);ctx.moveTo(x,y-radius);ctx.lineTo(x,y+radius);ctx.stroke();
   if(target){ctx.beginPath();ctx.arc(target[0],target[1],3,0,Math.PI*2);ctx.fill();}
-  ctx.font='10px system-ui';ctx.fillText(label,x-radius,y-radius-8);ctx.restore();
+  ctx.font=`10px ${CANVAS_MONO}`;ctx.fillText(label,x-radius,y-radius-8);ctx.restore();
 }
 
 // A screen-space locator, not an enlargement of the physical object.

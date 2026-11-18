@@ -1,102 +1,118 @@
-.mission-main{padding-bottom:20px}.back{color:#b8cabb;font-size:12px;text-decoration:none}.mission-grid{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:16px}.planner-card,.planner-controls,.contract-card,.debrief{border:1px solid var(--line);background:#13211f;padding:24px}.planner-head{display:flex;justify-content:space-between;align-items:start}.planner-head h2,.contract-card h2,.debrief h2{font-size:32px;margin-top:12px}.mission-chip{font-size:9px;letter-spacing:.12em;color:#dfc68a;border:1px solid #705f3f;padding:7px 10px;border-radius:20px}.mission-sub,.planner-controls p,.contract-card p,.disclaimer{font-size:12px;line-height:1.65;color:#9dac9f}.mission-canvas{position:relative;height:clamp(320px,36vw,510px);background:radial-gradient(circle at center,#182d2c,#0a1718 70%);overflow:hidden;touch-action:none}.mission-canvas canvas{cursor:crosshair}.mission-canvas span{position:absolute;top:15px;left:16px;font-size:9px;letter-spacing:.12em;color:#849b90;pointer-events:none}.plan-status{color:#c4d7c1;font-size:11px;min-height:16px}.mission-legend{display:flex;gap:25px;color:#a4b7a8;font-size:11px}.mission-legend i{display:inline-block;vertical-align:middle;width:25px;border-top:2px dashed #6ad5da;margin-right:6px}.mission-legend .gold{border-top:2px solid #e1bd78}.mission-legend .violet{border-top:2px dashed #b9a7e8}.planner-controls{display:flex;flex-direction:column;gap:8px}.planner-controls p{margin:5px 0 10px}.planner-controls label,.prediction-grid label{font-size:11px;color:#cbd7c9;margin-top:8px}.planner-controls small,.prediction-grid small{font-size:10px;color:#829589;float:right}.planner-controls input,.planner-controls select,.prediction-grid input{width:100%;background:#0d1c1b;color:#e3eddf;border:1px solid #40544b;border-radius:3px;padding:9px}.planner-controls select{appearance:auto}.button-row{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}.button-row button,.planner-controls button{border:1px solid #53695b;background:#1c3029;padding:9px 12px;border-radius:3px;font-size:11px}.button-row button:hover,.planner-controls button:hover{background:#2b4535}.button-row .primary{background:#bbd1b3;color:#10201a;font-weight:700}.button-row .primary:hover{background:#dbebd3}.quiet{background:transparent!important;color:#c3d1c3}.lens{border-left:2px solid #d1b47c;background:#1c3028;padding:14px;margin-top:15px}.lens p{margin:10px 0 0;color:#c7d3c4}.contract-card,.debrief{margin-top:16px}.contract-card p{max-width:780px}.prediction-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin:20px 0}.prediction-grid input{display:block;margin-top:7px}.debrief h2 em{color:#c1d2b7}.debrief-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:22px 0}.debrief-grid div{background:#1a2c26;padding:16px}.debrief-grid strong,.debrief-grid span{display:block}.debrief-grid strong{font:24px Georgia,serif;color:#e6d49e}.debrief-grid span{font-size:10px;color:#9bad9f;margin-top:7px}.sensitivity-list{font-size:12px;color:#bbcebd;line-height:1.9}.disclaimer{max-width:800px}.failure{color:#edbc98!important}@media(max-width:850px){.mission-grid{grid-template-columns:1fr}.prediction-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.debrief-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.mission-canvas{height:400px}}@media(max-width:450px){.planner-card,.planner-controls,.contract-card,.debrief{padding:16px}.mission-canvas{height:320px}.prediction-grid{grid-template-columns:1fr}.mission-legend{flex-wrap:wrap;gap:10px}.back{font-size:10px}}
+/* ============================================================================
+   ODDERON — FLIGHT DECK (mission.html)
+   ----------------------------------------------------------------------------
+   The console body is a fixed grid: top command bar, left station rail, the
+   active station workspace, and a bottom status line. No document scroll, no
+   page footer, no stacked marketing sections. Everything below assumes ui.css.
+   ========================================================================== */
 
-.causal{border-left:2px solid #8ea98d;background:#182c25;padding:14px;margin-top:8px}.causal #causal-text{font-size:11px;line-height:1.65;color:#bdcdbd;margin-top:10px}.causal button{margin-top:10px}.cause-chain{margin-bottom:8px}.cause-chain strong{color:#ead7a9}
-/* style.css positions every canvas absolutely for the observatory scene.
-   The lens panel is not a scene, so its canvas must stay in normal flow or
-   it escapes to the initial containing block and covers the top bar. */
-/* Reserve the close button's space: hiding it on input blur must not move a
-   neighboring button between pointerdown and click. */
-.lens-close-slot{min-height:33px}
-.lens canvas{position:static;display:block;width:100%;height:150px;background:#0d1c1b;border:1px solid #34493f;margin:10px 0}.lens-projection{font-size:11px;color:#ead7a9;border-top:1px solid #34493f;padding-top:8px}.term{text-decoration:underline dotted #d1b47c;text-underline-offset:3px;cursor:help;color:#ead7a9}.term:focus{outline:2px solid #d1b47c;outline-offset:2px}.prediction-table{width:100%;border-collapse:collapse;font-size:12px;margin:18px 0}.prediction-table th,.prediction-table td{border:1px solid #34493f;padding:8px;text-align:right}.prediction-table th:first-child,.prediction-table td:first-child{text-align:left}.prediction-table thead th{background:#1a2c26;color:#ead7a9}.finite-loss,.elo-update,.attribution-note{font-size:12px;color:#bbcebd;line-height:1.7}.cause-chain .demo{margin-left:8px;padding:4px 8px;font-size:10px}
-@media print{.topbar,.planner-controls,.button-row,footer,#unlock,.mission-canvas{display:none!important}.app,.mission-main{background:#fff;color:#000}.planner-card,.contract-card,.debrief{border:1px solid #999;background:#fff;color:#000}.prediction-table th,.prediction-table td{border-color:#999}.debrief-grid div{background:#f4f4f4}.debrief-grid strong{color:#000}abbr.term{color:#000;text-decoration:underline}}
+html,body{height:100%;overflow:hidden;background:var(--space)}
+.app{height:100%;display:flex;flex-direction:column;overflow:hidden}
 
-/* Flight License & Profile. Static styles only: the idle gate forbids
-   keyframe animation and the governor owns every animation frame. */
-.topbar-right{display:flex;align-items:center;gap:1rem;flex-wrap:wrap}
-.profile-button{display:flex;align-items:center;gap:.55rem;padding:.4rem .7rem;border:1px solid var(--line,#2b3f45);border-radius:.5rem;background:transparent;color:inherit;font:inherit;cursor:pointer}
-.profile-button:hover,.profile-button:focus-visible{border-color:var(--gold,#c9a227)}
-.profile-button-label{font-size:.62rem;letter-spacing:.12em;opacity:.65}
-.profile-elo-chip{font-size:.66rem;letter-spacing:.08em;opacity:.8}
-.attempt-row{margin:.75rem 0;display:flex;flex-direction:column;gap:.3rem}
-.attempt-row select{max-width:22rem}
-#profile-dialog{width:min(52rem,94vw);max-height:88vh;overflow:auto;padding:1.5rem;border:1px solid var(--line,#2b3f45);border-radius:.75rem;background:var(--panel,#0f1c20);color:inherit}
-#profile-dialog::backdrop{background:rgba(4,10,12,.72)}
-.profile-head{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem}
-.profile-head h2{margin:.2rem 0 0}
-#profile-close{background:transparent;border:1px solid var(--line,#2b3f45);border-radius:.4rem;color:inherit;cursor:pointer;padding:.25rem .55rem}
-.profile-identity{display:grid;grid-template-columns:repeat(auto-fit,minmax(11rem,1fr));gap:.9rem;margin:1.2rem 0}
-.profile-identity>div{display:flex;flex-direction:column;gap:.2rem}
-.profile-identity code{font-size:.78rem;word-break:break-all}
-.profile-row{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin-top:.4rem}
-.profile-row input{flex:1 1 14rem;min-width:0}
-.profile-note{font-size:.76rem;line-height:1.45;opacity:.8;margin:.4rem 0}
-.profile-note.is-valid{color:var(--cyan,#57d2d2);opacity:1}
-.profile-warning{font-size:.78rem;line-height:1.5;border-left:2px solid var(--gold,#c9a227);padding-left:.7rem;margin:.7rem 0}
-.secret-block{margin:.7rem 0}
-.secret-head{display:flex;justify-content:space-between;align-items:center;gap:.75rem}
-.secret-value{display:block;margin-top:.3rem;padding:.6rem;border:1px solid var(--line,#2b3f45);border-radius:.4rem;font-size:.8rem;line-height:1.6;word-break:break-word}
-#profile-reveal{margin:1rem 0;padding:.7rem;border:1px solid var(--line,#2b3f45);border-radius:.5rem}
-#profile-reveal summary{cursor:pointer}
-.profile-restore textarea{width:100%;box-sizing:border-box;font-family:ui-monospace,monospace;font-size:.8rem}
-.profile-restore h3,.profile-ranked h3{font-size:.9rem;margin:1.2rem 0 .4rem}
-.file-button{border:1px solid var(--line,#2b3f45);border-radius:.4rem;padding:.35rem .7rem;cursor:pointer;font-size:.8rem}
+.console-body{
+  flex:1 1 auto;min-height:0;display:flex;align-items:stretch;overflow:hidden;
+}
+.console-main{
+  flex:1 1 auto;min-width:0;display:flex;flex-direction:column;overflow:hidden;
+}
 
-/* Verification dialog. Shares the profile dialog's static chrome. */
-#verify-dialog{width:min(48rem,94vw);max-height:88vh;overflow:auto;padding:1.5rem;border:1px solid var(--line,#2b3f45);border-radius:.75rem;background:var(--panel,#0f1c20);color:inherit}
-#verify-dialog::backdrop{background:rgba(4,10,12,.72)}
-#verify-dialog textarea{width:100%;box-sizing:border-box;font-family:ui-monospace,monospace;font-size:.76rem}
-#verify-close{background:transparent;border:1px solid var(--line,#2b3f45);border-radius:.4rem;color:inherit;cursor:pointer;padding:.25rem .55rem}
-.verify-verdict{font-size:.9rem;font-weight:700;letter-spacing:.04em;margin:.9rem 0 .3rem;min-height:1.2em}
-.verify-verdict.is-verified{color:#8fe0b0}
-.verify-verdict.is-rejected{color:#eda88a}
+/* Bottom status line replaces the old website footer. */
+.console-status{
+  flex:0 0 24px;display:flex;align-items:center;justify-content:space-between;gap:14px;
+  padding:0 12px 0 4px;
+  background:linear-gradient(180deg,rgba(2,9,13,.6),rgba(2,9,13,.95));
+  box-shadow:inset 0 1px 0 var(--stroke);
+  font-family:var(--font-data);font-size:8px;letter-spacing:.16em;color:var(--txt-3);
+  text-transform:uppercase;
+}
+.console-status b{color:var(--hud);font-weight:500}
+.status-lamp{display:flex;align-items:center;gap:7px;color:var(--green)}
+.status-lamp i{width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}
+.status-build{color:var(--txt-3)}
 
-/* The dossier print frame is off-screen but rendered, so the browser can
-   print the document at its own @page geometry. */
-.dossier-print-frame{position:fixed;left:-10000px;top:0;width:210mm;height:297mm;border:0}
-.certificate-button{margin-left:.35rem;padding:.2rem .5rem;font-size:.7rem;border:1px solid var(--line,#2b3f45);border-radius:.35rem;background:transparent;color:inherit;cursor:pointer}
-.certificate-button:hover{border-color:var(--gold,#c9a227)}
+/* The station rail is now a column inside the console body, not a page block. */
+.flight-mode-nav{height:100%;flex:0 0 78px}
 
-/* Engine CAD & Schlieren lab. Static styles only: the governor owns every
-   animation frame, and the idle gate forbids keyframe animation. */
-.engine-card{border:1px solid var(--line);background:#13211f;padding:24px;margin-top:16px}
-.engine-card h2{font-size:32px;margin-top:12px}
-.engine-card h2 em{color:#c1d2b7}
-.engine-grid{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:18px;margin-top:18px}
-.engine-view{position:relative;min-height:300px;height:clamp(300px,30vw,420px);background:#08110f;border:1px solid #34493f;overflow:hidden;touch-action:none}
-/* style.css positions every canvas absolutely for the observatory scene. */
-.engine-view canvas{cursor:crosshair}
-.engine-view span{position:absolute;top:12px;left:14px;font-size:9px;letter-spacing:.12em;color:#849b90;pointer-events:none}
-.engine-controls{display:flex;flex-direction:column;gap:6px}
-.engine-controls label{font-size:11px;color:#cbd7c9;margin-top:8px}
-.engine-controls small{font-size:10px;color:#829589;float:right}
-.engine-controls input,.engine-controls select{width:100%;background:#0d1c1b;color:#e3eddf;border:1px solid #40544b;border-radius:3px;padding:8px}
-.engine-controls input[type=range]{padding:0;accent-color:#bbd1b3}
-.engine-controls select{appearance:auto}
-#engine-status{font-size:11px;color:#c4d7c1;min-height:16px;line-height:1.6}
-.engine-readout{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin:18px 0 4px}
-.engine-readout div{background:#1a2c26;padding:12px}
-.engine-readout strong{display:block;font:20px Georgia,serif;color:#e6d49e}
-.engine-readout span{display:block;font-size:10px;color:#9bad9f;margin-top:6px}
-.engine-readout .is-warning strong{color:#edbc98}
-#engine-causal{font-size:11px;line-height:1.65;color:#bdcdbd;margin-top:10px;min-height:3.3em}
-@media(max-width:850px){.engine-grid{grid-template-columns:1fr}.engine-view{height:300px}}
-@media(max-width:450px){.engine-card{padding:16px}}
-@media print{.engine-card{border:1px solid #999;background:#fff;color:#000}.engine-controls,.engine-view{display:none!important}.engine-readout div{background:#f4f4f4}.engine-readout strong{color:#000}}
+/* The assembly rack is taller than a 720p laptop can show: it gets its own
+   scrollbar inside the bezel rather than clipping the mass ledger. */
+#assembly{overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--stroke-2) transparent}
 
-/* A delegated control shows the chief's own number and cannot be edited. */
-.engine-controls input.chief-owned,.engine-controls input:disabled{opacity:.72;border-style:dashed;border-color:#7d6a45}
-.chief-choice{color:#e1bc76}
+/* Panel-level miniature headings. */
+.planner-head .section-label{display:block}
+.planner-head+*{margin-top:2px}
 
-/* Event-driven onboarding: no keyframes or recurring timers. */
-.onboarding-card{border:1px solid #4c604f;background:#162620;padding:20px 24px;margin:0 0 16px}
-.onboarding-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}
-.onboarding-card h2{margin:7px 0 0;font:26px Georgia,serif;color:#e7d9ae}
-.onboarding-card h3{margin:8px 0;font:22px Georgia,serif}
-.onboarding-card p{max-width:72ch;line-height:1.55}
-.onboarding-save{display:flex;gap:8px;align-items:center;font-size:12px;color:#c4d1c3;margin:12px 0}
-.onboarding-save small{color:#87998d}
-.onboarding-status{border-left:2px solid #7f7051;padding-left:10px;color:#b9c8ba}
-.onboarding-status.is-complete{border-color:#69c8b3;color:#8fdec9}
-#onboarding-hint[data-level="4"]{border-color:#d2b77e;color:#ead9ae}
-@media(max-width:600px){.onboarding-card{padding:16px}.onboarding-head{align-items:center}.onboarding-save{align-items:flex-start}}
-@media print{.onboarding-card{display:none!important}}
+/* Prediction card: ledger style, one row of six entry wells. */
+#prediction-workspace{flex:1 1 auto;min-height:0}
+#execute-status{
+  font-family:var(--font-data);font-size:10px;letter-spacing:.06em;color:var(--hud);
+  margin:8px 0 0;min-height:14px;
+}
+#attempt-mode-note{color:var(--txt-3)}
+
+/* Debrief expands inside the console, keeping the rail and command strip live. */
+#debrief-content{min-height:0}
+#debrief .planner-head{margin-bottom:6px}
+
+/* Engine lab uses the free vertical space for the canvas. */
+#engine-lab .engine-grid{flex:1 1 auto}
+
+/* The reference/lesson panel leans on the amber caution palette. */
+#onboarding{overflow-y:auto}
+/* Academy is a split station: the lesson well on top, the real flight
+   workspace underneath, so a lesson always runs against live telemetry. The
+   well's height is set in ui.css; on narrow screens it flows in the scroll. */
+
+/* ------------------------------------------------------------------ narrow */
+/* The console keeps its chrome. Only the active workspace scrolls, and the
+   station rail becomes a hardware game bar pinned under the workspace. */
+@media (max-width:900px){
+  .console-body{flex-direction:column;min-height:0}
+  .console-main{order:1;flex:1 1 auto;min-height:0}
+  .flight-mode-nav{
+    order:2;flex:0 0 54px;width:100%;height:54px;flex-direction:row;
+    padding:3px 4px;gap:2px;align-items:stretch;
+    box-shadow:inset 0 1px 0 var(--stroke-2);
+  }
+  .mode-rail-title,.mode-rail-state{display:none}
+  .flight-mode-nav button{flex:1 1 0;height:48px;min-height:48px;clip-path:none}
+  .flight-mode-nav button.is-active::before{left:8px;right:8px;top:auto;bottom:0;width:auto;height:2px}
+  .flight-mode-nav button b{font-size:13px}
+  .flight-mode-nav button span{font-size:8px;letter-spacing:.06em}
+
+  .mission-main{display:block;overflow-y:auto;overflow-x:hidden;padding:5px;gap:0}
+  .mission-main>.intro{display:none}
+  .mission-main>[data-flight-panel]{display:none!important}
+  .mission-main>[data-flight-panel].is-active:not([hidden]){display:block!important;height:auto;flex:none}
+  .mission-main>.mission-grid.is-active{display:block!important}
+  .planner-card,.planner-controls,.engine-card,.contract-card,.debrief,.onboarding-card{
+    margin:0 0 5px;height:auto;max-height:none;overflow:visible;padding:11px 12px 13px;
+  }
+  .planner-card{display:block}
+  .mission-canvas{height:min(46vh,320px);margin-top:8px}
+  /* Two absolute corners of sub-8px type collide once the instrument narrows:
+     the plate label moves onto its own line under the sensor tag. */
+  .mission-canvas>span{top:30px}
+  .mission-canvas:after{right:10px;top:8px;font-size:8px;letter-spacing:.1em;padding:2px 5px}
+  .planner-controls{display:block}
+  .planner-controls .button-row button{flex:1 1 40%}
+  .engine-grid{display:block}
+  .engine-view{height:min(34vh,260px);margin-bottom:8px}
+  .engine-readout{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .commit-console{display:block}
+  .commit-console .prediction-grid{grid-template-columns:repeat(2,minmax(0,1fr));margin-bottom:8px}
+  .commit-notes{margin-top:8px}
+  #assembly-grid{display:block}
+  #assembly-grid>.engine-controls{margin-bottom:6px}
+  .debrief{overflow:visible}
+  .console-status{flex:0 0 20px}
+}
+@media (max-width:650px){
+  .console-status{font-size:8px;padding:0 8px 0 4px}
+  .status-keys{display:none}
+  .mission-main>.intro{display:none}
+  .publisher-note{display:none}
+}
+@media (max-width:650px){
+  .flight-command-strip{flex:0 0 34px}
+  .mission-canvas{height:min(40vh,270px)}
+}

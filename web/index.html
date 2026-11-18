@@ -3,68 +3,97 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#050a0d">
+  <meta name="theme-color" content="#02060a">
   <meta name="description" content="Odderon — a browser-native space engineering game.">
   <link rel="icon" href="data:,">
   <title>Odderon</title>
   <link rel="preload" href="./assets/title-orbit.jpg" as="image">
-  <link rel="stylesheet" href="./game.css">
+  <link rel="preload" href="./assets/fonts/barlow-condensed-latin-500-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="./ui.css">
+  <link rel="stylesheet" href="./title.css">
 </head>
 <body>
   <main class="title-screen" aria-labelledby="game-title">
     <div class="spacecraft" aria-hidden="true"></div>
     <div class="vignette" aria-hidden="true"></div>
     <div class="grain" aria-hidden="true"></div>
+    <div class="hud-ladder" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="hud-rim" aria-hidden="true"></div>
+    <div class="cam-tag" aria-hidden="true"><span class="cam-rec"></span>EXT CAM 03 · DOCKING APPROACH<span class="cam-tc">T+ 00:03:02:11</span></div>
+    <div class="cam-scale" aria-hidden="true"><i></i><b>20 M</b></div>
 
     <header class="game-header">
-      <div class="wordmark"><span class="wordmark-mark">◒</span><span>ODDERON</span></div>
-      <div class="build-state"><i></i><span id="system-state">FLIGHT COMPUTER INITIALIZING</span></div>
+      <div class="wordmark"><span class="wordmark-mark" aria-hidden="true">◒</span><span>ODDERON</span></div>
+      <div class="build-state"><i aria-hidden="true"></i><span id="system-state">FLIGHT COMPUTER INITIALIZING</span></div>
     </header>
 
-    <section class="command-deck">
-      <p class="kicker">SPACE ENGINEERING SIMULATION</p>
+    <div class="title-stamp">
+      <p class="kicker">Space engineering simulation</p>
       <h1 id="game-title">ODDERON</h1>
-      <p class="tagline">Design the machine.<br>Predict the flight.<br><strong>Answer to physics.</strong></p>
+      <p class="tagline">Contract 101 staged · Window <strong>03:00:00</strong></p>
+      <p class="build-tag">MISSION SOFTWARE 0.3 · LOCAL PRACTICE BUILD</p>
+    </div>
 
-      <nav class="game-menu" aria-label="Main menu">
-        <a class="menu-item primary" href="./mission.html">
-          <span class="menu-index">01</span><span class="menu-label">ENTER FLIGHT DECK<small>Continue with mission planning</small></span><span class="menu-arrow">›</span>
-        </a>
-        <a class="menu-item" href="./mission.html#onboarding">
-          <span class="menu-index">02</span><span class="menu-label">ACADEMY<small>Placement and guided flight</small></span><span class="menu-arrow">›</span>
-        </a>
-        <a class="menu-item" href="./observatory.html">
-          <span class="menu-index">03</span><span class="menu-label">OBSERVATORY<small>Explore the Earth–Moon system</small></span><span class="menu-arrow">›</span>
-        </a>
-        <button class="menu-item" id="open-settings" type="button">
-          <span class="menu-index">04</span><span class="menu-label">SETTINGS<small>Display and accessibility</small></span><span class="menu-arrow">›</span>
-        </button>
-      </nav>
-    </section>
+    <nav class="game-menu" aria-label="Main menu">
+      <a class="menu-item primary" href="./mission.html">
+        <span class="menu-mark" aria-hidden="true">▸</span>
+        <span class="menu-label">Enter flight deck<small>Continue the operation</small></span>
+        <span class="menu-index" aria-hidden="true">01</span>
+      </a>
+      <a class="menu-item" href="./mission.html#onboarding">
+        <span class="menu-mark" aria-hidden="true">▸</span>
+        <span class="menu-label">Academy<small>Placement and guided flight</small></span>
+        <span class="menu-index" aria-hidden="true">02</span>
+      </a>
+      <a class="menu-item" href="./observatory.html">
+        <span class="menu-mark" aria-hidden="true">▸</span>
+        <span class="menu-label">Observatory<small>Earth–Moon tracking station</small></span>
+        <span class="menu-index" aria-hidden="true">03</span>
+      </a>
+      <button class="menu-item" id="open-settings" type="button">
+        <span class="menu-mark" aria-hidden="true">▸</span>
+        <span class="menu-label">Settings<small>Display and accessibility</small></span>
+        <span class="menu-index" aria-hidden="true">04</span>
+      </button>
+    </nav>
 
     <aside class="mission-brief" aria-label="Current operation">
-      <p class="brief-label">CURRENT OPERATION</p>
-      <div class="brief-rule"></div>
+      <div class="brief-head"><p class="brief-label">Operation</p><span class="brief-live">ASSIGNED</span></div>
       <p class="brief-code">CONTRACT 101</p>
-      <h2>ORBIT RESCUE</h2>
+      <h2>Orbit rescue</h2>
       <p>Recover a stranded stage. Build an engine, design the burns, and lock your prediction before flight.</p>
+      <div class="brief-rule" aria-hidden="true"></div>
       <div class="brief-meta"><span>EARTH ORBIT</span><span>CADET</span><span>3 HOURS</span></div>
     </aside>
 
+    <ul class="hud-readout" aria-hidden="true">
+      <li><span>FRAME</span><b>EARTH-CENTERED</b></li>
+      <li><span>AUTHORITY</span><b>LOCAL / PRACTICE</b></li>
+      <li><span>STATION</span><b>FLIGHT DYNAMICS</b></li>
+    </ul>
+
     <footer class="game-footer">
-      <span>FOUNDATION 0.3 <b>•</b> LOCAL PRACTICE</span>
-      <span>PORTABLE WEB BUILD</span>
-      <span class="key-hint"><kbd>↵</kbd> SELECT</span>
+      <span>Foundation 0.3 <b>•</b> Local practice</span>
+      <span class="game-footer-mid">Portable web build</span>
+      <span class="key-hint"><kbd>↵</kbd> Select</span>
     </footer>
   </main>
 
   <dialog id="settings-dialog" class="settings-dialog">
     <form method="dialog">
-      <div class="dialog-head"><div><p>ODDERON / SYSTEM</p><h2>Settings</h2></div><button value="close" aria-label="Close settings">×</button></div>
-      <label><span>Reduced visual effects<small>Disable grain and expensive backdrop effects</small></span><input id="reduced-effects" type="checkbox"></label>
-      <label><span>Interface contrast<small>Increase menu separation</small></span><input id="high-contrast" type="checkbox"></label>
-      <p class="settings-note">Flight controls and audio settings will appear here as those systems ship. Preferences remain on this device.</p>
-      <button class="settings-done" value="close">RETURN TO COMMAND</button>
+      <div class="dialog-head"><div><p>ODDERON / FLIGHT COMPUTER</p><h2>Settings</h2></div><button value="close" aria-label="Close settings">✕</button></div>
+      <label class="switch-row">
+        <input id="reduced-effects" type="checkbox">
+        <span class="switch" aria-hidden="true"></span>
+        <span>Reduced visual effects<small>Disable film grain and expensive backdrop effects</small></span>
+      </label>
+      <label class="switch-row">
+        <input id="high-contrast" type="checkbox">
+        <span class="switch" aria-hidden="true"></span>
+        <span>Interface contrast<small>Increase instrument separation</small></span>
+      </label>
+      <p class="settings-note">Flight controls and audio settings appear here as those systems ship. Preferences remain on this device.</p>
+      <button class="settings-done" value="close">Return to command</button>
     </form>
   </dialog>
   <script type="module" src="./game.js"></script>

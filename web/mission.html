@@ -2,13 +2,24 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#0b1518"><link rel="icon" href="data:,">
-  <title>Odderon · Mission planning</title>
-  <link rel="stylesheet" href="./style.css"><link rel="stylesheet" href="./mission.css"><link rel="stylesheet" href="./flight-shell.css">
+  <meta name="theme-color" content="#02060a"><link rel="icon" href="data:,">
+  <title>Odderon · Flight Deck</title>
+  <link rel="preload" href="./assets/fonts/barlow-condensed-latin-500-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="./ui.css"><link rel="stylesheet" href="./mission.css">
 </head>
-<body><div class="app">
-  <header class="topbar"><a class="brand" href="./"><span class="brand-mark">◒</span><span>ODDERON<small>SPACE ENGINEERING, MADE TANGIBLE</small></span></a><div class="topbar-right"><button type="button" id="open-leaderboard" class="profile-button" aria-haspopup="dialog"><span class="profile-button-label">LEADERBOARD</span></button><button type="button" id="open-verify" class="profile-button" aria-haspopup="dialog"><span class="profile-button-label">VERIFY / REPLAY</span></button><button type="button" id="open-profile" class="profile-button" aria-haspopup="dialog"><span class="profile-button-label">FLIGHT LICENSE</span><strong id="topbar-callsign">—</strong><span class="profile-elo-chip">ELO <b id="topbar-elo">—</b></span></button><a class="back" href="./">← Main menu</a></div></header>
-  <main class="mission-main" data-mode="flight">
+<body>
+<div class="app">
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="Odderon main menu"><span class="brand-mark">◒</span><span>ODDERON<small>MS-0.3 · LOCAL PRACTICE</small></span></a>
+    <div class="topbar-right">
+      <button type="button" id="open-leaderboard" class="profile-button" aria-haspopup="dialog"><span class="profile-button-label">LEADERBOARD</span></button>
+      <button type="button" id="open-verify" class="profile-button" aria-haspopup="dialog"><span class="profile-button-label">VERIFY / REPLAY</span></button>
+      <button type="button" id="open-profile" class="profile-button" aria-haspopup="dialog"><span class="profile-button-label">FLIGHT LICENSE</span><strong id="topbar-callsign">—</strong><span class="profile-elo-chip">ELO <b id="topbar-elo">—</b></span></button>
+      <a class="back" href="./" aria-label="Exit to main menu">EXIT</a>
+    </div>
+  </header>
+
+  <div class="console-body">
     <nav class="flight-mode-nav" aria-label="Flight Deck stations">
       <div class="mode-rail-title">STATIONS</div>
       <button type="button" data-flight-mode="flight"><b>FDO</b><span>FLIGHT</span></button>
@@ -19,103 +30,192 @@
       <button type="button" data-flight-mode="debrief" id="debrief-mode" disabled><b>FDR</b><span>DEBRIEF</span></button>
       <div class="mode-rail-state"><i></i> LOCAL<br>PRACTICE</div>
     </nav>
-    <div class="flight-command-strip"><div><span>ACTIVE STATION</span><strong id="active-station">FLIGHT DYNAMICS</strong></div><div><span>OPERATION</span><strong>ORBIT RESCUE</strong></div><div><span>FRAME</span><strong>EARTH CENTERED</strong></div><div><span>AUTHORITY</span><strong>LOCAL / PRACTICE</strong></div></div>
-    <div class="intro"><div><div class="eyebrow">FLIGHT DECK / CONTRACT OPERATIONS</div><h1>Flight dynamics <em>console.</em></h1><p>Build the vehicle, design the burns, commit a prediction, then answer to the modeled flight.</p></div></div>
-    <section id="onboarding" class="onboarding-card" data-flight-panel="academy" aria-labelledby="onboarding-heading">
-      <div class="onboarding-head"><div><div class="section-label">FIRST 30 MINUTES</div><h2 id="onboarding-heading">Learn by changing the real flight.</h2></div><button id="onboarding-close" class="quiet" aria-label="Close guide">Close</button></div>
-      <p>No scripted outcomes and no separate tutorial physics. Each lesson reads the same plan, engine and debrief as the contracts below.</p>
-      <label class="onboarding-save"><input id="onboarding-save" type="checkbox"> Save lesson progress on this device <small>local only; nothing is sent</small></label>
-      <label class="onboarding-save"><input id="playtest-consent" type="checkbox"> Opt-in: Record local playtest observation log to help improve Odderon <small>stored only on your device until you export</small></label>
-      <div class="button-row"><button id="playtest-export" class="quiet" disabled>Export Playtest Observation JSON</button><button id="playtest-clear" class="quiet" disabled>Clear Playtest Data</button></div>
-      <div id="onboarding-welcome" class="button-row"><button id="onboarding-start" class="primary">Start guided flight</button><button id="placement-start" class="quiet">Find My Starting Point</button><button id="onboarding-skip" class="quiet">Skip for now</button></div>
-      <div id="placement-diagnostic" hidden>
-        <div class="section-label">2-MINUTE HANDS-ON PLACEMENT</div>
-        <p id="placement-copy">Check 1: place a node that raises the ideal apoapsis to at least 500 km, then measure it.</p>
-        <div id="placement-choices" class="button-row"><button id="placement-measure">Measure my orbit</button></div>
-        <p id="placement-status" role="status"></p>
+
+    <div class="console-main">
+      <div class="flight-command-strip">
+        <div><span>ACTIVE STATION</span><strong id="active-station">FLIGHT DYNAMICS</strong></div>
+        <div><span>OPERATION</span><strong>ORBIT RESCUE</strong></div>
+        <div><span>FRAME</span><strong>EARTH CENTERED</strong></div>
+        <div><span>AUTHORITY</span><strong>LOCAL / PRACTICE</strong></div>
       </div>
-      <div id="onboarding-lesson" hidden>
-        <div id="onboarding-progress" class="section-label"></div><h3 id="onboarding-title"></h3><p id="onboarding-copy"></p>
-        <p id="onboarding-mass-ledger" class="onboarding-status" hidden></p>
-        <p id="onboarding-status" class="onboarding-status" role="status"></p>
-        <div class="button-row"><button id="onboarding-hint" class="quiet" data-level="0">Show a hint</button><button id="onboarding-next" disabled>Next lesson</button></div>
+
+      <main class="mission-main" data-mode="flight">
+        <div class="intro"><div class="eyebrow">FLIGHT DECK / CONTRACT OPERATIONS</div><h1>FLIGHT DYNAMICS <em>console.</em></h1><p>Build the vehicle, design the burns, commit a prediction, then answer to the modeled flight.</p></div>
+
+
+        <section id="academy-station" class="station-panel" data-flight-panel="academy">
+          <div class="station-head">
+            <div><div class="section-label">FIRST 30 MINUTES · ACD-01</div><h2 id="onboarding-heading">Learn by changing the real flight.</h2></div>
+            <button id="onboarding-close" class="quiet" aria-label="Close guide">Close</button>
+          </div>
+          <section id="onboarding" class="onboarding-card" aria-labelledby="onboarding-heading">
+            <p class="onboarding-setup">No scripted outcomes and no separate tutorial physics. Each lesson reads the same plan, engine and debrief as the contracts below.</p>
+            <label class="onboarding-save onboarding-setup"><input id="onboarding-save" type="checkbox"> Save lesson progress on this device <small>local only; nothing is sent</small></label>
+            <label class="onboarding-save onboarding-setup"><input id="playtest-consent" type="checkbox"> Opt-in: record a local playtest observation log to help improve Odderon <small>stored on your device until you export</small></label>
+            <div class="button-row onboarding-setup"><button id="playtest-export" class="quiet" disabled>Export observation JSON</button><button id="playtest-clear" class="quiet" disabled>Clear data</button></div>
+            <div id="onboarding-welcome" class="button-row"><button id="onboarding-start" class="primary">Start guided flight</button><button id="placement-start" class="quiet">Find my starting point</button><button id="onboarding-skip" class="quiet">Skip for now</button></div>
+            <div id="placement-diagnostic" hidden>
+              <div class="section-label">2-MINUTE HANDS-ON PLACEMENT</div>
+              <p id="placement-copy">Check 1: place a node that raises the ideal apoapsis to at least 500 km, then measure it.</p>
+              <div id="placement-choices" class="button-row"><button id="placement-measure">Measure my orbit</button></div>
+              <p id="placement-status" role="status"></p>
+            </div>
+            <div id="onboarding-lesson" hidden>
+              <div id="onboarding-progress" class="section-label"></div><h3 id="onboarding-title"></h3><p id="onboarding-copy"></p>
+              <p id="onboarding-mass-ledger" class="onboarding-status" hidden></p>
+              <p id="onboarding-status" class="onboarding-status" role="status"></p>
+              <div class="button-row"><button id="onboarding-hint" class="quiet" data-level="0">Show a hint</button><button id="onboarding-next" disabled>Next lesson</button></div>
+            </div>
+          </section>
+        </section>
+
+        <div id="flight-workspace" class="mission-grid" data-flight-panel="flight">
+          <section class="planner-card" aria-label="Orbit planning diagram">
+            <div class="planner-head">
+              <div><span id="mission-rank" class="section-label">CONTRACT 101 / CADET</span><h2 id="mission-title">Orbit rescue</h2></div>
+              <span class="mission-chip">EXPERIMENTAL</span>
+            </div>
+            <p id="mission-description" class="mission-sub">Raise a 260 km circular orbit to 550 km, then make it circular within three hours. The dotted cyan path is your instantaneous-push preview; the gold path includes finite burns and modeled forces.</p>
+            <div class="mission-canvas"><canvas id="plan-canvas" aria-label="Orbit plan. Select a point on the path to add a maneuver. Use the maneuver controls for keyboard access."></canvas><span>EARTH-CENTERED · PLANE PROJECTION</span></div>
+            <p id="plan-status" class="plan-status" role="status">Loading mission physics…</p>
+            <div class="mission-legend"><span><i class="cyan"></i> Instantaneous prediction</span><span><i class="gold"></i> Finite-burn calculation</span><span><i class="violet"></i> Patched lunar preview</span></div>
+          </section>
+
+          <aside class="planner-controls" aria-label="Maneuver design">
+            <div class="panel-title"><span class="section-label">01 / DESIGN THE PUSHES</span><span class="panel-code">MNRV</span></div>
+            <label for="mission-select">Mission <small>contract</small></label><select id="mission-select" disabled><option value="101">101 · Orbit rescue · 800</option><option value="102">102 · Sun-synchronous orbit · 1250</option><option value="103">103 · Cislunar perigee-kick trap · 1650</option></select>
+            <p class="hint-line">Click the path to add a maneuver, or use the controls below. Drag the colored handles to change its direction and strength.</p>
+            <div class="button-row"><button id="add-node" disabled>+ Add maneuver</button><button id="example" disabled>Two-push example</button></div>
+            <label for="node-select">Selected maneuver <small>node</small></label><select id="node-select" disabled><option>No maneuver</option></select>
+            <label for="node-time">Time after start <small>seconds</small></label><input id="node-time" type="number" min="1" max="10799" step="1" value="200" disabled>
+            <label for="node-t">Along motion <small>m/s</small></label><input id="node-t" type="number" step="1" value="0" disabled>
+            <label for="node-n">In-plane sideways <small>m/s</small></label><input id="node-n" type="number" step="1" value="0" disabled>
+            <label for="node-w">Out of plane <small>m/s</small></label><input id="node-w" type="number" step="1" value="0" disabled>
+            <button id="remove-node" class="quiet" disabled>Remove maneuver</button>
+            <div class="lens" aria-live="polite"><div class="panel-title"><span class="section-label">PHYSICS LENS</span><span class="panel-code">LENS</span></div><canvas id="lens-canvas" width="280" height="150" aria-label="Live physics projection for the hovered term or handle"></canvas><p id="lens-text">A maneuver is a change in velocity. Hover a TNW handle or any underlined term such as TWR, ISP, RAAN, AOP or SOI for a live projection.</p><p id="lens-projection" class="lens-projection" hidden></p><div class="lens-close-slot"><button id="lens-close" class="quiet" hidden>Close projection</button></div></div>
+            <div class="causal" aria-live="polite"><div class="panel-title"><span class="section-label">CAUSE &amp; EFFECT</span><span class="panel-code">DAG</span></div><div id="causal-text">The checks update as you design and simulate a plan.</div><button id="split-kick" class="quiet" hidden>Split into perigee kicks</button><button id="target-bplane" class="quiet" hidden>Target B-plane</button></div>
+          </aside>
+        </div>
+
+        <section class="engine-card" id="engine-lab" data-flight-panel="propulsion" aria-labelledby="engine-title">
+          <div class="planner-head">
+            <div><span class="section-label">02 / PROPULSION · PRP-04</span><h2 id="engine-title">Build the bell, then watch it <em>flow.</em></h2></div>
+            <span class="mission-chip">SCHLIEREN LAB</span>
+          </div>
+          <p class="mission-sub">Drag the throat, exit, bell length, mixture track and pressure handle on the cross-section. The Schlieren field is solved in Rust from the same model the flight flies &mdash; never a lookup table.</p>
+          <div class="engine-grid">
+            <div class="engine-view"><canvas id="engine-canvas" aria-label="Engine cross-section and Schlieren field. Drag the throat, exit or length handle, or use the numeric controls."></canvas><span id="engine-view-label">CHAMBER · THROAT · BELL · FREE JET</span></div>
+            <div class="engine-controls">
+              <div class="panel-title"><span class="section-label">GEOMETRY &amp; INJECTION</span><span class="panel-code">CAD</span></div>
+              <label for="engine-propellant">Propellant pair</label><select id="engine-propellant"></select>
+              <label for="engine-of">Mixture ratio O/F <small id="engine-of-band">—</small></label><input id="engine-of" type="range" min="2.5" max="10" step="0.01" value="6">
+              <label for="engine-pc">Chamber pressure <small>MPa</small></label><input id="engine-pc" type="number" min="0.2" max="40" step="0.01" value="3.5">
+              <label for="engine-throat">Throat radius <small>mm</small></label><input id="engine-throat" type="number" min="5" max="1000" step="0.1" value="28.8">
+              <label for="engine-exit">Exit radius <small>mm</small></label><input id="engine-exit" type="number" min="5" max="4000" step="0.1" value="315.5">
+              <label for="engine-length">Bell length fraction <small>of a 15° cone</small></label><input id="engine-length" type="range" min="0.4" max="1.2" step="0.01" value="0.8">
+              <label for="engine-altitude">Test-stand altitude <small id="engine-ambient">—</small></label><input id="engine-altitude" type="range" min="0" max="100" step="0.5" value="100">
+              <div class="button-row"><button id="engine-apply" class="primary">Fit engine to stage</button><button id="engine-reset" class="quiet">Baseline</button></div>
+              <p id="engine-chief-note" class="chief-choice" role="status" hidden></p>
+              <p id="engine-status" role="status">Loading engine physics…</p>
+            </div>
+          </div>
+          <div class="engine-readout" id="engine-readout" aria-live="polite"></div>
+          <div class="causal" aria-live="polite"><div class="panel-title"><span class="section-label">ENGINE CAUSE &amp; EFFECT</span><span class="panel-code">DAG</span></div><div id="engine-causal">The engine checks update as you drag.</div></div>
+          <p class="disclaimer">Reduced-order model: shifting-equilibrium-calibrated chamber properties, quasi-one-dimensional nozzle flow with a contour-corrected Summerfield separation line, Bartz throat heat transfer and a Prandtl–Pack cell train. The Schlieren image reconstructs those features; it is not a computational fluid dynamics solution.</p>
+        </section>
+
+        <section class="engine-card" id="assembly" data-flight-panel="vehicle" aria-labelledby="assembly-title">
+          <div class="planner-head">
+            <div><span class="section-label">02b / VEHICLE ASSEMBLY · VHC-02</span><h2 id="assembly-title">Size it yourself, or <em>delegate.</em></h2></div>
+            <span class="mission-chip">CHIEF ENGINEER</span>
+          </div>
+          <p class="mission-sub">Each discipline can be sized by hand or handed to a rule-of-thumb chief. A delegated chief adds 35% mass and 30% cost to its own hardware, and caps the efficiency component of your score at 0.65. The margin is real dry mass, so it changes the flight. Your choice is signed into the recorder.</p>
+          <div class="engine-grid" id="assembly-grid">
+            <div class="engine-controls" id="delegation-controls">
+              <div class="panel-title"><span class="section-label">DISCIPLINE AUTHORITY</span><span class="panel-code">CHIEF</span></div>
+              <label><input type="checkbox" id="delegate-0" data-department="0"><span>Propulsion<small>THRUST · FEED · TVC</small></span></label>
+              <label><input type="checkbox" id="delegate-1" data-department="1"><span>Thermal / cryo<small>MLI · RADIATOR · COOLER</small></span></label>
+              <label><input type="checkbox" id="delegate-2" data-department="2"><span>Power<small>ARRAY · BUS · STORAGE</small></span></label>
+              <label><input type="checkbox" id="delegate-3" data-department="3"><span>Guidance &amp; control<small>SENSORS · ACTUATORS</small></span></label>
+              <p id="delegation-status" role="status">All disciplines are hand-sized.</p>
+            </div>
+            <div class="engine-controls">
+              <div class="panel-title"><span class="section-label">CRYOGENIC FIT-OUT</span><span class="panel-code">THM</span></div>
+              <label for="thermal-mli">MLI layers <small id="thermal-epsilon">—</small></label><input id="thermal-mli" type="range" min="1" max="60" step="1" value="20">
+              <label for="thermal-strut">Support heat leak <small>W/K</small></label><input id="thermal-strut" type="number" min="0" max="20" step="0.01" value="0.5">
+              <label for="thermal-radiator">Radiator area <small>m²</small></label><input id="thermal-radiator" type="number" min="0" max="400" step="0.5" value="0">
+              <label for="thermal-cooler">Cryocooler lift <small>W at the tank</small></label><input id="thermal-cooler" type="number" min="0" max="4000" step="10" value="0">
+              <label for="thermal-array">Solar array output <small>W at 1 AU</small></label><input id="thermal-array" type="number" min="300" max="40000" step="100" value="3000">
+              <button type="button" id="thermal-apply-card">Fit recommended thermal design</button>
+              <p id="thermal-status" role="status">Passive tanks.</p>
+            </div>
+            <div class="engine-controls assembly-ledger">
+              <div class="panel-title"><span class="section-label">STAGE MASS LEDGER</span><span class="panel-code">MAS</span></div>
+              <div class="engine-readout" id="assembly-readout" aria-live="polite"></div>
+            </div>
+          </div>
+          <div id="delegation-badges" aria-live="polite"></div>
+        </section>
+
+        <section class="contract-card" id="prediction-workspace" data-flight-panel="prediction" aria-labelledby="prediction-title">
+          <div class="planner-head">
+            <div><span class="section-label">03 / PREDICTION CONTRACT · PCL-01</span><h2 id="prediction-title">Commit your numbers.</h2></div>
+            <span class="mission-chip">LOCK REQUIRED</span>
+          </div>
+          <p class="mission-sub">Start with the ideal prediction, or edit it to account for real effects. Locking freezes your plan and estimates before flight. The signed recorder carries exactly what you commit here.</p>
+          <div class="commit-console">
+            <div class="prediction-grid">
+              <label>Velocity change <input id="predict-dv" type="number" min="0" step="any"><small>m / s</small></label>
+              <label>Farthest altitude <input id="predict-apo" type="number" step="any"><small>km</small></label>
+              <label>Closest altitude <input id="predict-peri" type="number" step="any"><small>km</small></label>
+              <label>Remaining propellant <input id="predict-fuel" type="number" min="0" step="any"><small>kg</small></label>
+              <label>Flight duration <input id="predict-time" type="number" min="0" step="any"><small>seconds</small></label>
+              <label>Target miss distance <input id="predict-miss" type="number" min="0" step="any"><small>km · optional</small></label>
+            </div>
+            <div class="commit-notes">
+              <div class="panel-title"><span class="section-label">PLAN CHECK</span><span class="panel-code" id="plan-check-code">—</span></div>
+              <div class="plan-check" id="plan-check">
+                <p class="plan-check-line"><span>Delta-v</span><b id="check-dv">—</b></p>
+                <p class="plan-check-line"><span>Propellant</span><b id="check-fuel">—</b></p>
+                <p class="plan-check-line"><span>Pad to ideal</span><b id="check-pad">—</b></p>
+                <p class="plan-check-line"><span>Burn windows</span><b id="check-nodes">—</b></p>
+              </div>
+              <div class="panel-title"><span class="section-label">COMMIT LEDGER</span><span class="panel-code">SIG</span></div>
+              <p class="commit-note"><b>SIGNED FIELDS</b> Velocity change, both apsides, remaining propellant and duration are hashed into the flight recorder.</p>
+              <p class="commit-note"><b>AUTHORITY</b> Ranked commits need a trusted server key; practice commits replay locally with no rating change.</p>
+              <p class="commit-note"><b>VERIFICATION</b> The debrief replays the signed timeline and must reproduce every field bit for bit.</p>
+            </div>
+            <div class="commit-side">
+              <div class="panel-title"><span class="section-label">ATTEMPT AUTHORITY</span><span class="panel-code">AUTH</span></div>
+              <label class="field-label" for="attempt-mode">Attempt mode</label>
+              <select id="attempt-mode"><option value="ranked">Ranked — certifies this contract</option><option value="practice">Practice — no rating change</option></select>
+              <p id="attempt-mode-note" class="profile-note"></p>
+              <div class="commit-keys">
+                <button id="prefill" class="quiet" disabled>Use ideal prediction</button>
+                <button id="unlock" class="quiet" hidden>Change plan</button>
+                <button id="execute" class="primary commit-button" disabled>Lock &amp; execute mission</button>
+              </div>
+              <p id="execute-status" role="status"></p>
+            </div>
+          </div>
+        </section>
+
+        <section class="debrief" id="debrief" data-flight-panel="debrief" hidden aria-live="polite">
+          <div class="planner-head">
+            <div><span class="section-label">04 / MISSION DEBRIEF · FDR-01</span><h2>The prediction meets <em>reality.</em></h2></div>
+            <span class="mission-chip">SIGNED</span>
+          </div>
+          <div id="debrief-content"></div>
+          <p class="disclaimer">“Reality” here is a simplified model, not a flight-operations prediction. Exact Shapley shares use absolute contributions; signed contributions reconstruct the full-minus-ideal metric error. Cryogenic boil-off is integrated along the flown trajectory with sun, planet and eclipse geometry; the vented mass and cooler draw are signed and recomputed on verification. Vented mass is drawn from the same propellant pool the engine burns, so it reduces both the remaining fuel and the mass every acceleration divides by; running the pool dry by boil-off truncates thrust and is signed as a flameout. Tank volume, mixture split and ullage come from one derivation shared with the contract card, so a signed stage fits the airframe it was sized for. For frozen replay compatibility, v1–v3 certificates keep their original geometry and rules, schema 4 keeps catalog-dry-mass scoring, and current schema 5 scores fuel and prediction against verified fitted dry mass.</p>
+        </section>
+      </main>
+
+      <div class="console-status" aria-hidden="true">
+        <span class="status-lamp"><i></i> FC-01 ONLINE</span>
+        <span class="status-keys"><b>1</b>–<b>6</b> STATION · <b>Q</b> / <b>E</b> CYCLE</span>
+        <span class="status-build">ODDERON · MISSION SOFTWARE 0.3</span>
       </div>
-    </section>
-    <div id="flight-workspace" class="mission-grid" data-flight-panel="flight">
-      <section class="planner-card" aria-label="Orbit planning diagram">
-        <div class="planner-head"><div><span id="mission-rank" class="section-label">CONTRACT 101 / CADET</span><h2 id="mission-title">Orbit rescue</h2></div><span class="mission-chip">EXPERIMENTAL</span></div>
-        <p id="mission-description" class="mission-sub">Raise a 260 km circular orbit to 550 km, then make it circular within three hours. The dotted cyan path is your instantaneous-push preview; the gold path includes finite burns and modeled forces.</p>
-        <div class="mission-canvas"><canvas id="plan-canvas" aria-label="Orbit plan. Select a point on the path to add a maneuver. Use the maneuver controls for keyboard access."></canvas><span>EARTH-CENTERED · PLANE PROJECTION</span></div>
-        <p id="plan-status" class="plan-status" role="status">Loading mission physics…</p>
-        <div class="mission-legend"><span><i class="cyan"></i> Instantaneous prediction</span><span><i class="gold"></i> Finite-burn calculation</span><span><i class="violet"></i> Patched lunar preview</span></div>
-      </section>
-      <aside class="planner-controls" aria-label="Maneuver design">
-        <div class="section-label">01 / DESIGN THE PUSHES</div>
-        <label for="mission-select">Mission</label><select id="mission-select" disabled><option value="101">101 · Orbit rescue · 800</option><option value="102">102 · Sun-synchronous orbit · 1250</option><option value="103">103 · Cislunar perigee-kick trap · 1650</option></select>
-        <p>Click the path to add a maneuver, or use the controls below. Drag the colored handles to change its direction and strength.</p>
-        <div class="button-row"><button id="add-node" disabled>Add maneuver</button><button id="example" disabled>Show two-push example</button></div>
-        <label for="node-select">Selected maneuver</label><select id="node-select" disabled><option>No maneuver</option></select>
-        <label for="node-time">Time after start <small>seconds</small></label><input id="node-time" type="number" min="1" max="10799" step="1" value="200" disabled>
-        <label for="node-t">Along motion <small>meters per second</small></label><input id="node-t" type="number" step="1" value="0" disabled>
-        <label for="node-n">In-plane sideways <small>meters per second</small></label><input id="node-n" type="number" step="1" value="0" disabled>
-        <label for="node-w">Out of orbital plane <small>meters per second</small></label><input id="node-w" type="number" step="1" value="0" disabled>
-        <button id="remove-node" class="quiet" disabled>Remove maneuver</button>
-        <div class="lens" aria-live="polite"><div class="section-label">PHYSICS LENS</div><canvas id="lens-canvas" width="280" height="150" aria-label="Live physics projection for the hovered term or handle"></canvas><p id="lens-text">A maneuver is a change in velocity. Hover a TNW handle or any underlined term such as TWR, ISP, RAAN, AOP or SOI for a live projection.</p><p id="lens-projection" class="lens-projection" hidden></p><div class="lens-close-slot"><button id="lens-close" class="quiet" hidden>Close projection</button></div></div>
-        <div class="causal" aria-live="polite"><div class="section-label">CAUSE &amp; EFFECT CHECK</div><div id="causal-text">The checks update as you design and simulate a plan.</div><button id="split-kick" class="quiet" hidden>Split into perigee kicks</button><button id="target-bplane" class="quiet" hidden>Target B-plane</button></div>
-      </aside>
     </div>
-    <section class="engine-card" id="engine-lab" data-flight-panel="propulsion" aria-labelledby="engine-title">
-      <div class="planner-head"><div><div class="section-label">02 / DESIGN THE ENGINE</div><h2 id="engine-title">Build the bell, then watch it <em>flow.</em></h2></div><span class="mission-chip">SCHLIEREN LAB</span></div>
-      <p class="mission-sub">Drag the throat, the exit, the bell length, the mixture-ratio track and the injector pressure handle directly on the cross-section. The grey field is the radial density gradient a Schlieren camera would record, computed in Rust from the same solution the flight uses. Nothing here is a lookup table: the signed recorder stores this geometry, and a verifier recomputes thrust from it.</p>
-      <div class="engine-grid">
-        <div class="engine-view"><canvas id="engine-canvas" aria-label="Engine cross-section and Schlieren field. Drag the throat, exit or length handle, or use the numeric controls."></canvas><span id="engine-view-label">CHAMBER · THROAT · BELL · FREE JET</span></div>
-        <div class="engine-controls">
-          <label for="engine-propellant">Propellant pair</label><select id="engine-propellant"><!-- Options are built from odd_propulsion through the bridge. --></select>
-          <label for="engine-of">Mixture ratio O/F <small id="engine-of-band">—</small></label><input id="engine-of" type="range" min="2.5" max="10" step="0.01" value="6">
-          <label for="engine-pc">Chamber pressure <small>MPa</small></label><input id="engine-pc" type="number" min="0.2" max="40" step="0.01" value="3.5">
-          <label for="engine-throat">Throat radius <small>mm</small></label><input id="engine-throat" type="number" min="5" max="1000" step="0.1" value="28.8">
-          <label for="engine-exit">Exit radius <small>mm</small></label><input id="engine-exit" type="number" min="5" max="4000" step="0.1" value="315.5">
-          <label for="engine-length">Bell length fraction <small>of a 15° cone</small></label><input id="engine-length" type="range" min="0.4" max="1.2" step="0.01" value="0.8">
-          <label for="engine-altitude">Test-stand altitude <small id="engine-ambient">—</small></label><input id="engine-altitude" type="range" min="0" max="100" step="0.5" value="100">
-          <div class="button-row"><button id="engine-apply" class="primary">Fit this engine to the stage</button><button id="engine-reset" class="quiet">Restore contract baseline</button></div>
-          <p id="engine-chief-note" class="chief-choice" role="status" hidden></p>
-          <p id="engine-status" role="status">Loading engine physics…</p>
-        </div>
-      </div>
-      <div class="engine-readout" id="engine-readout" aria-live="polite"></div>
-      <div class="causal" aria-live="polite"><div class="section-label">ENGINE CAUSE &amp; EFFECT</div><div id="engine-causal">The engine checks update as you drag.</div></div>
-      <p class="disclaimer">Reduced-order model: shifting-equilibrium-calibrated chamber properties, quasi-one-dimensional nozzle flow with a contour-corrected Summerfield separation line, Bartz throat heat transfer and a Prandtl–Pack cell train. The Schlieren image reconstructs those features; it is not a computational fluid dynamics solution.</p>
-    </section>
-    <section class="engine-card" id="assembly" data-flight-panel="vehicle" aria-labelledby="assembly-title">
-      <div class="planner-head"><div><div class="section-label">02b / ASSEMBLE THE STAGE</div><h2 id="assembly-title">Size it yourself, or <em>delegate.</em></h2></div><span class="mission-chip">CHIEF ENGINEER</span></div>
-      <p class="mission-sub">Each discipline can be sized by hand or handed to a rule-of-thumb chief. A delegated chief adds 35% mass and 30% cost to its own hardware, and caps the efficiency component of your score at 0.65. The margin is real dry mass, so it changes the flight. Your choice is signed into the recorder.</p>
-      <div class="engine-grid">
-        <div class="engine-controls" id="delegation-controls">
-          <label><input type="checkbox" id="delegate-0" data-department="0"> Propulsion chief</label>
-          <label><input type="checkbox" id="delegate-1" data-department="1"> Thermal / cryo chief</label>
-          <label><input type="checkbox" id="delegate-2" data-department="2"> Power chief</label>
-          <label><input type="checkbox" id="delegate-3" data-department="3"> GNC chief</label>
-          <p id="delegation-status" role="status">All disciplines are hand-sized.</p>
-        </div>
-        <div class="engine-controls">
-          <label for="thermal-mli">MLI layers <small id="thermal-epsilon">—</small></label><input id="thermal-mli" type="range" min="1" max="60" step="1" value="20">
-          <label for="thermal-strut">Support heat leak <small>W/K</small></label><input id="thermal-strut" type="number" min="0" max="20" step="0.01" value="0.5">
-          <label for="thermal-radiator">Radiator area <small>m²</small></label><input id="thermal-radiator" type="number" min="0" max="400" step="0.5" value="0">
-          <label for="thermal-cooler">Cryocooler lift <small>W at the tank</small></label><input id="thermal-cooler" type="number" min="0" max="4000" step="10" value="0">
-          <label for="thermal-array">Solar array output <small>W at 1 AU</small></label><input id="thermal-array" type="number" min="300" max="40000" step="100" value="3000">
-          <button type="button" id="thermal-apply-card">Fit recommended thermal design</button>
-          <p id="thermal-status" role="status">Passive tanks.</p>
-        </div>
-      </div>
-      <div class="engine-readout" id="assembly-readout" aria-live="polite"></div>
-      <div id="delegation-badges" aria-live="polite"></div>
-    </section>
-    <section class="contract-card" id="prediction-workspace" data-flight-panel="prediction" aria-labelledby="prediction-title"><div><div class="section-label">03 / MAKE A PREDICTION</div><h2 id="prediction-title">What do you expect?</h2><p>Start with the ideal prediction, or edit it to account for real effects. Locking freezes your plan and estimates before flight.</p></div>
-      <div class="prediction-grid"><label>Velocity change <small>m/s</small><input id="predict-dv" type="number" min="0" step="any"></label><label>Farthest altitude <small>km</small><input id="predict-apo" type="number" step="any"></label><label>Closest altitude <small>km</small><input id="predict-peri" type="number" step="any"></label><label>Remaining propellant <small>kg</small><input id="predict-fuel" type="number" min="0" step="any"></label><label>Flight duration <small>seconds</small><input id="predict-time" type="number" min="0" step="any"></label><label>Target miss distance <small>km, optional</small><input id="predict-miss" type="number" min="0" step="any"></label></div>
-      <div class="attempt-row"><label class="field-label" for="attempt-mode">Attempt mode</label><select id="attempt-mode"><option value="ranked">Ranked — certifies this contract</option><option value="practice">Practice — no rating change</option></select><p id="attempt-mode-note" class="profile-note"></p></div>
-      <div class="button-row"><button id="prefill" disabled>Use ideal prediction</button><button id="execute" class="primary" disabled>Lock &amp; execute mission</button><button id="unlock" class="quiet" hidden>Change plan</button></div><p id="execute-status" role="status"></p>
-    </section>
-    <section class="debrief" id="debrief" data-flight-panel="debrief" hidden aria-live="polite"><div class="section-label">04 / MISSION DEBRIEF</div><h2>The prediction meets <em>reality.</em></h2><div id="debrief-content"></div><p class="disclaimer">“Reality” here is a simplified model, not a flight-operations prediction. Exact Shapley shares use absolute contributions; signed contributions reconstruct the full-minus-ideal metric error. Cryogenic boil-off is integrated along the flown trajectory with sun, planet and eclipse geometry; the vented mass and cooler draw are signed and recomputed on verification. Vented mass is drawn from the same propellant pool the engine burns, so it reduces both the remaining fuel and the mass every acceleration divides by; running the pool dry by boil-off truncates thrust and is signed as a flameout. Tank volume, mixture split and ullage come from one derivation shared with the contract card, so a signed stage fits the airframe it was sized for. For frozen replay compatibility, v1–v3 certificates keep their original geometry and rules, schema 4 keeps catalog-dry-mass scoring, and current schema 5 scores fuel and prediction against verified fitted dry mass.</p></section>
-    <footer><span>ODDERON / MISSION PLANNING PROTOTYPE</span><span>THREE EXPERIMENTAL CONTRACTS · NOT FLIGHT OPERATIONS</span></footer>
-  </main>
-</div><script type="module" src="./flight-shell.js"></script><script type="module" src="./mission.js"></script></body></html>
+  </div>
+</div>
+<script type="module" src="./flight-shell.js"></script><script type="module" src="./mission.js"></script></body></html>
