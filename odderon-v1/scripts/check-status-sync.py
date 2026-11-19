@@ -57,11 +57,12 @@ if not re.search(rf"\b(?:{lessons}|{word})[- ]lesson\b", status, re.I):
 if story and not re.search(rf"Lessons?\s+1[–-]{lessons}\b", story, re.I):
     errors.append(f"storyboard does not cover Lessons 1–{lessons}")
 
-workflow_files = list((root / ".github/workflows").glob("*.yml"))
+repo_root = root.parent
+workflow_files = list((repo_root / ".github/workflows").glob("*.yml"))
 for workflow in workflow_files:
     text = workflow.read_text(encoding="utf-8")
     if "cancel-in-progress: true" not in text or "github.workflow" not in text or "github.ref" not in text:
-        errors.append(f"{workflow.relative_to(root)} lacks canceling workflow/ref concurrency")
+        errors.append(f"{workflow.relative_to(repo_root)} lacks canceling workflow/ref concurrency")
 
 if errors:
     raise SystemExit("status sync failed:\n- " + "\n- ".join(errors))

@@ -3,12 +3,12 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - 'docs/**'
-      - '**/*.md'
+      - 'odderon-v1/docs/**'
+      - 'odderon-v1/**/*.md'
   pull_request:
     paths-ignore:
-      - 'docs/**'
-      - '**/*.md'
+      - 'odderon-v1/docs/**'
+      - 'odderon-v1/**/*.md'
   workflow_dispatch:
 
 concurrency:
@@ -18,12 +18,16 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: odderon-v1
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: odderon-v1/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -31,6 +35,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+          workspaces: odderon-v1
       - name: Check shipped status constants
         run: python3 scripts/check-status-sync.py
       - name: Verify bundled ephemeris checksum
@@ -115,7 +120,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: odd-view-wasm
-          path: web/odd_view.wasm
+          path: odderon-v1/web/odd_view.wasm
       - name: Build the local and Cloudflare authorities
         run: |
           cargo build --locked -p odd-worker --features local --bin odderon-authority --example segment_chain

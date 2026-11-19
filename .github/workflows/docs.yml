@@ -3,22 +3,22 @@ on:
   push:
     branches: [main]
     paths:
-      - 'docs/**'
-      - '**/*.md'
-      - 'scripts/check-status-sync.py'
+      - 'odderon-v1/docs/**'
+      - 'odderon-v1/**/*.md'
+      - 'odderon-v1/scripts/check-status-sync.py'
       - '.github/workflows/**'
-      - 'web/onboarding.js'
-      - 'crates/odd-report/src/fdr.rs'
-      - 'crates/odd-contracts/src/lib.rs'
+      - 'odderon-v1/web/onboarding.js'
+      - 'odderon-v1/crates/odd-report/src/fdr.rs'
+      - 'odderon-v1/crates/odd-contracts/src/lib.rs'
   pull_request:
     paths:
-      - 'docs/**'
-      - '**/*.md'
-      - 'scripts/check-status-sync.py'
+      - 'odderon-v1/docs/**'
+      - 'odderon-v1/**/*.md'
+      - 'odderon-v1/scripts/check-status-sync.py'
       - '.github/workflows/**'
-      - 'web/onboarding.js'
-      - 'crates/odd-report/src/fdr.rs'
-      - 'crates/odd-contracts/src/lib.rs'
+      - 'odderon-v1/web/onboarding.js'
+      - 'odderon-v1/crates/odd-report/src/fdr.rs'
+      - 'odderon-v1/crates/odd-contracts/src/lib.rs'
   workflow_dispatch:
 
 concurrency:
@@ -28,6 +28,9 @@ concurrency:
 jobs:
   status-sync:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: odderon-v1
     steps:
       - uses: actions/checkout@v5
       - name: Check shipped status constants
