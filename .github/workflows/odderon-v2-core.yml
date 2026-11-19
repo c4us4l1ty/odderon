@@ -89,15 +89,17 @@ jobs:
         run: |
           # Re-run the pipeline capturing everything: it is cheap, and it is
           # the only way to get compiler output out of this runner.
-          : > /tmp/core.log
-          echo "== cargo test ==" >> /tmp/core.log
-          cargo test --color never -- --nocapture >> /tmp/core.log 2>&1 || true
-          echo "== cargo build wasm ==" >> /tmp/core.log
-          cargo build --release --target wasm32-unknown-unknown >> /tmp/core.log 2>&1 || true
-          echo "== smoke ==" >> /tmp/core.log
-          node smoke.mjs target/wasm32-unknown-unknown/release/odderon_core.wasm >> /tmp/core.log 2>&1 || true
+          set +e
+          {
+            echo "== cargo test =="
+            cargo test --color never -- --nocapture
+            echo "== cargo build wasm =="
+            cargo build --release --target wasm32-unknown-unknown
+            echo "== smoke =="
+            node smoke.mjs target/wasm32-unknown-unknown/release/odderon_core.wasm
+          } > /tmp/core.log 2>&1
           tail -c 3800 /tmp/core.log > /tmp/tail.txt
-          python3 -c "import json;print(json.dumps({'body':'core build failed\n\n```\n'+open('/tmp/tail.txt').read()+'\n```'}))" > /tmp/body.json
+          jq -Rs '{body: ("core build failed\n\n```\n" + . + "\n```")}' < /tmp/tail.txt > /tmp/body.json
           gh api -X POST "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/comments" --input /tmp/body.json || echo "could not publish log"
 
       - name: Publish wasm to the branch
