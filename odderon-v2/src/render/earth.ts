@@ -117,7 +117,7 @@ void main(){
   albedo = mix(albedo, vec3(0.045, 0.180, 0.210), smoothstep(0.50, 0.55, height) * (1.0 - land));
 
   float ice = smoothstep(0.855, 0.945, lat + (fbm(p * 11.0 + vec3(3.0)) - 0.5) * 0.12);
-  albedo = mix(albedo, vec3(0.82, 0.88, 0.92), ice);
+  albedo = mix(albedo, vec3(0.76, 0.83, 0.90), ice);
 
   // ---- clouds: two layers, drifting, with a soft displaced shadow.
   float cw = fbm(p * 3.0 + vec3(uTime * 0.0025));

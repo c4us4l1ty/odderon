@@ -165,6 +165,11 @@ export class FlightView {
   }
 
   setCameraMode(mode: CameraMode): void {
+    if (mode !== this.camMode) {
+      // Camera changes are cuts, not flights through the planet: snap the rig
+      // instead of lerping across millions of metres.
+      this.camInitialised = false;
+    }
     this.camMode = mode;
   }
 

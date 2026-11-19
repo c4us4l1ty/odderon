@@ -614,10 +614,12 @@ export class Game {
       const error = this.burnObjective === "pe" ? targetPe - el.pe : el.ap - targetAp;
       // The contract tolerance is ±45 km; stop with margin so the residual
       // finite-burn drift still lands inside it.
-      const margin = Math.max(12_000, (this.contract.target.tolerance) * 0.55);
+      const margin = Math.max(6_000, this.contract.target.tolerance * 0.55);
       const peOk = Math.abs(el.pe - targetPe) <= margin;
       const apOk = Math.abs(el.ap - targetAp) <= margin;
-      if ((peOk && apOk) || error <= 400 || this.vessel.propellant <= 0) {
+      const burnedFor = this.met - (this.burnNodeTime - this.burnDuration * 0.5);
+      const overrun = burnedFor > this.burnDuration * 2.4;
+      if ((peOk && apOk) || error <= 400 || overrun || this.vessel.propellant <= 0) {
         this.finishBurn();
         return;
       }
@@ -646,7 +648,11 @@ export class Game {
     this.hud.setSasMode("stability");
     this.hud.flash("BURN COMPLETE", "good");
     this.audio.success();
-    this.refreshNode();
+    // The plan is spent. Leaving it loaded would draw a stale conic and show a
+    // prediction for a burn that has already happened.
+    this.node = null;
+    this.planned = null;
+    this.nodePosition = null;
     window.setTimeout(() => {
       if (this.autopilot === "complete") this.autopilot = "idle";
     }, 1800);
@@ -698,7 +704,7 @@ export class Game {
       throttle: this.throttle,
       actualThrottle: this.mode === "menu" ? 0 : this.vessel.spool,
       gimbal: this.vessel.gimbal,
-      planned: this.planned,
+      planned: this.autopilot === "burning" ? this.vessel.elements : this.planned,
       target: this.target,
       nodePosition: this.nodePosition,
       showTarget: this.showOrbitLines,
@@ -835,7 +841,7 @@ export class Game {
             dv: this.node.dv,
             time: this.node.time,
             burnTime: this.burnTimeFor(this.node.dv),
-            planned: this.planned,
+            planned: this.autopilot === "burning" ? this.vessel.elements : this.planned,
           }
         : null,
       autopilot: this.autopilot,
