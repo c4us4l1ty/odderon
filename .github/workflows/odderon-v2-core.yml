@@ -83,14 +83,20 @@ jobs:
       - name: Publish failure log
         if: failure()
         shell: bash
-        working-directory: .
+        working-directory: odderon-v2/rust
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ ! -s /tmp/core.log ]; then
-            echo "no captured log" > /tmp/core.log
-          fi
-          tail -c 3500 /tmp/core.log > /tmp/tail.txt
+          # Re-run the pipeline capturing everything: it is cheap, and it is
+          # the only way to get compiler output out of this runner.
+          : > /tmp/core.log
+          echo "== cargo test ==" >> /tmp/core.log
+          cargo test --color never -- --nocapture >> /tmp/core.log 2>&1 || true
+          echo "== cargo build wasm ==" >> /tmp/core.log
+          cargo build --release --target wasm32-unknown-unknown >> /tmp/core.log 2>&1 || true
+          echo "== smoke ==" >> /tmp/core.log
+          node smoke.mjs target/wasm32-unknown-unknown/release/odderon_core.wasm >> /tmp/core.log 2>&1 || true
+          tail -c 3800 /tmp/core.log > /tmp/tail.txt
           python3 -c "import json;print(json.dumps({'body':'core build failed\n\n```\n'+open('/tmp/tail.txt').read()+'\n```'}))" > /tmp/body.json
           gh api -X POST "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/comments" --input /tmp/body.json || echo "could not publish log"
 
