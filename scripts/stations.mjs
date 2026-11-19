@@ -7,7 +7,7 @@ process.chdir(fileURLToPath(new URL("..", import.meta.url)));
 const dest = "public/stations";
 // Preserve the directory inode: a running Vite dev server watches this tree.
 await mkdir(dest, { recursive: true });
-await cp("../odderon-v1/web", dest, {
+await cp("odderon-v1/web", dest, {
   recursive: true,
   filter: (p) =>
     ![
@@ -36,7 +36,7 @@ for (const page of ["observatory", "mission"]) {
   await writeFile(path, html);
 }
 await cp("src/station.css", `${dest}/station.css`);
-await cp("../odderon-v1/data/attribution", "public/notices", {
+await cp("odderon-v1/data/attribution", "public/notices", {
   recursive: true,
 });
 await cp("node_modules/lucide-static/LICENSE", "public/notices/Lucide.txt");

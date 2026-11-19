@@ -33,7 +33,7 @@ cargo build --locked --release -p odd-view --features cockpit --target wasm32-un
 npm test
 ```
 
-From `odderon-v3/`:
+From the repository root:
 
 ```sh
 npm ci

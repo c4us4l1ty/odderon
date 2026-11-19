@@ -1,0 +1,7 @@
+/node_modules/
+/desktop/node_modules/
+/public/
+/dist/
+/.cache/
+/test-results/
+/playwright-report/
