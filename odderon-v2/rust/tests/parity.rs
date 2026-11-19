@@ -147,6 +147,19 @@ fn scoring_matches_the_type_script_contract() {
 }
 
 #[test]
+fn circular_state_has_the_expected_shape() {
+    // 7 000 km radius at 7 500 m/s is an ellipse with a = 6 916.9 km.
+    let el = elements::elements_from_state(
+        Vec3::new(7_000_000.0, 0.0, 0.0),
+        Vec3::new(0.0, 7_500.0, 0.0),
+        MU,
+    );
+    assert!((el.a - 6_916_882.0).abs() < 5_000.0, "a = {}", el.a);
+    assert!(el.period > 5_000.0 && el.period < 6_000.0, "period = {}", el.period);
+    assert!(el.e > 0.0 && el.e < 0.05, "e = {}", el.e);
+}
+
+#[test]
 fn self_test_export_answers() {
     assert_eq!(odderon_core::oc_self_test(), 1);
     assert_eq!(odderon_core::oc_version(), 2);

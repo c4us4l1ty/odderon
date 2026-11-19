@@ -46,7 +46,7 @@ fn write(values: &[f64]) -> i32 {
 /// Pointer to the shared scratch buffer, as an offset into wasm memory.
 #[no_mangle]
 pub extern "C" fn oc_scratch_ptr() -> *mut f64 {
-    unsafe { addr_of_mut!(SCRATCH) as *mut f64 }
+    addr_of_mut!(SCRATCH) as *mut f64
 }
 
 #[no_mangle]
@@ -168,7 +168,7 @@ pub extern "C" fn oc_self_test() -> i32 {
     let r = Vec3::new(7_000_000.0, 0.0, 0.0);
     let v = Vec3::new(0.0, 7_500.0, 0.0);
     let el = elements::elements_from_state(r, v, EARTH_MU);
-    let ok = (el.a - 6_837_000.0).abs() < 50_000.0 && el.e > 0.0 && el.period > 5_000.0;
+    let ok = (el.a - 6_916_882.0).abs() < 5_000.0 && el.e > 0.0 && el.period > 5_000.0;
     if ok {
         1
     } else {
