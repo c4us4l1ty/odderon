@@ -1,9 +1,0 @@
-/target/
-/data/raw/
-/web/odd_view.wasm
-/node_modules/
-/.cache/
-/.venv/
-
-/crates/odd-worker-cloudflare/src/authority.wasm
-/crates/odd-worker-cloudflare/.cache/

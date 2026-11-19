@@ -1,6 +1,0 @@
-[package]
-name = "pack-ephem"
-version = "0.1.0"
-edition = "2021"
-description = "Extract selected type-2 SPK segments for odd-ephem"
-license = "MIT OR Apache-2.0"
