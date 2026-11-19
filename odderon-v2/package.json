@@ -1,0 +1,55 @@
+{
+  "name": "odderon",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Odderon \u2014 a visually flown orbital engineering game.",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc --noEmit && vite build && node scripts/postbuild.mjs",
+    "preview": "vite preview --host 0.0.0.0",
+    "typecheck": "tsc --noEmit",
+    "desktop": "npm run build && electron .",
+    "package:linux": "npm run build && electron-builder --linux",
+    "package:win": "npm run build && electron-builder --win",
+    "package:mac": "npm run build && electron-builder --mac",
+    "visual": "node tools/visual/shoot.mjs"
+  },
+  "dependencies": {
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.187.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.2"
+  },
+  "build": {
+    "appId": "com.odderon.flight",
+    "productName": "Odderon",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Game"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.games"
+    }
+  }
+}
