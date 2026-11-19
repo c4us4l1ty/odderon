@@ -1,7 +1,0 @@
-node_modules/
-dist/
-release/
-tools/visual/node_modules/
-tools/visual/.shots/
-*.log
-.DS_Store
