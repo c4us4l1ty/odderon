@@ -1,0 +1,60 @@
+/* Instrument pages live inside the cockpit MFD, not another website. */
+.topbar,
+.obs-actions,
+.flight-mode-nav,
+#open-leaderboard,
+.profile-elo-chip,
+[for="attempt-mode"],
+#attempt-mode,
+#attempt-mode-note {
+  display: none !important;
+}
+.app {
+  height: 100dvh !important;
+  grid-template-rows: 1fr !important;
+  background: #10151a !important;
+}
+.console-body {
+  display: flex !important;
+  flex: 1;
+  min-height: 0;
+}
+.console-main {
+  flex: 1;
+  min-width: 0;
+}
+.intro {
+  display: none !important;
+}
+:root {
+  --cyan: #eda85a;
+  --accent: #eda85a;
+}
+.obs-main {
+  height: 100%;
+}
+.statusbar {
+  display: none !important;
+}
+.console-status {
+  display: none !important;
+}
+:root {
+  --cy: #e4a66c;
+  --cy-4: #70563d;
+  --fl-1: #ecf0f3;
+  --seam-2: #35404a;
+  --font-display: Oxanium, system-ui, sans-serif;
+}
+.panel-title {
+  background: #182028 !important;
+  border-bottom: 1px solid #39454f !important;
+}
+.console-main {
+  padding: 4px;
+}
+.engine-lab,
+.lesson-dock,
+.assembly-card {
+  border-color: #313c44 !important;
+}

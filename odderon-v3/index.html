@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#0b1014" />
+    <title>Odderon III · Flight Deck</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='8' fill='%230b1014'/%3E%3Cpath d='m7 31 14-24 12 22-10-6-3-7-6 11z' fill='%23f6ab62'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <header class="mast">
+      <div class="brand">
+        <svg viewBox="0 0 48 42" aria-hidden="true">
+          <path d="M4 35 24 2l19 33-17-9-3-8-8 13z" fill="currentColor" />
+          <path d="m4 36 20-8 17 8-18-3z" fill="currentColor" /></svg
+        ><b>ODDERON</b><span>III</span>
+      </div>
+      <div class="mast-id">
+        ORBITAL FLIGHT SYSTEM<span>FLIGHT SOFTWARE &nbsp;/&nbsp; REV. 03</span>
+      </div>
+      <div class="mast-tools">
+        <i class="dot"></i><span class="online">INITIALIZING</span
+        ><i class="vline"></i
+        ><button id="help" title="Flight controls" aria-label="Flight controls">
+          <i data-i="keyboard"></i></button
+        ><button
+          id="settings"
+          title="Display settings"
+          aria-label="Display settings"
+        >
+          <i data-i="sliders-horizontal"></i>
+        </button>
+      </div>
+    </header>
+    <div class="layout">
+      <nav class="rail" aria-label="Flight stations">
+        <div class="rail-label">DECK</div>
+        <div id="stations"></div>
+        <div class="rail-bottom">
+          <button id="license" title="Pilot license">
+            <i data-i="fingerprint"></i><small>LICENSE</small>
+          </button>
+        </div>
+      </nav>
+      <main>
+        <div class="deck-title">
+          <div>
+            <i data-i="crosshair"></i>
+            <h1>Flight deck</h1>
+            <span class="deck-tag">FD–01</span>
+          </div>
+          <div class="timer">
+            <span>MET</span><b id="met">00:00:00</b><i class="vline"></i
+            ><button id="warp" title="Cycle coast time warp">
+              <i data-i="fast-forward"></i><strong>1×</strong></button
+            ><button
+              id="pause"
+              title="Pause / resume"
+              aria-label="Pause or resume"
+            >
+              <i data-i="play"></i>
+            </button>
+          </div>
+        </div>
+        <section
+          class="viewport"
+          id="viewport"
+          aria-label="Live spacecraft view"
+        >
+          <canvas id="universe"></canvas><canvas id="spacecraft"></canvas
+          ><canvas id="map" hidden></canvas>
+          <div class="shade"></div>
+          <div class="scan corners"></div>
+          <div class="brief">
+            <div class="eyebrow accent">
+              <i class="square"></i> ACTIVE CONTRACT
+              <span class="faint">/</span> <span id="cid">101</span>
+            </div>
+            <h2 id="title">LEO drag rescue</h2>
+            <p id="desc">
+              Raise a decaying orbit to a stable 550 km circular orbit.
+            </p>
+            <div class="brief-actions">
+              <button id="fly" class="primary-flight">
+                <i data-i="play"></i> Take control</button
+              ><button id="contracts" class="flat">
+                <i data-i="layers-3"></i> Mission brief
+                <i data-i="chevron-right"></i>
+              </button>
+            </div>
+          </div>
+          <div class="cam-switch" aria-label="Camera">
+            <button id="external" class="selected">
+              <i data-i="video"></i> External</button
+            ><button id="mapBtn"><i data-i="orbit"></i> Orbit map</button>
+          </div>
+          <div class="tracker">
+            <div></div>
+            <span>ODV–<b id="ship-id">101</b><small>ACTIVE VESSEL</small></span>
+          </div>
+          <div class="cam-lower">
+            <span class="live-tag"><i></i> CAM 01</span
+            ><b id="cam-label">EXTERNAL OPTICS</b><span class="cross">+</span
+            ><small>ECI / J2000</small>
+          </div>
+          <div class="zoom">
+            <button id="minus" aria-label="Zoom out">
+              <i data-i="minus"></i></button
+            ><button id="recenter" aria-label="Recenter camera">
+              <i data-i="scan"></i></button
+            ><button id="plus" aria-label="Zoom in">
+              <i data-i="plus"></i>
+            </button>
+          </div>
+        </section>
+        <div class="instruments">
+          <section class="instrument orbit">
+            <div class="panel-heading">
+              <i data-i="orbit"></i>
+              <h3>Orbital state</h3>
+              <code>ORB–01</code>
+            </div>
+            <div class="apsides">
+              <div>
+                <label><i class="lozenge"></i> APOAPSIS</label
+                ><strong id="ap">—</strong> <small>km</small
+                ><time id="eta-ap">—</time>
+              </div>
+              <div>
+                <label><i class="lozenge pe"></i> PERIAPSIS</label
+                ><strong id="pe">—</strong> <small>km</small
+                ><time id="eta-pe">—</time>
+              </div>
+            </div>
+            <dl>
+              <div>
+                <dt>Altitude</dt>
+                <dd id="alt">—</dd>
+              </div>
+              <div>
+                <dt>Velocity</dt>
+                <dd id="speed">—</dd>
+              </div>
+              <div>
+                <dt>Inclination</dt>
+                <dd id="inc">—</dd>
+              </div>
+            </dl>
+          </section>
+          <section class="instrument attitude">
+            <div class="panel-heading">
+              <i data-i="compass"></i>
+              <h3>Attitude</h3>
+              <code>NAV–02</code>
+            </div>
+            <div class="ball-wrap">
+              <canvas
+                id="ball"
+                width="300"
+                height="240"
+                aria-label="Attitude indicator"
+              ></canvas>
+              <div class="angle-list">
+                <label>PITCH</label><b id="pitch">+0.0°</b><label>YAW</label
+                ><b id="yaw">+0.0°</b>
+              </div>
+            </div>
+            <div class="touch-stick" aria-label="Attitude commands">
+              <button data-axis="KeyW" aria-label="Pitch up">P+</button
+              ><button data-axis="KeyS" aria-label="Pitch down">P−</button
+              ><button data-axis="KeyA" aria-label="Yaw left">Y−</button
+              ><button data-axis="KeyD" aria-label="Yaw right">Y+</button
+              ><button data-axis="KeyQ" aria-label="Roll left">R−</button
+              ><button data-axis="KeyE" aria-label="Roll right">R+</button>
+            </div>
+            <div class="att-foot">
+              <i class="dot"></i><span id="att-label">PROGRADE</span
+              ><span class="right">TNW REF</span>
+            </div>
+          </section>
+          <section class="instrument prop">
+            <div class="panel-heading">
+              <i data-i="flame"></i>
+              <h3>Propulsion</h3>
+              <code>ENG–03</code>
+            </div>
+            <div class="fuel-top">
+              <label>PROPELLANT</label><span><b id="fuel">—</b> kg</span>
+            </div>
+            <div class="fuelbar"><i id="fuelbar"></i></div>
+            <div class="dv"><span>Δv reserve</span><b id="dv">—</b></div>
+            <div class="throttle-line">
+              <label for="throttle">THROTTLE</label><strong id="pct">0%</strong>
+            </div>
+            <input
+              type="range"
+              id="throttle"
+              min="0"
+              max="100"
+              value="0"
+              aria-label="Engine throttle"
+            /><button id="arm" class="arm">
+              <i data-i="power"></i><b>Arm engine</b><kbd>SPACE</kbd>
+            </button>
+          </section>
+          <section class="instrument log">
+            <div class="panel-heading">
+              <i data-i="terminal"></i>
+              <h3>Flight log</h3>
+              <span class="pulse"></span>
+            </div>
+            <div id="entries" role="log"></div>
+            <button id="report" class="report">
+              <i data-i="clipboard-list"></i> Flight review
+              <i data-i="arrow-up-right"></i>
+            </button>
+          </section>
+        </div>
+      </main>
+    </div>
+    <footer>
+      <div>
+        <i class="dot"></i> LOCAL PRACTICE <span>/</span> <b>NO UPLINK</b>
+      </div>
+      <div class="keyline">
+        <kbd>W</kbd><kbd>S</kbd> Pitch <kbd>A</kbd><kbd>D</kbd> Yaw <kbd>Z</kbd
+        ><kbd>X</kbd> Throttle
+      </div>
+      <button id="controls">
+        <i data-i="keyboard"></i> Controls <kbd>?</kbd>
+      </button>
+    </footer>
+    <dialog id="sheet">
+      <header>
+        <span class="eyebrow accent" id="sheet-tag"></span
+        ><button data-close aria-label="Close"><i data-i="x"></i></button>
+      </header>
+      <div id="sheet-content"></div>
+    </dialog>
+    <dialog id="mfd">
+      <header>
+        <div>
+          <span class="eyebrow accent">MULTIFUNCTION DISPLAY</span>
+          <h2 id="mfd-title">Engineering</h2>
+        </div>
+        <button id="mfd-close" aria-label="Return to flight deck">
+          <i data-i="x"></i>
+        </button>
+      </header>
+      <div id="mfd-tabs"></div>
+      <div class="frame-wrap">
+        <iframe id="engine-frame" title="Engineering instrument" hidden></iframe
+        ><iframe id="obs-frame" title="Earth–Moon observatory" hidden></iframe>
+      </div>
+      <div class="mfd-footer">
+        <span>SIMULATION STATION · LOCAL</span
+        ><button id="fit">Fly fitted stage →</button>
+      </div>
+    </dialog>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

@@ -924,4 +924,18 @@ assembly=createAssembly({wasm,isLocked:()=>!!locked,annotate:annotateAcronyms,on
 if(wasm.mission_contract(contractId)){engineLab.loadBaseline();engineLab.setLocked();assembly.sync();assembly.setLocked();}
 annotateAcronyms(document.querySelector('.mission-main'));syncFields();updatePreview();
 onboarding=createOnboarding({snapshot:onboardingSnapshot,activate:activateOnboardingLesson,recorder:playtest});onVerification(()=>onboarding?.update());setupPlaytestControls();
+// Optional local cockpit host. Hand off the fitted Rust stage, not values
+// scraped from labels. Standalone v1 and its workers remain unchanged.
+if(wasm.pilot_start && window.parent !== window && document.referrer && new URL(document.referrer).origin === location.origin){
+  window.parent.dispatchEvent(new CustomEvent('odderon-instrument-ready',{detail:{
+    selectContract(id){if(id!==contractId && !locked){$('mission-select').value=String(id);$('mission-select').dispatchEvent(new Event('change'));}},
+    stage:()=>({id:contractId,engine:appliedEngine,assembly:assemblyPayload(wasm)}),
+    briefing(){
+      const fields=['predict-apo','predict-peri','predict-fuel','predict-dv','predict-time'].map(id=>$(id).value.trim());
+      return {prediction:fields.every(v=>v!==''&&Number.isFinite(Number(v)))?fields.map((v,i)=>Number(v)*(i<2?1000:1)):null,
+        route:nodes.length?preview.map(p=>p.state.slice(0,3)):[]};
+    },
+    profile:openProfile,verify:openVerify
+  }}));
+}
 }catch(e){$('plan-status').classList.add('failure');$('plan-status').textContent=String(e.message||e);annotateAcronyms($('plan-status'));}

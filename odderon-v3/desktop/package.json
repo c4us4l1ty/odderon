@@ -1,0 +1,12 @@
+{
+  "name": "odderon-local-shell",
+  "version": "3.0.0",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "45.4.1"
+  }
+}

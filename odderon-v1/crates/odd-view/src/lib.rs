@@ -11,6 +11,8 @@ mod engine_bridge;
 mod fdr_bridge;
 mod identity_bridge;
 mod mission_bridge;
+#[cfg(feature = "cockpit")]
+mod pilot;
 
 // position, velocity, Sun relative Earth, Earth and Moon body-to-J2000 matrices,
 // then a count and time-tagged Earth-relative Moon samples (seconds,x,y,z).
