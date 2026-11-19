@@ -1,247 +1,210 @@
 /* ============================================================================
-   ODDERON — TRACKING STATION
+   ODDERON — OBSERVATORY / TRACKING STATION
    ----------------------------------------------------------------------------
-   The ephemeris viewport IS the screen. Telemetry floats over its right edge;
-   the time control floats across the bottom. No column, no card, no footer: the
-   objects being watched are never competing with interface furniture.
+   The scope owns the frame. The optics run edge to edge; the layer control and
+   the epoch control dock to the right as instrument racks; the two live gauges
+   float on the glass as range and range-rate windows. No document, no footer,
+   no explanation column sitting under the picture.
 
-     scene   1fr   Earth/Moon viewport, full bleed
-     side    auto  readouts pinned to the right edge, over the scene
-     time    auto  date control pinned to the bottom, over the scene
+     ┌ topbar ─────────────────────────────────────────────────────┐
+     │ optics (world + overlay + HUD furniture)      │ control rack │
+     └─────────────────────────────────────────────────────────────┘
    ========================================================================= */
 
-.app{
-  position:fixed;inset:0;display:grid;
-  grid-template-columns:minmax(0,1fr) minmax(280px,320px);
-  grid-template-rows:34px minmax(0,1fr) auto;
-  grid-template-areas:"top top" "scene side" "time time";
-  overflow:hidden;
-}
+.app{height:100%;display:flex;flex-direction:column;overflow:hidden}
 
-/* ------------------------------------------------------------- legend line */
-.topbar{
-  grid-area:top;display:flex;align-items:center;justify-content:space-between;
-  gap:14px;padding:0 14px;min-height:0;z-index:4;
-}
-.brand{
-  display:flex;align-items:center;gap:8px;min-width:0;
-  font-family:var(--font-display);font-size:13px;font-weight:600;
-  letter-spacing:.28em;text-transform:uppercase;color:var(--hud-bright);
-}
-.brand-mark{font-size:12px;color:var(--hud);letter-spacing:0}
-.brand small{
-  font-family:var(--font-data);font-size:9px;font-weight:400;letter-spacing:.18em;
-  color:var(--ink-4);text-transform:uppercase;margin-left:2px;
-}
-.obs-actions{display:flex;align-items:center;gap:6px}
+.topbar{display:grid;grid-template-columns:auto minmax(0,1fr) auto;padding-left:10px}
+.brand{padding-right:14px;box-shadow:inset -1px 0 0 var(--seam);min-width:0}
+.brand small{font-size:9px;letter-spacing:.12em}
 .obs-station{
-  display:flex;align-items:center;gap:6px;
-  font-family:var(--font-data);font-size:9px;letter-spacing:.2em;text-transform:uppercase;
-  color:var(--hud-dim);padding-right:8px;
+  justify-self:start;gap:8px;color:var(--fl-2);
+  box-shadow:inset -1px 0 0 var(--seam-2);padding:0 14px;
 }
-.live-dot{width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}
-.obs-actions a{
-  display:inline-flex;align-items:center;min-height:24px;padding:2px 9px;
-  font-family:var(--font-data);font-size:9px;letter-spacing:.18em;text-transform:uppercase;
-  color:var(--ink-3);box-shadow:inset 0 0 0 1px var(--rule-soft);
-}
-.obs-actions a:hover{color:var(--hud-bright);box-shadow:inset 0 0 0 1px var(--rule-bright)}
+.live-dot{width:6px;height:6px;border-radius:50%;background:var(--gn);box-shadow:0 0 9px var(--gn)}
+.obs-actions{gap:0}
+.obs-actions a{justify-content:center;font-weight:700;letter-spacing:.14em}
 
-/* --------------------------------------------------------------- viewport */
-.obs-main{grid-area:scene;grid-row:2;grid-column:1 / -1;display:contents}
+.obs-main{
+  flex:1 1 auto;display:grid;grid-template-columns:minmax(0,1fr) minmax(272px,300px);
+  grid-template-rows:minmax(0,1fr);min-height:0;overflow:hidden;
+  gap:0;
+}
+
+/* ------------------------------------------------------------------ optics */
 .obs-viewport{
-  grid-area:scene;position:relative;min-height:0;min-width:0;overflow:hidden;
-  /* The scene runs to the frame edge: no inset, no bezel. */
-  margin:0;
+  position:relative;min-width:0;min-height:0;overflow:hidden;
+  background:radial-gradient(80% 90% at 46% 44%,rgba(11,26,33,.7),rgba(2,5,8,1) 82%);
 }
-.scene{
-  position:absolute;inset:0;touch-action:none;
-  background:radial-gradient(circle at 42% 48%,#04121a,#01060a 70%);
-}
+.scene{position:absolute;inset:0;outline:none;overflow:hidden}
 .scene canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 .scene canvas#overlay{pointer-events:none}
+.scene:focus-visible{outline:1px solid var(--am);outline-offset:-4px}
 
-/* HUD furniture on the viewport: marks, not panels. */
-.scene-top,.scene-bottom{
-  position:absolute;left:0;right:0;z-index:2;pointer-events:none;
-  display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;
-}
-.scene-top{top:0}
-.scene-bottom{bottom:0}
-.hud-chip{
-  display:inline-flex;align-items:center;gap:6px;
-  font-family:var(--font-data);font-size:9px;letter-spacing:.18em;text-transform:uppercase;
-  color:var(--ink-3);padding:3px 7px;
-  box-shadow:inset 0 0 0 1px var(--rule-soft);background:rgba(1,6,9,.42);
-}
-.hud-chip b{color:var(--hud-dim);font-weight:400}
-.drag-icon{color:var(--hud-dim);font-size:10px}
-/* A reticle: four corner ticks, drawn, never a box. */
-.scene-reticle{position:absolute;inset:26px;z-index:1;pointer-events:none;--c:rgba(127,227,216,.34)}
-.scene-reticle i{position:absolute;width:16px;height:16px}
+/* Corner brackets over the optics: the scope's own frame. */
+.scene-reticle{position:absolute;inset:10px;z-index:1;pointer-events:none;--c:rgba(157,196,208,.32)}
+.scene-reticle i{position:absolute;width:22px;height:22px}
 .scene-reticle i:nth-child(1){left:0;top:0;border-left:1px solid var(--c);border-top:1px solid var(--c)}
 .scene-reticle i:nth-child(2){right:0;top:0;border-right:1px solid var(--c);border-top:1px solid var(--c)}
 .scene-reticle i:nth-child(3){left:0;bottom:0;border-left:1px solid var(--c);border-bottom:1px solid var(--c)}
 .scene-reticle i:nth-child(4){right:0;bottom:0;border-right:1px solid var(--c);border-bottom:1px solid var(--c)}
 
-/* An error is a warning mark on the glass, not a banner. */
-.error{
-  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;
-  max-width:min(440px,calc(100% - 40px));padding:12px 16px;text-align:center;
-  font-family:var(--font-data);font-size:11px;line-height:1.5;letter-spacing:.04em;
-  color:var(--amber-bright);background:rgba(4,10,12,.94);
-  box-shadow:inset 0 0 0 1px rgba(244,184,96,.5);
+.scene-top,.scene-bottom{
+  position:absolute;left:0;right:0;z-index:2;display:flex;flex-wrap:wrap;gap:6px;
+  padding:16px 18px;pointer-events:none;
+}
+.scene-top{top:0;justify-content:flex-start}
+.scene-bottom{bottom:0;align-items:flex-end;justify-content:flex-start}
+.scene-top .hud-chip{background:linear-gradient(90deg,rgba(2,6,9,.8),rgba(2,6,9,.25))}
+.drag-icon{color:var(--fl-4);font-size:11px}
+
+/* The two scope gauges: range and range rate, floating top-right on the glass. */
+.scope-gauges{
+  position:absolute;right:16px;top:16px;z-index:3;
+  display:flex;flex-direction:column;gap:8px;width:min(260px,38vw);
+}
+.gauge{
+  position:relative;padding:7px 11px 8px;
+  background:linear-gradient(180deg,rgba(6,13,17,.9),rgba(3,7,10,.94));
+  box-shadow:inset 0 0 0 1px rgba(99,226,244,.22),inset 0 0 30px rgba(0,0,0,.5);
+}
+/* A lit edge on the gauge's left, as on a bolted instrument window. */
+.gauge::before{
+  content:'';position:absolute;left:0;top:0;bottom:0;width:3px;
+  background:var(--cy);box-shadow:0 0 12px rgba(99,226,244,.7);
+}
+.gauge-cap{
+  display:flex;align-items:baseline;justify-content:space-between;gap:8px;
+  font-family:var(--font-data);font-size:9px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--fl-3);
+}
+.gauge-cap b{color:var(--cy);font-weight:500;letter-spacing:.1em}
+.gauge-value{
+  display:flex;align-items:baseline;justify-content:flex-end;
+  font-family:var(--font-display);font-size:34px;font-weight:600;line-height:1;
+  letter-spacing:-.01em;color:#fff;font-variant-numeric:tabular-nums;
+  margin:2px 0 5px;
+}
+/* The engraved scale under the number: a hardware tick rail, not decoration. */
+.gauge-rule{display:flex;justify-content:space-between;align-items:flex-start;height:7px}
+.gauge-rule i{display:block;width:1px;height:4px;background:rgba(99,226,244,.4)}
+.gauge-rule i:nth-child(2n){height:7px;background:rgba(99,226,244,.7)}
+.gauge-note{
+  font-family:var(--font-data);font-size:9px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--fl-4);margin-top:3px;
 }
 
-/* The viewport rail: scale + view keys, floated on the glass. */
+/* Drag/zoom rail, bottom right of the optics. */
 .scene-rail{
-  position:absolute;left:14px;right:14px;bottom:48px;z-index:3;
-  display:flex;align-items:center;justify-content:space-between;gap:10px;
-  pointer-events:none;
+  position:absolute;right:16px;bottom:16px;z-index:3;
+  display:flex;align-items:center;gap:10px;pointer-events:none;
 }
 .scale-note{
-  display:flex;align-items:center;gap:7px;pointer-events:auto;
-  font-family:var(--font-data);font-size:9px;letter-spacing:.16em;text-transform:uppercase;
-  color:var(--ink-3);padding:3px 8px;background:rgba(1,6,9,.5);
+  display:flex;align-items:center;gap:8px;padding:5px 9px;
+  background:rgba(2,6,9,.72);box-shadow:inset 0 0 0 1px rgba(157,196,208,.18);
+  font-family:var(--font-data);font-size:9px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--fl-3);
 }
 .scale-note > span:last-child{display:flex;flex-direction:column;gap:1px;min-width:0}
-.scale-note strong{color:var(--hud-dim);font-weight:500;letter-spacing:.18em}
-.scale-note small{display:block;font-size:9px;letter-spacing:.06em;text-transform:none;color:var(--ink-4)}
-.scale-icon{color:var(--hud-dim)}
-.view-controls{pointer-events:auto}
+.scale-note strong{color:var(--fl-2);font-weight:500;letter-spacing:.14em}
+.scale-note small{display:block;font-size:9px;letter-spacing:.02em;text-transform:none;color:var(--fl-4)}
+.scale-icon{color:var(--cy)}
+.view-controls{pointer-events:auto;gap:4px}
 .view-controls button{
-  background:rgba(1,6,9,.62);box-shadow:inset 0 0 0 1px var(--rule-soft);
+  min-width:32px;min-height:30px;padding:0 8px;
+  font-family:var(--font-display);font-size:15px;letter-spacing:0;
 }
-.view-controls .reset span{
-  font-family:var(--font-data);font-size:9px;letter-spacing:.14em;text-transform:uppercase;
+/* Reset is drawn as a labelled key, with its label set by the sheet rather
+   than by an inline child, so every word on the glass shares one type law. */
+.view-controls .reset{display:inline-flex;align-items:center;gap:5px;font-size:13px}
+.view-controls .reset::after{content:'RESET';font-family:var(--font-data);font-size:9px;letter-spacing:.12em}
+.view-controls .reset span{display:none}
+
+.error{
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:4;
+  max-width:min(420px,80%);padding:12px 14px;
+  font-family:var(--font-data);font-size:11px;line-height:1.5;color:var(--rd);
+  background:rgba(8,4,4,.94);box-shadow:inset 0 0 0 1px rgba(255,91,69,.5),0 16px 40px rgba(0,0,0,.6);
 }
 
-/* -------------------------------------------------------------- telemetry */
-/* Pinned to the right edge over the scene, separated from it by a single rule
-   and a scrim — the readouts belong to the glass, not to a sidebar. */
+/* ------------------------------------------------------------- control rack */
 .obs-side{
-  grid-area:side;position:relative;z-index:3;min-height:0;overflow:auto;
-  display:flex;flex-direction:column;padding:4px 14px 8px 16px;
-  box-shadow:inset 1px 0 0 var(--rule-soft);
-  background:linear-gradient(270deg,rgba(2,7,10,.96),rgba(2,7,10,.72));
-  
+  display:flex;flex-direction:column;min-height:0;overflow:auto;
+  background:linear-gradient(180deg,rgba(11,20,25,.98),rgba(5,10,13,.99));
+  box-shadow:inset 1px 0 0 rgba(99,226,244,.2);
+  padding:0 0 10px;
 }
-.obs-side .panel-title{
-  display:flex;align-items:baseline;justify-content:space-between;gap:8px;
-  padding-bottom:6px;margin-bottom:10px;box-shadow:inset 0 -1px 0 var(--rule-soft);
-}
-.layer-title{margin-top:16px}
-.metric-block{padding:0 0 12px;margin-bottom:12px;box-shadow:inset 0 -1px 0 var(--rule-soft)}
-.metric{display:flex;align-items:baseline;gap:5px;margin-top:4px}
-.metric span{
-  font-family:var(--font-data);font-size:clamp(26px,2.6vw,34px);font-weight:500;
-  letter-spacing:-.01em;line-height:1;color:var(--hud-bright);font-variant-numeric:tabular-nums;
-  text-shadow:0 0 24px rgba(127,227,216,.28);
-}
-.metric small{font-size:11px;letter-spacing:.14em;color:var(--ink-3);text-transform:none}
-.metric.secondary span{font-size:clamp(20px,2vw,24px);color:var(--hud)}
-.metric-label{display:flex;align-items:center;gap:5px;color:var(--ink-3)}
-.metric-label span{font-size:9px;color:var(--ink-4);cursor:help}
-.metric-sub{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:3px}
-
-/* A layer toggle: caption, description, throw switch. Rule-separated. */
-.toggle-row{
-  position:relative;display:flex;align-items:center;gap:10px;
-  padding:7px 0;cursor:pointer;box-shadow:inset 0 -1px 0 rgba(127,227,216,.08);
-}
-.toggle-row > input{
-  position:absolute;left:-6px;top:50%;transform:translateY(-50%);
-  width:42px;height:100%;min-height:44px;margin:0;opacity:0;z-index:2;cursor:pointer;
-}
-.toggle-row > span:last-child{min-width:0;flex:1 1 auto}
-.toggle-row strong{
-  display:block;font-family:var(--font-display);font-size:13px;font-weight:500;
-  letter-spacing:.1em;color:var(--ink);text-transform:uppercase;
-}
-.toggle-row small{
-  display:block;font-family:var(--font-data);font-size:9px;letter-spacing:.08em;
-  text-transform:none;color:var(--ink-4);margin-top:1px;
-}
-.toggle-row input:checked ~ span strong{color:var(--hud-bright)}
-.toggle-row input:focus-visible + .switch{outline:1px solid var(--hud-bright);outline-offset:2px}
-.status-line{
-  font-family:var(--font-data);font-size:9px;letter-spacing:.14em;color:var(--amber);
-  padding:8px 0 2px;text-transform:uppercase;
-}
-.side-note{margin-top:auto;padding:9px 0 0;font-size:10px;line-height:1.55;
-  color:var(--ink-4);box-shadow:inset 0 1px 0 var(--rule-soft)}
-.side-note strong{color:var(--ink-3);letter-spacing:.16em;font-weight:500;display:block;margin-bottom:3px}
-
-/* ------------------------------------------------------------- time control */
-/* Laid across the bottom edge of the frame, under the glass: the date is a
-   property of the observation, so it sits with the observation. */
+.obs-side .panel-title{margin:0 0 2px}
+.layer-title{margin-top:14px!important}
+.obs-status{padding:9px 11px;box-shadow:inset 0 1px 0 var(--seam)}
+.obs-status .status-line{margin-top:5px;color:var(--cy);font-size:10px}
 .obs-time{
-  grid-area:time;grid-row:3;grid-column:1 / -1;z-index:4;
-  display:flex;align-items:center;gap:18px;flex-wrap:wrap;
-  padding:9px 16px;min-height:0;
-  box-shadow:inset 0 1px 0 var(--rule-soft);
-  background:linear-gradient(180deg,rgba(2,7,10,.9),rgba(2,7,10,.97));
-  
+  margin:10px 10px 0;padding:0;
+  background:rgba(4,9,12,.7);box-shadow:inset 0 0 0 1px rgba(99,226,244,.16);
 }
-.time-title{display:flex;flex-direction:column;gap:1px;flex:0 0 auto}
-.time-sub{font-family:var(--font-data);font-size:9px;letter-spacing:.06em;color:var(--ink-4)}
-.time-controls{display:flex;align-items:center;gap:6px;flex:1 1 auto;min-width:0}
-.time-controls > label{
-  font-family:var(--font-data);font-size:9px;letter-spacing:.2em;text-transform:uppercase;
-  color:var(--ink-3);white-space:nowrap;
+.obs-time .panel-title{margin:0}
+.time-controls{display:flex;align-items:stretch;gap:4px;padding:8px 9px 6px}
+.time-controls button{
+  min-width:34px;min-height:34px;padding:0;font-size:11px;letter-spacing:0;
 }
-.time-scale{color:var(--ink-4);letter-spacing:.14em}
-#date{width:auto;min-width:158px;max-width:190px}
-#date::-webkit-calendar-picker-indicator{
-  filter:invert(72%) sepia(38%) saturate(420%) hue-rotate(130deg);opacity:.7;cursor:pointer;
+.time-controls input[type=date]{
+  flex:1 1 auto;min-width:0;font-size:12px;color-scheme:dark;
 }
-.time-controls > label{display:flex;align-items:center;gap:5px}
-.time-controls > button{min-width:28px;min-height:28px;padding:0 8px;font-size:12px;letter-spacing:0}
-.date-reset{
-  font-family:var(--font-data);font-size:9px;letter-spacing:.16em;text-transform:uppercase;
-  min-height:28px;color:var(--ink-3);
+.date-reset{width:calc(100% - 18px);margin:0 9px 6px;font-size:10px}
+.time-explain{padding:0 9px 9px;margin:0;font-size:9.5px;color:var(--fl-3)}
+.side-note{
+  margin:10px 10px 0;padding:8px 10px;
+  font-family:var(--font-data);font-size:9.5px;line-height:1.55;color:var(--fl-3);
+  box-shadow:inset 2px 0 0 var(--cy-2);
 }
-.time-explain{margin:0;flex:1 1 260px;min-width:0;max-width:62ch}
+.side-note strong{
+  display:block;font-family:var(--font-ui);font-size:11px;letter-spacing:.12em;
+  color:var(--cy);margin-bottom:3px;
+}
+.obs-side .toggle-row{padding:8px 11px}
+.obs-side .metric-block{margin:8px 10px}
 
-/* --------------------------------------------------------------- responsive */
-@media (max-width:1024px){
-  .app{grid-template-columns:minmax(0,1fr) minmax(240px,280px)}
-  .metric span{font-size:26px}
-  .time-explain{display:none}
+/* ---------------------------------------------------------------- narrow */
+@media (max-width:900px){
+  .obs-main{grid-template-columns:minmax(0,1fr) minmax(248px,264px)}
+  .scope-gauges{width:min(224px,46vw)}
+  .gauge-value{font-size:28px}
+  .scene-rail{gap:6px}
+  .scale-note{display:none}
 }
-@media (max-width:820px){
-  /* The telemetry moves under the glass as one ruled block; the scene keeps the
-     top of the frame. Everything still fits one viewport. */
-  .app{grid-template-columns:minmax(0,1fr);grid-template-rows:36px minmax(0,1fr) auto auto;
-    grid-template-areas:"top" "scene" "side" "time"}
-  /* The desktop rules pin these two by row number; restating only the areas
-     would leave the time bar in row 3, sharing the side block's cell. */
-  .obs-time{grid-row:4}
-  .obs-side{
-    display:grid;grid-template-columns:1fr 1fr;gap:0 16px;
-    padding:8px 14px;max-height:34vh;
-    box-shadow:inset 0 1px 0 var(--rule-soft);
-    background:rgba(2,7,10,.96);
+/* On a phone the optics keep the top of the frame and the rack slides under
+   it as one ruled block; the scope never becomes a page image. */
+@media (max-width:760px){
+  .topbar{grid-template-columns:auto minmax(0,1fr);padding-left:8px;min-height:44px}
+  .obs-station{display:none}
+  .obs-actions a{min-height:44px;padding:0 9px;font-size:9px}
+  .brand{font-size:16px;letter-spacing:.16em}
+  .brand small{font-size:9px}
+  .obs-main{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(280px,52vh) minmax(0,1fr)}
+  .obs-side{box-shadow:inset 0 1px 0 rgba(99,226,244,.24)}
+  /* The gauges become a row under the glass; the drag/zoom rail takes its own
+     strip below them, so a control never covers a value. */
+  .scope-gauges{
+    left:0;right:0;top:auto;bottom:0;width:auto;
+    flex-direction:row;gap:1px;padding:0;
   }
-  .obs-side .panel-title,.layer-title{grid-column:1 / -1}
-  .metric-block{margin-bottom:8px}
+  .gauge{background:linear-gradient(180deg,rgba(6,13,17,.97),rgba(3,7,10,.99))}
+  .gauge::before{display:none}
+  .gauge{flex:1 1 0;min-width:0}
+  .gauge-value{font-size:22px}
+  .gauge-note{display:none}
+  .scene-top{padding:12px 12px 0}
+  .scene-top .hud-chip:nth-child(2){display:none}
+  .scene-bottom{padding:0 12px 10px}
+  /* The rail floats just above the gauge row; the drag hint sits on the glass
+     at the left foot, clear of it. */
+  .scene-rail{right:10px;bottom:78px}
+  .scene-bottom{bottom:78px;padding:0 12px 0}
+  .view-controls button{min-width:30px;min-height:28px}
   .side-note{display:none}
-  /* The rail is a strip across the foot of the scene, so the drag/status chips
-     move up out of its way rather than printing through it. */
-  .scene-rail{bottom:10px}
-  .scene-bottom{bottom:44px;gap:8px;flex-wrap:wrap}
-  .scene-bottom .hud-chip{white-space:nowrap}
-  .obs-time{padding:7px 14px;gap:10px}
-  .time-title{display:none}
 }
-@media (max-width:600px){
-  .brand{font-size:11px;letter-spacing:.2em}
-  .brand small,.obs-station{display:none}
-  .obs-side{grid-template-columns:1fr;max-height:34vh}
-  .metric span{font-size:24px}
-  .metric.secondary span{font-size:19px}
-  .scene-top .hud-chip:nth-child(2),.scene-bottom .hud-chip:last-child{display:none}
-  .time-controls{flex-wrap:wrap}
-  #date{min-width:130px}
-  .scale-note small{display:none}
+@media (max-width:420px){
+  .gauge-cap span{font-size:9px}
+  .gauge-value{font-size:19px}
+  .scene-top .hud-chip{font-size:9px;letter-spacing:.06em}
+  .scene-bottom .hud-chip{font-size:9px}
 }

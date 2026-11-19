@@ -123,7 +123,7 @@ function build() {
   dialog.setAttribute('aria-labelledby', 'profile-title');
   dialog.innerHTML = `
     <div class="profile-head">
-      <div><span class="section-label">AEROSPACE FLIGHT LICENSE</span><h2 id="profile-title">Flight License &amp; Profile</h2></div>
+      <div data-unit="UNIT LIC · PERSONNEL FILE · LOCAL STORE"><span class="section-label">AEROSPACE FLIGHT LICENSE</span><h2 id="profile-title">Flight License &amp; Profile</h2></div>
       <button type="button" id="profile-close" aria-label="Close profile">✕</button>
     </div>
     <div class="profile-identity">

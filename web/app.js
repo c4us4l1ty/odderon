@@ -3,6 +3,7 @@ import { CANVAS_MONO, loadCanvasFaces } from './glyphs.js';
 import { planetShine } from './lighting.js';
 import { Renderer } from './renderer.js';
 import { polyline, vector, reticle, apsis } from './overlay.js';
+import { consoleFrame } from './hud-layer.js';
 import { EARTH_RADIUS_M, MOON_RADIUS_M, projectedRadius, needsReticle, orbitViewSpan } from './scale.js';
 
 const $=id=>document.getElementById(id);
@@ -100,18 +101,27 @@ function drawOverlay(model,rect){
   if(overlay.width!==w||overlay.height!==h){overlay.width=w;overlay.height=h;}
   const ctx=overlay.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,rect.width,rect.height);
   const pixel=p=>[rect.width/2+p[0]*rect.height/2,rect.height/2-p[1]*rect.height/2];
+  // The scope's furniture: machined corner brackets in the frame's own overlay.
+  // The vignette is drawn by the world shader, so no second layer is composited
+  // above the live WebGL surface (see the no-blur rule in docs/interface.md).
+  // The outer edge and brackets belong to the DOM frame around the optics;
+  // only the inner glass furniture is painted here, so the overlay never
+  // covers the full canvas with new pixels on every repaint.
+  ctx.save();
+  ctx.strokeStyle='rgba(157,196,208,.16)';ctx.lineWidth=1;ctx.strokeRect(6.5,6.5,rect.width-13,rect.height-13);
+  ctx.restore();
   if($('show-orbit').checked&&activeOrbit){
     const points=activeOrbit.points.map(p=>pixel(model.project(p)));if(activeOrbit.closed)points.push(points[0]);
-    polyline(ctx,points,{stroke:'#6ad5da',width:1.5,dashed:true});
-    if(activeOrbit.perturbed)polyline(ctx,activeOrbit.perturbed.map(p=>pixel(model.project(p))),{stroke:'#e1bd78',width:2});
+    polyline(ctx,points,{stroke:'rgba(99,226,244,.85)',width:1.5,dashed:true});
+    if(activeOrbit.perturbed)polyline(ctx,activeOrbit.perturbed.map(p=>pixel(model.project(p))),{stroke:'rgba(255,180,63,.95)',width:2});
     for(const marker of activeOrbit.markers)apsis(ctx,pixel(model.project(marker.pos)),marker.name);
-    const craft=pixel(model.project(activeOrbit.position));reticle(ctx,craft,{color:'#e1bd78'});ctx.fillStyle='#e1bd78';ctx.font=`10px ${CANVAS_MONO}`;ctx.fillText('TEST CRAFT',craft[0]+9,craft[1]+12);
-    ctx.fillStyle='#e1bd78';ctx.font=`10px ${CANVAS_MONO}`;ctx.fillText(activeOrbit.closed?'IDEAL TWO-BODY TEST ORBIT':'IDEAL TWO-BODY · OPEN SEGMENT',20,rect.height-26);
+    const craft=pixel(model.project(activeOrbit.position));reticle(ctx,craft,{color:'rgba(255,180,63,.95)'});ctx.fillStyle='rgba(255,180,63,.95)';ctx.font=`10px ${CANVAS_MONO}`;ctx.fillText('TEST CRAFT',craft[0]+9,craft[1]+12);
+    ctx.fillStyle='rgba(255,180,63,.9)';ctx.font=`10px ${CANVAS_MONO}`;ctx.fillText(activeOrbit.closed?'IDEAL TWO-BODY TEST ORBIT':'IDEAL TWO-BODY · OPEN SEGMENT',20,rect.height-26);
   }
   if($('show-path').checked){
     for(const future of [false,true]){
       const points=snapshot.samples.filter(sample=>future ? sample.time>=snapshot.seconds : sample.time<=snapshot.seconds).map(sample=>pixel(model.project(sample.pos)));
-      polyline(ctx,points,{stroke:future?'rgba(194,211,189,.25)':'rgba(194,211,189,.55)',dashed:future});
+      polyline(ctx,points,{stroke:future?'rgba(198,247,255,.22)':'rgba(198,247,255,.55)',dashed:future});
     }
   }
   if($('show-velocity').checked){
@@ -119,17 +129,17 @@ function drawOverlay(model,rect){
     // A 1-day tangent scaled from instantaneous geometric velocity, not an orbit prediction.
     const to=pixel(model.project(snapshot.moon.map((x,i)=>x+snapshot.velocity[i]*86400)));
     const visible=vector(ctx,from,to);
-    ctx.fillStyle='#e1bd78';
+    ctx.fillStyle='rgba(255,180,63,.9)';
     ctx.font=`10px ${CANVAS_MONO}`;ctx.fillText(visible?'VELOCITY · 1 DAY AT CURRENT SPEED':'VELOCITY · ALMOST ALONG VIEW',20,rect.height-(model.vehicle?62:45));
   }
-  if(model.vehicle){ctx.fillStyle='#d5bb80';ctx.font=`10px ${CANVAS_MONO}`;ctx.fillText('VEHICLE GLYPH · NOT TO SCALE',20,rect.height-45);}
+  if(model.vehicle){ctx.fillStyle='rgba(255,180,63,.85)';ctx.font=`10px ${CANVAS_MONO}`;ctx.fillText('VEHICLE GLYPH · NOT TO SCALE',20,rect.height-45);}
   function label(body,name,detail){
     const [x,y]=pixel(body),radius=body[2]*rect.height/2;
     if(x < -radius||x>rect.width+radius||y < -radius||y>rect.height+radius)return;
     if(needsReticle(body[2],rect.height))reticle(ctx,[x,y]);
     const side=x+radius+140>rect.width?-1:1, tx=x+side*(Math.max(radius,6)+16),ty=Math.max(42,Math.min(rect.height-40,y-radius*.22));
-    ctx.textAlign=side===1?'left':'right';ctx.strokeStyle='rgba(205,223,203,.55)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x+side*radius*.76,y-radius*.3);ctx.lineTo(tx-side*5,ty);ctx.stroke();
-    ctx.font=`600 10px ${CANVAS_MONO}`;ctx.letterSpacing='1.2px';ctx.fillStyle='#dce8d5';ctx.fillText(name,tx,ty-3);ctx.font=`10px ${CANVAS_MONO}`;ctx.letterSpacing='0px';ctx.fillStyle='#91a89a';ctx.fillText(detail,tx,ty+11);ctx.textAlign='left';
+    ctx.textAlign=side===1?'left':'right';ctx.strokeStyle='rgba(99,226,244,.45)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x+side*radius*.76,y-radius*.3);ctx.lineTo(tx-side*5,ty);ctx.stroke();
+    ctx.font=`600 10px ${CANVAS_MONO}`;ctx.letterSpacing='1.2px';ctx.fillStyle='#eef6f8';ctx.fillText(name,tx,ty-3);ctx.font=`10px ${CANVAS_MONO}`;ctx.letterSpacing='0px';ctx.fillStyle='rgba(169,190,198,.9)';ctx.fillText(detail,tx,ty+11);ctx.textAlign='left';
   }
   label(model.earth,'EARTH','Our home');label(model.moon,'MOON','Natural satellite');
 }

@@ -2,8 +2,9 @@
 // bundled faces as the DOM, so a scene can never fall back to a system UI font
 // and quietly stop looking like an instrument. Kept separate from hud.css
 // because a canvas cannot inherit a CSS font stack.
-export const CANVAS_MONO = '"Odderon Data","IBM Plex Mono",ui-monospace,monospace';
-export const CANVAS_DISPLAY = '"Odderon Display","Barlow Condensed",ui-sans-serif,sans-serif';
+export const CANVAS_MONO = '"Odderon Data","Martian Mono",ui-monospace,monospace';
+export const CANVAS_DISPLAY = '"Odderon Gauge",Oxanium,ui-sans-serif,sans-serif';
+export const CANVAS_PANEL = '"Odderon Panel",Rajdhani,system-ui,sans-serif';
 
 /// Paint a readout label: monospaced, tracked, upper case, in one place so the
 /// tracking is never set by hand at a call site.
@@ -27,5 +28,7 @@ export async function loadCanvasFaces() {
     document.fonts.load(`400 10px ${CANVAS_MONO}`),
     document.fonts.load(`600 10px ${CANVAS_MONO}`),
     document.fonts.load(`500 11px ${CANVAS_DISPLAY}`),
+    document.fonts.load(`600 11px ${CANVAS_DISPLAY}`),
+    document.fonts.load(`700 12px ${CANVAS_PANEL}`),
   ]).catch(() => {});
 }

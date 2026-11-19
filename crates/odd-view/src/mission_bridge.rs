@@ -1531,6 +1531,26 @@ pub extern "C" fn mission_delegation_mask() -> u32 {
         .map_or(0, |s| u32::from(s.delegation.0))
 }
 
+/// One discipline's chief decision: field 0 is the kg the chief added, field 1
+/// the discipline's own hardware mass. NaN when out of range.
+#[no_mangle]
+pub extern "C" fn mission_delegation_cell(department: u32, field: u32) -> f64 {
+    let Some(outcome) = delegation_outcome() else {
+        return f64::NAN;
+    };
+    let Ok(index) = usize::try_from(department) else {
+        return f64::NAN;
+    };
+    let Some(decision) = outcome.decisions.get(index) else {
+        return f64::NAN;
+    };
+    match field {
+        0 => decision.margin_kg,
+        1 => decision.base_kg,
+        _ => f64::NAN,
+    }
+}
+
 /// Assembly readout: 0 margin kg, 1 cost multiplier, 2 dry mass, 3 wet mass,
 /// 4 efficiency cap. NaN when no stage is selected.
 #[no_mangle]

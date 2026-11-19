@@ -1,288 +1,388 @@
 /* ============================================================================
-   ODDERON — TITLE FRAME
+   ODDERON — LAUNCH BAY (title screen)
    ----------------------------------------------------------------------------
-   The launch screen is a live external camera feed with a soft-key stack laid
-   over it. There is no page: the plate fills the frame, the keys sit on the
-   lower edge, and the only words are the game's current state.
+   The first frame of the game is the external camera looking at the player's
+   vehicle with the computer's own overlay on it: an identity plate, the
+   ship's nameplate stamped on the hull, the assigned operation clipped to the
+   right edge, a live telemetry column, and a row of machined launch keys on
+   the deck. There is no page here — no hero block, no centred button list, no
+   site navigation, no footer links.
 
-   Structure is a 4-row frame and nothing else:
-     header   wordmark + flight-computer state        (44px)
-     void     the camera plate, with HUD furniture    (1fr)
-     keys     soft-key stack                          (auto)
-     footer   build + input hint                      (28px)
+   Frame rows:  header 44 / viewport 1fr / keys auto / status 26
    ========================================================================= */
 
 .title-screen{
   position:fixed;inset:0;display:grid;
-  grid-template-rows:44px minmax(0,1fr) auto 28px;
+  grid-template-rows:44px minmax(0,1fr) auto 26px;
   grid-template-areas:"head" "void" "keys" "foot";
   overflow:hidden;
+  background:var(--void);
 }
 
 /* --------------------------------------------------------------- the plate */
-/* The camera feed. `title-orbit.jpg` is the photographed stage; every overlay
-   below is HUD furniture on top of it, not page decoration. */
+/* `title-orbit.jpg` is the photographed stage. Everything below is overlay
+   furniture on a live feed, not page decoration. */
 .spacecraft{
-  grid-area:void;position:relative;
+  grid-area:void;grid-row:2;position:relative;
   background-image:url('./assets/title-orbit.jpg');
   background-position:center 46%;background-size:cover;background-repeat:no-repeat;
-  filter:saturate(.92) contrast(1.06) brightness(.98);
+  filter:saturate(.86) contrast(1.1) brightness(.9);
 }
-.vignette{grid-area:void;position:relative;pointer-events:none;z-index:1;
+.vignette{
+  grid-area:void;grid-row:2;position:relative;pointer-events:none;z-index:1;
   background:
-    radial-gradient(120% 90% at 50% 40%,transparent 40%,rgba(1,5,9,.55) 78%,rgba(1,5,9,.95) 100%),
-    linear-gradient(180deg,rgba(1,5,9,.82),transparent 26%,transparent 62%,rgba(1,5,9,.92));
+    radial-gradient(120% 92% at 62% 44%,transparent 34%,rgba(2,5,8,.45) 72%,rgba(2,5,8,.9) 100%),
+    linear-gradient(180deg,rgba(2,5,8,.9),transparent 22%,transparent 58%,rgba(2,5,8,.95)),
+    linear-gradient(90deg,rgba(2,5,8,.8),transparent 42%);
 }
 .grain{
-  grid-area:void;position:relative;z-index:2;pointer-events:none;opacity:.05;mix-blend-mode:screen;
+  grid-area:void;grid-row:2;position:relative;z-index:2;pointer-events:none;opacity:.055;
+  mix-blend-mode:screen;
   background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
 }
 
-/* The plates all share the void cell; each is absolutely placed inside it. */
-.spacecraft,.vignette,.grain{grid-row:2}
-.hud-rim,.hud-ladder,.cam-tag,.cam-scale,.title-stamp,.hud-readout,.mission-brief{
+/* The hull nameplate: a serial number etched into the plate, reading vertically
+   up the right edge of the frame. It is machinery, not decoration — every
+   machine carries its own number where the fitter can read it. */
+.title-screen::after{
+  content:'ODD-03 · HULL SECTION 04 · ODDERON FLIGHT SOFTWARE';
+  position:absolute;right:14px;top:64%;transform:translateY(-50%) rotate(90deg);
+  transform-origin:center;z-index:2;pointer-events:none;white-space:nowrap;
+  font-family:var(--font-data);font-size:9px;letter-spacing:.42em;
+  color:rgba(157,196,208,.24);
+}
+@media (max-width:900px){.title-screen::after{display:none}}
+
+/* Every overlay plate shares the viewport cell and is placed inside it. */
+.hud-rim,.hud-ladder,.cam-tag,.cam-scale,.game-header,.title-stamp,.hud-readout,.mission-brief{
   position:absolute;z-index:3;
 }
-.hud-rim{inset:14px;pointer-events:none;
-  --c:rgba(127,227,216,.4);
+.hud-rim{
+  inset:10px;pointer-events:none;
+  --c:rgba(157,196,208,.26);
   background:
-    linear-gradient(var(--c),var(--c)) left top/22px 1px no-repeat,
-    linear-gradient(var(--c),var(--c)) left top/1px 22px no-repeat,
-    linear-gradient(var(--c),var(--c)) right top/22px 1px no-repeat,
-    linear-gradient(var(--c),var(--c)) right top/1px 22px no-repeat,
-    linear-gradient(var(--c),var(--c)) left bottom/22px 1px no-repeat,
-    linear-gradient(var(--c),var(--c)) left bottom/1px 22px no-repeat,
-    linear-gradient(var(--c),var(--c)) right bottom/22px 1px no-repeat,
-    linear-gradient(var(--c),var(--c)) right bottom/1px 22px no-repeat;
+    linear-gradient(var(--c),var(--c)) left top/30px 1px no-repeat,
+    linear-gradient(var(--c),var(--c)) left top/1px 30px no-repeat,
+    linear-gradient(var(--c),var(--c)) right top/30px 1px no-repeat,
+    linear-gradient(var(--c),var(--c)) right top/1px 30px no-repeat,
+    linear-gradient(var(--c),var(--c)) left bottom/30px 1px no-repeat,
+    linear-gradient(var(--c),var(--c)) left bottom/1px 30px no-repeat,
+    linear-gradient(var(--c),var(--c)) right bottom/30px 1px no-repeat,
+    linear-gradient(var(--c),var(--c)) right bottom/1px 30px no-repeat;
 }
-/* A pitch ladder, laid against the left edge of the frame. */
+/* A pitch ladder laid against the left edge: the camera is looking somewhere. */
 .hud-ladder{
-  left:18px;top:50%;transform:translateY(-50%);
-  display:flex;flex-direction:column;gap:7px;pointer-events:none;opacity:.55;
+  left:16px;top:50%;transform:translateY(-50%);
+  display:flex;flex-direction:column;gap:9px;pointer-events:none;opacity:.6;
 }
-.hud-ladder i{display:block;width:9px;height:1px;background:var(--hud-faint)}
-.hud-ladder i:nth-child(2n){width:16px}
-.hud-ladder i:nth-child(3){width:22px;background:rgba(244,184,96,.8)}
+.hud-ladder i{display:block;width:10px;height:1px;background:rgba(157,196,208,.4)}
+/* Corner brackets on the camera plate: the plate is a viewfinder, and its
+   corners are where a viewfinder puts them. */
+.hud-rim::after{
+  content:'';position:absolute;inset:5px;pointer-events:none;
+  background:
+    linear-gradient(var(--c),var(--c)) left top/26px 1px no-repeat,
+    linear-gradient(var(--c),var(--c)) left top/1px 26px no-repeat,
+    linear-gradient(var(--c),var(--c)) right bottom/26px 1px no-repeat,
+    linear-gradient(var(--c),var(--c)) right bottom/1px 26px no-repeat;
+  opacity:.8;
+}
+.hud-ladder i:nth-child(2n){width:18px}
+.hud-ladder i:nth-child(4){width:26px;height:2px;background:var(--am);box-shadow:0 0 8px rgba(255,180,63,.6)}
 
-/* The camera is labelled as a camera: source, subject, timecode, scale. */
+/* Camera identification: source, subject, timecode, scale bar. */
 .cam-tag{
-  left:50%;top:56px;transform:translateX(-50%);
-  display:flex;align-items:center;gap:9px;
-  font-family:var(--font-data);font-size:9px;letter-spacing:.22em;text-transform:uppercase;
-  color:var(--ink-2);padding:4px 10px;
-  box-shadow:inset 0 0 0 1px var(--rule-soft);background:rgba(2,7,10,.42);
+  left:50%;top:6px;transform:translateX(-50%);
+  display:flex;align-items:center;gap:10px;padding:3px 10px;
+  font-family:var(--font-data);font-size:9px;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--fl-2);background:rgba(2,6,9,.55);
+  box-shadow:inset 0 0 0 1px rgba(157,196,208,.2);
 }
-.cam-rec{width:5px;height:5px;border-radius:50%;background:var(--red);box-shadow:0 0 9px var(--red)}
-.cam-tag .cam-tc{color:var(--ink-3);letter-spacing:.18em}
-.cam-scale{left:18px;bottom:22px;display:flex;flex-direction:column;gap:4px;pointer-events:none}
-.cam-scale i{display:block;width:74px;height:7px;
-  border-left:1px solid var(--hud-dim);border-right:1px solid var(--hud-dim);border-bottom:1px solid var(--hud-dim)}
-.cam-scale b{font-family:var(--font-data);font-size:9px;font-weight:500;letter-spacing:.18em;color:var(--ink-3)}
+.cam-rec{width:6px;height:6px;border-radius:50%;background:var(--rd);box-shadow:0 0 9px var(--rd)}
+.cam-tag .cam-tc{color:var(--fl-3);letter-spacing:.12em;padding-left:8px;
+  box-shadow:inset 1px 0 0 rgba(157,196,208,.24)}
+.cam-scale{left:18px;bottom:14px;display:flex;flex-direction:column;gap:4px;pointer-events:none}
+.cam-scale i{display:block;width:80px;height:7px;
+  border-left:1px solid var(--brk);border-right:1px solid var(--brk);border-bottom:1px solid var(--brk)}
+.cam-scale b{font-family:var(--font-data);font-size:9px;font-weight:500;letter-spacing:.16em;color:var(--fl-3)}
 
-/* ---------------------------------------------------------------- identity */
-/* The wordmark plate. It carries the game's name and the operation in progress
-   — never a product pitch. A launch screen inside a game reports state. */
-/* Absolute children of the grid ignore the named areas, so the stamp is pinned
-   to the top of the void cell rather than to the frame: on a phone the header
-   is 42px and `top:16px` would print the kicker through the wordmark. */
-.title-stamp{left:clamp(18px,3.2vw,54px);top:calc(44px + clamp(10px,2.4vh,30px));max-width:min(560px,52vw)}
-.kicker{
-  font-family:var(--font-data);font-size:9px;letter-spacing:.34em;text-transform:uppercase;
-  color:var(--hud-dim);margin:0 0 10px;
-}
-.title-stamp h1{
-  font-family:var(--font-display);font-weight:500;
-  font-size:clamp(44px,7.2vw,104px);line-height:.86;letter-spacing:.035em;
-  text-transform:uppercase;color:var(--hud-bright);
-  text-shadow:0 0 40px rgba(127,227,216,.22);
-}
-.tagline{
-  font-family:var(--font-data);font-size:11px;letter-spacing:.16em;text-transform:uppercase;
-  color:var(--ink-2);margin:12px 0 0;
-}
-.tagline strong{color:var(--hud);font-weight:500}
-.build-tag{
-  font-family:var(--font-data);font-size:9px;letter-spacing:.26em;text-transform:uppercase;
-  color:var(--ink-4);margin:12px 0 0;padding-top:9px;
-  box-shadow:inset 0 1px 0 var(--rule-soft);max-width:330px;
-}
-
-/* --------------------------------------------------------------- the keys */
-/* The main menu is a soft-key stack pinned to the lower edge — the shape a
-   console launch screen uses, not a nav list in a sidebar. */
-.game-menu{
-  grid-area:keys;position:relative;z-index:4;
-  display:flex;flex-direction:column;
-  margin:0 clamp(14px,3.2vw,54px) 10px;
-  max-width:min(540px,54vw);
-}
-.menu-item{
-  display:grid;grid-template-columns:14px minmax(0,1fr) auto;
-  align-items:center;gap:12px;
-  padding:11px 14px;min-height:52px;
-  color:var(--ink-2);text-align:left;
-  /* A scrim that fades to nothing at its right edge, so the key reads as type
-     laid on the camera plate rather than as a button on a page. The hairline is
-     masked with the same ramp: an unmasked ring closes into a plate outline
-     under the last letter. */
-  background-image:linear-gradient(90deg,rgba(2,8,11,.74),rgba(2,8,11,.34) 62%,transparent);
-  box-shadow:inset 0 0 0 1px var(--rule-soft);
-  -webkit-mask-image:linear-gradient(90deg,#000 0%,#000 88%,transparent 100%);
-  mask-image:linear-gradient(90deg,#000 0%,#000 88%,transparent 100%);
-  transition:var(--ease);position:relative;
-}
-.menu-item + .menu-item{margin-top:2px}
-.menu-item:hover,.menu-item:focus-visible{
-  color:var(--hud-bright);box-shadow:inset 0 0 0 1px var(--rule-bright);
-  background-image:linear-gradient(90deg,rgba(20,64,66,.82),rgba(6,26,30,.4) 62%,transparent);
-}
-.menu-mark{font-size:11px;color:var(--hud-dim);transition:color .1s linear}
-.menu-item:hover .menu-mark,.menu-item:focus-visible .menu-mark{color:var(--hud)}
-.menu-label{
-  font-family:var(--font-display);font-size:19px;font-weight:500;
-  letter-spacing:.14em;text-transform:uppercase;color:inherit;line-height:1.05;
-}
-.menu-label small{
-  display:block;font-family:var(--font-data);font-size:9px;letter-spacing:.14em;
-  color:var(--ink-3);margin-top:3px;text-transform:uppercase;
-}
-.menu-index{
-  font-family:var(--font-data);font-size:9px;letter-spacing:.1em;color:var(--ink-3);
-  padding:1px 5px;box-shadow:inset 0 0 0 1px var(--rule-soft);
-}
-
-/* The primary key is lit: it is the operation the player is in the middle of.
-   It must also stay obviously lit under keyboard focus, which is why the focus
-   state gets its own frame rather than relying on the accent colour alone. */
-.menu-item.primary{
-  color:var(--hud-bright);
-  background-image:linear-gradient(90deg,rgba(30,86,88,.82),rgba(8,26,30,.34) 64%,transparent);
-  box-shadow:inset 0 0 0 1px var(--rule-bright),inset 3px 0 0 var(--hud);
-}
-.menu-item.primary .menu-mark{color:var(--hud)}
-.menu-item.primary .menu-index{color:#04211f;background:var(--hud);box-shadow:none}
-.menu-item.primary:hover{background-image:linear-gradient(90deg,rgba(44,120,120,.9),rgba(10,34,38,.4) 64%,transparent)}
-.menu-item.primary:focus-visible{
-  outline:1px solid var(--hud-bright);outline-offset:3px;
-  box-shadow:inset 0 0 0 1px rgba(215,255,249,.7),inset 3px 0 0 var(--hud-bright),0 0 26px rgba(127,227,216,.3);
-}
-
-/* -------------------------------------------------------------- operation */
-/* What the player is currently assigned to. Set on the right, under the frame
-   telemetry, so the eye reads name-left, task-right. */
-.mission-brief{
-  right:clamp(18px,3.2vw,54px);bottom:clamp(18px,3vh,40px);z-index:4;
-  width:min(390px,42vw);padding:14px 16px 15px;
-  box-shadow:inset 0 -1px 0 var(--rule-soft),inset 3px 0 0 rgba(244,184,96,.4);
-  background-image:linear-gradient(180deg,rgba(2,8,11,.74),rgba(2,8,11,.2) 88%,transparent);
-}
-.brief-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
-.brief-label{font-family:var(--font-data);font-size:9px;letter-spacing:.28em;text-transform:uppercase;color:var(--ink-3)}
-.brief-live{
-  font-family:var(--font-data);font-size:9px;letter-spacing:.18em;color:var(--green);
-  padding:1px 6px;box-shadow:inset 0 0 0 1px rgba(121,230,164,.45);
-}
-.brief-code{font-family:var(--font-data);font-size:9px;letter-spacing:.24em;color:var(--hud-dim);margin:10px 0 2px}
-.mission-brief h2{
-  font-family:var(--font-display);font-size:26px;font-weight:500;letter-spacing:.08em;
-  text-transform:uppercase;color:var(--ink);margin:0 0 7px;
-}
-.mission-brief > p{font-family:var(--font-ui);font-size:12px;line-height:1.45;color:var(--ink-2)}
-.brief-rule{height:1px;background:var(--rule-soft);margin:11px 0 9px}
-.brief-meta{display:flex;flex-wrap:wrap;gap:6px}
-.brief-meta span{
-  font-family:var(--font-data);font-size:9px;letter-spacing:.16em;text-transform:uppercase;
-  color:var(--ink-3);padding:2px 6px;box-shadow:inset 0 0 0 1px var(--rule-soft);
-}
-
-/* Frame telemetry, top right: what projection the camera is showing. */
-.hud-readout{
-  right:clamp(18px,3.2vw,54px);top:clamp(18px,3vh,40px);z-index:4;
-  display:flex;flex-direction:column;gap:7px;text-align:right;
-  padding-right:11px;box-shadow:inset -1px 0 0 var(--rule);
-}
-.hud-readout li{display:flex;flex-direction:column;gap:1px}
-.hud-readout span{font-family:var(--font-data);font-size:9px;letter-spacing:.22em;color:var(--ink-3)}
-.hud-readout b{font-family:var(--font-display);font-size:12px;font-weight:600;letter-spacing:.16em;color:var(--hud);text-transform:uppercase}
-
-/* ---------------------------------------------------------------- bars */
+/* ------------------------------------------------------- identity plate */
 .game-header{
-  grid-area:head;display:flex;align-items:center;justify-content:space-between;
-  gap:14px;padding:0 clamp(14px,3.2vw,54px);position:relative;z-index:5;
-  box-shadow:inset 0 -1px 0 var(--rule-soft);
-  background:linear-gradient(180deg,rgba(2,7,10,.94),rgba(2,7,10,.5));
+  left:0;top:0;right:0;height:44px;display:flex;align-items:center;
+  gap:16px;padding:0 14px 0 12px;
+  background:linear-gradient(90deg,rgba(4,9,12,.92),rgba(4,9,12,.2));
 }
 .wordmark{
-  display:flex;align-items:center;gap:9px;
-  font-family:var(--font-display);font-size:15px;font-weight:600;
-  letter-spacing:.32em;text-transform:uppercase;color:var(--hud-bright);
+  display:flex;align-items:center;gap:10px;
+  font-family:var(--font-display);font-size:19px;font-weight:700;letter-spacing:.22em;
+  color:var(--fl);line-height:1;
 }
-.wordmark-mark{font-size:13px;color:var(--hud);letter-spacing:0}
-.build-state{display:flex;align-items:center;gap:7px;
-  font-family:var(--font-data);font-size:9px;letter-spacing:.22em;text-transform:uppercase;color:var(--ink-3)}
-.build-state i{width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 9px var(--green)}
+.wordmark-mark{
+  display:grid;place-items:center;width:22px;height:22px;font-size:12px;
+  color:var(--void);background:var(--cy);
+  clip-path:polygon(0 0,100% 0,100% 72%,72% 100%,0 100%);
+  font-family:var(--font-data);letter-spacing:0;
+}
+.wordmark small{display:block;font-size:9px;letter-spacing:.14em;color:var(--fl-3);margin-top:3px;line-height:1}
+.wordmark > span:last-child{display:flex;flex-direction:column}
+.build-state{
+  display:flex;align-items:center;gap:7px;margin-left:auto;
+  font-family:var(--font-data);font-size:9px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--fl-3);
+}
+.build-state i{
+  width:6px;height:6px;border-radius:50%;background:var(--am);
+  box-shadow:0 0 8px var(--am);
+}
+.build-state.ready{color:var(--cy)}
+.build-state.ready i{background:var(--gn);box-shadow:0 0 9px var(--gn)}
 
+/* ------------------------------------------------------------ nameplate */
+.title-stamp{
+  left:34px;top:clamp(70px,13vh,150px);max-width:min(44vw,520px);
+  padding-left:16px;
+  box-shadow:inset 2px 0 0 rgba(99,226,244,.5);
+}
+.kicker{
+  font-family:var(--font-data);font-size:10px;font-weight:500;letter-spacing:.32em;
+  text-transform:uppercase;color:var(--cy);margin-bottom:8px;
+}
+.title-stamp h1{
+  font-family:var(--font-display);font-weight:700;
+  font-size:clamp(46px,7.4vw,104px);line-height:.86;letter-spacing:.06em;
+  color:#f4fbfd;
+}
+.stamp-rule{display:flex;align-items:center;gap:8px;margin:10px 0 9px}
+.stamp-rule i{display:block;width:46px;height:2px;background:var(--am);box-shadow:0 0 10px rgba(255,180,63,.7)}
+.stamp-rule b{display:block;flex:1 1 auto;height:1px;background:linear-gradient(90deg,rgba(157,196,208,.4),transparent)}
+.tagline{
+  font-family:var(--font-data);font-size:11px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--fl-2);
+}
+.tagline span{color:var(--fl-4);padding:0 4px}
+.tagline strong{color:var(--am);font-weight:500}
+.build-tag{
+  margin-top:7px;font-family:var(--font-data);font-size:9px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--fl-3);
+}
+
+/* --------------------------------------------------- operation manifest */
+/* Clipped to the right edge of the glass like a stowed checklist. */
+.mission-brief{
+  right:18px;top:58px;width:min(300px,30vw);padding:0;
+  background:linear-gradient(180deg,rgba(8,15,20,.9),rgba(4,9,13,.94));
+  border-top:2px solid var(--am);
+  box-shadow:inset 0 0 0 1px rgba(157,196,208,.18),
+    inset 0 0 40px rgba(0,0,0,.5),
+    0 20px 50px rgba(0,0,0,.45);
+}
+.brief-head{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:7px 11px;
+  background:rgba(255,180,63,.09);
+  box-shadow:inset 0 -1px 0 rgba(255,180,63,.24);
+}
+.brief-label{font-family:var(--font-data);font-size:9px;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--am)!important}
+.brief-live{
+  font-family:var(--font-data);font-size:9px;letter-spacing:.14em;
+  color:var(--gn);padding-left:9px;box-shadow:inset 1px 0 0 rgba(255,180,63,.3);
+}
+.brief-code{
+  font-family:var(--font-data);font-size:10px;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--fl-3);padding:10px 11px 0;
+}
+.mission-brief h2{
+  font-family:var(--font-display);font-size:31px;font-weight:600;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--fl);padding:3px 11px 9px;line-height:1;
+}
+.brief-copy{
+  font-family:var(--font-ui);font-size:12.5px;font-weight:600;line-height:1.35;
+  color:var(--fl-2);padding:0 11px 11px;letter-spacing:.01em;
+}
+.brief-rule{height:1px;margin:0 11px;background:linear-gradient(90deg,rgba(255,180,63,.5),transparent)}
+.brief-spec{padding:7px 11px 9px;display:grid;grid-template-columns:1fr 1fr;gap:1px;background:rgba(157,196,208,.08)}
+.brief-spec > div{background:rgba(6,12,16,.92);padding:5px 8px}
+.brief-spec dt{font-family:var(--font-data);font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--fl-4)}
+.brief-spec dd{font-family:var(--font-data);font-size:11px;color:var(--fl);letter-spacing:.02em;margin:2px 0 0}
+.brief-meta{display:none}
+
+/* --------------------------------------------------------- telemetry column */
+.hud-readout{
+  right:18px;bottom:106px;display:flex;flex-direction:column;gap:1px;
+  text-align:right;pointer-events:none;
+  font-family:var(--font-data);font-size:9px;letter-spacing:.12em;text-transform:uppercase;
+}
+.hud-readout li{
+  display:flex;justify-content:flex-end;gap:10px;padding:3px 8px 3px 14px;
+  background:linear-gradient(90deg,transparent,rgba(2,6,9,.8));
+  box-shadow:inset -2px 0 0 rgba(99,226,244,.3);
+}
+.hud-readout span{color:var(--fl-4)}
+.hud-readout b{color:var(--fl-2);font-weight:500;min-width:132px}
+
+/* ------------------------------------------------------------ launch keys */
+/* A row of machined keys bolted along the bottom deck. Each is a plate with a
+   cut corner, a number stamp and a legend; the armed key glows amber. */
+.game-menu{
+  grid-area:keys;grid-row:3;position:relative;z-index:4;
+  display:flex;align-items:stretch;gap:8px;
+  padding:10px 18px 12px 34px;
+  background:linear-gradient(180deg,rgba(2,5,8,.4),rgba(2,5,8,.94));
+}
+.game-menu::before{
+  content:'';position:absolute;left:34px;right:18px;top:0;height:1px;
+  background:linear-gradient(90deg,rgba(99,226,244,.5),rgba(99,226,244,.1) 60%,transparent);
+}
+.menu-item{
+  position:relative;display:flex;align-items:center;gap:12px;
+  min-width:0;flex:1 1 220px;padding:12px 15px 12px 14px;
+  text-align:left;justify-content:flex-start;
+  background:linear-gradient(180deg,rgba(26,41,49,.92),rgba(8,15,19,.96));
+  box-shadow:
+    inset 0 1px 0 rgba(200,240,250,.16),
+    inset 0 -2px 0 rgba(0,0,0,.7),
+    inset 0 0 0 1px rgba(126,168,180,.26);
+  clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,0 100%);
+  transition:var(--ease);
+}
+.menu-item:hover{
+  background:linear-gradient(180deg,rgba(38,62,72,.95),rgba(12,23,28,.97));
+  box-shadow:inset 0 1px 0 rgba(200,240,250,.24),inset 0 -2px 0 rgba(0,0,0,.7),
+    inset 0 0 0 1px rgba(99,226,244,.5);
+}
+/* Hover is a lamp in the key's own face, not a glow around it: nothing is ever
+   composited outside a plate on the title screen. */
+.menu-item::after{
+  content:'';position:absolute;left:0;right:0;top:0;height:2px;opacity:0;
+  background:var(--cy);transition:var(--ease);
+}
+.menu-item:hover::after{opacity:1}
+.menu-item.primary::after{display:none}
+.menu-item:hover .menu-mark{color:var(--cy)}
+.menu-mark{
+  font-size:13px;color:var(--fl-4);line-height:1;
+  transition:var(--ease);flex:0 0 auto;
+}
+.menu-label{
+  display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 auto;
+  font-family:var(--font-ui);font-size:15px;font-weight:700;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--fl);line-height:1.05;
+}
+.menu-label small{
+  font-family:var(--font-data);font-size:9px;font-weight:400;letter-spacing:.06em;
+  text-transform:none;color:var(--fl-3);line-height:1.2;
+}
+.menu-index{
+  font-family:var(--font-data);font-size:10px;letter-spacing:.1em;
+  color:var(--fl-4);align-self:flex-start;padding:2px 5px;
+  box-shadow:inset 0 0 0 1px rgba(126,168,180,.2);
+}
+/* The armed launch key: the game's primary action, lit like an arming switch. */
+.menu-item.primary{
+  background:linear-gradient(180deg,rgba(255,196,92,.96),rgba(220,140,20,.96));
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.6),
+    inset 0 -3px 0 rgba(120,66,0,.55),
+    inset 0 0 0 1px rgba(255,236,200,.7);
+}
+.menu-item.primary .menu-label{color:#160e02}
+.menu-item.primary .menu-label small{color:rgba(30,18,2,.72)}
+.menu-item.primary .menu-mark{color:#2a1a02}
+.menu-item.primary .menu-index{color:#3a2606;box-shadow:inset 0 0 0 1px rgba(60,38,0,.4)}
+.menu-item.primary:hover{
+  background:linear-gradient(180deg,#ffe0a4,#ffb43f);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.75),inset 0 -3px 0 rgba(120,66,0,.55),
+    inset 0 0 0 1px #fff6e2;
+}
+.menu-item.primary:hover .menu-mark{color:#2a1a02}
+
+/* ------------------------------------------------------------- status rail */
 .game-footer{
-  grid-area:foot;display:flex;align-items:center;justify-content:space-between;gap:14px;
-  padding:0 clamp(14px,3.2vw,54px);
-  font-family:var(--font-data);font-size:9px;letter-spacing:.22em;text-transform:uppercase;
-  color:var(--ink-4);box-shadow:inset 0 1px 0 var(--rule-soft);
-  background:rgba(2,7,10,.7);
+  grid-area:foot;grid-row:4;position:relative;
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:0 18px 0 34px;
+  font-family:var(--font-data);font-size:9px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--fl-3);
+  background:rgba(2,5,8,.96);
+  box-shadow:inset 0 1px 0 rgba(157,196,208,.14);
 }
-.game-footer b{color:var(--hud-dim);font-weight:400}
-.game-footer-mid{color:var(--ink-4)}
-.key-hint{display:flex;align-items:center;gap:6px}
-.key-hint kbd{
-  font-family:var(--font-data);font-size:10px;padding:1px 5px;color:var(--ink-2);
-  box-shadow:inset 0 0 0 1px var(--rule-soft);
+.game-footer-mid{color:var(--fl-2)}
+.status-build{color:var(--fl-4)}
+.key-hint{display:flex;align-items:center;gap:4px;color:var(--fl-2)}
+kbd{
+  display:inline-grid;place-items:center;min-width:16px;height:15px;padding:0 3px;
+  font-family:var(--font-data);font-size:9px;color:var(--fl);
+  background:linear-gradient(180deg,rgba(40,58,66,.95),rgba(14,23,28,.95));
+  box-shadow:inset 0 1px 0 rgba(200,240,250,.25),inset 0 0 0 1px rgba(126,168,180,.3);
 }
+.key-hint kbd + kbd{margin-left:-1px}
 
-/* ------------------------------------------------------------ responsive */
-@media (max-width:1120px){
-  .mission-brief{width:min(340px,46vw)}
+/* The settings dialog is shared chrome; nothing to add locally. */
+
+/* --------------------------------------------------------------- responsive */
+/* Under 900px the plates stop floating and dock to edges: the stream is the
+   screen, the keys are the deck, the manifest is folded away. */
+@media (max-width:900px){
+  .mission-brief{width:min(264px,42vw)}
+  .hud-readout{bottom:96px}
+  .hud-readout b{min-width:0}
+  .menu-item{flex:1 1 0;padding:9px 10px}
+  .menu-label{font-size:13px;letter-spacing:.1em}
+  .menu-label small{display:none}
+  .menu-index{display:none}
+}
+@media (max-width:720px){
+  .title-screen{grid-template-rows:40px minmax(0,1fr) auto 24px}
+  .game-header{height:40px;padding:0 10px}
+  .wordmark{font-size:16px;letter-spacing:.16em}
+  .wordmark small{font-size:9px;letter-spacing:.08em}
+  .build-state{font-size:9px;letter-spacing:.06em}
+  .build-state span{max-width:118px;text-align:right;line-height:1.15}
+  .cam-tag{display:none}
+  .title-stamp{left:14px;top:52px;max-width:calc(100vw - 28px)}
+  .title-stamp h1{font-size:clamp(40px,13vw,64px)}
+  .kicker{font-size:9px;letter-spacing:.2em}
+  .tagline{font-size:9px;letter-spacing:.08em}
+  .build-tag{font-size:9px;letter-spacing:.08em}
+  .mission-brief{
+    left:14px;right:14px;top:auto;bottom:calc(100% - 100% );width:auto;
+    position:relative;
+  }
+  /* On a phone the manifest is a clip strip above the keys. */
+  .title-screen{grid-template-areas:"head" "void" "brief" "keys" "foot";
+    grid-template-rows:40px minmax(0,1fr) auto auto 24px}
+  .mission-brief{
+    position:relative;inset:auto;grid-area:brief;left:auto;right:auto;top:auto;bottom:auto;
+    width:auto;margin:0;display:grid;grid-template-columns:1fr auto;
+  }
+  .brief-head{grid-column:1 / -1}
+  .brief-code{padding:7px 10px 0;font-size:9px}
+  .mission-brief h2{font-size:20px;padding:0 10px 8px}
+  .brief-copy{display:none}
+  .brief-rule{display:none}
+  .brief-spec{grid-column:1 / -1;grid-template-columns:repeat(4,1fr);padding:6px 8px}
+  .brief-spec dd{font-size:10px}
+  .hud-readout{display:none}
+  .hud-ladder{display:none}
+  .cam-scale{display:none}
+  .game-menu{flex-wrap:wrap;padding:8px 12px 10px;gap:6px}
+  .game-menu::before{left:12px;right:12px}
+  .menu-item{flex:1 1 40%;padding:9px 10px}
+  .menu-label{font-size:12px}
+  /* The camera's own header is a legend strip: the status roll does not wrap to
+     two lines over the wordmark. */
+  .title-screen{grid-template-rows:46px minmax(0,1fr) auto auto 24px}
+  .game-header{height:46px}
+  .build-state span{max-width:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .game-footer{padding:0 12px;gap:8px;font-size:9px}
+  .game-footer-mid{color:var(--fl-3)}
+  .status-build{display:none}
+}
+@media (max-height:620px){
+  .title-stamp{top:56px}
+  .title-stamp h1{font-size:clamp(38px,8vh,64px)}
+  .mission-brief{top:44px}
+  .brief-copy{display:none}
   .hud-readout{display:none}
 }
-@media (max-width:860px){
-  .title-screen{grid-template-rows:42px minmax(0,1fr) auto 26px}
-  .title-stamp{max-width:none}
-  .game-menu{max-width:none;margin:0 12px 8px}
-  .mission-brief{
-    position:static;width:auto;margin:0 12px 2px;padding:10px 12px;
-  }
-  .mission-brief > p{display:none}
-  .brief-rule{margin:8px 0 7px}
-  .cam-tag{top:auto;bottom:initial;left:12px;transform:none}
-  .hud-ladder,.cam-scale{display:none}
-}
-@media (max-width:600px){
-  /* A phone crop of a 21:9 plate is mostly empty sky; pull the camera so the
-     hardware sits behind the wordmark. */
-  .spacecraft{background-position:72% 58%;background-size:auto 108%}
-  .title-stamp{left:14px;top:calc(42px + 10px)}
-  .title-stamp h1{font-size:clamp(38px,12.5vw,54px)}
-  .tagline{font-size:10px}
-  .build-tag{display:none}
-  .menu-item{min-height:46px;padding:8px 12px}
-  .menu-label{font-size:16px;letter-spacing:.12em}
-  .menu-label small{font-size:9px;letter-spacing:.06em}
-  .menu-index{display:none}
-  .game-footer-mid{display:none}
-  .hud-rim{inset:7px}
-  .mission-brief{bottom:auto}
-  .cam-tag{display:none}
-}
-@media (min-width:601px) and (max-width:1024px){
-  .spacecraft{background-position:64% 46%;background-size:auto 132%}
-}
-/* A short landscape frame — a phone on its side — cannot hold the operation
-   card and the keys at once. The keys win; the brief is state, not a control. */
-@media (max-height:520px) and (min-width:601px){
-  .mission-brief,.cam-scale{display:none}
-  .title-stamp h1{font-size:clamp(34px,5vw,54px)}
-  .menu-item{min-height:40px;padding:6px 12px}
-  .menu-label{font-size:15px}
-}
-
-/* The settings switches write these classes on <body>; on the title screen the
-   grain is the only effect to suppress. */
-body.reduced-effects .grain{display:none}

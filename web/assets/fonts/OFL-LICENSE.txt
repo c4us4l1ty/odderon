@@ -1,16 +1,17 @@
-Odderon bundles the following typefaces. All three are licensed under the
-SIL Open Font License, Version 1.1, which permits redistribution inside a
-game build. The fonts are shipped as local WOFF2 files, never fetched from a
-third-party service, so the game stays playable offline and packageable for a
-desktop or Steam build without changing the code.
+Odderon bundles the following typefaces. All are licensed under the SIL Open
+Font License, Version 1.1, which permits redistribution inside a game build.
+The fonts ship as local WOFF2 files, never fetched from a third-party service,
+so the game stays playable offline and packageable as a desktop or Steam build
+without changing the code. Full licence texts sit beside this file.
 
-  Barlow Condensed   Copyright (c) 2017 The Barlow Project Authors
-                     https://github.com/jpt/barlow
-  IBM Plex Mono      Copyright (c) 2017 IBM Corporation
-                     https://github.com/IBM/plex
-  Rajdhani           Copyright (c) 2014 Indian Type Foundry
-                     https://github.com/itfoundry/rajdhani
+  Oxanium       Copyright (c) 2019 The Oxanium Project Authors
+                https://github.com/sevmeyer/oxanium
+                Licence: OFL-OXANIUM.txt
 
-Files in this directory are subsets of the "latin" unicode range produced by
-@fontsource. Obtain the full OFL text and the original font sources from the
-projects above.
+  Rajdhani      Copyright (c) 2014 The Rajdhani Project Authors
+                https://github.com/itfoundry/rajdhani
+                Licence: OFL-RAJDHANI.txt
+
+  Martian Mono  Copyright (c) 2022 The Martian Mono Project Authors
+                https://github.com/evilmartians/mono
+                Licence: OFL-MARTIAN-MONO.txt
