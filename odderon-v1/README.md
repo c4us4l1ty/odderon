@@ -15,7 +15,7 @@ boundary is summarized in [current project status](docs/project-status.md).
 
 ```sh
 git clone https://github.com/c4us4l1ty/odderon.git
-cd odderon
+cd odderon/odderon-v1
 ./scripts/provision.sh   # first clone only; builds the browser WASM
 bun run dev              # Bun-native local game server
 ```
