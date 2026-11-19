@@ -1,0 +1,70 @@
+name: Odderon 2 core
+
+# Compiles the Rust flight core for the browser and desktop builds. The wasm
+# artifact produced here is what `odderon-v2/src/core/core.wasm.ts` embeds, so
+# this workflow is the authoritative build for that file.
+
+on:
+  push:
+    branches: [main, 'arena/**']
+    paths:
+      - 'odderon-v2/rust/**'
+      - '.github/workflows/odderon-v2-core.yml'
+  pull_request:
+    paths:
+      - 'odderon-v2/rust/**'
+      - '.github/workflows/odderon-v2-core.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  wasm:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: odderon-v2/rust
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: odderon-v2/rust
+          cache-on-failure: true
+
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+        continue-on-error: true
+
+      - name: clippy
+        run: cargo clippy --all-targets -- -D warnings
+        continue-on-error: true
+
+      - name: Unit and parity tests
+        run: cargo test --color never -- --nocapture
+
+      - name: Build wasm
+        run: cargo build --release --target wasm32-unknown-unknown
+
+      - name: Report artifact size
+        run: |
+          wasm=target/wasm32-unknown-unknown/release/odderon_core.wasm
+          ls -l "$wasm"
+          echo "::notice::odderon-core.wasm $(stat -c%s "$wasm") bytes"
+
+      - name: Smoke test the wasm boundary
+        run: node smoke.mjs target/wasm32-unknown-unknown/release/odderon_core.wasm
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: odderon-core-wasm
+          path: odderon-v2/rust/target/wasm32-unknown-unknown/release/odderon_core.wasm
+          if-no-files-found: error
+          retention-days: 90
