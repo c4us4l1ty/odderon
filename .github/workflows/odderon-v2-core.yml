@@ -1,8 +1,12 @@
 name: Odderon 2 core
 
-# Compiles the Rust flight core for the browser and desktop builds. The wasm
-# artifact produced here is what `odderon-v2/src/core/core.wasm.ts` embeds, so
-# this workflow is the authoritative build for that file.
+# Compiles the Rust flight core for the browser and desktop builds.
+#
+# Two things make this workflow do more than a normal build:
+#   * the compiled wasm is committed back to the branch, so the web bundle is
+#     self-contained and nobody needs a Rust toolchain to build the game;
+#   * failures are published as commit comments, because that is the only
+#     channel that survives environments which cannot read workflow logs.
 
 on:
   push:
@@ -20,12 +24,18 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 jobs:
   wasm:
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: odderon-v2/rust
+    env:
+      WASM_OUT: target/wasm32-unknown-unknown/release/odderon_core.wasm
+      WASM_IN_REPO: odderon-v2/src/core/odderon-core.wasm
     steps:
       - uses: actions/checkout@v5
 
@@ -40,31 +50,70 @@ jobs:
           cache-on-failure: true
 
       - name: rustfmt
-        run: cargo fmt --all -- --check
+        run: cargo fmt --all -- --check 2>&1 | tee -a /tmp/core.log
         continue-on-error: true
 
       - name: clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings 2>&1 | tee -a /tmp/core.log
         continue-on-error: true
 
       - name: Unit and parity tests
-        run: cargo test --color never -- --nocapture
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --color never -- --nocapture 2>&1 | tee -a /tmp/core.log
 
       - name: Build wasm
-        run: cargo build --release --target wasm32-unknown-unknown
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo build --release --target wasm32-unknown-unknown 2>&1 | tee -a /tmp/core.log
 
       - name: Report artifact size
         run: |
-          wasm=target/wasm32-unknown-unknown/release/odderon_core.wasm
-          ls -l "$wasm"
-          echo "::notice::odderon-core.wasm $(stat -c%s "$wasm") bytes"
+          ls -l "$WASM_OUT"
+          echo "::notice::odderon-core.wasm $(stat -c%s "$WASM_OUT") bytes"
 
       - name: Smoke test the wasm boundary
-        run: node smoke.mjs target/wasm32-unknown-unknown/release/odderon_core.wasm
+        shell: bash
+        run: |
+          set -o pipefail
+          node smoke.mjs "$WASM_OUT" 2>&1 | tee -a /tmp/core.log
+
+      - name: Publish failure log
+        if: failure()
+        shell: bash
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ ! -s /tmp/core.log ]; then
+            echo "no captured log" > /tmp/core.log
+          fi
+          tail -c 3500 /tmp/core.log > /tmp/tail.txt
+          python3 -c "import json;print(json.dumps({'body':'core build failed\n\n```\n'+open('/tmp/tail.txt').read()+'\n```'}))" > /tmp/body.json
+          gh api -X POST "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/comments" --input /tmp/body.json || echo "could not publish log"
+
+      - name: Publish wasm to the branch
+        if: success() && github.event_name == 'push'
+        shell: bash
+        working-directory: .
+        run: |
+          cp "$WASM_OUT" "$WASM_IN_REPO"
+          if git diff --quiet -- "$WASM_IN_REPO"; then
+            echo "wasm unchanged"
+            exit 0
+          fi
+          git config user.name "odderon-core"
+          git config user.email "core@odderon.invalid"
+          git add "$WASM_IN_REPO"
+          git commit -m "core: rebuild odderon-core.wasm [skip ci]"
+          git push origin "HEAD:${{ github.ref_name }}"
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: odderon-core-wasm
           path: odderon-v2/rust/target/wasm32-unknown-unknown/release/odderon_core.wasm
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 90
