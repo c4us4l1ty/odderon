@@ -12,7 +12,7 @@
 //! and the real `StageTankModel`, so the live flight and the authority's replay
 //! reach the same numbers by construction.
 
-use odd_astro::coupled::{integrate_coupled, CoupledOutcome, CoupledSetup};
+use odd_astro::coupled::{integrate_coupled, CoupledCheckpoint, CoupledOutcome, CoupledSetup};
 use odd_astro::force_model::Environment;
 use odd_astro::integrator::{IntegrationError, Options};
 use odd_astro::perturb::burn::Burn;
@@ -40,20 +40,24 @@ where
     E: Fn(f64) -> Result<Environment, IntegrationError> + Copy,
 {
     let inputs = settings.thermal?;
-    fly_inputs(
+    fly_segment(
         settings,
         contract,
         inputs,
+        None,
         burns,
         settings.duration_us as f64 / 1e6,
         environment,
     )
 }
 
-fn fly_inputs<E>(
+/// Advance a fitted cryogenic stage from an optional complete checkpoint.
+/// A manual cockpit changes the force between segments, never the tank law.
+pub fn fly_segment<E>(
     settings: &FlightSettings,
     contract: &Contract,
     inputs: ThermalInputs,
+    resumed: Option<&CoupledCheckpoint>,
     burns: &[Burn],
     end_s: f64,
     environment: E,
@@ -86,7 +90,9 @@ where
     // state — and samples the ephemeris itself. `environment` is a pure
     // function of flight time, so both closures see identical Sun/Earth/Moon
     // geometry at the same instant and the flight reproduces exactly on replay.
-    let position = Rc::new(Cell::new(settings.initial.position));
+    let position = Rc::new(Cell::new(
+        resumed.map_or(settings.initial.position, |c| c.position),
+    ));
     let for_tanks = Rc::clone(&position);
     // The ephemeris is by far the most expensive part of a right-hand-side
     // evaluation, and both tanks and the force field ask for it at the *same*
@@ -134,7 +140,7 @@ where
     let outcome = integrate_coupled(
         &setup,
         settings.initial,
-        0.0,
+        resumed.map_or(0.0, |c| c.time_s),
         end_s,
         |t, r, v, mass| {
             position.set(r);
@@ -142,7 +148,7 @@ where
             force.field(t, r, v, mass, Some(limits), &mut |_| Ok(env))
         },
         &mut tanks,
-        None,
+        resumed,
     )
     .ok()?;
     Some(CoupledFlight::new(outcome, tanks.vents().to_vec()))

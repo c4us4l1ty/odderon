@@ -1,0 +1,72 @@
+name: Odderon III browser game
+on:
+  push:
+    branches: [main, 'arena/**']
+    paths: ['odderon-v3/**', 'odderon-v1/crates/**', 'odderon-v1/Cargo*', 'odderon-v1/web/**', 'odderon-v1/data/**', '.github/workflows/odderon-v3.yml']
+  pull_request:
+    paths: ['odderon-v3/**', 'odderon-v1/crates/**', 'odderon-v1/Cargo*', 'odderon-v1/web/**', 'odderon-v1/data/**', '.github/workflows/odderon-v3.yml']
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  browser-game:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: odderon-v1
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: odderon-v3/package-lock.json
+      - name: Test the shared Rust flight model
+        working-directory: odderon-v1
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --locked -p odd-view --features cockpit --all-targets -- -D warnings
+          cargo test --release --locked -p odd-view -p odd-verify -p odd-contracts -p odd-systems --features odd-view/cockpit --lib --tests
+      - name: Compile the local game (no authority service)
+        working-directory: odderon-v1
+        run: |
+          cargo build --locked --release --target wasm32-unknown-unknown -p odd-view --features cockpit
+          cp target/wasm32-unknown-unknown/release/odd_view.wasm ../odderon-v3/runtime/
+      - name: Test the emitted ABI and assemble the offline distro
+        working-directory: odderon-v3
+        run: |
+          npm ci
+          npm test
+          npm run build
+      # Same locked, npm-distributed headless Chromium used by the visual
+      # harness. Avoid a second browser download or apt install at test time.
+      - name: Prepare the browser test runner
+        working-directory: odderon-v2/tools/visual
+        run: |
+          npm ci
+          node --input-type=module -e 'import chromium from "@sparticuz/chromium"; console.log("CHROME_BIN=" + await chromium.executablePath())' >> "$GITHUB_ENV"
+      - name: Exercise the browser distro
+        working-directory: odderon-v3
+        run: |
+          set -o pipefail
+          npm run test:browser 2>&1 | tee /tmp/v3-browser.log || {
+            python3 -c 'from pathlib import Path; s=Path("/tmp/v3-browser.log").read_text()[-4000:]; print("::error::" + s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))'
+            exit 1
+          }
+      - uses: actions/upload-artifact@v6
+        with:
+          name: odderon-v3-browser
+          path: odderon-v3/dist/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v6
+        with:
+          name: odderon-v3-rust-runtime
+          path: odderon-v3/runtime/odd_view.wasm
+          if-no-files-found: error

@@ -1813,6 +1813,11 @@ pub extern "C" fn mission_boil_off(field: u32) -> f64 {
     }
 }
 
+#[cfg(feature = "cockpit")]
+pub(crate) fn fitted_settings() -> Option<FlightSettings> {
+    SETTINGS.lock().ok()?.as_ref().map(Settings::flight)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
