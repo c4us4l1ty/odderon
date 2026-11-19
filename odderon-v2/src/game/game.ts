@@ -69,6 +69,13 @@ export class Game {
   private nodePosition: Vector3 | null = null;
   private autopilot: Autopilot = "idle";
   private burnDone = 0;
+  /** Δv the loaded node asked for; the hard budget for the burn. */
+  private burnDvTarget = 0;
+  /** Semi-major axis the finished burn is aiming for. */
+  private burnTargetA = Number.NaN;
+  private burnAErrPrev = Number.NaN;
+  /** Mission time the engine actually lit; the overrun clock starts here. */
+  private burnStartMet = 0;
   private burnSign = 1;
   private burnDuration = 0;
   private burnNodeTime = 0;
@@ -473,33 +480,49 @@ export class Game {
     const mu = EARTH_MU;
     const targetPe = EARTH_RADIUS + this.contract.target.peAlt;
     const targetAp = EARTH_RADIUS + this.contract.target.apAlt;
-    const tolerance = 45_000;
+    const tolerance = this.contract.target.tolerance;
 
-    const raisePe = targetPe - el.pe > tolerance;
-    const lowerAp = !raisePe && el.ap - targetAp > tolerance;
-    if (!raisePe && !lowerAp) {
+    // Whichever apsis is furthest from its target is the one this burn moves.
+    // Its sign decides the direction: a negative deficit means the apsis has to
+    // come *down* (a deorbit burn), not up.
+    const dPe = targetPe - el.pe;
+    const dAp = targetAp - el.ap;
+    const movesPe = Math.abs(dPe) >= Math.abs(dAp);
+    const deficit = movesPe ? dPe : dAp;
+    if (Math.abs(dPe) <= tolerance && Math.abs(dAp) <= tolerance) {
       this.hud.flash("ORBIT ALREADY WITHIN TOLERANCE", "good");
       return;
     }
 
-    // Burn at the apsis we want to move: apoapsis to raise periapsis,
-    // periapsis to lower apoapsis. Both are optimal for a tangential burn.
-    const atApo = raisePe;
+    // Burn at the apsis opposite the one being moved: apoapsis to change
+    // periapsis, periapsis to change apoapsis. Tangential either way.
+    const atApo = movesPe;
+    const rBurn = atApo ? el.ap : el.pe;
+    const targetApsis = movesPe ? targetPe : targetAp;
+    const aWant = (rBurn + targetApsis) / 2;
+    if (!(aWant > rBurn * 0.5)) {
+      this.hud.flash("NO FEASIBLE BURN FROM THIS ORBIT", "warn");
+      return;
+    }
+    const vNow = Math.sqrt(mu * (2 / rBurn - 1 / el.a));
+    const vWant = Math.sqrt(mu * (2 / rBurn - 1 / aWant));
+    const dv = clamp(vWant - vNow, -1500, 1500);
+    if (!Number.isFinite(dv) || Math.abs(dv) < 0.5) {
+      this.hud.flash("NO FEASIBLE BURN FROM THIS ORBIT", "warn");
+      return;
+    }
+
     let wait = timeToApsis(el, atApo);
     if (!Number.isFinite(wait)) wait = 120;
     // Never park the node half an orbit away: if we are already at the right
     // apsis, burn on the next pass through it after a short settling coast.
     if (wait < 20) wait += el.period || 3600;
-    const rBurn = atApo ? el.ap : el.pe;
-    const aWant = atApo ? (el.ap + targetPe) / 2 : (el.pe + targetAp) / 2;
-    const vNow = Math.sqrt(mu * (2 / rBurn - 1 / el.a));
-    const vWant = Math.sqrt(mu * (2 / rBurn - 1 / aWant));
-    const dv = clamp(vWant - vNow, -1500, 1500);
 
     this.node = { dv, time: this.met + wait };
     this.refreshNode();
+    const verb = deficit > 0 ? "RAISE" : "LOWER";
     this.hud.flash(
-      `${atApo ? "APOAPSIS" : "PERIAPSIS"} NODE · ${Math.abs(dv).toFixed(0)} M/S`,
+      `${atApo ? "APOAPSIS" : "PERIAPSIS"} NODE · ${verb} ${movesPe ? "PE" : "AP"} · ${Math.abs(dv).toFixed(0)} M/S`,
       "good",
     );
     this.audio.click();
@@ -550,10 +573,21 @@ export class Game {
     }
     const el = this.vessel.elements;
     const targetPe = EARTH_RADIUS + this.contract.target.peAlt;
-    this.burnObjective = targetPe - el.pe > EARTH_RADIUS + this.contract.target.apAlt - el.ap ? "pe" : "ap";
-    this.burnSign = this.burnObjective === "pe" ? 1 : -1;
+    const targetAp = EARTH_RADIUS + this.contract.target.apAlt;
+    const dPe = targetPe - el.pe;
+    const dAp = targetAp - el.ap;
+    this.burnObjective = Math.abs(dPe) >= Math.abs(dAp) ? "pe" : "ap";
+    // Prograde when the apsis has to rise, retrograde when it has to fall.
+    this.burnSign = (this.burnObjective === "pe" ? dPe : dAp) >= 0 ? 1 : -1;
     this.burnDone = 0;
+    this.burnDvTarget = Math.abs(this.node.dv);
     this.burnDuration = this.burnTimeFor(this.node.dv);
+    // Target the *planned conic*, not a bare Δv: the same Δv spread over a
+    // finite arc buys slightly less orbit than the impulsive plan, so closing
+    // on the semi-major axis lands the burn where the plan says it will.
+    this.refreshNode();
+    this.burnTargetA = this.planned ? this.planned.a : Number.NaN;
+    this.burnAErrPrev = Number.NaN;
     this.burnNodeTime = this.node.time;
     this.autopilot = "waiting";
     this.sas = "node";
@@ -605,44 +639,44 @@ export class Game {
         this.throttle = 1;
         this.burnErrorPrev = Number.POSITIVE_INFINITY;
         this.burnStall = 0;
+        this.burnStartMet = this.met;
         this.hud.flash("BURN IN PROGRESS", "good");
       }
     }
     if (this.autopilot === "burning") {
-      // Closed-loop guidance: keep burning until the *measured* orbit matches
-      // the target, not until a pre-computed stopwatch runs out. Finite burns
-      // over minutes would otherwise miss by hundreds of kilometres.
+      this.throttle = 1;
+      this.engineArmed = true;
+      // The cut itself is evaluated per integration step (`burnCutReason`), so
+      // a 0.05 s step cannot overshoot the target by a whole frame of Δv.
       const targetPe = EARTH_RADIUS + this.contract.target.peAlt;
       const targetAp = EARTH_RADIUS + this.contract.target.apAlt;
       const el = this.vessel.elements;
       const error = this.burnObjective === "pe" ? targetPe - el.pe : el.ap - targetAp;
-      // The contract tolerance is ±45 km; stop with margin so the residual
-      // finite-burn drift still lands inside it.
-      const margin = Math.max(6_000, this.contract.target.tolerance * 0.55);
-      const peOk = Math.abs(el.pe - targetPe) <= margin;
-      const apOk = Math.abs(el.ap - targetAp) <= margin;
-      const burnedFor = this.met - (this.burnNodeTime - this.burnDuration * 0.5);
-      const overrun = burnedFor > this.burnDuration * 2.4;
-      if ((peOk && apOk) || error <= 400 || overrun || this.vessel.propellant <= 0) {
-        this.finishBurn();
-        return;
-      }
       // If the targeted apsis has stopped improving, more thrust only makes the
       // other one worse: cut the engine and let the operator trim.
-      if (error < this.burnErrorPrev - 250) this.burnStall = 0;
+      if (Math.abs(error) < this.burnErrorPrev - 250) this.burnStall = 0;
       else this.burnStall += dtWall;
-      this.burnErrorPrev = error;
-      if (this.burnStall > 4) {
-        this.hud.flash("BURN CUT · TRIM REQUIRED", "warn");
-        this.finishBurn();
-        return;
-      }
-      this.throttle = clamp(error / 30_000, 0.22, 1);
-      this.engineArmed = true;
+      this.burnErrorPrev = Math.abs(error);
+      if (this.burnStall > 12) this.finishBurn("STALLED · TRIM REQUIRED");
     }
   }
 
-  private finishBurn(): void {
+  /** Per-step burn cut test. Returns a label when the engine should stop. */
+  private burnCutReason(): string | null {
+    if (!Number.isFinite(this.burnTargetA)) return null;
+    const a = this.vessel.elements.a;
+    const aErr = a - this.burnTargetA;
+    const crossed =
+      Number.isFinite(this.burnAErrPrev) && Math.sign(aErr) !== Math.sign(this.burnAErrPrev);
+    this.burnAErrPrev = aErr;
+    if (this.vessel.propellant <= 0) return "PROPELLANT EXHAUSTED";
+    if (Math.abs(aErr) <= 800 || crossed) return "TARGET REACHED";
+    if (this.burnDone >= this.burnDvTarget * 1.02) return "BUDGET SPENT";
+    if (this.met - this.burnStartMet > this.burnDuration * 2.4 + 5) return "BURN OVERRUN";
+    return null;
+  }
+
+  private finishBurn(reason = "BURN COMPLETE"): void {
     this.throttle = 0;
     this.engineArmed = false;
     this.autopilot = "complete";
@@ -650,7 +684,7 @@ export class Game {
     this.vessel.targetAttitude = null;
     this.sas = "stability";
     this.hud.setSasMode("stability");
-    this.hud.flash("BURN COMPLETE", "good");
+    this.hud.flash(reason === "BURN COMPLETE" ? "BURN COMPLETE" : reason, reason === "TARGET REACHED" ? "good" : "warn");
     this.audio.success();
     // The plan is spent. Leaving it loaded would draw a stale conic and show a
     // prediction for a burn that has already happened.
@@ -746,7 +780,6 @@ export class Game {
     const rate = (fine ? 0.12 : 0.55) * dt;
     if (this.keys.has("z")) this.throttle = clamp(this.throttle + rate, 0, 1);
     if (this.keys.has("x")) this.throttle = clamp(this.throttle - rate, 0, 1);
-    if (this.autopilot === "burning") this.throttle = this.throttle;
 
     if (this.engineArmed && this.vessel.propellant <= 0) {
       this.engineArmed = false;
@@ -766,6 +799,13 @@ export class Game {
         this.met += step;
         this.accumulateBurn(step);
         remaining -= step;
+        if (this.autopilot === "burning") {
+          const why = this.burnCutReason();
+          if (why) {
+            this.finishBurn(why);
+            break;
+          }
+        }
         if (!(this.engineArmed && this.throttle > 0.001)) break;
       }
     } else {

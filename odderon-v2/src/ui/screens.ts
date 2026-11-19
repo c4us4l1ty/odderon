@@ -34,6 +34,21 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
 const fmt = (n: number): string =>
   n.toLocaleString("en-US", { maximumFractionDigits: 0 }).replace(/,/g, " ");
 
+/** Settings are user-editable storage: never trust the types inside. */
+function sanitiseSettings(input: unknown): Settings {
+  const out: Settings = { ...DEFAULT_SETTINGS };
+  if (!input || typeof input !== "object") return out;
+  const raw = input as Record<string, unknown>;
+  for (const key of ["grain", "orbitLines", "invertY", "audio"] as const) {
+    if (typeof raw[key] === "boolean") out[key] = raw[key] as boolean;
+  }
+  const scale = raw.sensitivity;
+  if (typeof scale === "number" && Number.isFinite(scale)) {
+    out.sensitivity = Math.min(3, Math.max(0.2, scale));
+  }
+  return out;
+}
+
 export class Screens {
   onLaunch: (contractId: string) => void = () => {};
   onResume: () => void = () => {};
@@ -48,6 +63,8 @@ export class Screens {
   private selected = 0;
   private menuFocus = 0;
   private pauseFocus = 0;
+  /** True while an overlay was opened from the pause menu. */
+  private overlayFromPause = false;
   private currentMeter = 0;
 
   private readonly menu = $("menu");
@@ -108,7 +125,7 @@ export class Screens {
       const raw = localStorage.getItem(SETTINGS_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<Settings>;
-        this.settings = { ...DEFAULT_SETTINGS, ...parsed };
+        this.settings = sanitiseSettings(parsed);
       }
     } catch {
       this.settings = { ...DEFAULT_SETTINGS };
@@ -370,10 +387,14 @@ export class Screens {
         this.onRestart();
         break;
       case "controls":
+        this.overlayFromPause = true;
+        this.hidePause();
         this.closeOtherOverlays("controls");
         this.controls.classList.remove("is-hidden");
         break;
       case "settings":
+        this.overlayFromPause = true;
+        this.hidePause();
         this.closeOtherOverlays("settings");
         this.refreshSystemInfo();
         this.settingsScreen.classList.remove("is-hidden");
@@ -388,6 +409,11 @@ export class Screens {
   }
 
   closeOverlay(id: string): void {
+    this.hideOne(id);
+    this.restorePauseIfNested();
+  }
+
+  private hideOne(id: string): void {
     const map: Record<string, HTMLElement> = {
       operations: this.operations,
       controls: this.controls,
@@ -396,9 +422,19 @@ export class Screens {
     map[id]?.classList.add("is-hidden");
   }
 
+  /** Closing an overlay that was opened from the pause menu returns there. */
+  private restorePauseIfNested(): void {
+    if (!this.overlayFromPause) return;
+    if (this.overlaysOpen()) return;
+    this.overlayFromPause = false;
+    this.pause.classList.remove("is-hidden");
+  }
+
   private closeOtherOverlays(except: string): void {
+    // No pause restore here: this runs while *opening* an overlay, when the
+    // pause card is supposed to stay hidden until the overlay is closed.
     for (const id of ["operations", "controls", "settings"]) {
-      if (id !== except) this.closeOverlay(id);
+      if (id !== except) this.hideOne(id);
     }
   }
 
@@ -406,6 +442,7 @@ export class Screens {
     for (const el of [this.operations, this.controls, this.settingsScreen, this.pause, this.debrief]) {
       el.classList.add("is-hidden");
     }
+    this.overlayFromPause = false;
   }
 
   overlaysOpen(): boolean {
@@ -444,6 +481,10 @@ export class Screens {
 
   showDebrief(result: FlightResult): void {
     const c = result.contract;
+    // Follow the contract that was actually flown, not whatever the board had
+    // highlighted: "next operation" must be the one after *this* flight.
+    const flown = CONTRACTS.findIndex((entry) => entry.id === c.id);
+    if (flown >= 0) this.selected = flown;
     $("debrief-name").textContent = c.name.toUpperCase();
     $("debrief-code").textContent = `CONTRACT ${c.code} · ${c.agency}`;
     $("debrief-grade").textContent = result.grade;
@@ -512,7 +553,8 @@ export class Screens {
     if (this.debriefOpen()) return false;
     if (this.overlaysOpen()) {
       if (event.key === "Escape") {
-        this.hideOverlays();
+        this.closeOtherOverlays("");
+        this.restorePauseIfNested();
         return true;
       }
       return false;

@@ -63,12 +63,14 @@ export const CONTRACTS: Contract[] = [
     agency: "HELIOS SURVEY",
     brief: "A survey satellite is stranded in a low relay orbit. Lift it to the high-latitude survey ring.",
     detail:
-      "Meridian-2 needs a 958 km circular orbit at 51.6° inclination. Trim the apoapsis first, then close the orbit at altitude. The survey window closes in ninety minutes.",
+      "Meridian-2 needs a 958 km circular orbit at 51.6° inclination. Raise the far side at apoapsis, then close the orbit at altitude. The survey window closes in three hours.",
     difficulty: "PILOT",
     reward: 1250,
     start: { peAlt: 418_000, apAlt: 424_000, inc: 51.6, raan: 118, argp: 0, nu: 12 },
     target: { peAlt: 958_000, apAlt: 962_000, inc: 51.6, tolerance: 30_000 },
-    window: 90 * 60,
+    // Two nodes a half-orbit apart is the intended solution, so the window has
+    // to cover two orbits of the starting ellipse.
+    window: 3 * 3600,
     kind: "raise",
   },
   {
