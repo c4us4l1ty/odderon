@@ -5,6 +5,8 @@ single engine, a limited tank and a contract that has to be met inside a launch
 window. The presentation is a cockpit: a lit planet below, a lit spacecraft in
 front of you, and a dense instrument HUD docked to the edges of the screen.
 
+![Flight view](docs/hero.png)
+
 This is the second pass. The physics, ephemeris and contract data come from the
 `odderon-v1` tree; the interface was rebuilt from scratch so it reads as a game
 rather than a document.
@@ -48,6 +50,9 @@ matters because a 265 m/s burn takes about 17 seconds and drifts.
 
 The autopilot drops out of warp to 5× near the node and to 1× for alignment.
 Warp is capped at 5× whenever the engine is lit.
+
+![Map view](docs/map.png)
+![Flight report](docs/report.png)
 
 ## Controls
 
