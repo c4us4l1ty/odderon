@@ -112,13 +112,13 @@ jobs:
           echo "copying $(stat -c%s "$src") bytes to $dst"
           cp "$src" "$dst"
           cd "$GITHUB_WORKSPACE"
-          if git diff --quiet -- odderon-v2/src/core/odderon-core.wasm; then
-            echo "wasm unchanged"
-            exit 0
-          fi
           git config user.name "odderon-core"
           git config user.email "core@odderon.invalid"
           git add odderon-v2/src/core/odderon-core.wasm
+          if git diff --cached --quiet; then
+            echo "wasm unchanged"
+            exit 0
+          fi
           git commit -m "core: rebuild odderon-core.wasm [skip ci]"
           git push origin "HEAD:${{ github.ref_name }}"
 
