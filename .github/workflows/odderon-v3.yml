@@ -23,7 +23,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: odderon-v1
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -45,17 +45,27 @@ jobs:
           npm ci
           npm test
           npm run build
+      # Same locked, npm-distributed headless Chromium used by the visual
+      # harness. Avoid a second browser download or apt install at test time.
+      - name: Prepare the browser test runner
+        working-directory: odderon-v2/tools/visual
+        run: |
+          npm ci
+          node --input-type=module -e 'import chromium from "@sparticuz/chromium"; console.log("CHROME_BIN=" + await chromium.executablePath())' >> "$GITHUB_ENV"
       - name: Exercise the browser distro
         working-directory: odderon-v3
         run: |
-          npx playwright install --with-deps chromium
-          npm run test:browser
-      - uses: actions/upload-artifact@v4
+          set -o pipefail
+          npm run test:browser 2>&1 | tee /tmp/v3-browser.log || {
+            python3 -c 'from pathlib import Path; s=Path("/tmp/v3-browser.log").read_text()[-4000:]; print("::error::" + s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))'
+            exit 1
+          }
+      - uses: actions/upload-artifact@v6
         with:
           name: odderon-v3-browser
           path: odderon-v3/dist/
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: odderon-v3-rust-runtime
           path: odderon-v3/runtime/odd_view.wasm
