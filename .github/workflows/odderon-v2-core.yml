@@ -105,16 +105,20 @@ jobs:
       - name: Publish wasm to the branch
         if: success() && github.event_name == 'push'
         shell: bash
-        working-directory: .
         run: |
-          cp "$WASM_OUT" "$WASM_IN_REPO"
-          if git diff --quiet -- "$WASM_IN_REPO"; then
+          set -euo pipefail
+          src="$GITHUB_WORKSPACE/odderon-v2/rust/target/wasm32-unknown-unknown/release/odderon_core.wasm"
+          dst="$GITHUB_WORKSPACE/odderon-v2/src/core/odderon-core.wasm"
+          echo "copying $(stat -c%s "$src") bytes to $dst"
+          cp "$src" "$dst"
+          cd "$GITHUB_WORKSPACE"
+          if git diff --quiet -- odderon-v2/src/core/odderon-core.wasm; then
             echo "wasm unchanged"
             exit 0
           fi
           git config user.name "odderon-core"
           git config user.email "core@odderon.invalid"
-          git add "$WASM_IN_REPO"
+          git add odderon-v2/src/core/odderon-core.wasm
           git commit -m "core: rebuild odderon-core.wasm [skip ci]"
           git push origin "HEAD:${{ github.ref_name }}"
 
