@@ -11,6 +11,7 @@
 
 import { Vector3, Quaternion, Matrix4 } from "three";
 import { EARTH_MU, EARTH_RADIUS, EARTH_J2, clamp } from "./math";
+import { coreElements, coreKepler, coreReady, coreRk4, coreTimeToApsis } from "./core";
 
 export interface Elements {
   /** Semi-major axis, metres. Negative for hyperbolic. */
@@ -55,6 +56,10 @@ const EPS = 1e-9;
 
 /** Classical elements from an inertial state vector. */
 export function elementsFromState(r: Vector3, v: Vector3, mu = EARTH_MU): Elements {
+  if (coreReady()) {
+    const w = coreElements(r.x, r.y, r.z, v.x, v.y, v.z, mu);
+    if (w) return elementsFromPacked(w);
+  }
   const rm = r.length();
   const vm = v.length();
   const h = new Vector3().crossVectors(r, v);
@@ -117,6 +122,19 @@ export function elementsFromState(r: Vector3, v: Vector3, mu = EARTH_MU): Elemen
   const period = e < 1 && Number.isFinite(a) ? 2 * Math.PI * Math.sqrt(a ** 3 / mu) : Infinity;
 
   return { a, e, i, raan, argp, nu, p, pe, ap, period, energy, h, eVec, pHat, qHat, closed: e < 1 };
+}
+
+/** Unpack the Rust core's 23-double elements record. */
+function elementsFromPacked(w: Float64Array): Elements {
+  return {
+    a: w[0]!, e: w[1]!, i: w[2]!, raan: w[3]!, argp: w[4]!, nu: w[5]!,
+    p: w[6]!, pe: w[7]!, ap: w[8]!, period: w[9]!, energy: w[10]!,
+    h: new Vector3(w[11]!, w[12]!, w[13]!),
+    eVec: new Vector3(w[14]!, w[15]!, w[16]!),
+    pHat: new Vector3(w[17]!, w[18]!, w[19]!),
+    qHat: new Vector3(w[20]!, w[21]!, w[22]!),
+    closed: w[1]! < 1,
+  };
 }
 
 /** Inertial state from classical elements. */
@@ -193,6 +211,10 @@ export function apsisStates(el: Elements, mu = EARTH_MU): { ap: Vector3 | null; 
 export function propagateKepler(r0: Vector3, v0: Vector3, dt: number, mu = EARTH_MU): State {
   if (!Number.isFinite(dt) || dt === 0) {
     return { r: r0.clone(), v: v0.clone() };
+  }
+  if (coreReady()) {
+    const w = coreKepler(r0.x, r0.y, r0.z, v0.x, v0.y, v0.z, dt, mu);
+    if (w) return { r: new Vector3(w[0]!, w[1]!, w[2]!), v: new Vector3(w[3]!, w[4]!, w[5]!) };
   }
   const rm = r0.length();
   const vm = v0.length();
@@ -326,6 +348,13 @@ export function stepRK4(
   ctx: ForceContext,
   mu = EARTH_MU,
 ): State {
+  if (coreReady()) {
+    const w = coreRk4(
+      r.x, r.y, r.z, v.x, v.y, v.z, dt,
+      ctx.accel.x, ctx.accel.y, ctx.accel.z, ctx.j2, mu,
+    );
+    if (w) return { r: new Vector3(w[0]!, w[1]!, w[2]!), v: new Vector3(w[3]!, w[4]!, w[5]!) };
+  }
   const a1 = accel(r, v, ctx, mu);
   const r2 = r.clone().addScaledVector(v, dt / 2);
   const v2 = v.clone().addScaledVector(a1, dt / 2);
@@ -354,6 +383,10 @@ export function stepRK4(
 /** Time to next periapsis/apoapsis, positive seconds. */
 export function timeToApsis(el: Elements, targetApoapsis: boolean, mu = EARTH_MU): number {
   if (!el.closed) return Infinity;
+  if (coreReady()) {
+    const t = coreTimeToApsis(el.a, el.e, el.nu, targetApoapsis, mu);
+    if (t !== null) return t;
+  }
   const nu = el.nu;
   const n = Math.sqrt(mu / el.a ** 3);
   let target = targetApoapsis ? Math.PI : 0;

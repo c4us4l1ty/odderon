@@ -5,6 +5,7 @@
 import { Vector3 } from "three";
 import { EARTH_MU, EARTH_RADIUS, clamp, rad } from "./math";
 import { Elements, perifocalBasis, State, periodOf } from "./orbit";
+import { coreReady, coreScore } from "./core";
 
 export interface TargetOrbit {
   peAlt: number;
@@ -189,8 +190,12 @@ export function scoreFlight(
 ): FlightResult {
   const ev = evaluate(contract, el);
   const timeFraction = clamp(1 - missionTime / contract.window, 0, 1);
+  const composite = coreReady()
+    ? coreScore(ev.peError, ev.apError, contract.target.tolerance, fuelLeftFraction, timeFraction)
+    : null;
   const score = Math.round(
-    (0.62 * ev.accuracy + 0.24 * clamp(fuelLeftFraction, 0, 1) + 0.14 * timeFraction) * 1000,
+    (composite ??
+      (0.62 * ev.accuracy + 0.24 * clamp(fuelLeftFraction, 0, 1) + 0.14 * timeFraction)) * 1000,
   );
   const grade = score >= 950 ? "S" : score >= 850 ? "A" : score >= 700 ? "B" : score >= 550 ? "C" : "D";
   return {

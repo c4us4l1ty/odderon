@@ -41,6 +41,8 @@ export class Screens {
   onReturnToMenu: () => void = () => {};
   onQuit: () => void = () => {};
   onSettingsChanged: (settings: Settings) => void = () => {};
+  /** Which flight core is live; the settings panel reports it. */
+  onCoreStatus: () => "idle" | "ready" | "unavailable" = () => "idle";
 
   settings: Settings = { ...DEFAULT_SETTINGS };
   private selected = 0;
@@ -347,6 +349,12 @@ export class Screens {
     }
     const r = $("set-renderer");
     if (r) r.textContent = renderer || "—";
+    const core = $("set-core");
+    if (core) {
+      const status = this.onCoreStatus();
+      core.textContent =
+        status === "ready" ? "RUST · WASM · 24 KB" : status === "unavailable" ? "TYPESCRIPT · FALLBACK" : "BOOTING";
+    }
     const v = $("set-viewport");
     if (v) v.textContent = `${window.innerWidth} × ${window.innerHeight} · ${Math.round(window.devicePixelRatio * 100)}%`;
   }

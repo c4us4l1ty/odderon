@@ -70,6 +70,44 @@ Warp is capped at 5× whenever the engine is lit.
 | `ESC` | pause |
 | `F11` | fullscreen |
 
+## The Rust core
+
+Orbital elements, the universal-variable Kepler solver, the RK4 step under
+thrust and contract scoring live in `rust/` as a dependency-free crate
+(`odderon-core`). It is compiled to wasm32 with a flat C ABI — no
+wasm-bindgen, no glue, no allocation — so it instantiates from a plain byte
+array in every environment, including `file://`.
+
+```
+rust/src/elements.rs    elements, perifocal basis, apsis timing
+rust/src/propagate.rs   universal-variable Kepler (Vallado 8)
+rust/src/dynamics.rs    force model and RK4
+rust/src/score.rs       accuracy and the 0.62/0.24/0.14 composite
+rust/tests/parity.rs    golden values captured from the TypeScript reference
+```
+
+**CI is the compiler.** `.github/workflows/odderon-v2-core.yml` runs the
+parity tests, builds wasm32, smoke-tests the exported ABI from Node, and
+commits the artifact back to the branch as `src/core/odderon-core.wasm`.
+`scripts/embed-wasm.mjs` turns that into `src/core/core-bytes.ts`, which the
+bundle carries so nothing is fetched at runtime.
+
+The TypeScript implementation stays in `src/core/orbit.ts` as the fallback:
+if the module is missing, fails to instantiate, or reports an unexpected ABI
+version, the game flies on TypeScript. `?core=ts` forces it, and the settings
+panel reports which core is live. `tools/visual/core.mjs` asserts the two
+agree — currently to the last bit on elements and a 600 s propagation.
+
+To rebuild by hand:
+
+```bash
+cd rust
+cargo test
+cargo build --release --target wasm32-unknown-unknown
+cp target/wasm32-unknown-unknown/release/odderon_core.wasm ../src/core/
+cd .. && npm run core:embed
+```
+
 ## Flight model
 
 - Two-body gravity with an optional J2 term in the RK4 integrator.
@@ -101,7 +139,8 @@ depth range spans metres at the vessel and millions of metres at the planet.
 ## Layout
 
 ```
-src/core      physics, orbits, contracts, vessel, scoring
+rust/         Rust flight core (wasm32), compiled by CI
+src/core      bridge, physics, orbits, contracts, vessel, scoring
 src/render    renderer, Earth shader, ship, trajectory, textures, scene
 src/ui         HUD, navball, screens, CSS, procedural audio
 src/game      mode machine, autopilot, input, per-frame ticks

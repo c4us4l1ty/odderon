@@ -47,6 +47,9 @@ export class Game {
   private readonly screens: Screens;
   private readonly audio = new Audio();
 
+  /** Which implementation the flight core is running: set by main.ts. */
+  coreStatus: "idle" | "ready" | "unavailable" = "idle";
+
   private mode: Mode = "menu";
   private paused = false;
   private contract: Contract = CONTRACTS[0]!;
@@ -113,6 +116,7 @@ export class Game {
     this.hud.onEndFlight = () => this.finishFlight();
 
     this.screens.onLaunch = (id) => this.startFlight(id);
+    this.screens.onCoreStatus = () => this.coreStatus;
     this.screens.onResume = () => this.resume();
     this.screens.onRestart = () => this.startFlight(this.contract.id);
     this.screens.onReturnToMenu = () => this.returnToMenu();

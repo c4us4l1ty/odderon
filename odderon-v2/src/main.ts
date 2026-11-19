@@ -1,4 +1,6 @@
 import { Game } from "./game/game";
+import { bootCore, coreStatus } from "./core/core";
+import * as orbitMath from "./core/orbit";
 
 function fail(message: string): void {
   const boot = document.getElementById("boot-status");
@@ -13,9 +15,16 @@ async function start(): Promise<void> {
       document.fonts.ready,
       new Promise((resolve) => window.setTimeout(resolve, 1200)),
     ]);
+    // The Rust core is optional: if it will not instantiate the TypeScript
+    // implementation keeps flying. `?core=ts` forces the fallback.
+    bootCore();
     const game = new Game();
     // Exposed for the visual test harness and for support diagnostics.
     (window as unknown as { odderon?: Game }).odderon = game;
+    game.coreStatus = coreStatus();
+    // Test seam: the visual harness compares the Rust core against the
+    // TypeScript fallback through the same entry points the game uses.
+    (window as unknown as { odderonMath?: unknown }).odderonMath = orbitMath;
     requestAnimationFrame(() => {
       const boot = document.getElementById("boot");
       if (!boot) return;
