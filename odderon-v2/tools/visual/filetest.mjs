@@ -1,0 +1,15 @@
+import chromium from "@sparticuz/chromium";
+import { chromium as pw } from "playwright-core";
+const browser = await pw.launch({ executablePath: "/tmp/chromium", args: [...chromium.args,"--use-gl=angle","--use-angle=swiftshader","--enable-unsafe-swiftshader","--in-process-gpu"], headless: true, timeout: 90000 });
+const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+const errors = [];
+page.on("pageerror", e => errors.push(e.message.slice(0,300)));
+page.on("console", m => { if (m.type()==="error") errors.push(m.text().slice(0,300)); });
+await page.goto("file:///home/user/odderon/odderon-v2/dist/index.html", { waitUntil: "load", timeout: 60000 });
+await page.waitForFunction(() => Boolean(window.odderon), { timeout: 20000 }).catch(() => {});
+const boot = await page.evaluate(() => ({ canvas: Boolean(document.querySelector("#viewport")), core: window.odderon?.coreStatus, el: window.odderon?.vessel?.elements?.pe }));
+await page.click(".launch-key").catch(() => {});
+await page.waitForTimeout(2500);
+await page.screenshot({ path: "tools/visual/.shots/file-flight.png" });
+console.log({ ...boot, errors: errors.slice(0, 4) });
+await browser.close();

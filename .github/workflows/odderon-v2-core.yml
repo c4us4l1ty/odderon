@@ -1,0 +1,131 @@
+name: Odderon 2 core
+
+# Compiles the Rust flight core for the browser and desktop builds.
+#
+# Two things make this workflow do more than a normal build:
+#   * the compiled wasm is committed back to the branch, so the web bundle is
+#     self-contained and nobody needs a Rust toolchain to build the game;
+#   * failures are published as commit comments, because that is the only
+#     channel that survives environments which cannot read workflow logs.
+
+on:
+  push:
+    branches: [main, 'arena/**']
+    paths:
+      - 'odderon-v2/rust/**'
+      - '.github/workflows/odderon-v2-core.yml'
+  pull_request:
+    paths:
+      - 'odderon-v2/rust/**'
+      - '.github/workflows/odderon-v2-core.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  wasm:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: odderon-v2/rust
+    env:
+      WASM_OUT: target/wasm32-unknown-unknown/release/odderon_core.wasm
+      WASM_IN_REPO: odderon-v2/src/core/odderon-core.wasm
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: odderon-v2/rust
+          cache-on-failure: true
+
+      - name: rustfmt
+        run: cargo fmt --all -- --check 2>&1 | tee -a /tmp/core.log
+        continue-on-error: true
+
+      - name: clippy
+        run: cargo clippy --all-targets -- -D warnings 2>&1 | tee -a /tmp/core.log
+        continue-on-error: true
+
+      - name: Unit and parity tests
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --color never -- --nocapture 2>&1 | tee -a /tmp/core.log
+
+      - name: Build wasm
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo build --release --target wasm32-unknown-unknown 2>&1 | tee -a /tmp/core.log
+
+      - name: Report artifact size
+        run: |
+          ls -l "$WASM_OUT"
+          echo "::notice::odderon-core.wasm $(stat -c%s "$WASM_OUT") bytes"
+
+      - name: Smoke test the wasm boundary
+        shell: bash
+        run: |
+          set -o pipefail
+          node smoke.mjs "$WASM_OUT" 2>&1 | tee -a /tmp/core.log
+
+      - name: Publish failure log
+        if: failure()
+        shell: bash
+        working-directory: odderon-v2/rust
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Re-run the pipeline capturing everything: it is cheap, and it is
+          # the only way to get compiler output out of this runner.
+          set +e
+          {
+            echo "== cargo test =="
+            cargo test --color never -- --nocapture
+            echo "== cargo build wasm =="
+            cargo build --release --target wasm32-unknown-unknown
+            echo "== smoke =="
+            node smoke.mjs target/wasm32-unknown-unknown/release/odderon_core.wasm
+          } > /tmp/core.log 2>&1
+          tail -c 3800 /tmp/core.log > /tmp/tail.txt
+          jq -Rs '{body: ("core build failed\n\n```\n" + . + "\n```")}' < /tmp/tail.txt > /tmp/body.json
+          gh api -X POST "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/comments" --input /tmp/body.json || echo "could not publish log"
+
+      - name: Publish wasm to the branch
+        if: success() && github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$GITHUB_WORKSPACE/odderon-v2/rust/target/wasm32-unknown-unknown/release/odderon_core.wasm"
+          dst="$GITHUB_WORKSPACE/odderon-v2/src/core/odderon-core.wasm"
+          echo "copying $(stat -c%s "$src") bytes to $dst"
+          cp "$src" "$dst"
+          cd "$GITHUB_WORKSPACE"
+          git config user.name "odderon-core"
+          git config user.email "core@odderon.invalid"
+          git add odderon-v2/src/core/odderon-core.wasm
+          if git diff --cached --quiet; then
+            echo "wasm unchanged"
+            exit 0
+          fi
+          git commit -m "core: rebuild odderon-core.wasm [skip ci]"
+          git push origin "HEAD:${{ github.ref_name }}"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: odderon-core-wasm
+          path: odderon-v2/rust/target/wasm32-unknown-unknown/release/odderon_core.wasm
+          if-no-files-found: warn
+          retention-days: 90

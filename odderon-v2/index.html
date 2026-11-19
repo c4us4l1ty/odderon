@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#010305" />
+    <meta name="description" content="Odderon — orbital flight operations." />
+    <title>ODDERON</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%23050b0f' stroke='%2363e2f4' stroke-width='2'/%3E%3Cpath d='M16 5v22M5 16h22' stroke='%2363e2f4' stroke-width='1'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./src/ui/style.css" />
+  </head>
+  <body>
+    <canvas id="viewport" aria-label="Orbital flight view"></canvas>
+    <div class="glass" aria-hidden="true">
+      <div class="scanlines"></div>
+      <div class="vignette"></div>
+      <div class="grain"></div>
+    </div>
+
+    <!-- ================================================== FLIGHT HUD -->
+    <div id="hud" class="hud is-hidden" aria-hidden="true">
+      <div class="hud-edge edge-left"></div>
+      <div class="hud-edge edge-right"></div>
+
+      <header class="topbar">
+        <div class="topbar-left">
+          <div class="brand-mini"><span class="glyph">◒</span><b>ODDERON</b><i>FLIGHT SOFTWARE</i></div>
+          <div class="tb-cell">
+            <span class="tb-label">OPERATION</span>
+            <span class="tb-value" id="hud-code">CTR-2214</span>
+          </div>
+          <div class="tb-cell">
+            <span class="tb-label">MET</span>
+            <span class="tb-value num" id="hud-met">00:00:00</span>
+          </div>
+        </div>
+
+        <div class="topbar-centre">
+          <div class="clock">
+            <span class="clock-label" id="hud-phase">MISSION TIME</span>
+            <b class="clock-value num" id="hud-clock">T+ 00:00:00</b>
+          </div>
+          <div class="clock-rule" aria-hidden="true"></div>
+          <div class="warp-chip" id="hud-warp-chip"><i></i><b id="hud-warp">1×</b><span>TIME</span></div>
+        </div>
+
+        <div class="topbar-right">
+          <div class="tb-cell tb-right">
+            <span class="tb-label">PE</span>
+            <span class="tb-value num" id="hud-top-pe">—</span>
+          </div>
+          <div class="tb-cell tb-right">
+            <span class="tb-label">AP</span>
+            <span class="tb-value num" id="hud-top-ap">—</span>
+          </div>
+          <div class="tb-cell tb-right">
+            <span class="tb-label">INC</span>
+            <span class="tb-value num" id="hud-top-inc">—</span>
+          </div>
+          <button class="icon-key" id="btn-end-flight" type="button" title="End flight and file the report">
+            END FLIGHT
+          </button>
+        </div>
+      </header>
+
+      <div class="objective" id="objective">
+        <div class="objective-head">
+          <span class="obj-lamp" id="obj-lamp"></span>
+          <span id="obj-code">CTR-2214</span>
+          <b id="obj-state">ACTIVE</b>
+        </div>
+        <div class="objective-body">
+          <div class="objective-title">
+            <span class="obj-kicker">CURRENT DIRECTIVE</span>
+            <h2 id="obj-title">Circularise at 1 200 km</h2>
+          </div>
+          <div class="objective-progress">
+            <div class="progress-track"><i id="obj-progress"></i></div>
+            <span id="obj-hint">RAISE PERIAPSIS</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ------------------------------------------------ LEFT COLUMN -->
+      <div class="hud-col hud-col-left">
+      <section class="panel nav-panel" id="panel-nav">
+        <div class="panel-head">
+          <span>ATTITUDE</span>
+          <i>NAV-01</i>
+        </div>
+        <div class="navball-wrap">
+          <canvas id="navball" width="460" height="460"></canvas>
+          <span class="navball-tag">ORBITAL</span>
+        </div>
+        <div class="nav-readout">
+          <div><span>PITCH</span><b class="num" id="nav-pitch">+0.0°</b></div>
+          <div><span>HDG</span><b class="num" id="nav-heading">000°</b></div>
+          <div><span>ROLL</span><b class="num" id="nav-roll">+0.0°</b></div>
+        </div>
+      </section>
+
+      <section class="panel plant-panel" id="panel-plant">
+        <div class="panel-head">
+          <span>PROPULSION</span>
+          <i>PRP-02</i>
+        </div>
+        <div class="plant-grid">
+          <div class="plant-cell">
+            <span class="cell-label">PROPELLANT</span>
+            <b class="num cell-big" id="plant-prop">2 500</b>
+            <span class="cell-unit">KG</span>
+            <div class="seg-bar" id="plant-bar"></div>
+          </div>
+          <div class="plant-cell">
+            <span class="cell-label">ΔV REMAINING</span>
+            <b class="num cell-big" id="plant-dv">2 960</b>
+            <span class="cell-unit">M/S</span>
+          </div>
+          <div class="plant-cell compact">
+            <span class="cell-label">MASS</span><b class="num" id="plant-mass">4 150</b><span class="cell-unit">KG</span>
+          </div>
+          <div class="plant-cell compact">
+            <span class="cell-label">THRUST</span><b class="num" id="plant-thrust">0.0</b><span class="cell-unit">KN</span>
+          </div>
+        </div>
+        <div class="engine-strip">
+          <div class="engine-state" id="engine-state"><i></i><b>SAFE</b></div>
+          <div class="throttle">
+            <div class="throttle-head"><span>THROTTLE</span><b class="num" id="throttle-num">000%</b></div>
+            <div class="throttle-rail" id="throttle-rail">
+              <div class="throttle-fill" id="throttle-fill"></div>
+              <div class="throttle-handle" id="throttle-handle"></div>
+              <div class="throttle-ticks" aria-hidden="true"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel rcs-panel" id="panel-rcs">
+        <div class="panel-head"><span>RCS PULSE</span><i>MAN-03</i></div>
+        <div class="rcs-body">
+          <div class="rcs-pad" id="rcs-pad">
+            <i data-dir="pitch-fwd"></i><i data-dir="pitch-aft"></i>
+            <i data-dir="yaw-left"></i><i data-dir="centre" class="centre"></i><i data-dir="yaw-right"></i>
+            <i data-dir="roll-left"></i><i data-dir="roll-right"></i>
+          </div>
+          <div class="rcs-labels">
+            <span>RATE</span><b class="num" id="rcs-rate">0.00°/s</b>
+            <span>MODE</span><b id="rcs-mode">MAN</b>
+          </div>
+        </div>
+      </section>
+
+      </div>
+
+      <!-- ----------------------------------------------- RIGHT COLUMN -->
+      <div class="hud-col hud-col-right">
+      <section class="panel orbit-panel" id="panel-orbit">
+        <div class="panel-head"><span>ORBITAL STATE</span><i>ORB-04</i></div>
+        <div class="orbit-readout">
+          <div class="orbit-primary">
+            <div><span>APOAPSIS</span><b class="num" id="orb-ap">—</b><em>KM</em></div>
+            <div><span>PERIAPSIS</span><b class="num" id="orb-pe">—</b><em>KM</em></div>
+          </div>
+          <dl class="data-table">
+            <div><dt>ALTITUDE</dt><dd class="num" id="orb-alt">—</dd></div>
+            <div><dt>VELOCITY</dt><dd class="num" id="orb-vel">—</dd></div>
+            <div><dt>ECCENTRICITY</dt><dd class="num" id="orb-ecc">—</dd></div>
+            <div><dt>INCLINATION</dt><dd class="num" id="orb-inc">—</dd></div>
+            <div><dt>PERIOD</dt><dd class="num" id="orb-period">—</dd></div>
+            <div><dt>SEMI-MAJOR</dt><dd class="num" id="orb-sma">—</dd></div>
+          </dl>
+        </div>
+        <div class="ap-pe-bar" aria-hidden="true">
+          <span class="ap-pe-pe" id="ap-pe-pe">PE</span>
+          <span class="ap-pe-ap" id="ap-pe-ap">AP</span>
+          <i class="ap-pe-alt" id="ap-pe-alt"></i>
+          <div class="ap-pe-target" id="ap-pe-target"></div>
+        </div>
+      </section>
+
+      <section class="panel target-panel" id="panel-target">
+        <div class="panel-head"><span>CONTRACT ORBIT</span><i>TGT-05</i></div>
+        <div class="target-grid">
+          <div><span>TARGET AP</span><b class="num" id="tgt-ap">—</b></div>
+          <div><span>TARGET PE</span><b class="num" id="tgt-pe">—</b></div>
+          <div><span>AP ERROR</span><b class="num" id="tgt-ap-err">—</b></div>
+          <div><span>PE ERROR</span><b class="num" id="tgt-pe-err">—</b></div>
+        </div>
+        <div class="tolerance">
+          <span class="cell-label">TOLERANCE ±<b id="tgt-tol">45</b> KM</span>
+          <div class="tolerance-track"><i id="tgt-acquire"></i></div>
+        </div>
+      </section>
+
+      <section class="panel node-panel" id="panel-node">
+        <div class="panel-head"><span>MANOEUVRE</span><i>MNRV-06</i></div>
+        <div class="node-empty" id="node-empty">
+          <p>NO PLAN LOADED</p>
+          <button class="key primary" id="btn-add-node" type="button">PLACE NODE · APOAPSIS</button>
+        </div>
+        <div class="node-active is-hidden" id="node-active">
+          <div class="node-head">
+            <span>NODE 01</span>
+            <b class="num" id="node-time">T+ 00:00</b>
+            <button class="key tiny" id="btn-clear-node" type="button" title="Delete node">✕</button>
+          </div>
+          <div class="burn-row">
+            <span class="cell-label">PROGRADE ΔV</span>
+            <b class="num burn-dv" id="node-dv">0</b><em>M/S</em>
+          </div>
+          <input id="node-slider" class="hud-slider" type="range" min="0" max="1200" step="1" value="0" aria-label="Manoeuvre delta-v" />
+          <div class="burn-trim">
+            <button class="key tiny" data-dv="-100" type="button">−100</button>
+            <button class="key tiny" data-dv="-10" type="button">−10</button>
+            <button class="key tiny" data-dv="10" type="button">+10</button>
+            <button class="key tiny" data-dv="100" type="button">+100</button>
+          </div>
+          <div class="node-prediction">
+            <div><span>PREDICTED AP</span><b class="num" id="node-ap">—</b></div>
+            <div><span>PREDICTED PE</span><b class="num" id="node-pe">—</b></div>
+            <div><span>BURN TIME</span><b class="num" id="node-burn">—</b></div>
+          </div>
+          <button class="key primary wide" id="btn-execute" type="button">ALIGN &amp; EXECUTE</button>
+        </div>
+      </section>
+
+      </div>
+
+      <!-- -------------------------------------------------- CENTRE -->
+      <div class="reticle" id="reticle" aria-hidden="true">
+        <i class="r-tl"></i><i class="r-tr"></i><i class="r-bl"></i><i class="r-br"></i>
+        <b class="r-dot"></b>
+      </div>
+      <div class="screen-markers" id="screen-markers"></div>
+      <div class="alerts" id="alerts" role="status"></div>
+
+      <!-- ------------------------------------------------ BOTTOM BAR -->
+      <footer class="controls">
+        <div class="ctrl-block throttle-block">
+          <button class="key engine-key" id="btn-engine" type="button">
+            <i></i><span>ENGINE</span><b>SAFE</b>
+          </button>
+          <div class="thr-mini">
+            <div class="thr-mini-head"><span>THR</span><b class="num" id="thr-mini-num">0%</b></div>
+            <div class="thr-mini-track"><i id="thr-mini-fill"></i></div>
+          </div>
+          <div class="key-hint"><kbd>Z</kbd><kbd>X</kbd> THR <kbd>⇧</kbd><kbd>⌃</kbd> FINE</div>
+        </div>
+
+        <div class="ctrl-block sas-block">
+          <div class="ctrl-label">SAS</div>
+          <div class="seg-buttons" id="sas-modes">
+            <button class="key" data-sas="off" type="button">OFF</button>
+            <button class="key" data-sas="stability" type="button">STAB</button>
+            <button class="key" data-sas="prograde" type="button">PRO</button>
+            <button class="key" data-sas="retrograde" type="button">RETRO</button>
+            <button class="key" data-sas="radial" type="button">RAD</button>
+            <button class="key" data-sas="normal" type="button">NML</button>
+          </div>
+          <div class="seg-buttons">
+            <button class="key" id="btn-rcs" type="button">RCS</button>
+            <button class="key" id="btn-reticle" type="button">MARKERS</button>
+          </div>
+        </div>
+
+        <div class="ctrl-block warp-block">
+          <div class="ctrl-label">TIME WARP</div>
+          <div class="seg-buttons" id="warp-modes">
+            <button class="key" data-warp="1" type="button">1×</button>
+            <button class="key" data-warp="5" type="button">5×</button>
+            <button class="key" data-warp="25" type="button">25×</button>
+            <button class="key" data-warp="100" type="button">100×</button>
+          </div>
+          <div class="seg-buttons">
+            <button class="key" data-cam="flight" type="button">FLIGHT</button>
+            <button class="key" data-cam="chase" type="button">CHASE</button>
+            <button class="key" data-cam="map" type="button">MAP</button>
+          </div>
+        </div>
+
+        <div class="ctrl-block hint-block">
+          <span class="key-hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> ATTITUDE <kbd>Q</kbd><kbd>E</kbd> ROLL</span>
+          <span class="key-hint"><kbd>1</kbd>–<kbd>3</kbd> CAMERA <kbd>ESC</kbd> MENU</span>
+        </div>
+      </footer>
+    </div>
+
+    <!-- ================================================== MAIN MENU -->
+    <section id="menu" class="screen menu">
+      <div class="menu-scrim" aria-hidden="true"></div>
+      <header class="menu-top">
+        <div class="menu-mark"><span class="glyph">◒</span><b>ODDERON</b><i>FLIGHT SOFTWARE</i></div>
+        <div class="menu-status">
+          <span class="status-lamp"></span>
+          <span>FLIGHT COMPUTER READY</span>
+          <span class="menu-build">BUILD 0.2 · LOCAL</span>
+        </div>
+      </header>
+
+      <div class="menu-left">
+        <p class="eyebrow">ORBITAL FLIGHT OPERATIONS</p>
+        <h1>ODDERON</h1>
+        <p class="tagline">Repair the orbit. Fly the margin.</p>
+
+        <nav class="menu-list" aria-label="Main menu">
+          <button class="menu-item is-selected" data-action="launch" type="button">
+            <span class="mi-index">01</span><span class="mi-label">LAUNCH</span><span class="mi-sub">Begin assigned flight</span><span class="mi-arrow">▸</span>
+          </button>
+          <button class="menu-item" data-action="operations" type="button">
+            <span class="mi-index">02</span><span class="mi-label">OPERATIONS</span><span class="mi-sub">Contract board</span><span class="mi-arrow">▸</span>
+          </button>
+          <button class="menu-item" data-action="settings" type="button">
+            <span class="mi-index">03</span><span class="mi-label">SETTINGS</span><span class="mi-sub">Display and controls</span><span class="mi-arrow">▸</span>
+          </button>
+          <button class="menu-item" data-action="quit" type="button">
+            <span class="mi-index">04</span><span class="mi-label">QUIT</span><span class="mi-sub">Return to desktop</span><span class="mi-arrow">▸</span>
+          </button>
+        </nav>
+
+        <div class="menu-hints">
+          <span><kbd>↑</kbd><kbd>↓</kbd> SELECT</span>
+          <span><kbd>↵</kbd> CONFIRM</span>
+          <span><kbd>F11</kbd> FULLSCREEN</span>
+        </div>
+      </div>
+
+      <aside class="brief" id="brief">
+        <div class="brief-head">
+          <div>
+            <span class="brief-eyebrow">OPERATION BRIEF</span>
+            <h2 id="brief-name">Kestrel-9</h2>
+          </div>
+          <span class="brief-reward"><i>◈</i><b id="brief-reward">800</b></span>
+        </div>
+        <p class="brief-agency" id="brief-agency">VASHTI LOGISTICS · CONTRACT 2214</p>
+
+        <div class="brief-diagram" id="brief-diagram">
+          <canvas id="brief-canvas" width="520" height="220" aria-label="Orbit diagram"></canvas>
+          <span class="diagram-tag">TRANSFER PROFILE</span>
+        </div>
+
+        <p class="brief-copy" id="brief-copy"></p>
+
+        <dl class="brief-spec">
+          <div><dt>CURRENT ORBIT</dt><dd id="brief-start">186 × 1 182 KM</dd></div>
+          <div><dt>TARGET ORBIT</dt><dd id="brief-target">1 200 KM CIRCULAR</dd></div>
+          <div><dt>INCLINATION</dt><dd id="brief-inc">28.5°</dd></div>
+          <div><dt>WINDOW</dt><dd id="brief-window">05:00:00</dd></div>
+        </dl>
+
+        <div class="brief-foot">
+          <div class="brief-diff"><span>RATING</span><b id="brief-diff">CADET</b></div>
+          <div class="brief-pager">
+            <button class="key tiny" id="brief-prev" type="button" aria-label="Previous contract">◂</button>
+            <span class="num" id="brief-index">01 / 03</span>
+            <button class="key tiny" id="brief-next" type="button" aria-label="Next contract">▸</button>
+          </div>
+          <button class="key primary launch-key" data-action="launch" type="button">BEGIN FLIGHT <i>▸</i></button>
+        </div>
+      </aside>
+
+      <footer class="menu-foot">
+        <span>FOUNDATION 0.2 · LOCAL PRACTICE</span>
+        <span class="menu-foot-mid">NO NETWORK · NO ACCOUNT · FLIGHT MODEL: TWO-BODY + J2</span>
+        <span>ODDERON FLIGHT SOFTWARE</span>
+      </footer>
+    </section>
+
+    <!-- ================================================== OPERATIONS -->
+    <section id="operations" class="screen overlay-screen is-hidden">
+      <div class="overlay-head">
+        <div><span class="eyebrow">CONTRACT BOARD</span><h2>OPERATIONS</h2></div>
+        <button class="key" data-close="operations" type="button">CLOSE ✕</button>
+      </div>
+      <div class="contract-board" id="contract-board"></div>
+      <p class="overlay-note">Each contract is flown with the same vehicle and the same physics. Target orbits are judged on apoapsis, periapsis and inclination tolerance.</p>
+    </section>
+
+    <!-- ================================================== PAUSE -->
+    <section id="pause" class="screen overlay-screen pause-screen is-hidden">
+      <div class="pause-panel">
+        <div class="overlay-head">
+          <div><span class="eyebrow">FLIGHT SUSPENDED</span><h2>PAUSED</h2></div>
+          <span class="pause-met num" id="pause-met">T+ 00:00:00</span>
+        </div>
+        <nav class="pause-list">
+          <button class="menu-item" data-pause="resume" type="button"><span class="mi-index">01</span><span class="mi-label">RESUME FLIGHT</span><span class="mi-arrow">▸</span></button>
+          <button class="menu-item" data-pause="restart" type="button"><span class="mi-index">02</span><span class="mi-label">RESTART FLIGHT</span><span class="mi-arrow">▸</span></button>
+          <button class="menu-item" data-pause="controls" type="button"><span class="mi-index">03</span><span class="mi-label">CONTROLS</span><span class="mi-arrow">▸</span></button>
+          <button class="menu-item" data-pause="settings" type="button"><span class="mi-index">04</span><span class="mi-label">SETTINGS</span><span class="mi-arrow">▸</span></button>
+          <button class="menu-item" data-pause="menu" type="button"><span class="mi-index">05</span><span class="mi-label">ABORT TO HANGAR</span><span class="mi-arrow">▸</span></button>
+        </nav>
+        <p class="pause-note">The simulation is halted. Propellant and mission time are not consumed.</p>
+      </div>
+    </section>
+
+    <!-- ================================================== CONTROLS -->
+    <section id="controls" class="screen overlay-screen is-hidden">
+      <div class="overlay-card">
+      <div class="overlay-head">
+        <div><span class="eyebrow">FLIGHT REFERENCE</span><h2>CONTROLS</h2></div>
+        <button class="key" data-close="controls" type="button">CLOSE ✕</button>
+      </div>
+      <div class="controls-sheet">
+        <div class="control-col">
+          <h3>ATTITUDE</h3>
+          <div><span>Pitch / yaw</span><b><kbd>W</kbd><kbd>S</kbd> <kbd>A</kbd><kbd>D</kbd></b></div>
+          <div><span>Roll</span><b><kbd>Q</kbd><kbd>E</kbd></b></div>
+          <div><span>SAS modes</span><b><kbd>T</kbd> cycle</b></div>
+          <div><span>RCS authority</span><b><kbd>R</kbd></b></div>
+          <div><span>Kill rotation</span><b><kbd>X</kbd> (SAS STAB)</b></div>
+        </div>
+        <div class="control-col">
+          <h3>PROPULSION</h3>
+          <div><span>Arm engine</span><b><kbd>SPACE</kbd></b></div>
+          <div><span>Throttle up / down</span><b><kbd>Z</kbd> / <kbd>X</kbd></b></div>
+          <div><span>Full / cut</span><b><kbd>⇧</kbd><kbd>Z</kbd> / <kbd>⇧</kbd><kbd>X</kbd></b></div>
+          <div><span>Warp</span><b><kbd>.</kbd> / <kbd>,</kbd></b></div>
+        </div>
+        <div class="control-col">
+          <h3>VIEW</h3>
+          <div><span>Camera</span><b><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></b></div>
+          <div><span>Orbit camera</span><b>drag · wheel zoom</b></div>
+          <div><span>Pause / menu</span><b><kbd>ESC</kbd></b></div>
+          <div><span>Fullscreen</span><b><kbd>F11</kbd></b></div>
+        </div>
+      </div>
+      <div class="controls-doctrine">
+        <div><span>BURN DOCTRINE</span><p>Place a node at an apsis, align with SAS NODE, then arm and burn. The autopilot centres the burn on the node and trims on measured apsides.</p></div>
+        <div><span>WARP LIMITS</span><p>Warp is capped at 5× with the engine lit. Alignment always drops to 1×. Kepler propagation keeps the conic exact at any warp.</p></div>
+        <div><span>GRADING</span><p>Apsis accuracy is 62% of the score, propellant reserve 24%, time inside the window 14%. S ≥ 950, A ≥ 850, B ≥ 700, C ≥ 550.</p></div>
+      </div>
+      <p class="overlay-note">The flight model is two-body with J2 and a thin exponential atmosphere below 200 km. It is simplified and labelled as such; it is not a certified trajectory tool.</p>
+      </div>
+    </section>
+
+    <!-- ================================================== SETTINGS -->
+    <section id="settings" class="screen overlay-screen is-hidden">
+      <div class="overlay-card">
+      <div class="overlay-head">
+        <div><span class="eyebrow">FLIGHT COMPUTER</span><h2>SETTINGS</h2></div>
+        <button class="key" data-close="settings" type="button">CLOSE ✕</button>
+      </div>
+      <div class="settings-sheet">
+        <label class="rocker"><input type="checkbox" id="set-grain" checked /><span class="rocker-slug"></span><span><b>Film grain &amp; scanlines</b><small>Display glass texture</small></span></label>
+        <label class="rocker"><input type="checkbox" id="set-orbit-lines" checked /><span class="rocker-slug"></span><span><b>Orbit lines</b><small>Show predicted conics and target ring</small></span></label>
+        <label class="rocker"><input type="checkbox" id="set-invert-y" /><span class="rocker-slug"></span><span><b>Invert camera pitch</b><small>Orbit camera only</small></span></label>
+        <label class="rocker"><input type="checkbox" id="set-audio" checked /><span class="rocker-slug"></span><span><b>Audio</b><small>Engine, pumps and interface tones</small></span></label>
+        <div class="settings-slider">
+          <span class="cell-label">CAMERA RESPONSE</span>
+          <input id="set-scale" class="hud-slider" type="range" min="40" max="160" step="10" value="100" />
+          <b class="num" id="set-scale-val">100%</b>
+        </div>
+        <div class="settings-system">
+          <h3>FLIGHT COMPUTER</h3>
+          <div><span>BUILD</span><b>ODDERON 0.2 · LOCAL</b></div>
+          <div><span>RENDERER</span><b id="set-renderer">—</b></div>
+          <div><span>VIEWPORT</span><b id="set-viewport">—</b></div>
+          <div><span>CORE</span><b id="set-core">—</b></div>
+          <div><span>DEPENDENCIES</span><b>NONE · OFFLINE</b></div>
+          <div><span>PROFILE</span><b>SOLO OPERATOR</b></div>
+        </div>
+        <p class="overlay-note">Preferences are stored on this device only. The flight build has no network dependency.</p>
+      </div>
+      </div>
+    </section>
+
+    <!-- ================================================== DEBRIEF -->
+    <section id="debrief" class="screen overlay-screen debrief-screen is-hidden">
+      <div class="report">
+        <header class="report-head">
+          <div>
+            <span class="eyebrow">FLIGHT REPORT · ODDERON FLIGHT OFFICE</span>
+            <h2 id="debrief-name">KESTREL-9</h2>
+            <p id="debrief-code">CONTRACT CTR-2214 · VASHTI LOGISTICS</p>
+          </div>
+          <div class="report-status" id="report-status"><span>RESULT</span><b>SECURED</b></div>
+        </header>
+
+        <div class="report-grid">
+          <div class="grade-block">
+            <span class="grade-label">FLIGHT GRADE</span>
+            <b class="grade" id="debrief-grade">A</b>
+            <span class="score num" id="debrief-score">0874</span>
+          </div>
+          <div class="report-table">
+            <div><span>APOAPSIS ACHIEVED</span><b class="num" id="debrief-ap">—</b></div>
+            <div><span>PERIAPSIS ACHIEVED</span><b class="num" id="debrief-pe">—</b></div>
+            <div><span>APOAPSIS ERROR</span><b class="num" id="debrief-ap-err">—</b></div>
+            <div><span>PERIAPSIS ERROR</span><b class="num" id="debrief-pe-err">—</b></div>
+            <div><span>PROPELLANT USED</span><b class="num" id="debrief-fuel">—</b></div>
+            <div><span>MISSION TIME</span><b class="num" id="debrief-time">—</b></div>
+          </div>
+          <div class="report-notes">
+            <span class="cell-label">FLIGHT OFFICER NOTES</span>
+            <p id="debrief-notes"></p>
+            <div class="stamp" id="debrief-stamp">FILED</div>
+          </div>
+        </div>
+
+        <footer class="report-foot">
+          <button class="key" id="debrief-menu" type="button">RETURN TO HANGAR</button>
+          <button class="key" id="debrief-replay" type="button">REFLY CONTRACT</button>
+          <button class="key primary" id="debrief-next" type="button">NEXT OPERATION <i>▸</i></button>
+        </footer>
+      </div>
+    </section>
+
+    <div class="boot" id="boot">
+      <div class="boot-inner">
+        <span class="boot-mark">◒</span>
+        <b>ODDERON</b>
+        <span id="boot-status">FLIGHT COMPUTER STARTING</span>
+        <i></i>
+      </div>
+    </div>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
