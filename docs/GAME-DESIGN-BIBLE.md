@@ -562,6 +562,16 @@ has moved on by however much time passed, *at the rate the world moves* (Section
 ### 9.3 The morning after
 On return, the first thing is not a summary screen. It is the room. Then the drawer. Then the day.
 
+### 9.4 There are no loading screens
+Not "short" ones — none. Entering a ship, leaving a planet, crossing a solar system: all of it is a
+continuation of the same world, never a suspension of it. The only moment of waiting in the entire
+game is the first boot, and it is choreographed as *waking up* — a fan, cicadas, a room fading up from
+black — because the opening scene is pure fragment shader and needs no simulation to render.
+
+Full doctrine, including the 8.6-order-of-magnitude descent problem, the nine rules, and the CI-gated
+hitch budget: [`IMMERSION.md`](IMMERSION.md). Also note **N8: no teleportation.** The absence of a
+loading screen is a commitment to the absence of fast travel — travel costs what physics says.
+
 ---
 
 ## 10. Awe budgeting
