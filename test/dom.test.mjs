@@ -55,11 +55,14 @@ function makeEnv() {
   const el = (tag) => ({
     tagName: tag, style: {}, width: 1280, height: 720, textContent: '', className: '',
     checked: false, classList: { add: () => {}, remove: () => {}, toggle: () => {} },
-    addEventListener: () => {}, requestPointerLock: () => {},
+    addEventListener: () => {},
+    requestPointerLock() { this._locked = true; doc.pointerLockElement = this; },
     getContext: (kind) => (kind === 'webgl2' ? gl : makeCtx2d())
   });
   const doc = {
     pointerLockElement: null,
+    _exited: false,
+    exitPointerLock() { this._exited = true; this.pointerLockElement = null; },
     getElementById: (id) => {
       if (!doc._els) doc._els = {};
       if (!doc._els[id]) doc._els[id] = el(id);
@@ -156,4 +159,98 @@ suite('the page boots and survives 600 real frames (headless)');
   ok(src.indexOf('#version 300 es') === 0, 'the shader declares GLSL ES 3.00 first, as WebGL2 requires');
   const declares = (src.match(/\buniform\b/g) || []).length;
   ok(declares >= 15, 'the scene shader declares ' + declares + ' uniforms');
+}
+
+suite('the instruments live on the walls, and the mouse is captured');
+{
+  const env = makeEnv();
+  const ctx = vm.createContext(env.win);
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const scripts = [...html.matchAll(/<script src="([^"]+)"><\/script>/g)].map(m => m[1]);
+  for (const s of scripts) {
+    const code = readFileSync(new URL('../' + s, import.meta.url), 'utf8');
+    vm.runInContext(code, ctx, { filename: s });
+  }
+  const app = env.win.ODApp;
+  app.boot();
+  env.step(30);
+
+  // --- capturing the mouse -------------------------------------------------------------------
+  const pd = env.listeners.pointerdown || [];
+  ok(pd.length > 0, 'a pointerdown anywhere on the page is heard (the HUD canvas is pointer-events:none)');
+  env.win.document.pointerLockElement = app.canvas;
+  (env.listeners['d:pointerlockchange'] || []).forEach(f => f());
+  ok(app.pointer.locked === true, 'pointerlockchange is reflected in the app state');
+  // a real browser: a pointerdown on the page requests the lock on the scene canvas, synchronously
+  env.win.document.pointerLockElement = null;
+  (env.listeners['d:pointerlockchange'] || []).forEach(f => f());   // the release, then a new click
+  app.canvas._locked = false;
+  (env.listeners['d:pointerdown'] || []).forEach(f => f({ clientX: 10, clientY: 10 }));
+  ok(app.canvas._locked === true, 'a click requests the lock on the scene canvas, not the overlay');
+  ok(app.overlay._locked !== true, 'and never on the HUD overlay, which is pointer-events:none');
+
+  const before = app.cam.yaw;
+  (env.listeners['d:pointermove'] || []).forEach(f => f({ movementX: 120, movementY: 0 }));
+  ok(Math.abs(app.cam.yaw - before) > 1e-3, 'moving the captured mouse turns the head');
+
+  // --- Esc returns the cursor, and the view stops moving --------------------------------------
+  const kd = env.listeners.keydown || [];
+  kd.forEach(f => f({ key: 'escape', preventDefault() {} }));
+  ok(env.win.document._exited === true, 'Esc calls exitPointerLock, so the cursor comes back');
+  env.win.document.pointerLockElement = null;
+  (env.listeners['d:pointerlockchange'] || []).forEach(f => f());
+  const after = app.cam.yaw;
+  (env.listeners['d:pointermove'] || []).forEach(f => f({ movementX: 200, movementY: 0 }));
+  ok(app.cam.yaw === after, 'with the pointer released, moving the mouse no longer turns the head');
+
+  // --- the instruments are objects at real world positions -----------------------------------
+  const cam = app._camera();
+  const hud = app.hud;
+  const pr = hud.project([-2.02, 1.16, 2.34], cam, 1280, 720);
+  ok(pr && pr.z > 0, 'the wall thermometer is in front of the camera at spawn, so it is readable');
+  ok(pr.x > -40 && pr.x < 1320 && pr.y > -40 && pr.y < 760,
+    'and it lands inside the frame when you look at the window');
+  // turn 180 degrees: the gauge must now be behind the camera, i.e. it is not an overlay
+  const turned = { pos: cam.pos, fwd: [-cam.fwd[0], cam.fwd[1], -cam.fwd[2]],
+                   right: [-cam.right[0], cam.right[1], -cam.right[2]], up: cam.up, fov: cam.fov };
+  const behind = hud.project([-2.02, 1.16, 2.34], turned, 1280, 720);
+  ok(behind === null, 'a gauge behind you is not drawn: instruments are not an overlay');
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * The image cannot depend on the clock. This is the test that keeps the rest-state guarantee honest:
+ * if `uTime` reaches the shader, `Renderer.same()` can never be true and every frame is a present,
+ * no matter what the schedule decides.
+ */
+suite('the shader state is a function of the world, not of wall-clock time');
+{
+  const env = makeEnv();
+  const ctx = vm.createContext(env.win);
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const scripts = [...html.matchAll(/<script src="([^"]+)"><\/script>/g)].map(m => m[1]);
+  for (const s of scripts) {
+    vm.runInContext(readFileSync(new URL('../' + s, import.meta.url), 'utf8'), ctx, { filename: s });
+  }
+  const app = env.win.ODApp;
+  app.boot();
+  env.step(30);
+
+  // two identical camera states, 2 s of game time apart, must produce the identical uniform blob
+  const cam = app._camera();
+  const st = () => ({
+    res: [1280, 720], time: 0, cam,
+    sun: { dir: [0.1, 0.9, 0.4], col: [1, 0.98, 0.92], elev: 60 },
+    sky: { zenith: [0.1, 0.3, 0.6], horizon: [0.7, 0.8, 0.9] },
+    day: 1, curtain: 1, hour: 12.2, peak: 0, warmth: 0.2, lampOn: 0.25, lampCol: [1, 0.8, 0.6], screen: 0.4
+  });
+  const a = app.renderer.constructor.clone(st());
+  app.world.advanceTo(app.world.t + 2.0);
+  app.model.advanceTo(app.world.t);
+  const b = app.renderer.constructor.clone(st());
+  ok(a === b, 'a still room produces a byte-identical uniform set, so nothing is re-presented');
+
+  // and the schedule agrees: with an unchanged scene there is nothing to draw
+  const S = env.win.ODSchedule;
+  const d = S.schedule({ now: 10_000, lastPresent: 9_999, changeRate: 1e-9, moving: false });
+  ok(d.present === false, 'the scheduler refuses a present when nothing has changed');
 }

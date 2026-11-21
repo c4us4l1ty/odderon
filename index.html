@@ -35,6 +35,11 @@
   #help kbd{display:inline-block;min-width:17px;text-align:center;border:1px solid rgba(240,232,214,.3);
     border-radius:3px;padding:0 3px;margin:0 1px;font-size:10px;color:var(--paper)}
 
+  #lockhint{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);font-size:11px;
+    letter-spacing:.05em;color:rgba(240,232,214,.62);background:rgba(10,9,8,.55);
+    border:1px solid rgba(240,232,214,.14);padding:6px 12px;pointer-events:none;
+    transition:opacity .25s ease}
+  #lockhint .k{border:1px solid rgba(240,232,214,.3);border-radius:3px;padding:0 4px;font-size:10px}
   #hint{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);font-size:12px;
     color:rgba(240,232,214,.62);text-align:center;line-height:1.7;letter-spacing:.03em;
     animation:hintfade 7s ease-out forwards;pointer-events:none}
@@ -57,6 +62,8 @@
 
 <div id="boot"></div>
 <div id="toast"></div>
+
+<div id="lockhint">click to look around · <span class="k">esc</span> releases the mouse</div>
 
 <div id="hint">
   16:26, Tanegashima. The AC is off and the window is open.<br>
@@ -86,6 +93,7 @@
 <script src="game/sim/thermo.js"></script>
 <script src="game/sim/world.js"></script>
 <script src="game/sim/marks.js"></script>
+<script src="game/sim/schedule.js"></script>
 <script src="game/render/glsl.js"></script>
 <script src="game/render/renderer.js"></script>
 <script src="game/render/audio.js"></script>

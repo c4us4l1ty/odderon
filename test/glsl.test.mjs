@@ -97,13 +97,34 @@ suite('glsl: the scene geometry is coherent');
 {
   const s = G.SCENE;
   ok(/vec2 trace\(/.test(s), 'trace() returns (t, material)');
-  ok(/inWindow/.test(s) && /inWindow\(hp\)/.test(s), 'the window is a hole tested on the wall hit, not a box');
-  ok(/roomD|max\(\(-b-o\)\*inv/.test(s), 'the walls are intersected analytically, not ray-marched');
-  ok(/corrugate/.test(s), 'corrugation is a normal perturbation, not geometry');
+  ok(/inWindow/.test(s) && /inWindow\(p\)/.test(s), 'the window is a hole tested on the wall hit, not a box');
+  ok(/inDoor/.test(s), 'the door is an aperture too, so you can see the corridor beyond it');
+  ok(/float shell\(/.test(s), 'the shell is one distance function, not a stack of intersectors');
+  ok(/floorLevel/.test(s) && /LOUNGE_D/.test(s),
+    'the sunken lounge is a real step in the floor, not a texture');
+  ok(/lightBars/.test(s) && /gobo\(/.test(s),
+    'the light-bars and the tree shadows are analytic: the window aperture is integrated, not geometry');
+  ok(!/sampler2D/.test(s) && !/shadowMap/i.test(s), 'no textures and no shadow maps anywhere');
+  ok(/vec3 nShell\(/.test(s) && /return vec3\(sign\(p\.x\), 0\.0, 0\.0\)/.test(s),
+    'the wall normal points into the room (the bug that turned the room into blue fog)');
+  ok(/sunVisible\(/.test(s) && /dot\(n, uSunDir\)/.test(s),
+    'the sun only reaches a surface through the window: one visibility test, not a shadow map');
   ok(/gobo\(/.test(s), 'shadows come from analytic gobos, not a shadow map');
   ok(!/shadowMap|sampler2D/.test(s), 'there is no texture and no shadow map anywhere in the scene');
   const noiseOct = (s.match(/for\(int i=0;i<4;i\+\+\)/g) || []).length;
   ok(noiseOct >= 1, 'the sky cloud is a 4-octave FBM (bounded loop, unrollable)');
+
+  // --- the frame cost, as a number -----------------------------------------------------------
+  // A ray-marched shell at 1.35 MP is the thing that made this 11 fps. The march is bounded and the
+  // bound is small; if someone raises it, the phone-class timeline dies and this test says so.
+  const loops2 = [...s.matchAll(/for\s*\(\s*int\s+i\s*=\s*0\s*;\s*i\s*<\s*(\d+)\s*;/g)].map(x => +x[1]);
+  const marchSteps = Math.max(...loops2);
+  ok(marchSteps <= 56, 'the longest march is ' + marchSteps + ' steps (bounded; the budget is 56)');
+  ok(!/while\s*\(/.test(s), 'no while loops: the shader must be unrollable on a 2015 iGPU');
+  ok(!/shaft/.test(s) || !/uTime/.test(s.split('shaft').slice(-1)[0].slice(0, 400)),
+     'the image does not depend on the wall clock, so a motionless room can actually settle');
+  ok(/pow\(col,\s*vec3\(1\.0\/2\.2\)\)/.test(s),
+     'the grade is arithmetic (a filmic curve and a gamma), not a LUT texture');
   // every loop must have a literal bound: dynamic loops are a driver-compatibility risk
   const loops = [...s.matchAll(/for\s*\(([^)]*)\)/g)].map(x => x[1]);
   ok(loops.every(l => /<\s*\d+/.test(l)), 'all ' + loops.length + ' loops have literal bounds');

@@ -30,11 +30,11 @@ and nothing scheduled at all when idle.
 ```sh
 git pull origin main
 ./run.sh            # then open http://localhost:8080
-./run.sh test       # 107 assertions, no dependencies
+./run.sh test       # 139 assertions, no dependencies
 ```
 
 No build step, no bundler, no package install. Python 3 only, for the static server with the
-cross-origin-isolation headers. Total download: **90.8 KB**, zero binary assets.
+cross-origin-isolation headers. Total download: **148 KB**, zero binary assets.
 
 **Block 1 — *The Room*** is playable: you wake in a 25 m² apartment on Tanegashima at 16:26 with the
 real sun where the sun actually is. Walk, open the curtain, switch the air conditioner on, mark the
