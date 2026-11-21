@@ -5,14 +5,17 @@ from `docs/` on real hardware, and nothing here exists for decoration.
 
 ```sh
 ./run.sh          # http://localhost:8080
-./run.sh test     # 107 assertions, no dependencies
+./run.sh test     # 139 assertions, no dependencies
+node test/vectors.mjs   # the JS kernel's answers, for the Rust kernel to be held to (CI does this)
 ```
 
 ## Controls
 
 | | |
 | --- | --- |
-| `W A S D` | walk (mouse to look; click the canvas to capture the pointer) |
+| **click** | capture the mouse — the pointer is locked and the view follows your hand |
+| **`Esc`** | release the mouse and get your cursor back (press it again to lift the visor) |
+| `W A S D` | walk (you step down into the sunken lounge) |
 | `E` | open / close the curtain |
 | `F` | the air conditioner |
 | `M` | **grease-pencil the thermometer** — mark where you think the needle will settle |
@@ -34,15 +37,19 @@ from `docs/` on real hardware, and nothing here exists for decoration.
 | Attribution needs no paragraph | the ghost twin + one arrow at `argmax|∂δ/∂xᵢ|` | `test/provenance.test.mjs` |
 | Honesty costs no frame rate | `sim/provenance.js` — flat `f64` in the loop, a ~120-node lineage graph on demand | `test/provenance.test.mjs` |
 | The kernel is deterministic | `test/golden.test.mjs` runs the same 7200-step simulation in **two separate processes** and compares digests | CI |
-| There are no assets | 90.8 KB total, no images, no audio files, no meshes | `curl` the server |
+| There are no assets | 148 KB of source, no images, no audio files, no meshes | CI's cold-payload gate |
 | The sun is where the sun is | `sim/world.js` — NOAA solar position | `test/physics.test.mjs` |
 | There is no game loop | `main.js` `_idle()` — when nothing changes, no frame is requested | `test/dom.test.mjs` |
-| The shaders are well-formed | `test/glsl.test.mjs` — delimiters, declaration order, GLSL ES 3.00 literal rules | CI |
+| The shaders are well-formed | `test/glsl.test.mjs` — delimiters, declaration order, GLSL ES 3.00 literal rules, and a march bound of 56 steps | CI |
+| The mouse is captured, and Esc returns it | `main.js` — `requestPointerLock` on the scene canvas, not the `pointer-events:none` overlay; `Esc` → `exitPointerLock` → the cursor comes back | `test/dom.test.mjs` |
+| The instruments are objects, not an overlay | `ui/hud.js` `project()` inverts the shader's own camera, so the gauge is drawn on the plaster at a real position; turn away and it is gone | `test/dom.test.mjs` |
+| A still room cannot repaint itself | `sim/schedule.js` — a pure, tested function: no time term in the image, a present quantised to its bucket, idle request rate → 0 | `test/schedule.test.mjs` |
+| Rust and JavaScript are the same kernel | `kernel/` compiles in CI (native + `wasm32-unknown-unknown`), and `kernel/tests/parity.rs` replays the vectors that `test/vectors.mjs` extracts from the JavaScript kernel: transcendentals to 1e-14, and 2 h of the thermal solver to 1e-9 K | `.github/workflows/ci.yml` |
 
 ## Layout
 
 ```
-index.html            the whole game is this page + 11 scripts
+index.html            the whole game is this page + 12 scripts
 game/
   sim/
     dmath.js          deterministic transcendentals (no Math.sin anywhere in the kernel)
@@ -51,6 +58,7 @@ game/
     thermo.js         THE solver. apartment, capsule, lunar base, O'Neill cylinder
     world.js          time, solar geometry, irradiance, sky colour, the event queue
     marks.js          the grease pencil, δ, proper scoring, the epistemic peak
+    schedule.js       the frame budget as a pure function: when to present, when not to
   render/
     glsl.js           the scene, as a signed distance field. No textures, no shadow maps
     renderer.js       two draws for the whole room; skips the frame if nothing changed
@@ -58,15 +66,36 @@ game/
   ui/
     hud.js            instruments drawn as objects: a thermometer, a meter, a drawer, the visor
   main.js             the camera, the hand, and the render-on-demand scheduler
+kernel/               the same kernel in Rust: dmath, the thermal solver, the replay digest
+  src/lib.rs          no dependencies, no libm, bit-compatible with game/sim/
+  tests/parity.rs     replays the JavaScript kernel's vectors and fails if a bit moved
+.github/workflows/    the compiler: native + wasm32 + node + two emulated device classes
 ```
+
+## How the Rust half is compiled
+
+There is no Rust toolchain on the machine this was written on, so **the compiler is CI**
+(`.github/workflows/ci.yml`). Every push:
+
+1. builds `kernel/` natively with `clippy -D warnings` and runs its tests;
+2. builds it for `wasm32-unknown-unknown` in two profiles, runs `wasm-opt -Oz`, and **fails the
+   build above 512 KB** (the core budget is ~400 KB);
+3. regenerates `test/vectors.json` from the **JavaScript** kernel and makes the Rust tests replay it —
+   so the two kernels are proven to agree rather than assumed to;
+4. runs the node suite on Node 20 and 22, enforces the cold-payload budget, and refuses to let a
+   binary asset into the repo;
+5. runs the same suite under `cpulimit` at 12% and 25% of a core, as a floor for a throttling Android
+   phone and a 2015 UHD laptop.
+
+The wasm artifacts are uploaded per run, so a build from any commit can be downloaded and inspected
+without a toolchain anywhere.
 
 ## What is deliberately *not* here yet
 
-- **Rust/WASM.** The kernel is written behind module boundaries that mirror the planned Rust crates
-  (`odderon-dmath`, `odderon-thermo`, `odderon-sim`), so the port is mechanical. There was no Rust
-  toolchain and no Chrome in the environment where this was built, so shipping untested Rust would
-  have been worse than shipping tested JavaScript. The port is Block 2 work, and
-  `test/golden.test.mjs` is the harness that will prove the port did not change a single bit.
+- **The Rust kernel in the browser.** `kernel/` compiles and passes parity today, but the page still
+  loads the JavaScript kernel: 90 KB, zero toolchain, instant start. Wiring the wasm in is Block 2,
+  and the parity test is the harness that will prove the swap changed nothing.
+- **`wasm-bindgen` glue.** Not needed yet: the first wasm surface will be raw exported functions.
 - **Progressive refinement / reprojection** (`PERFORMANCE.md` I2). Block 1 ships the simple path
   first, as the doctrine says: measure the straightforward architecture, then add cleverness only
   where the measurement demands it.
@@ -77,12 +106,21 @@ game/
 ## Honest limitations of this build
 
 1. **The shader has never run on a GPU.** This environment has no browser and no GL. Everything that
-   could be checked without one — GLSL well-formedness, declaration order, loop bounds, uniform
-   wiring, 600 frames of the app against a stubbed WebGL2 — is checked, and one real bug was found
-   and fixed that way (the window was modelled as a box inside the wall, so it could never be the
-   nearest hit). Visual quality is unverified until you run it.
-2. **Frame rate is unmeasured.** The 1080p60 claim in `PERFORMANCE.md` is arithmetic, not a
-   measurement. Tick the *frame read-out* checkbox to see it on your machine, and tell me the number.
+   could be checked without one is checked, and it has already paid for itself: round 1's geometry
+   was re-implemented in JavaScript on the CPU to ray-trace the spawn view, which is how the camera
+   pointing at a wall instead of the window was found before shipping. Visual quality is still
+   unverified until you run it.
+2. **Frame rate: the 1080p60 claim failed on real hardware** — round 1 measured **11 fps** on the
+   reviewer's machine at 1880×959, which is exactly why round 2 exists. What changed:
+   - the shaded resolution is now capped at **1.35 MP** and is deliberately below the CSS size
+     (a ray-marched pixel is expensive; upscaling is free);
+   - the march was cut from 56+48 steps to **40+32**, the FBM from 4 octaves to 3, and the shadow
+     ray for the sun was replaced by a closed-form window intersection (one division, no march);
+   - the per-frame work is now scheduled: a still room is not redrawn, a moving camera always is;
+   - a governor drops resolution (not cadence) when the measured frame *cost* is over 26 ms.
+   This is still arithmetic until it runs on your laptop. Tick the *frame read-out* box: it now shows
+   fps, presents, skips, the framebuffer size and the quality factor, so one screenshot tells me
+   which of the four levers is binding.
 3. **The AC's thermostat is bang-bang with hysteresis, not a real vapour-compression cycle.** The
    compressor, condenser, expansion valve and evaporator are represented by capacity, COP, inrush and
    duty. Making that a full cycle is exactly what Block 2 does when the same code becomes a turbopump.

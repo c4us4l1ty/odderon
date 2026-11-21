@@ -104,11 +104,12 @@
     this._set('uSkyHorizon', 'v3', s.sky.horizon);
     this._set('uDay', 'f', s.day);
     this._set('uCurtain', 'f', s.curtain);
-    this._set('uACOn', 'f', s.acOn);
-    this._set('uRate', 'f', s.rate);
     this._set('uHour', 'f', s.hour);
     this._set('uPeak', 'f', s.peak);
     this._set('uWarmth', 'f', s.warmth);
+    this._set('uLampCol', 'v3', s.lampCol || [1.0, 0.86, 0.66]);
+    this._set('uLampOn', 'f', s.lampOn === undefined ? 1 : s.lampOn);
+    this._set('uScreen', 'f', s.screen === undefined ? 1 : s.screen);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     this.frames++;
     return true;

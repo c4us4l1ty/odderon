@@ -17,14 +17,15 @@
 
   var M = global.ODMath, Wd = global.ODWorld, Th = global.ODThermo, K = global.ODMarks,
       P = global.ODProv, Hud = global.ODHud, Renderer = global.ODRenderer, Glsl = global.ODGlsl,
-      Audio = global.ODAudio, Rng = global.ODRng;
+      Audio = global.ODAudio, Rng = global.ODRng, Sched = global.ODSchedule;
 
   var App = {
     // ---- state -------------------------------------------------------------------------------
     running: false, t: 0, lastReal: 0, raf: 0, frames: 0, framesRequested: 0,
     curtain: 1.0, acOn: false, visor: false, visorPage: 'provenance',
     pointer: { x: 0, y: 0, down: false, locked: false },
-    cam: { pos: [0.2, 1.62, -0.9], yaw: 0.0, pitch: -0.02 },
+    // spawn in the sunken lounge, looking up at the window: the light is the first thing you see
+    cam: { pos: [1.35, 1.18, -1.05], yaw: -0.504, pitch: -0.05 },
     keys: {},
     marks: null, ledger: null, model: null, world: null, audio: null,
     hud: null, renderer: null,
@@ -33,6 +34,11 @@
     drawer: [],
     fps: 0, _fpsN: 0, _fpsT: 0,
     dirty: true,
+    // ---- the render schedule (PERFORMANCE.md §3, sim/schedule.js) ----
+    lastPresent: 0, intervalMs: 17, frameMs: 0, presented: 0, skipped: 0,
+    quality: 1.0,          // adaptive: 1.0 = full DPR, lowered on slow machines
+    changeRate: 0,         // how fast the scene is changing (drives the present cadence)
+    reticle: 0,            // 0..1 fade of the crosshair, so it does not pop
 
     // ---- boot ---------------------------------------------------------------------------------
     boot: function () {
@@ -102,31 +108,82 @@
 
     _frame: function (ts) {
       var realDt = Math.min(0.1, (ts - this.lastReal) / 1000);
-      this.lastReal = ts;
-      var moved = this._move(realDt);
 
-      // advance physics only as far as it needs (its own cadence, not the frame rate)
-      if (this.world.t !== this.t) {
-        this.t = this.world.t;
-      }
+      // Frame *cost*, not frame interval. Comparing rAF timestamps only ever reports the display's
+      // refresh rate, and a governor fed that number fights the vsync instead of the shader.
+      var t0 = performance.now();
+
+      var moving = this._move(realDt);
       this.world.advanceTo(this.world.t + realDt);
       this.t = this.world.t;
       this.model.advanceTo(this.t);
-
-      // history for the ghost twin, at 1 Hz, only while something is actually changing
       this._record();
-
-      // the epistemic peak: detected, then choreographed
       this._checkPeak();
 
-      var drew = this._draw();
+      // How fast is the scene changing? The sun, the needle, the compressor.
+      this.changeRate = this._changeRate();
+
+      // Ask the schedule, not the vsync. This is the whole performance story in one call.
+      var decided = Sched.schedule({
+        dirty: this.dirty, moving: moving, changeRate: this.changeRate,
+        frameMs: this.frameMs, now: ts, lastPresent: this.lastPresent,
+        intervalMs: this.intervalMs
+      });
+      this.intervalMs = decided.intervalMs;
+
+      if (decided.present) {
+        this.dirty = false;
+        this.lastPresent = ts - (ts % decided.quantum);
+        this._draw(ts);
+        this.presented++;
+      } else {
+        this.skipped++;
+      }
+
+      // One correction per frame: the previous frame's measured cost (smoothed).
+      this.frameMs = this.frameMs ? this.frameMs * 0.82 + (performance.now() - t0) * 0.18
+                                  : (performance.now() - t0);
       this.frames++;
       this._fpsN++;
-      if (ts - this._fpsT > 500) { this.fps = this._fpsN * 1000 / (ts - this._fpsT); this._fpsN = 0; this._fpsT = ts; }
+      if (ts - this._fpsT > 500) {
+        this.fps = this._fpsN * 1000 / (ts - this._fpsT);
+        this._fpsN = 0; this._fpsT = ts;
+        this._governQuality();
+      }
 
-      // ask for another frame only if the world is still moving or the player still is
-      if (moved || this._worldMoving()) this._askFrame();
+      // Keep the loop alive only while the scene is actually changing, the player is moving, or a
+      // present was skipped and is now due. Otherwise: nothing is scheduled at all.
+      var stillChanging = this.changeRate > 1e-6 || moving || this.dirty || !decided.present
+        || Math.abs(this.reticle - (this.pointer.locked ? 1 : 0)) > 0.02;
+      if (stillChanging) this._askFrame();
       else this._idle();
+    },
+
+    // How fast is the scene changing, per second, in relative units. Used only to pick a cadence.
+    _changeRate: function () {
+      var h = this.world.hoursLocal();
+      var prev = this._prevHour === undefined ? h : this._prevHour;
+      this._prevHour = h;
+      // 1 hour of sun motion per second of wall clock is "fast"; a slow drift is 1e-5
+      var sunRate = Math.abs(h - prev);
+      var T = this.model.nodes[0].T;
+      var dT = this._prevT === undefined ? 0 : Math.abs(T - this._prevT);
+      this._prevT = T;
+      var ac = this.model.hvacs[0];
+      var acRate = ac.on ? 0.002 : 0.0004;
+      return Math.max(sunRate * 0.02, dT * 0.06, acRate);
+    },
+
+    // If the machine cannot hold the cadence, drop the resolution before dropping the cadence:
+    // a softer image at 30 fps is better than a sharp one at 11.
+    _governQuality: function () {
+      if (this.fps < 26 && this.quality > 0.55) {
+        this.quality = Math.max(0.55, this.quality - 0.08);
+        this._resize();
+      } else if (this.fps > 55 && this.quality < 1.0) {
+        this.quality = Math.min(1.0, this.quality + 0.04);
+        this._resize();
+      }
     },
 
     _idle: function () {
@@ -169,7 +226,17 @@
           // you carry a China marker. It marks whatever instrument you are looking at.
           self._placeMark();
         }
-        if (k === 'escape') { self.visor = false; self._wake(); }
+        if (k === 'escape') {
+          // Esc returns the cursor (the browser does this itself once the pointer is captured; the
+          // explicit call covers browsers that do not). It must never be swallowed: if we handled it
+          // and the browser also handled it, the second press would appear to do nothing at all.
+          if (document.pointerLockElement) {
+            document.exitPointerLock();
+          } else if (self.visor) {
+            self.visor = false;          // no capture to release, so Esc lifts the visor instead
+          }
+          self._wake();
+        }
         if (k === 'e') { self._toggleCurtain(); }
         if (k === 'f') { self._toggleAC(); }
         if (k === 'r') { self._resolveMark(); }
@@ -178,27 +245,39 @@
       });
       addEventListener('keyup', function (e) { self.keys[e.key.toLowerCase()] = false; });
 
-      c.addEventListener('pointerdown', function (e) {
-        if (!self.pointer.locked && c.requestPointerLock) {
-          c.requestPointerLock();
-          self.dirty = true;
-          self._askFrame();
-          return;
+      // Pointer capture. The HUD canvas is pointer-events:none (it must be, or it eats the click),
+      // so the request has to live on the document -- listening on the canvas was the bug that made
+      // the camera feel fixed.
+      var canvasEl = self.canvas;
+      function requestLock() {
+        if (document.pointerLockElement) return;
+        if (canvasEl.requestPointerLock) {
+          try { canvasEl.requestPointerLock(); } catch (err) { /* Safari: needs a user gesture */ }
         }
-        self.pointer.down = true;
+      }
+      document.addEventListener('pointerdown', function (e) {
+        if (!self.pointer.locked) requestLock();
+        else self.pointer.down = true;
+        self._wake();
       });
+      // double-click also captures; a locked pointer means you look, not click UI
+      document.addEventListener('dblclick', function () { requestLock(); });
+
       addEventListener('pointerup', function () { self.pointer.down = false; });
-      addEventListener('pointermove', function (e) {
-        if (document.pointerLockElement === c) {
-          self.cam.yaw -= e.movementX * 0.0022;
-          self.cam.pitch = M.clamp(self.cam.pitch - e.movementY * 0.0022, -1.2, 1.2);
-          self._askFrame();
+      document.addEventListener('pointermove', function (e) {
+        if (document.pointerLockElement) {
+          var s = 0.0020;
+          self.cam.yaw -= (e.movementX || 0) * s;
+          self.cam.pitch = M.clamp(self.cam.pitch - (e.movementY || 0) * s, -1.35, 1.35);
+          self._wake();
         } else {
           self.pointer.x = e.clientX; self.pointer.y = e.clientY;
         }
       });
       document.addEventListener('pointerlockchange', function () {
-        self.pointer.locked = document.pointerLockElement === c;
+        self.pointer.locked = !!document.pointerLockElement;
+        var hint = document.getElementById('lockhint');
+        if (hint) hint.style.opacity = self.pointer.locked ? '0' : '1';
         self._wake();
       });
       c.addEventListener('touchstart', function (e) { self._touch(e, true); }, { passive: true });
@@ -235,8 +314,11 @@
       var p = this.cam.pos;
       p[0] += (sy * f + cy * r) * speed * dt;
       p[2] += (cy * f - sy * r) * speed * dt;
-      p[0] = M.clamp(p[0], -2.35, 2.35);
-      p[2] = M.clamp(p[2], -2.15, 2.15);
+      p[0] = M.clamp(p[0], -2.30, 2.30);
+      p[2] = M.clamp(p[2], -2.10, 2.10);
+      // you step down into the lounge, so your eye steps down with you
+      var eyeY = (p[2] > 1.05 ? 0.0 : -0.42) + 1.60;
+      p[1] += (eyeY - p[1]) * Math.min(1, dt * 9);
       return true;
     },
 
@@ -314,11 +396,16 @@
     /* ---- draw ------------------------------------------------------------------------------ */
     _resize: function () {
       var w = innerWidth, h = innerHeight;
-      var dpr = Math.min(devicePixelRatio || 1, 1.6);
-      // resolution governor: keep the frame budget on weak hardware
-      if (this.fps && this.fps < 26) dpr = Math.max(0.75, dpr * 0.8);
+      // A ray-marched pixel is expensive, so the shaded resolution is deliberately below the CSS
+      // size: the room is soft, and upscaling is free. This is the single biggest lever we have.
+      var base = Math.min(devicePixelRatio || 1, 1.0);
+      var dpr = base * this.quality;
+      // hard cap the framebuffer: 1.3 megapixels is plenty for a room made of gradients
+      var maxPx = 1.35e6;
+      var px = w * h * dpr * dpr;
+      if (px > maxPx) dpr *= Math.sqrt(maxPx / px);
       this.renderer.resize(w, h, dpr);
-      this.hud.resize(w, h, dpr);
+      this.hud.resize(w, h, Math.min(devicePixelRatio || 1, 2));
       this.dpr = dpr;
     },
 
@@ -346,7 +433,7 @@
       };
     },
 
-    _draw: function () {
+    _draw: function (ts) {
       var L = this.world.light();
       var sol = L.sol, sky = L.sky;
       var elevDeg = sol.elev / M.DEG;
@@ -364,16 +451,19 @@
       var ac = this.model.hvacs[0];
       var st = {
         res: [this.canvas.width, this.canvas.height],
-        time: this.world.t,
+        time: 0,   // the image must not depend on t, or a still room can never settle
         cam: this._camera(),
         sun: { dir: sunDir, col: sunCol, elev: elevDeg },
         sky: { zenith: sky.zenith, horizon: sky.horizon },
-        day: sky.day, curtain: this.curtain, acOn: this.acOn ? 1 : 0,
-        rate: 1, hour: this.world.hoursLocal(),
-        peak: this.peakGlow, warmth: warm
+        day: sky.day, curtain: this.curtain,
+        hour: this.world.hoursLocal(),
+        peak: this.peakGlow, warmth: warm,
+        lampOn: sky.day < 0.5 ? 1 : 0.25,
+        lampCol: [1.0, 0.82, 0.60],
+        screen: 0.35 + 0.65 * (1 - sky.day)
       };
       var drew = this.renderer.draw(st);
-      if (drew) this._drawHud(L, ac);
+      // the instruments are redrawn every present, not every frame: they are part of the picture
       this.hud.g.clearRect(0, 0, this.hud.w, this.hud.h);
       this._drawHud(L, ac);
       return drew;
@@ -382,14 +472,22 @@
     _drawHud: function (L, ac) {
       var h = this.hud, T = this.model.nodes[0].T - 273.15;
       var mark = this.pendingMark ? this.pendingMark.value - 273.15 : null;
-      var ghost = this.pendingMark ? (this.pendingMark.value - 273.15) : null;
-      h.thermometer({ x: this.hud.w * 0.14, y: this.hud.h * 0.34, value: T, mark: mark, ghost: ghost, label: 'ROOM' });
-      h.meter({
-        x: this.hud.w * 0.14, y: this.hud.h * 0.34 + 116,
-        value: ac.p * (ac.on ? 1 : 0.02), duty: ac.on ? 1 : 0
+      var cam = this._camera();
+      // The two instruments are screwed to the walls, at real positions in the room:
+      // the thermometer beside the window, the AC's ammeter on the wall screen.
+      h.wallGauge('thermometer', {
+        at: [-2.02, 1.16, 2.34], cam: cam, value: T, mark: mark, ghost: null, label: 'ROOM'
+      });
+      h.wallGauge('meter', {
+        at: [-2.52, 1.28, -0.30], cam: cam,
+        value: ac.p * (ac.on ? 1 : 0.02), duty: ac.duty || 0
       });
       h.drawer({ x: this.hud.w - 300, y: 24, w: 276, text: 'DRAWER  1  ·  ' + (this.drawer[0] || '').slice(0, 34) });
       h.mirror(this.ledger.stats());
+      // the crosshair fades in with the capture and out with the release
+      var wantR = this.pointer.locked ? 1 : 0;
+      this.reticle += (wantR - this.reticle) * 0.25;
+      if (this.reticle > 0.01) h.reticle({ alpha: this.reticle });
 
       if (this.visor) {
         var self = this;
@@ -410,8 +508,10 @@
         g.save();
         g.font = '10px ui-monospace, monospace'; g.textAlign = 'right';
         g.fillStyle = 'rgba(240,232,214,0.5)';
-        g.fillText('fps ' + this.fps.toFixed(0) + '   rAF/s ' + this.rafRate() +
-          '   draws 2   ' + this.canvas.width + 'x' + this.canvas.height, this.hud.w - 14, this.hud.h - 14);
+        g.fillText('fps ' + this.fps.toFixed(0) +
+          '   present ' + this.presented + ' / skip ' + this.skipped +
+          '   ' + this.canvas.width + 'x' + this.canvas.height +
+          '   q ' + this.quality.toFixed(2), this.hud.w - 14, this.hud.h - 14);
         g.restore();
       }
     },

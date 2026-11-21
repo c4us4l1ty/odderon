@@ -297,6 +297,25 @@ build fails. Performance becomes a test, not an aspiration.
 
 Replacing the previous surrender with numbers someone can check.
 
+### Round 2: the claim was falsified, so here is the correction
+
+Block 1 round 1 shipped and was measured by the reviewer at **11 fps at 1880×959** on the target
+class of machine. The 1080p60 row below was therefore wrong, and the doctrine says a falsified claim
+is a bug with a number attached. What actually changed:
+
+| Lever | Round 1 | Round 2 |
+| --- | --- | --- |
+| Shaded pixels | full DPR (up to 1.6×), 1880×959 ≈ 2.9 MP with DPR | **capped at 1.35 MP**, DPR capped at 1.0, deliberately below CSS size |
+| March | 56 prop + 48 shell + 10 shadow steps | **40 prop + 32 shell**, no shadow march (the sun/window test is closed-form) |
+| Sky | 4-octave FBM, two sun lobes | **3-octave FBM**, one lobe, `pow` exponents 300/8 |
+| Present cadence | every rAF, 60 Hz, image dependent on `uTime` | **scheduled**: still room = 0 presents, moving camera = 60 Hz, `uTime` removed |
+| Governor | drops DPR below 26 fps (measured on rAF *interval*, so it never fired) | drops DPR below 26 fps **frame cost**, and never below 0.55 |
+
+The honest number now is: **unknown until it is re-measured on the reviewer's laptop.** The frame
+read-out (`H` menu) prints fps, presents, skips, framebuffer size and quality factor, so one
+screenshot identifies which lever is binding. There is a second, larger lever in reserve if the
+answer is still bad: shade at 0.5 MP and upscale, which is the "1/3 px shading" row below.
+
 | Claim | Number | How you falsify it |
 | --- | --- | --- |
 | 1080p at 60 fps on a 2015 iGPU | ≤ 11 ms worst case, ≤ 6 ms typical | Run the Block 1 benchmark on your machine |

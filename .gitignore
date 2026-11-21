@@ -1,3 +1,11 @@
 node_modules/
 .DS_Store
 *.log
+
+# Rust build output (the compiler runs in CI, see .github/workflows/ci.yml)
+kernel/target/
+kernel/out/
+
+# reference photographs consulted while designing the room: never committed, because the repo
+# ships zero binary assets and every pixel in the game is arithmetic
+image-search/

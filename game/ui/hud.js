@@ -37,6 +37,64 @@
     this.w = w; this.h = h;
   };
 
+  /* ---------- the crosshair: a painted ring on the glass, only while the mouse is captured ------
+   * Pointer lock hides the OS cursor, so the game owes the player a mark. Without it, looking around
+   * feels like the camera is drifting on its own.
+   */
+  Hud.prototype.reticle = function (o) {
+    var g = this.g;
+    var x = this.w * 0.5, y = this.h * 0.5;
+    g.save();
+    g.globalAlpha = o.alpha;
+    g.strokeStyle = 'rgba(248,240,226,0.75)'; g.lineWidth = 1.2;
+    g.beginPath(); g.arc(x, y, 5.5, 0, 6.283); g.stroke();
+    g.fillStyle = 'rgba(248,240,226,0.85)';
+    g.beginPath(); g.arc(x, y, 1.1, 0, 6.283); g.fill();
+    g.strokeStyle = 'rgba(20,18,15,0.35)'; g.lineWidth = 2.6;
+    g.beginPath(); g.arc(x, y, 5.5, 0, 6.283); g.stroke();
+    g.restore();
+  };
+
+  /* ---------- projection: an instrument is an object on a wall, not an overlay -------------------
+   * The shader projects with rd = fwd + right*(uv.x*fov) + up*(uv.y*fov); this is the same camera,
+   * inverted, so the gauge lands exactly on the plaster it is screwed to. Look away and it is gone,
+   * which is the point: you turn your head to read it.
+   */
+  Hud.prototype.project = function (p, cam, w, h) {
+    var v = [p[0] - cam.pos[0], p[1] - cam.pos[1], p[2] - cam.pos[2]];
+    var dot = function (a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; };
+    var z = dot(v, cam.fwd);
+    if (z <= 0.12) return null;
+    var ux = dot(v, cam.right) / (z * cam.fov);
+    var uy = dot(v, cam.up) / (z * cam.fov);
+    return {
+      x: w * 0.5 + ux * h,
+      y: h * 0.5 - uy * h,
+      // pixels per metre at this depth: a gauge of radius r metres draws r*perMetre px
+      perMetre: (h * 0.5) / (z * cam.fov),
+      z: z,
+      facing: -z / Math.sqrt(dot(v, v))
+    };
+  };
+
+  /* ---------- a gauge mounted on a wall ---------- */
+  Hud.prototype.wallGauge = function (kind, o) {
+    var pr = this.project(o.at, o.cam, this.w, this.h);
+    if (!pr || pr.facing < 0.10) return;
+    // fade at the edge of vision and when nearly edge-on, so it never looks pasted on
+    var a = Math.min(1, (pr.facing - 0.10) / 0.35);
+    if (a <= 0.02) return;
+    var k = Math.max(0.35, Math.min(2.4, pr.perMetre * 0.16));
+    var g = this.g;
+    g.save();
+    g.globalAlpha = a;
+    g.translate(pr.x, pr.y);
+    g.scale(k, k);
+    if (kind === 'thermometer') this.thermometer({ x: 0, y: 0, value: o.value, mark: o.mark, ghost: o.ghost, label: o.label });
+    else this.meter({ x: 0, y: 0, value: o.value, duty: o.duty });
+    g.restore();
+  };
+
   /* ---------- the wall thermometer, as an object ---------- */
   Hud.prototype.thermometer = function (o) {
     var g = this.g;

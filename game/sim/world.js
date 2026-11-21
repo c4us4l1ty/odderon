@@ -61,10 +61,11 @@
     var e = elevDegIn !== undefined ? elevDegIn : (sol.elev !== undefined ? sol.elev / M.DEG : 0);
     var day = M.smoothstep(-6, 12, e);            // 0 night .. 1 full day
     var gold = M.smoothstep(3, 30, e);            // 1 = high sun/white; 0 = golden hour
-    // zenith: deep blue by day, near-black by night
-    var z = [M.lerp(0.02, 0.10, day), M.lerp(0.03, 0.30, day), M.lerp(0.06, 0.62, day)];
-    // horizon: warm at low sun
-    var h = [M.lerp(0.10, 0.62, day), M.lerp(0.11, 0.72, day), M.lerp(0.16, 0.82, day)];
+    // zenith: a saturated summer blue by day, near-black by night. This is the Shinkai sky: the
+    // blue is doing as much work as the sun, so it is set here, in the kernel, not in the shader.
+    var z = [M.lerp(0.02, 0.14, day), M.lerp(0.03, 0.38, day), M.lerp(0.06, 0.74, day)];
+    // horizon: warm at low sun, a pale sunlit haze at noon
+    var h = [M.lerp(0.10, 0.72, day), M.lerp(0.11, 0.82, day), M.lerp(0.16, 0.90, day)];
     var warmth = (1 - gold);
     h[0] = M.lerp(h[0], 0.95, warmth * day);
     h[1] = M.lerp(h[1], 0.62, warmth * day);
