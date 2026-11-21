@@ -11,9 +11,9 @@ use odderon_dmath::{dcos, dsin, Vec3, TAU};
 /// Sculpted Retro-Futuristic CRT Vector Telemetry Oscilloscope (smooth rounded housing + rear tube + rotary dials).
 pub fn crt_oscilloscope(buf: &mut MeshBuffer, pose: Pose) {
     buf.with_pose(pose, |b| {
-        let alloy_body = [0.76, 0.77, 0.74]; // Warm vintage Tektronix/Japanese lab cream-grey!
-        let alloy_dark = [0.17, 0.20, 0.23];
-        let chrome = [0.84, 0.86, 0.89];
+        let alloy_body = [0.58, 0.57, 0.53]; // Warm aged Tektronix/Japanese lab satin grey
+        let alloy_dark = [0.13, 0.15, 0.17];
+        let chrome = [0.76, 0.78, 0.81];
 
         // Rubber isolation feet
         for &(fx, fz) in &[(-0.20_f32, -0.13_f32), (0.20, -0.13), (-0.20, 0.13), (0.20, 0.13)] {
@@ -73,10 +73,10 @@ pub fn vhf_transceiver(buf: &mut MeshBuffer, pose: Pose) {
 /// Articulated Mid-Century Japanese Architect Desk Lamp (lathed base, twin tubular arms, conical bell shade).
 pub fn architect_lamp(buf: &mut MeshBuffer, pose: Pose) {
     buf.with_pose(pose, |b| {
-        let base_col = [0.18, 0.20, 0.22];
-        let chrome = [0.84, 0.86, 0.89];
-        let brass = [0.84, 0.67, 0.30];
-        let sage_enamel = [0.22, 0.44, 0.38];
+        let base_col = [0.14, 0.16, 0.18];
+        let chrome = [0.76, 0.78, 0.80];
+        let brass = [0.72, 0.54, 0.22];
+        let sage_enamel = [0.16, 0.28, 0.23];
 
         b.add_lathe_y(
             Vec3::ZERO,
@@ -160,18 +160,18 @@ pub fn kettle_set(buf: &mut MeshBuffer, pose: Pose) {
     });
 }
 
-/// Sculpted Japanese Black Pine Bonsai in a Smooth Glazed Stoneware Pot (smooth ellipsoid cloud pads!).
+/// Sculpted Japanese Black Pine Bonsai in a Smooth Glazed Stoneware Pot (realistic dark pine needle pads).
 pub fn bonsai_planter(buf: &mut MeshBuffer, pose: Pose) {
     buf.with_pose(pose, |b| {
-        let cedar_bark = [0.32, 0.20, 0.12];
-        // Glazed indigo-slate oval/rounded bonsai pot + soft green moss cushion
-        b.add_rounded_box(Vec3::new(-0.19, 0.0, -0.14), Vec3::new(0.19, 0.082, 0.14), 0.026, [0.16, 0.22, 0.29], MAT_CERAMIC);
-        b.add_ellipsoid(Vec3::new(0.0, 0.076, 0.0), Vec3::new(0.155, 0.028, 0.110), 14, 6, [0.25, 0.48, 0.20], MAT_FOLIAGE);
+        let cedar_bark = [0.20, 0.12, 0.07];
+        // Glazed Tokoname stoneware pot + rich dark moss cushion
+        b.add_rounded_box(Vec3::new(-0.19, 0.002, -0.14), Vec3::new(0.19, 0.082, 0.14), 0.026, [0.14, 0.17, 0.21], MAT_CERAMIC);
+        b.add_ellipsoid(Vec3::new(0.0, 0.078, 0.0), Vec3::new(0.155, 0.026, 0.110), 14, 6, [0.14, 0.26, 0.10], MAT_FOLIAGE);
 
         let b0 = Vec3::new(0.0, 0.08, 0.0);
         let b1 = Vec3::new(-0.06, 0.22, -0.02);
         let b2 = Vec3::new(0.04, 0.35, 0.02);
-        let b3 = Vec3::new(-0.02, 0.45, -0.01);
+        let b3 = Vec3::new(-0.02, 0.44, -0.01);
         let br_l = Vec3::new(0.15, 0.28, -0.03);
         let br_r = Vec3::new(-0.14, 0.33, 0.04);
 
@@ -181,12 +181,11 @@ pub fn bonsai_planter(buf: &mut MeshBuffer, pose: Pose) {
         b.add_cylinder(b1, br_l, 0.014, 0.008, 8, cedar_bark, MAT_WOOD, false);
         b.add_cylinder(b2, br_r, 0.013, 0.008, 8, cedar_bark, MAT_WOOD, false);
 
-        // Smooth spherical-normal cloud pads — completely eliminates low-poly hexagon tree artifacts!
         let pads = [
-            (br_l, Vec3::new(0.115, 0.042, 0.095), [0.17, 0.43, 0.20]),
-            (br_r, Vec3::new(0.110, 0.040, 0.092), [0.15, 0.39, 0.18]),
-            (b2.add(Vec3::new(0.04, 0.02, -0.03)), Vec3::new(0.102, 0.038, 0.088), [0.19, 0.46, 0.22]),
-            (b3.add(Vec3::new(0.0, 0.02, 0.0)), Vec3::new(0.125, 0.046, 0.105), [0.21, 0.50, 0.24]),
+            (br_l, Vec3::new(0.120, 0.034, 0.095), [0.09, 0.21, 0.09]),
+            (br_r, Vec3::new(0.115, 0.032, 0.092), [0.08, 0.19, 0.08]),
+            (b2.add(Vec3::new(0.04, 0.02, -0.03)), Vec3::new(0.105, 0.030, 0.088), [0.10, 0.23, 0.10]),
+            (b3.add(Vec3::new(0.0, 0.02, 0.0)), Vec3::new(0.130, 0.038, 0.105), [0.12, 0.26, 0.11]),
         ];
         for &(center, radii, col) in &pads {
             b.add_ellipsoid(center, radii, 14, 8, col, MAT_FOLIAGE);
@@ -218,27 +217,25 @@ pub fn washlet_toilet(buf: &mut MeshBuffer, pose: Pose) {
     });
 }
 
-/// Reusable Japanese Outdoor Split-AC Condenser Unit (used on BOTH our balcony AND the 2-story house across the street — ref `image-8`!).
+/// Reusable Japanese Outdoor Split-AC Condenser Unit (weathered ivory metal + recessed dark louver grille — ref `image-15`!).
 pub fn outdoor_ac_condenser(buf: &mut MeshBuffer, pose: Pose) {
     buf.with_pose(pose, |b| {
-        let ivory: [f32; 3] = [0.85, 0.84, 0.79];
-        let dark = [0.18, 0.20, 0.22];
-        b.add_rounded_box(Vec3::new(-0.40, 0.0, -0.18), Vec3::new(0.40, 0.58, 0.18), 0.026, ivory, MAT_ALLOY);
-        // Circular recessed fan shroud on `-Z` front face + center fan hub (exact look of `image-8, 9, 10`!)
-        b.add_disc_neg_z(Vec3::new(-0.10, 0.29, -0.182), 0.20, 18, dark, MAT_ALLOY);
-        b.add_disc_neg_z(Vec3::new(-0.10, 0.29, -0.186), 0.055, 12, [0.55, 0.56, 0.54], MAT_ALLOY);
-        // Louver ring circles / nameplate badge on right
-        b.add_box(Vec3::new(0.18, 0.42, -0.183), Vec3::new(0.32, 0.47, -0.178), [0.46, 0.48, 0.50], MAT_ALLOY);
-        // Mounting feet
-        b.add_box(Vec3::new(-0.34, -0.04, -0.16), Vec3::new(-0.26, 0.01, 0.16), [0.35, 0.36, 0.38], MAT_ALLOY);
-        b.add_box(Vec3::new(0.26, -0.04, -0.16), Vec3::new(0.34, 0.01, 0.16), [0.35, 0.36, 0.38], MAT_ALLOY);
+        let ivory: [f32; 3] = [0.70, 0.68, 0.63];
+        let dark = [0.10, 0.11, 0.13];
+        b.add_rounded_box(Vec3::new(-0.42, 0.01, -0.18), Vec3::new(0.42, 0.60, 0.18), 0.024, ivory, MAT_ALLOY);
+        // Circular recessed fan shroud on `-Z` front face (`8 mm` proud so zero Z-fighting!)
+        b.add_disc_neg_z(Vec3::new(-0.10, 0.30, -0.188), 0.21, 18, dark, MAT_ALLOY);
+        b.add_disc_neg_z(Vec3::new(-0.10, 0.30, -0.194), 0.055, 12, [0.36, 0.37, 0.36], MAT_ALLOY);
+        b.add_box(Vec3::new(0.18, 0.44, -0.189), Vec3::new(0.33, 0.49, -0.182), [0.32, 0.34, 0.36], MAT_ALLOY);
+        b.add_box(Vec3::new(-0.35, -0.04, -0.16), Vec3::new(-0.27, 0.015, 0.16), [0.22, 0.23, 0.25], MAT_ALLOY);
+        b.add_box(Vec3::new(0.27, -0.04, -0.16), Vec3::new(0.35, 0.015, 0.16), [0.22, 0.23, 0.25], MAT_ALLOY);
     });
 }
 
-/// Terracotta Street Planter Pot with Sunlit Green Foliage (`image-8, 9, 10, 11` street curb detail!).
+/// Weathered Terracotta Street Planter Pot with Deep Olive-Green Shrubbery (`image-15` street level!).
 pub fn terracotta_planter(buf: &mut MeshBuffer, pose: Pose) {
     buf.with_pose(pose, |b| {
-        let clay = [0.74, 0.36, 0.19];
+        let clay = [0.48, 0.23, 0.12];
         b.add_lathe_y(
             Vec3::ZERO,
             &[(0.0, 0.14), (0.28, 0.20), (0.31, 0.22), (0.35, 0.21)],
@@ -247,8 +244,8 @@ pub fn terracotta_planter(buf: &mut MeshBuffer, pose: Pose) {
             MAT_CERAMIC,
             true,
         );
-        b.add_ellipsoid(Vec3::new(0.0, 0.44, 0.0), Vec3::new(0.22, 0.16, 0.20), 10, 6, [0.22, 0.50, 0.20], MAT_FOLIAGE);
-        b.add_ellipsoid(Vec3::new(0.07, 0.56, -0.04), Vec3::new(0.14, 0.14, 0.14), 9, 6, [0.28, 0.56, 0.22], MAT_FOLIAGE);
+        b.add_ellipsoid(Vec3::new(-0.04, 0.42, 0.02), Vec3::new(0.20, 0.13, 0.18), 10, 6, [0.11, 0.25, 0.09], MAT_FOLIAGE);
+        b.add_ellipsoid(Vec3::new(0.08, 0.48, -0.04), Vec3::new(0.15, 0.12, 0.14), 9, 6, [0.16, 0.31, 0.11], MAT_FOLIAGE);
     });
 }
 

@@ -1,407 +1,321 @@
-//! Modular Japanese Coastal Town Streetscape & Distant Mountain Launch Complex (`town.rs`).
+//! Modular "Summer Noon" Japanese Machiya Streetscape & Distant Launch Pad Vista (`town.rs`).
 //!
-//! Built from reusable parametric specs (`JapaneseHouseSpec`, `UtilityPoleSpec`) so every building,
-//! Kawara roof, timber frame, koushi lattice window, utility pole, curb, and street prop can be
-//! instantiated anywhere in the town without duplicating geometry code.
+//! Styled directly after photorealistic Japanese Summer Noon architecture (`image-15.png`):
+//! - Deep roasted `kominka` cedar timber framing, aged warm sand-plaster, dark charcoal Kawara roofs,
+//!   projecting 2nd-floor wooden `te-suri` balconies, sliding `amado` shutters, hanging `chouchin` lanterns,
+//!   `noren` shop curtains, weathered corrugated steel annex, and foreground spun-concrete utility pole.
+//! - Composed with a deliberate right-of-center scenic gap (`x in [-3.55, -0.35]`) framing a small,
+//!   atmospheric sneak view of the far-away Rocket Launch Pad (`z = 380 m`) flanked by a second
+//!   2-story Machiya townhouse on the right edge of the window!
 
 use crate::{
-    props, DynamicSceneParams, MeshBuffer, Pose, MAT_ALLOY, MAT_CERAMIC, MAT_CORRUGATED,
-    MAT_FOLIAGE, MAT_KAWARA, MAT_MATTE, MAT_PLUME, MAT_WOOD,
+    props, DynamicSceneParams, MeshBuffer, Pose, EXTERIOR_PAD_POS, MAT_ALLOY, MAT_CERAMIC,
+    MAT_CORRUGATED, MAT_EMISSIVE_WARM, MAT_FOLIAGE, MAT_KAWARA, MAT_MATTE, MAT_PLUME, MAT_SHOJI,
+    MAT_WOOD,
 };
 use odderon_dmath::Vec3;
 
-/// Parameterized specification for a modular 2-story traditional-modern Japanese house (`Machiya / Showa`).
 #[derive(Clone, Copy, Debug)]
-pub struct JapaneseHouseSpec {
+pub struct MachiyaHouseSpec {
     pub width: f32,
     pub depth: f32,
-    pub wall_col: [f32; 3],
-    pub wood_col: [f32; 3],
+    pub plaster_col: [f32; 3],
+    pub timber_col: [f32; 3],
+    pub shutter_wood_col: [f32; 3],
     pub tile_col: [f32; 3],
-    /// `true`: wide 2nd-floor wooden `koushi` vertical lattice grille (`image-8` right house).
-    /// `false`: recessed 2nd-floor glass casement window with timber sun-hood (`image-8` left house).
-    pub koushi_upper_window: bool,
-    /// Adds a warm cedar-plank 3rd-level attic monitor (`image-8` & `image-10` upper right).
-    pub cedar_attic_riser: bool,
-    /// Mounts a modular outdoor Split-AC condenser on the 1st-floor tiled eave (`image-8, 9, 10`).
-    pub eave_ac_unit: bool,
-    /// Adds rooftop Yagi TV aerial + mini satellite dish (`image-8, 11`).
-    pub rooftop_antenna: bool,
-    /// Adds weathered corrugated metal side cladding (`image-10, 11`).
-    pub corrugated_side_wall: bool,
+    pub has_wide_balcony: bool,
+    pub has_eave_ac: bool,
+    pub has_izakaya_lanterns: bool,
+    pub has_rooftop_aerial: bool,
 }
 
-/// Builds a complete 2-story Japanese townhouse in local space:
-/// `y = 0` is sidewalk ground level, `-Z` (`z = 0`) is the street-facing front facade!
-pub fn build_japanese_house(buf: &mut MeshBuffer, pose: Pose, s: &JapaneseHouseSpec) {
+/// Builds a photorealistic 2-story "Summer Noon" Japanese Machiya townhouse (`image-15.png`!).
+/// Engineered with strict non-coplanar mortise-and-tenon step offsets so zero Z-fighting ever occurs.
+pub fn build_machiya_house(buf: &mut MeshBuffer, pose: Pose, s: &MachiyaHouseSpec) {
     buf.with_pose(pose, |b| {
         let hw = s.width * 0.5;
         let d = s.depth;
-        let h1 = 2.85_f32; // 1st story ceiling (`y = 0 .. 2.85`)
-        let h2 = 5.65_f32; // 2nd story eave (`y = 2.85 .. 5.65`, right across from our 2nd-floor Hab!)
-        let dark_glass = [0.13, 0.19, 0.25];
-        let gutter_col = [0.35, 0.32, 0.30];
+        let h1 = 2.85_f32;
+        let h2 = 5.62_f32;
+        let iron_dark = [0.09, 0.09, 0.10];
+        let warm_glass = [0.16, 0.14, 0.12];
+        let warm_shoji = [0.48, 0.40, 0.30];
 
-        // 1. Main 2-story plaster/stucco core (`z in [0.0, d]`)
-        b.add_box(Vec3::new(-hw, 0.0, 0.0), Vec3::new(hw, h2, d), s.wall_col, MAT_MATTE);
+        // 1. Main 2-story aged plaster & dark timber core (`z in [0.0, d]`)
+        b.add_box(Vec3::new(-hw, 0.005, 0.0), Vec3::new(hw, h2, d), s.plaster_col, MAT_MATTE);
+        // Dark vertical cedar plank cladding across 1st-floor facade (`z in [-0.018, -0.002]`, `image-15.png`!)
+        b.add_box(Vec3::new(-hw + 0.08, 0.01, -0.018), Vec3::new(hw - 0.08, h1 - 0.06, -0.002), s.shutter_wood_col, MAT_WOOD);
 
-        // Optional weathered corrugated iron side cladding (`image-10, 11`)
-        if s.corrugated_side_wall {
-            b.add_box(
-                Vec3::new(-hw - 0.03, 0.0, 0.15),
-                Vec3::new(-hw + 0.02, h1 + 0.4, d - 0.15),
-                [0.54, 0.44, 0.35],
-                MAT_CORRUGATED,
-            );
+        // 2. Stepped Japanese Post-and-Beam Joinery (`hashira` posts proud at `z = -0.075..-0.020`, `nuki` beams at `-0.048..-0.004`!)
+        for &px in &[-hw + 0.09, -hw * 0.34, hw * 0.34, hw - 0.09] {
+            b.add_box(Vec3::new(px - 0.075, 0.006, -0.075), Vec3::new(px + 0.075, h2 - 0.02, -0.020), s.timber_col, MAT_WOOD);
+        }
+        for &py in &[h1 - 0.08, h1 + 0.34, h2 - 0.14] {
+            b.add_box(Vec3::new(-hw + 0.02, py, -0.048), Vec3::new(hw - 0.02, py + 0.11, -0.004), s.timber_col, MAT_WOOD);
         }
 
-        // 2. Exposed Japanese Post-and-Beam Timber Framing (`hashira` columns & `nuki` tie-beams) on street facade!
-        for &px in &[-hw + 0.08, 0.0, hw - 0.08] {
-            b.add_box(Vec3::new(px - 0.07, 0.0, -0.045), Vec3::new(px + 0.07, h2, 0.02), s.wood_col, MAT_WOOD);
-        }
-        for &py in &[h1 - 0.08, h1 + 0.32, h2 - 0.12] {
-            b.add_box(Vec3::new(-hw, py, -0.04), Vec3::new(hw, py + 0.11, 0.02), s.wood_col, MAT_WOOD);
-        }
-
-        // 3. First-Floor Streetfront: Sliding Wooden Lattice Doors (`hikido`) + Shop/Genkan Window!
-        // Left bay: wooden lattice sliding entry doors
-        let door_x0 = -hw + 0.32;
-        let door_x1 = -0.18_f32;
-        b.add_u_frame_xy(door_x0, door_x1, 0.02, 2.18, -0.06, 0.02, 0.07, s.wood_col, MAT_WOOD);
-        b.add_box(Vec3::new(door_x0, 0.02, -0.02), Vec3::new(door_x1, 0.72, 0.01), s.wood_col, MAT_WOOD);
-        b.add_box(Vec3::new(door_x0, 0.72, -0.015), Vec3::new(door_x1, 2.18, 0.01), [0.84, 0.79, 0.68], MAT_MATTE);
-        let slats_1f = 7;
+        // 3. First-Floor Machiya Entrance (`sliding dark lattice hikido + crisp white noren + hanging chouchin lanterns!`)
+        let door_x0 = -hw * 0.45;
+        let door_x1 = hw * 0.45;
+        b.add_box(Vec3::new(door_x0, 0.02, -0.032), Vec3::new(door_x1, 2.16, -0.019), warm_glass, MAT_ALLOY);
+        let slats_1f = 10;
         for i in 0..=slats_1f {
             let sx = door_x0 + (door_x1 - door_x0) * (i as f32) / (slats_1f as f32);
-            b.add_box(Vec3::new(sx - 0.015, 0.02, -0.035), Vec3::new(sx + 0.015, 2.18, -0.01), s.wood_col, MAT_WOOD);
+            b.add_box(Vec3::new(sx - 0.016, 0.02, -0.052), Vec3::new(sx + 0.016, 2.16, -0.033), s.timber_col, MAT_WOOD);
         }
 
-        // Right bay: recessed dark glass shopfront / ground window with low timber balustrade (`image-8, 9`)
-        let win1_x0 = 0.22_f32;
-        let win1_x1 = hw - 0.34;
-        b.add_u_frame_xy(win1_x0, win1_x1, 0.48, 2.15, -0.06, 0.02, 0.065, s.wood_col, MAT_WOOD);
-        b.add_box(Vec3::new(win1_x0, 0.48, -0.015), Vec3::new(win1_x1, 2.15, 0.01), [0.24, 0.36, 0.46], MAT_ALLOY);
+        if s.has_izakaya_lanterns {
+            // Crisp white cloth `noren` curtain (`image-15.png` center doorway!)
+            for panel in 0..3 {
+                let nx0 = -0.58 + (panel as f32) * 0.40;
+                b.add_box(Vec3::new(nx0, 1.38, -0.22), Vec3::new(nx0 + 0.36, 2.14, -0.19), [0.76, 0.75, 0.72], MAT_MATTE);
+            }
+            // Framed menu board on left cedar post (`image-15.png`!)
+            b.add_rounded_box(Vec3::new(-hw + 0.34, 0.78, -0.095), Vec3::new(-hw + 1.08, 1.92, -0.055), 0.012, [0.42, 0.16, 0.09], MAT_WOOD);
+            b.add_box(Vec3::new(-hw + 0.40, 0.84, -0.104), Vec3::new(-hw + 1.02, 1.86, -0.096), [0.78, 0.73, 0.62], MAT_MATTE);
 
-        // 4. First-Floor Overhanging Kawara Tiled Eave (`hisashi`, projecting `-1.05m` over sidewalk!)
+            // Row of 4 hanging white `chouchin` paper lanterns under the dark 1st-floor eave (`image-15.png`!)
+            for i in 0..4 {
+                let lx = -hw * 0.56 + (i as f32) * (hw * 0.37);
+                b.add_cylinder(Vec3::new(lx, 2.46, -0.76), Vec3::new(lx, 2.34, -0.76), 0.008, 0.008, 6, iron_dark, MAT_ALLOY, false);
+                b.add_lathe_y(
+                    Vec3::new(lx, 1.98, -0.76),
+                    &[(0.0, 0.055), (0.06, 0.115), (0.28, 0.118), (0.35, 0.058)],
+                    12,
+                    [0.88, 0.85, 0.78],
+                    MAT_SHOJI,
+                    true,
+                );
+                b.add_cylinder(Vec3::new(lx, 2.33, -0.76), Vec3::new(lx, 2.36, -0.76), 0.062, 0.060, 10, iron_dark, MAT_ALLOY, true);
+                b.add_cylinder(Vec3::new(lx, 1.95, -0.76), Vec3::new(lx, 1.98, -0.76), 0.060, 0.062, 10, iron_dark, MAT_ALLOY, true);
+            }
+        }
+
+        // 4. First-Floor Dark Kawara Tiled Eave (`hisashi`) + Dark Iron Downspout (`amadoi`)!
         b.add_kawara_eave_slope(
-            -hw - 0.22,
-            hw + 0.22,
-            h1 - 0.32,
-            -1.05,
-            h1 + 0.28,
-            0.05,
+            -hw - 0.18,
+            hw + 0.18,
+            h1 - 0.34,
+            -0.98,
+            h1 + 0.26,
+            -0.02,
             s.tile_col,
-            s.wood_col,
-        );
-        // Vertical PVC rainwater downspout (`amadoi`) down left timber post (`image-8, 9, 10`)!
-        b.add_cylinder(
-            Vec3::new(-hw + 0.14, 0.0, -0.10),
-            Vec3::new(-hw + 0.14, h2 - 0.15, -0.10),
-            0.032,
-            0.032,
-            7,
-            gutter_col,
-            MAT_ALLOY,
-            false,
+            s.timber_col,
         );
         b.add_cylinder(
-            Vec3::new(-hw + 0.14, h1 - 0.42, -1.02),
-            Vec3::new(-hw + 0.14, h1 - 0.56, -0.10),
-            0.030,
-            0.030,
+            Vec3::new(-hw + 0.18, 0.02, -0.14),
+            Vec3::new(-hw + 0.18, h2 - 0.16, -0.14),
+            0.034,
+            0.034,
             7,
-            gutter_col,
+            iron_dark,
             MAT_ALLOY,
             false,
         );
 
-        // Optional Outdoor Split-AC Condenser perched on 1st-floor tiled eave (`image-8, 9, 10`!)
-        if s.eave_ac_unit {
-            props::outdoor_ac_condenser(b, Pose::at(-0.35, h1 + 0.02, -0.34));
+        // Weathered Outdoor Split-AC Condenser mounted on the 1st-floor eave (`image-15.png`!)
+        if s.has_eave_ac {
+            props::outdoor_ac_condenser(b, Pose::at(-hw + 1.18, h1 + 0.02, -0.32));
         }
 
-        // 5. Second-Story Windows (RIGHT AT EYE LEVEL WITH APARTMENT #204!)
-        if s.koushi_upper_window {
-            // Wide traditional vertical cedar `koushi` lattice grille (`image-8, 9, 10` right house!)
-            let kx0 = -hw + 0.48;
-            let kx1 = hw - 0.48;
-            let (ky0, ky1) = (h1 + 0.62, h2 - 0.38);
-            b.add_box(Vec3::new(kx0, ky0, -0.02), Vec3::new(kx1, ky1, 0.01), dark_glass, MAT_ALLOY);
-            b.add_rounded_box(Vec3::new(kx0 - 0.08, ky0 - 0.09, -0.14), Vec3::new(kx1 + 0.08, ky0, 0.02), 0.015, s.wood_col, MAT_WOOD);
-            b.add_box(Vec3::new(kx0 - 0.08, ky1, -0.12), Vec3::new(kx1 + 0.08, ky1 + 0.07, 0.02), s.wood_col, MAT_WOOD);
-            let k_slats = ((kx1 - kx0) / 0.17) as usize;
-            for i in 0..=k_slats {
-                let sx = kx0 + (kx1 - kx0) * (i as f32) / (k_slats.max(1) as f32);
-                b.add_box(Vec3::new(sx - 0.018, ky0, -0.11), Vec3::new(sx + 0.018, ky1, -0.03), s.wood_col, MAT_WOOD);
-            }
-        } else {
-            // Twin 2nd-story timber-framed casement windows with overhanging wooden sun-hoods (`image-8, 12`!)
-            for &(wx0, wx1) in &[(-hw + 0.42, -0.28_f32), (0.28, hw - 0.42)] {
-                let (wy0, wy1) = (h1 + 0.68, h2 - 0.48);
-                b.add_u_frame_xy(wx0, wx1, wy0, wy1, -0.07, 0.02, 0.06, s.wood_col, MAT_WOOD);
-                b.add_box(Vec3::new(wx0, wy0, -0.02), Vec3::new(wx1, wy1, 0.01), [0.18, 0.28, 0.38], MAT_ALLOY);
-                // Center mullion + projecting timber sun-hood
-                let wm = 0.5 * (wx0 + wx1);
-                b.add_box(Vec3::new(wm - 0.02, wy0, -0.04), Vec3::new(wm + 0.02, wy1, 0.01), s.wood_col, MAT_WOOD);
-                b.add_box(Vec3::new(wx0 - 0.10, wy1 + 0.04, -0.32), Vec3::new(wx1 + 0.10, wy1 + 0.11, 0.02), s.wood_col, MAT_WOOD);
-            }
+        // 5. Second-Story Dark Roasted-Wood Sliding `Amado` Shutters + Projecting `Te-suri` Wooden Balcony (`image-15.png`!)
+        let win_x0 = -hw * 0.56;
+        let win_x1 = hw * 0.68;
+        let (wy0, wy1) = (h1 + 0.48, h2 - 0.28);
+        // Recessed warm-amber shoji/glass window bay + louvered wooden `tobukuro` shutter box on left!
+        b.add_box(Vec3::new(win_x0, wy0, -0.028), Vec3::new(win_x0 + 0.72, wy1, -0.005), s.shutter_wood_col, MAT_WOOD);
+        b.add_box(Vec3::new(win_x0 + 0.73, wy0, -0.022), Vec3::new(win_x1, wy1, -0.004), warm_shoji, MAT_WOOD);
+        for m in 0..=4 {
+            let mx = (win_x0 + 0.73) + (win_x1 - (win_x0 + 0.73)) * (m as f32) / 4.0;
+            b.add_box(Vec3::new(mx - 0.022, wy0, -0.052), Vec3::new(mx + 0.022, wy1, -0.023), s.timber_col, MAT_WOOD);
+        }
+        b.add_box(Vec3::new(win_x0 + 0.73, (wy0 + wy1) * 0.5 - 0.018, -0.048), Vec3::new(win_x1, (wy0 + wy1) * 0.5 + 0.018, -0.024), s.timber_col, MAT_WOOD);
+
+        // Projecting dark wooden 2nd-story balcony handrail (`te-suri`, exact centerpiece of `image-15.png`!)
+        let bal_x0 = if s.has_wide_balcony { win_x0 - 0.06 } else { -0.85 };
+        let bal_x1 = if s.has_wide_balcony { win_x1 + 0.06 } else { 0.85 };
+        let bal_z = -0.38_f32;
+        b.add_box(Vec3::new(bal_x0, wy0 - 0.08, bal_z), Vec3::new(bal_x1, wy0 + 0.02, -0.03), s.timber_col, MAT_WOOD);
+        b.add_rounded_box(Vec3::new(bal_x0 - 0.04, wy0 + 0.54, bal_z - 0.03), Vec3::new(bal_x1 + 0.04, wy0 + 0.62, bal_z + 0.05), 0.012, s.timber_col, MAT_WOOD);
+        b.add_box(Vec3::new(bal_x0, wy0 + 0.54, bal_z), Vec3::new(bal_x0 + 0.06, wy0 + 0.61, -0.03), s.timber_col, MAT_WOOD);
+        b.add_box(Vec3::new(bal_x1 - 0.06, wy0 + 0.54, bal_z), Vec3::new(bal_x1, wy0 + 0.61, -0.03), s.timber_col, MAT_WOOD);
+        let slat_n = (((bal_x1 - bal_x0) / 0.22) as usize).clamp(4, 24);
+        for k in 0..=slat_n {
+            let bx = bal_x0 + (bal_x1 - bal_x0) * (k as f32) / (slat_n as f32);
+            b.add_box(Vec3::new(bx - 0.022, wy0 + 0.022, bal_z - 0.01), Vec3::new(bx + 0.022, wy0 + 0.538, bal_z + 0.03), s.shutter_wood_col, MAT_WOOD);
         }
 
-        // 6. Main Second-Story Overhanging Kawara Tiled Roof + Ridge Beam (`mune`)!
-        let ridge_y = h2 + 1.48;
+        // 6. Main Second-Story Overhanging Dark Kawara Tiled Roof (`non-coplanar gable inset!`)
+        let ridge_y = h2 + 1.42;
         let ridge_z = d * 0.48;
         b.add_kawara_eave_slope(
-            -hw - 0.42,
-            hw + 0.42,
+            -hw - 0.38,
+            hw + 0.38,
             h2 - 0.12,
-            -0.88,
+            -0.86,
             ridge_y,
             ridge_z,
             s.tile_col,
-            s.wood_col,
+            s.timber_col,
         );
-        // Rear roof slope + triangular side gable walls + heavy clay `mune` ridge cap!
         b.push_quad(
-            Vec3::new(-hw - 0.42, h2 - 0.12, d + 0.65),
-            Vec3::new(hw + 0.42, h2 - 0.12, d + 0.65),
-            Vec3::new(hw + 0.42, ridge_y, ridge_z),
-            Vec3::new(-hw - 0.42, ridge_y, ridge_z),
+            Vec3::new(-hw - 0.38, h2 - 0.12, d + 0.62),
+            Vec3::new(hw + 0.38, h2 - 0.12, d + 0.62),
+            Vec3::new(hw + 0.38, ridge_y, ridge_z),
+            Vec3::new(-hw - 0.38, ridge_y, ridge_z),
             s.tile_col,
             MAT_KAWARA,
         );
-        b.add_box(Vec3::new(-hw + 0.05, h2, 0.15), Vec3::new(hw - 0.05, ridge_y - 0.15, d - 0.15), s.wall_col, MAT_MATTE);
+        b.add_box(Vec3::new(-hw + 0.08, h2 + 0.01, 0.22), Vec3::new(hw - 0.08, ridge_y - 0.22, d - 0.22), s.plaster_col, MAT_MATTE);
         b.add_cylinder(
-            Vec3::new(-hw - 0.46, ridge_y + 0.05, ridge_z),
-            Vec3::new(hw + 0.46, ridge_y + 0.05, ridge_z),
-            0.11,
-            0.11,
+            Vec3::new(-hw - 0.42, ridge_y + 0.05, ridge_z),
+            Vec3::new(hw + 0.42, ridge_y + 0.05, ridge_z),
+            0.10,
+            0.10,
             8,
-            [0.20, 0.22, 0.25],
+            [0.10, 0.11, 0.13],
             MAT_KAWARA,
             true,
         );
 
-        // Optional warm cedar-plank attic monitor (`image-8` & `image-10` top-right wooden 3rd tier!)
-        if s.cedar_attic_riser {
-            let cedar_red = [0.54, 0.27, 0.15];
-            b.add_box(Vec3::new(-hw + 0.45, h2 + 0.55, 0.85), Vec3::new(hw - 0.25, ridge_y + 1.05, d - 0.65), cedar_red, MAT_WOOD);
-            b.add_kawara_eave_slope(
-                -hw + 0.20,
-                hw - 0.05,
-                ridge_y + 0.95,
-                0.45,
-                ridge_y + 1.48,
-                2.25,
-                s.tile_col,
-                s.wood_col,
-            );
-        }
-
-        // Optional Rooftop Yagi TV Aerial + Satellite Dish (`image-8, 11`!)
-        if s.rooftop_antenna {
-            let ax = hw * 0.35;
-            b.add_cylinder(Vec3::new(ax, ridge_y, ridge_z), Vec3::new(ax, ridge_y + 1.75, ridge_z), 0.022, 0.015, 6, [0.72, 0.74, 0.76], MAT_ALLOY, false);
-            b.add_cylinder(Vec3::new(ax, ridge_y + 1.55, ridge_z - 0.55), Vec3::new(ax, ridge_y + 1.55, ridge_z + 0.55), 0.014, 0.014, 6, [0.80, 0.42, 0.22], MAT_ALLOY, false);
-            for &dz in &[-0.42_f32, -0.18, 0.08, 0.34] {
-                b.add_cylinder(Vec3::new(ax - 0.32, ridge_y + 1.55, ridge_z + dz), Vec3::new(ax + 0.32, ridge_y + 1.55, ridge_z + dz), 0.009, 0.009, 5, [0.76, 0.78, 0.80], MAT_ALLOY, false);
+        if s.has_rooftop_aerial {
+            let ax = hw * 0.42;
+            b.add_cylinder(Vec3::new(ax, ridge_y + 0.05, ridge_z), Vec3::new(ax, ridge_y + 1.65, ridge_z), 0.018, 0.012, 6, [0.46, 0.48, 0.50], MAT_ALLOY, false);
+            b.add_cylinder(Vec3::new(ax, ridge_y + 1.48, ridge_z - 0.48), Vec3::new(ax, ridge_y + 1.48, ridge_z + 0.48), 0.012, 0.012, 6, [0.46, 0.48, 0.50], MAT_ALLOY, false);
+            for &dz in &[-0.36_f32, -0.12, 0.12, 0.36] {
+                b.add_cylinder(Vec3::new(ax - 0.28, ridge_y + 1.48, ridge_z + dz), Vec3::new(ax + 0.28, ridge_y + 1.48, ridge_z + dz), 0.008, 0.008, 5, [0.50, 0.52, 0.54], MAT_ALLOY, false);
             }
-            // Small parabolic dish
-            b.add_disc_neg_z(Vec3::new(ax + 0.85, ridge_y + 0.55, ridge_z - 0.35), 0.34, 14, [0.28, 0.30, 0.33], MAT_ALLOY);
         }
     });
 }
 
-/// Reusable Japanese Concrete Utility Pole (`image-11` & `image-12`!).
-/// Features tapered concrete shaft, galvanized collar bands, cylindrical pole transformers,
-/// teal vertical mast, orange top cap, and crossarm!
+/// Realistic Weathered Spun-Concrete Japanese Utility Pole (muted grey concrete & galvanized iron — NO cartoon colors!).
 pub fn build_japanese_utility_pole(buf: &mut MeshBuffer, pose: Pose, has_transformers: bool) {
     buf.with_pose(pose, |b| {
-        let concrete = [0.74, 0.72, 0.68];
-        let steel_band = [0.42, 0.45, 0.48];
-        let teal_mast = [0.16, 0.50, 0.58];
-        let orange_cap = [0.84, 0.38, 0.16];
+        let concrete = [0.48, 0.47, 0.44];
+        let steel_band = [0.22, 0.24, 0.26];
 
-        // Tapered concrete pole (`height = 7.15 m`, rises well above our 2nd-floor window!)
-        b.add_lathe_y(Vec3::ZERO, &[(0.0, 0.165), (7.10, 0.105)], 14, concrete, MAT_MATTE, true);
+        b.add_lathe_y(Vec3::ZERO, &[(0.0, 0.155), (7.10, 0.100)], 14, concrete, MAT_MATTE, true);
 
-        // Galvanized steel collar bands along shaft (`image-11, 12`)
         for &by in &[1.65_f32, 3.10, 4.35, 5.55, 6.55] {
-            let r = 0.165 - (0.060 * by / 7.10) + 0.006;
-            b.add_lathe_y(Vec3::new(0.0, by, 0.0), &[(0.0, r), (0.045, r)], 14, steel_band, MAT_ALLOY, false);
+            let r = 0.155 - (0.055 * by / 7.10) + 0.006;
+            b.add_lathe_y(Vec3::new(0.0, by, 0.0), &[(0.0, r), (0.042, r)], 14, steel_band, MAT_ALLOY, false);
         }
 
-        // Yellow/black municipal pole number plate at street height + notice band
-        b.add_box(Vec3::new(-0.14, 1.80, -0.155), Vec3::new(0.14, 2.15, -0.135), [0.88, 0.84, 0.68], MAT_MATTE);
-
-        // Twin cylindrical grey/red-striped pole transformers at 2nd-floor eye height (`image-11, 12`!)
         if has_transformers {
-            for &(tx, tz, r) in &[(-0.26_f32, -0.10_f32, 0.165_f32), (0.24, 0.08, 0.145)] {
-                b.add_lathe_y(Vec3::new(tx, 4.55, tz), &[(0.0, r), (0.58, r)], 14, [0.62, 0.63, 0.61], MAT_ALLOY, true);
-                b.add_lathe_y(Vec3::new(tx, 4.96, tz), &[(0.0, r + 0.004), (0.06, r + 0.004)], 14, [0.78, 0.24, 0.18], MAT_ALLOY, false);
-                b.add_cylinder(Vec3::new(0.0, 4.82, 0.0), Vec3::new(tx, 4.82, tz), 0.025, 0.025, 6, steel_band, MAT_ALLOY, false);
+            for &(tx, tz, r) in &[(-0.25_f32, -0.09_f32, 0.155_f32), (0.23, 0.07, 0.138)] {
+                b.add_lathe_y(Vec3::new(tx, 4.58, tz), &[(0.0, r), (0.56, r)], 14, [0.42, 0.43, 0.42], MAT_ALLOY, true);
+                b.add_cylinder(Vec3::new(0.0, 4.84, 0.0), Vec3::new(tx, 4.84, tz), 0.022, 0.022, 6, steel_band, MAT_ALLOY, false);
             }
         }
 
-        // Teal side riser mast + Orange top cap block + Insulator crossarm (`image-11, 12`!)
-        b.add_cylinder(Vec3::new(-0.13, 5.45, 0.0), Vec3::new(-0.13, 7.25, 0.0), 0.032, 0.030, 8, teal_mast, MAT_ALLOY, true);
-        b.add_rounded_box(Vec3::new(-0.18, 7.05, -0.18), Vec3::new(0.18, 7.30, 0.18), 0.022, orange_cap, MAT_ALLOY);
-        // Horizontal cross-arm jutting toward street with ceramic pin insulators
-        b.add_cylinder(Vec3::new(0.0, 6.88, -0.68), Vec3::new(0.0, 6.88, 0.68), 0.026, 0.026, 8, teal_mast, MAT_ALLOY, true);
-        for &iz in &[-0.55_f32, -0.18, 0.18, 0.55] {
-            b.add_lathe_y(Vec3::new(0.0, 6.90, iz), &[(0.0, 0.032), (0.075, 0.022)], 8, [0.94, 0.95, 0.95], MAT_CERAMIC, true);
+        // Galvanized steel crossarm & dark porcelain insulators
+        b.add_cylinder(Vec3::new(0.0, 6.88, -0.62), Vec3::new(0.0, 6.88, 0.62), 0.024, 0.024, 8, steel_band, MAT_ALLOY, true);
+        for &iz in &[-0.50_f32, -0.16, 0.16, 0.50] {
+            b.add_lathe_y(Vec3::new(0.0, 6.90, iz), &[(0.0, 0.028), (0.068, 0.018)], 8, [0.76, 0.77, 0.76], MAT_CERAMIC, true);
         }
     });
 }
 
-/// Delicate Japanese Street Sapling / Bamboo-Maple Accent Tree (smooth ellipsoid foliage, never blocky!).
-pub fn build_street_sapling(buf: &mut MeshBuffer, pose: Pose, blossom_tint: bool) {
-    buf.with_pose(pose, |b| {
-        let bark = [0.32, 0.23, 0.16];
-        let leaf_a = if blossom_tint { [0.88, 0.54, 0.62] } else { [0.24, 0.52, 0.22] };
-        let leaf_b = if blossom_tint { [0.94, 0.66, 0.72] } else { [0.30, 0.58, 0.25] };
-
-        // Curb tree-pit surround
-        b.add_rounded_box(Vec3::new(-0.42, 0.0, -0.42), Vec3::new(0.42, 0.08, 0.42), 0.015, [0.46, 0.34, 0.24], MAT_WOOD);
-        b.add_cylinder(Vec3::ZERO, Vec3::new(0.08, 2.4, -0.05), 0.065, 0.035, 8, bark, MAT_WOOD, false);
-        b.add_cylinder(Vec3::new(0.05, 1.8, -0.03), Vec3::new(0.48, 2.85, -0.18), 0.032, 0.016, 7, bark, MAT_WOOD, false);
-        b.add_cylinder(Vec3::new(0.06, 2.1, -0.04), Vec3::new(-0.38, 3.15, 0.15), 0.028, 0.015, 7, bark, MAT_WOOD, false);
-
-        for &(cx, cy, cz, rx, ry, rz, col) in &[
-            (0.08_f32, 3.15_f32, -0.05_f32, 0.55_f32, 0.42_f32, 0.48_f32, leaf_b),
-            (0.48, 2.95, -0.18, 0.44, 0.34, 0.40, leaf_a),
-            (-0.36, 3.22, 0.14, 0.46, 0.36, 0.42, leaf_b),
-            (0.16, 3.65, 0.04, 0.38, 0.32, 0.36, leaf_a),
-        ] {
-            b.add_ellipsoid(Vec3::new(cx, cy, cz), Vec3::new(rx, ry, rz), 12, 8, col, MAT_FOLIAGE);
-        }
-    });
-}
-
-/// Assembles the entire sunlit Japanese neighborhood street + distant mountain Launch Pad-1!
-/// Note: Room #204 is on the 2nd floor (`y = 0.0`), so street ground level is `y = -3.20 m`.
+/// Assembles the "Summer Noon" Japanese Machiya street + Right-Side Sneak View of Far-Away Launch Pad-1!
 pub fn build_uchinoura_street_static(buf: &mut MeshBuffer) {
     let ground_y = -3.20_f32;
 
-    // 1. Warm Sunlit Neighborhood Ground, Sidewalks, Concrete Curbs & Narrow Asphalt Street!
-    // Base town ground plane extending to mountain foothills (NO river/water strip!)
-    buf.add_box(Vec3::new(-160.0, ground_y - 0.35, 2.2), Vec3::new(160.0, ground_y, 140.0), [0.30, 0.44, 0.24], MAT_FOLIAGE);
+    // 1. Deep Sunlit Summer Meadow/Town Ground, Sidewalks, Curbs & Dark Weathered Asphalt Street!
+    buf.add_box(Vec3::new(-220.0, ground_y - 0.35, 2.2), Vec3::new(220.0, ground_y, 160.0), [0.14, 0.24, 0.10], MAT_FOLIAGE);
 
-    // Near sidewalk under our apartment (`z in [2.5, 4.8]`) + Far sidewalk in front of 2-story houses (`z in [9.4, 12.2]`)
-    let sidewalk_warm = [0.80, 0.77, 0.71];
-    let curb_stone = [0.72, 0.68, 0.62];
-    buf.add_box(Vec3::new(-42.0, ground_y, 2.5), Vec3::new(42.0, ground_y + 0.14, 4.8), sidewalk_warm, MAT_MATTE);
-    buf.add_box(Vec3::new(-42.0, ground_y, 9.4), Vec3::new(42.0, ground_y + 0.14, 12.4), sidewalk_warm, MAT_MATTE);
-    // Segmented concrete curbstones (`image-8, 9, 10`)
-    buf.add_rounded_box(Vec3::new(-42.0, ground_y, 9.22), Vec3::new(42.0, ground_y + 0.16, 9.44), 0.02, curb_stone, MAT_MATTE);
-    buf.add_rounded_box(Vec3::new(-42.0, ground_y, 4.78), Vec3::new(42.0, ground_y + 0.16, 5.00), 0.02, curb_stone, MAT_MATTE);
+    let sidewalk_stone = [0.46, 0.44, 0.40];
+    let curb_stone = [0.38, 0.36, 0.33];
+    buf.add_box(Vec3::new(-42.0, ground_y + 0.005, 2.5), Vec3::new(42.0, ground_y + 0.14, 4.78), sidewalk_stone, MAT_MATTE);
+    buf.add_box(Vec3::new(-42.0, ground_y + 0.005, 9.45), Vec3::new(42.0, ground_y + 0.14, 12.6), sidewalk_stone, MAT_MATTE);
+    buf.add_rounded_box(Vec3::new(-42.0, ground_y + 0.006, 9.24), Vec3::new(42.0, ground_y + 0.16, 9.44), 0.018, curb_stone, MAT_MATTE);
+    buf.add_rounded_box(Vec3::new(-42.0, ground_y + 0.006, 4.80), Vec3::new(42.0, ground_y + 0.16, 5.00), 0.018, curb_stone, MAT_MATTE);
 
-    // Sunlit Japanese Residential Asphalt Road (`z in [4.95, 9.25]`) + Crisp White Side Shoulder Lines (`image-8, 11, 12`)!
-    buf.add_box(Vec3::new(-45.0, ground_y - 0.02, 4.95), Vec3::new(45.0, ground_y + 0.04, 9.25), [0.22, 0.23, 0.25], MAT_MATTE);
-    buf.add_box(Vec3::new(-42.0, ground_y + 0.052, 5.45), Vec3::new(42.0, ground_y + 0.062, 5.55), [0.88, 0.87, 0.84], MAT_MATTE);
-    buf.add_box(Vec3::new(-42.0, ground_y + 0.052, 8.68), Vec3::new(42.0, ground_y + 0.062, 8.78), [0.88, 0.87, 0.84], MAT_MATTE);
+    // Dark weathered Japanese residential asphalt (`z in [5.01, 9.23]`) + muted shoulder lines
+    buf.add_box(Vec3::new(-45.0, ground_y + 0.004, 5.01), Vec3::new(45.0, ground_y + 0.042, 9.23), [0.14, 0.15, 0.17], MAT_MATTE);
+    buf.add_box(Vec3::new(-42.0, ground_y + 0.048, 5.45), Vec3::new(42.0, ground_y + 0.056, 5.54), [0.64, 0.63, 0.59], MAT_MATTE);
+    buf.add_box(Vec3::new(-42.0, ground_y + 0.048, 8.68), Vec3::new(42.0, ground_y + 0.056, 8.77), [0.64, 0.63, 0.59], MAT_MATTE);
 
-    // 2. Modular 2-Story Japanese Townhouses Right Across the Street (`z = 11.45 m`)!
-    //    - House Center-Right (`x = -2.25`, directly visible in front of our window!): 2-story Koushi lattice + eave AC unit + cedar attic!
-    //    - House Screen-Left  (`x = +6.95`, `image-8` left house): 2-story casement sun-hoods + rooftop Yagi TV antenna & dish!
-    //    - Between `x = +1.55` and `x = +3.35`: Scenic Japanese `roji` alley / garden gap revealing distant green mountains & far-off Pad-1!
-    //    - House Far-Right    (`x = -10.8`): 2-story Showa townhouse continuing down the street!
-    let cedar_frame = [0.36, 0.20, 0.12];
-    let kawara_charcoal = [0.22, 0.23, 0.25];
-    let kawara_warm_grey = [0.28, 0.27, 0.26];
+    // 2. WINDOW COMPOSITION (`image-15.png` aesthetic + Right-Side Launch Pad Sneak View!):
+    //    - Far-Left (`x in [+8.05, +13.6]`): Corrugated galvanized steel annex (`image-15.png` far left!).
+    //    - Left-to-Center (`x in [-0.30, +7.80]` at `z = 11.45`): Main 2-story Kominka Machiya (`House #1`).
+    //    - Right-of-Center (`x in [-3.55, -0.30]`): OPEN SNEAK-VIEW GAP looking out to far-away Launch Pad (`z = 380 m`)!
+    //    - Right Edge (`x in [-10.95, -3.55]` at `z = 11.75`): Second 2-story Machiya townhouse (`House #2`)!
+    let kominka_timber = [0.14, 0.08, 0.042];
+    let kominka_shutter = [0.22, 0.12, 0.062];
+    let kawara_dark = [0.12, 0.13, 0.15];
 
-    // House B: Center-Right directly across from our window (`x in [-6.05, +1.55]`)
-    build_japanese_house(
+    // Corrugated galvanized steel neighbor annex on the far left (`image-15.png` left edge!)
+    buf.add_box(Vec3::new(8.05, ground_y + 0.142, 10.85), Vec3::new(13.8, ground_y + 6.35, 17.2), [0.26, 0.30, 0.35], MAT_CORRUGATED);
+    buf.add_u_frame_xy(9.10, 10.35, ground_y + 3.65, ground_y + 4.45, 10.78, 10.86, 0.05, [0.18, 0.20, 0.22], MAT_ALLOY);
+    buf.add_box(Vec3::new(9.11, ground_y + 3.66, 10.81), Vec3::new(10.34, ground_y + 4.44, 10.84), [0.10, 0.14, 0.18], MAT_ALLOY);
+
+    // House #1: Main 2-Story Kominka Machiya (`x in [-0.30, +7.80]`, left & center of window!)
+    build_machiya_house(
         buf,
-        Pose::at(-2.25, ground_y + 0.14, 11.45),
-        &JapaneseHouseSpec {
-            width: 7.6,
+        Pose::at(3.75, ground_y + 0.142, 11.45),
+        &MachiyaHouseSpec {
+            width: 8.10,
             depth: 6.8,
-            wall_col: [0.89, 0.84, 0.76],
-            wood_col: cedar_frame,
-            tile_col: kawara_charcoal,
-            koushi_upper_window: true,
-            cedar_attic_riser: true,
-            eave_ac_unit: true,
-            rooftop_antenna: false,
-            corrugated_side_wall: true,
+            plaster_col: [0.56, 0.50, 0.40],
+            timber_col: kominka_timber,
+            shutter_wood_col: kominka_shutter,
+            tile_col: kawara_dark,
+            has_wide_balcony: true,
+            has_eave_ac: true,
+            has_izakaya_lanterns: true,
+            has_rooftop_aerial: true,
         },
     );
 
-    // House A: Screen-Left across the narrow `roji` alley (`x in [+3.15, +10.55]`)
-    build_japanese_house(
+    // House #2: Second 2-Story Machiya Townhouse framing the right edge of the window (`x in [-10.95, -3.55]`)!
+    build_machiya_house(
         buf,
-        Pose::at(6.85, ground_y + 0.14, 11.65),
-        &JapaneseHouseSpec {
-            width: 7.4,
+        Pose::at(-7.25, ground_y + 0.142, 11.75),
+        &MachiyaHouseSpec {
+            width: 7.40,
             depth: 6.6,
-            wall_col: [0.86, 0.80, 0.70],
-            wood_col: [0.33, 0.18, 0.11],
-            tile_col: kawara_warm_grey,
-            koushi_upper_window: false,
-            cedar_attic_riser: false,
-            eave_ac_unit: false,
-            rooftop_antenna: true,
-            corrugated_side_wall: false,
+            plaster_col: [0.52, 0.47, 0.38],
+            timber_col: kominka_timber,
+            shutter_wood_col: [0.25, 0.14, 0.072],
+            tile_col: [0.14, 0.15, 0.17],
+            has_wide_balcony: false,
+            has_eave_ac: false,
+            has_izakaya_lanterns: false,
+            has_rooftop_aerial: false,
         },
     );
 
-    // House C: Continuing down street on Screen-Right (`x in [-14.2, -7.2]`)
-    build_japanese_house(
-        buf,
-        Pose::at(-10.7, ground_y + 0.14, 11.75),
-        &JapaneseHouseSpec {
-            width: 7.0,
-            depth: 6.5,
-            wall_col: [0.84, 0.81, 0.74],
-            wood_col: cedar_frame,
-            tile_col: kawara_charcoal,
-            koushi_upper_window: false,
-            cedar_attic_riser: false,
-            eave_ac_unit: true,
-            rooftop_antenna: true,
-            corrugated_side_wall: true,
-        },
-    );
+    // 3. Ground-Level Japanese Street Details (`image-15.png`: stone plinth, street sign, low shrubs, bicycle — keeping gap sky-clear!)
+    // Weathered Oya-stone block wall at ground level inside the alley gap (`y = ground_y + 0.14 .. +1.05` so vista above is 100% open!)
+    buf.add_rounded_box(Vec3::new(-3.45, ground_y + 0.142, 11.55), Vec3::new(-1.85, ground_y + 1.02, 12.15), 0.03, [0.40, 0.39, 0.36], MAT_MATTE);
+    // Small Japanese round red-and-white street sign post (`image-15.png` bottom right!)
+    buf.add_cylinder(Vec3::new(-3.25, ground_y + 0.142, 10.15), Vec3::new(-3.25, ground_y + 2.05, 10.15), 0.022, 0.022, 8, [0.58, 0.60, 0.62], MAT_ALLOY, false);
+    buf.add_disc_neg_z(Vec3::new(-3.25, ground_y + 1.92, 10.12), 0.18, 14, [0.76, 0.16, 0.14], MAT_ALLOY);
+    buf.add_disc_neg_z(Vec3::new(-3.25, ground_y + 1.92, 10.112), 0.12, 12, [0.86, 0.85, 0.82], MAT_MATTE);
 
-    // Small setback backyard shed/annex in the alley depth (`image-10`!)
-    buf.add_box(Vec3::new(1.35, ground_y + 0.14, 15.8), Vec3::new(3.45, ground_y + 3.25, 19.5), [0.83, 0.78, 0.68], MAT_MATTE);
-    buf.add_kawara_eave_slope(1.15, 3.65, ground_y + 3.15, 15.1, ground_y + 3.85, 17.5, kawara_warm_grey, cedar_frame);
+    props::parked_bicycle(buf, Pose::at(5.85, ground_y + 0.142, 10.35));
+    props::terracotta_planter(buf, Pose::at(-0.05, ground_y + 0.142, 10.30));
+    props::terracotta_planter(buf, Pose::at(-3.85, ground_y + 0.142, 10.55).with_scale(0.90));
+    props::outdoor_ac_condenser(buf, Pose::at(-4.55, ground_y + 0.15, 11.35));
 
-    // 3. Lived-In Japanese Street Sidewalk Props (`image-8, 9, 10, 11, 12`!):
-    //    Parked blue bicycle, wooden A-frame cafe chalkboard sign, cluster of terracotta planters, & street saplings!
-    props::parked_bicycle(buf, Pose::at(0.65, ground_y + 0.14, 10.35));
-    props::terracotta_planter(buf, Pose::at(-0.55, ground_y + 0.14, 10.25));
-    props::terracotta_planter(buf, Pose::at(-3.95, ground_y + 0.14, 10.30).with_scale(0.85));
-    props::terracotta_planter(buf, Pose::at(4.35, ground_y + 0.14, 10.45).with_scale(1.05));
-
-    // Wooden A-Frame sidewalk menu board (`image-8, 9, 10`)
-    buf.add_beam(Vec3::new(-1.35, ground_y + 0.14, 10.05), Vec3::new(-1.35, ground_y + 0.92, 10.25), 0.025, [0.58, 0.36, 0.18], MAT_WOOD);
-    buf.add_beam(Vec3::new(-1.35, ground_y + 0.14, 10.45), Vec3::new(-1.35, ground_y + 0.92, 10.25), 0.025, [0.58, 0.36, 0.18], MAT_WOOD);
-    buf.add_box(Vec3::new(-1.60, ground_y + 0.30, 10.12), Vec3::new(-1.10, ground_y + 0.86, 10.20), [0.14, 0.16, 0.17], MAT_MATTE);
-
-    // Delicate street saplings down the sidewalk (`image-12`, tucked neatly so they frame rather than block!)
-    build_street_sapling(buf, Pose::at(2.35, ground_y + 0.14, 9.85), true);
-    build_street_sapling(buf, Pose::at(-6.45, ground_y + 0.14, 9.85), false);
-
-    // 4. FOREGROUND UTILITY POLE RIGHT OUTSIDE THE LEFT OF OUR WINDOW (`x = +0.92, z = 5.25` — `image-11, 12`!)
-    //    Plus secondary poles down the street so multi-tier black catenary cables sweep right across the window!
-    let pole_left_fg = Vec3::new(0.92, ground_y + 0.14, 5.25);
-    let pole_right = Vec3::new(-7.60, ground_y + 0.14, 5.65);
-    let pole_far_left = Vec3::new(9.80, ground_y + 0.14, 5.35);
+    // 4. FOREGROUND CONCRETE UTILITY POLE ON THE LEFT OUTSIDE WINDOW (`x = +1.08, z = 5.35`) + CATENARY CABLES!
+    let pole_left_fg = Vec3::new(1.08, ground_y + 0.142, 5.35);
+    let pole_right = Vec3::new(-8.20, ground_y + 0.142, 5.75);
+    let pole_far_left = Vec3::new(10.20, ground_y + 0.142, 5.45);
 
     build_japanese_utility_pole(buf, Pose::at(pole_left_fg.x, pole_left_fg.y, pole_left_fg.z), true);
     build_japanese_utility_pole(buf, Pose::at(pole_right.x, pole_right.y, pole_right.z), false);
     build_japanese_utility_pole(buf, Pose::at(pole_far_left.x, pole_far_left.y, pole_far_left.z), false);
 
-    let wire_blk = [0.11, 0.12, 0.14];
-    // Upper HV 3-wire catenary bundle sweeping from our left-window pole across the window to the right!
-    for &dz in &[-0.42_f32, 0.0, 0.42] {
+    let wire_blk = [0.07, 0.08, 0.09];
+    for &dz in &[-0.38_f32, 0.0, 0.38] {
         buf.add_catenary(
             Vec3::new(pole_left_fg.x, pole_left_fg.y + 6.94, pole_left_fg.z + dz),
             Vec3::new(pole_right.x, pole_right.y + 6.94, pole_right.z + dz),
             0.34,
             14,
-            0.010,
+            0.009,
             wire_blk,
         );
         buf.add_catenary(
@@ -409,141 +323,163 @@ pub fn build_uchinoura_street_static(buf: &mut MeshBuffer) {
             Vec3::new(pole_left_fg.x, pole_left_fg.y + 6.94, pole_left_fg.z + dz),
             0.34,
             12,
-            0.010,
+            0.009,
             wire_blk,
         );
     }
-    // Lower telecom/distribution bundle (`y + 5.55`, classic layered Japanese cable silhouette from `image-11, 12`!)
     buf.add_catenary(
-        Vec3::new(pole_left_fg.x, pole_left_fg.y + 5.58, pole_left_fg.z - 0.12),
-        Vec3::new(pole_right.x, pole_right.y + 5.58, pole_right.z - 0.12),
+        Vec3::new(pole_left_fg.x, pole_left_fg.y + 5.58, pole_left_fg.z - 0.10),
+        Vec3::new(pole_right.x, pole_right.y + 5.58, pole_right.z - 0.10),
         0.46,
         14,
-        0.013,
+        0.011,
         wire_blk,
     );
-    // Service drop wires crossing the street from our foreground pole to the 2-story houses (`image-11`!)
     buf.add_catenary(
         Vec3::new(pole_left_fg.x, pole_left_fg.y + 5.60, pole_left_fg.z + 0.10),
-        Vec3::new(-1.85, ground_y + 5.20, 11.40),
-        0.28,
-        10,
-        0.008,
-        wire_blk,
-    );
-    buf.add_catenary(
-        Vec3::new(pole_left_fg.x, pole_left_fg.y + 5.60, pole_left_fg.z + 0.15),
-        Vec3::new(4.85, ground_y + 5.25, 11.60),
-        0.28,
+        Vec3::new(1.85, ground_y + 5.20, 11.40),
+        0.26,
         10,
         0.008,
         wire_blk,
     );
 
-    // 5. LAYERED JAPANESE MOUNTAIN RIDGES RISING BEHIND THE 2-STORY ROOFS (`image-12`!)
-    //    + GENUINELY FAR-DISTANT LAUNCH PAD-1 (`z = 360 m`, visible through the rooftop valley!)
-    // Mid-distance forested hill (`z = 125 m`)
+    // 5. LAYERED DEEP-FOREST UCHINOURA MOUNTAINS & SNEAK VIEW OF FAR-AWAY LAUNCH PAD-1 (`z = 380 m`)!
+    // Mid-distance lush cedar-forested hills (`z = 135..160 m`, dipping into a saddle around `x = -26` so the distant Pad ridge rises clearly!)
     buf.push_quad(
-        Vec3::new(-140.0, 15.5, 138.0),
-        Vec3::new(-8.0, 9.5, 132.0),
-        Vec3::new(12.0, ground_y, 98.0),
-        Vec3::new(-140.0, ground_y, 98.0),
-        [0.19, 0.40, 0.22],
+        Vec3::new(-180.0, 16.0, 155.0),
+        Vec3::new(-38.0, 6.5, 148.0),
+        Vec3::new(-12.0, ground_y, 108.0),
+        Vec3::new(-180.0, ground_y, 108.0),
+        [0.09, 0.21, 0.10],
         MAT_FOLIAGE,
     );
     buf.push_quad(
-        Vec3::new(16.0, 11.0, 142.0),
-        Vec3::new(150.0, 18.5, 152.0),
-        Vec3::new(150.0, ground_y, 102.0),
-        Vec3::new(2.0, ground_y, 102.0),
-        [0.21, 0.42, 0.24],
-        MAT_FOLIAGE,
-    );
-
-    // Dramatic peaked Japanese mountain range in the far distance (`z = 360..420 m`, like `image-12`!)
-    buf.push_quad(
-        Vec3::new(-220.0, 42.0, 415.0),
-        Vec3::new(220.0, 36.0, 425.0),
-        Vec3::new(240.0, ground_y, 310.0),
-        Vec3::new(-240.0, ground_y, 300.0),
-        [0.24, 0.41, 0.34],
+        Vec3::new(-18.0, 6.2, 152.0),
+        Vec3::new(180.0, 19.5, 165.0),
+        Vec3::new(180.0, ground_y, 112.0),
+        Vec3::new(-36.0, ground_y, 112.0),
+        [0.10, 0.23, 0.11],
         MAT_FOLIAGE,
     );
 
-    // Distant Uchinoura Range Pad-1 Saddle (`x = +2.2, y = 14.5, z = 360.0` — framed cleanly in the gap between House A & House B roofs!)
-    // At `z = 360 m`, a 15 m tower subtends only ~2.4 degrees — genuinely miles away outside town!
-    let pad = Vec3::new(2.2, 14.5, 360.0);
+    // Distant Uchinoura Coastal Mountain Ridge (`z = 385..430 m`) supporting Launch Pad-1 at `(-58.0, 17.8, 380.0)`!
+    let pad = EXTERIOR_PAD_POS;
+    buf.push_quad(
+        Vec3::new(-260.0, 29.0, 425.0),
+        Vec3::new(pad.x - 12.0, pad.y - 0.5, 392.0),
+        Vec3::new(pad.x + 25.0, ground_y, 320.0),
+        Vec3::new(-260.0, ground_y, 320.0),
+        [0.12, 0.24, 0.20],
+        MAT_FOLIAGE,
+    );
+    buf.push_quad(
+        Vec3::new(pad.x - 16.0, pad.y - 0.4, 394.0),
+        Vec3::new(240.0, 38.0, 435.0),
+        Vec3::new(260.0, ground_y, 325.0),
+        Vec3::new(pad.x - 32.0, ground_y, 325.0),
+        [0.13, 0.25, 0.21],
+        MAT_FOLIAGE,
+    );
+
+    // Far-Away Rocket Launch Pad-1 (`EXTERIOR_PAD_POS = (-58.0, 17.8, 380.0)` — framed in the right-side sneak-view gap!):
+    // Concrete flame-trench apron cut into the distant ridge + red/white service gantry + glinting white orbital vehicle + lightning towers!
     buf.add_box(
-        Vec3::new(pad.x - 9.0, pad.y - 1.2, pad.z - 6.0),
-        Vec3::new(pad.x + 9.0, pad.y, pad.z + 6.0),
-        [0.74, 0.75, 0.73],
+        Vec3::new(pad.x - 14.0, pad.y - 3.5, pad.z - 8.0),
+        Vec3::new(pad.x + 14.0, pad.y, pad.z + 8.0),
+        [0.52, 0.53, 0.51],
         MAT_MATTE,
     );
-    // Tiny distant red/white gantry + slender white rocket needle + lightning mast
-    buf.add_box(
-        Vec3::new(pad.x - 1.8, pad.y, pad.z - 0.6),
-        Vec3::new(pad.x - 0.9, pad.y + 7.5, pad.z + 0.6),
-        [0.86, 0.24, 0.20],
-        MAT_ALLOY,
-    );
-    buf.add_box(
-        Vec3::new(pad.x - 1.7, pad.y + 7.5, pad.z - 0.5),
-        Vec3::new(pad.x - 1.0, pad.y + 13.8, pad.z + 0.5),
-        [0.95, 0.95, 0.94],
-        MAT_ALLOY,
-    );
+    // Red-and-white JAXA-style umbilical gantry tower (`height = 24 m` at `380 m` distance -> crisp ~3.6 deg silhouette!)
+    for tier in 0..4 {
+        let ty0 = pad.y + (tier as f32) * 6.0;
+        let col = if tier % 2 == 0 { [0.78, 0.18, 0.14] } else { [0.88, 0.88, 0.86] };
+        buf.add_box(
+            Vec3::new(pad.x - 3.6, ty0, pad.z - 1.1),
+            Vec3::new(pad.x - 1.4, ty0 + 6.0, pad.z + 1.1),
+            col,
+            MAT_ALLOY,
+        );
+    }
+    // Umbilical swing arms connecting gantry to rocket
+    for &ay in &[8.0_f32, 15.0, 20.5] {
+        buf.add_box(
+            Vec3::new(pad.x - 1.4, pad.y + ay, pad.z - 0.35),
+            Vec3::new(pad.x + 1.2, pad.y + ay + 0.55, pad.z + 0.35),
+            [0.76, 0.77, 0.78],
+            MAT_ALLOY,
+        );
+    }
+    // Slender sunlit white 3-stage launcher on the pad (`height = 22.5 m`) + orange fairing band + beacon!
     buf.add_lathe_y(
-        Vec3::new(pad.x + 0.6, pad.y, pad.z),
-        &[(0.0, 0.45), (9.5, 0.36), (12.8, 0.04)],
-        10,
-        [0.98, 0.98, 0.97],
+        Vec3::new(pad.x + 1.6, pad.y, pad.z),
+        &[(0.0, 0.85), (14.5, 0.78), (18.5, 0.68), (22.8, 0.06)],
+        12,
+        [0.95, 0.95, 0.93],
         MAT_ALLOY,
         true,
     );
-    buf.add_cylinder(
-        Vec3::new(pad.x - 4.8, pad.y, pad.z),
-        Vec3::new(pad.x - 4.8, pad.y + 16.5, pad.z),
-        0.16,
-        0.05,
-        6,
-        [0.86, 0.88, 0.90],
+    buf.add_lathe_y(
+        Vec3::new(pad.x + 1.6, pad.y + 14.5, pad.z),
+        &[(0.0, 0.80), (1.4, 0.80)],
+        12,
+        [0.86, 0.32, 0.12],
         MAT_ALLOY,
         false,
     );
+    buf.add_box(
+        Vec3::new(pad.x - 3.2, pad.y + 24.0, pad.z - 0.45),
+        Vec3::new(pad.x - 1.8, pad.y + 25.0, pad.z + 0.45),
+        [1.0, 0.36, 0.16],
+        MAT_EMISSIVE_WARM,
+    );
+    // Twin lightning protection masts flanking the distant pad
+    for &lx in &[-9.5_f32, 9.5] {
+        buf.add_cylinder(
+            Vec3::new(pad.x + lx, pad.y, pad.z),
+            Vec3::new(pad.x + lx, pad.y + 27.0, pad.z),
+            0.24,
+            0.08,
+            6,
+            [0.72, 0.74, 0.76],
+            MAT_ALLOY,
+            false,
+        );
+    }
 }
 
-/// Builds the far-distant static-fire flash & slender rising exhaust column at `z = 360 m`!
+/// Builds the far-distant static-fire ignition flare & rising exhaust column at `EXTERIOR_PAD_POS`!
 pub fn build_distant_pad_plume(buf: &mut MeshBuffer, p: &DynamicSceneParams) {
     if p.plume_intensity <= 0.01 && p.plume_age_s >= 18.0 {
         return;
     }
-    let pad = Vec3::new(2.2, 14.5, 360.0);
+    let pad = EXTERIOR_PAD_POS;
     if p.plume_intensity > 0.02 {
-        let core_h = 6.5 * p.plume_intensity;
+        let core_h = 9.5 * p.plume_intensity;
         buf.add_ellipsoid(
-            Vec3::new(pad.x + 0.6, pad.y + core_h * 0.4, pad.z),
-            Vec3::new(1.5 * p.plume_intensity, core_h * 0.55, 1.5 * p.plume_intensity),
+            Vec3::new(pad.x + 1.6, pad.y + core_h * 0.38, pad.z - 1.2),
+            Vec3::new(2.6 * p.plume_intensity, core_h * 0.55, 2.6 * p.plume_intensity),
             10,
             6,
-            [1.0, 0.88, 0.50],
+            [1.0, 0.86, 0.44],
             MAT_PLUME,
         );
     }
-    let drift_h = (p.plume_age_s * 3.8).clamp(1.2, 58.0);
+    let drift_h = (p.plume_age_s * 4.5).clamp(1.8, 68.0);
     let fade = (1.0 - (p.plume_age_s / 18.0)).clamp(0.0, 1.0);
     if fade > 0.04 {
         for puff in 0..6 {
             let frac = (puff as f32) / 5.0;
-            let py = pad.y + 1.5 + frac * drift_h;
-            let px = pad.x + 0.6 + frac * (p.plume_age_s * 0.42);
-            let rad = (1.4 + frac * 5.2) * (0.45 + 0.55 * fade);
-            let c = 0.94 + 0.05 * fade;
+            let py = pad.y + 2.0 + frac * drift_h;
+            let px = pad.x + 1.6 + frac * (p.plume_age_s * 0.48);
+            let rad = (2.2 + frac * 6.8) * (0.45 + 0.55 * fade);
+            let c = 0.90 + 0.08 * fade;
             buf.add_ellipsoid(
                 Vec3::new(px, py, pad.z),
                 Vec3::new(rad, rad * 0.78, rad),
                 10,
                 7,
-                [c, c, c * 0.98],
+                [c, c * 0.98, c * 0.95],
                 MAT_PLUME,
             );
         }
