@@ -395,15 +395,18 @@ mod tests {
 
     #[test]
     fn sin_is_accurate() {
-        // 1e-12, not 1e-13: the argument reduction `x - k*pi/2` loses a little to cancellation near
-        // the quadrant seams, and the JavaScript kernel has exactly the same error (6.9e-12). The
-        // kernel's precision is *stated*, not aspired to, and the parity test pins it to the JS side.
+        // The bound is *measured*, not aspired to. `x - k*pi/2` cancels as |x| grows, so the error
+        // here is ~7e-12 at |x| ~ 7 rad -- and the shipping JavaScript kernel has exactly the same
+        // error, to the last bit, because it uses exactly this reduction. For a solar-position
+        // kernel that is ten orders of magnitude beyond what matters; asserting 1e-13 would have
+        // been a nicer number and a false one.
         let mut worst = 0.0f64;
         for i in -400..400 {
             let x = f64::from(i) * 0.017_453_292_519_943_295;
             worst = worst.max((dmath::sin(x) - x.sin()).abs());
         }
-        assert!(worst < 1e-12, "sin vs libm: {worst:e}");
+        assert!(worst < 1e-11, "sin vs libm: {worst:e}");
+        println!("sin vs libm, worst over |x| < 7 rad: {worst:e}");
     }
 
     #[test]
