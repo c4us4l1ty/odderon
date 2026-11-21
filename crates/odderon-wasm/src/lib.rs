@@ -178,6 +178,7 @@ fn target_from_u8(code: u8) -> TargetId {
         13 => TargetId::SleepingBunk,
         14 => TargetId::KettleBody,
         15 => TargetId::AcUnit,
+        16 => TargetId::ToiletDoor,
         _ => TargetId::None,
     }
 }

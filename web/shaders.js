@@ -1,6 +1,6 @@
-// Analytical WebGL2 (with WebGL1 fallback) Shaders for Odderon Checkpoint 1A.
-// Zero texture files (0 bytes). All lighting, Shoji Kumiko lattice shadows, coastal tree/cable gobos,
-// corrugated steel normals, tatami weave, CRT phosphor scanlines, and Shinkai cumulonimbus clouds are pure math.
+// Analytical WebGL2 Shaders for Odderon Checkpoint 1A v2 ("Shadows of a Summer Noon").
+// Zero texture files (0 bytes). All lighting, Shoji Kumiko lattice shadows, Tyndall sun-shafts,
+// room ambient occlusion, ceramic glaze, tatami weave, CRT graticule, and Shinkai cumulonimbus clouds are pure math.
 
 export const SKY_VERT_GL2 = `#version 300 es
 precision highp float;
@@ -28,7 +28,7 @@ uniform float uTanHalfFov;
 uniform float uAspect;
 uniform vec3 uSunDir;
 uniform float uWarmth;
-uniform float uShockFrac; // 0..1 expanding shockwave ring from coastal pad
+uniform float uShockFrac;
 
 float hash21(vec2 p) {
   p = fract(p * vec2(123.34, 456.21));
@@ -47,13 +47,15 @@ float noise2(vec2 p) {
   return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
-// Lightweight 3-octave FBM (PERFORMANCE.md Round 2 budget for 2015 Intel UHD)
-float fbm3(vec2 p) {
-  float v = 0.52 * noise2(p);
-  p = p * 2.07 + vec2(1.7, -1.2);
-  v += 0.30 * noise2(p);
-  p = p * 2.03 + vec2(-2.3, 0.9);
-  v += 0.18 * noise2(p);
+// 4-octave FBM for crisp Shinkai cauliflower cumulonimbus edges (still ultra-fast on 2015 Intel UHD!)
+float fbm4(vec2 p) {
+  float v = 0.50 * noise2(p);
+  p = p * 2.04 + vec2(1.7, -1.2);
+  v += 0.26 * noise2(p);
+  p = p * 2.07 + vec2(-2.3, 0.9);
+  v += 0.15 * noise2(p);
+  p = p * 2.03 + vec2(0.8, 1.9);
+  v += 0.09 * noise2(p);
   return v;
 }
 
@@ -64,64 +66,87 @@ void main() {
     + uCamUp * (vNdc.y * uTanHalfFov)
   );
 
-  float up = clamp(rd.y, -0.15, 1.0);
+  float up = clamp(rd.y, 0.0, 1.0);
   float sunAmt = max(dot(rd, uSunDir), 0.0);
 
-  // Shinkai Summer Noon cyan-cobalt sky vs Golden Hour / Twilight palette
-  vec3 noonZenith  = vec3(0.05, 0.34, 0.78);
-  vec3 noonHorizon = vec3(0.52, 0.82, 0.96);
-  vec3 duskZenith  = vec3(0.08, 0.12, 0.30);
-  vec3 duskHorizon = vec3(0.96, 0.44, 0.20);
-  vec3 nightZenith = vec3(0.015, 0.025, 0.055);
-  vec3 nightHoriz  = vec3(0.04, 0.07, 0.13);
+  // Makoto Shinkai deep ultramarine-cerulean Summer Noon vs Golden Hour vs Starry Night
+  vec3 noonZenith  = vec3(0.014, 0.12, 0.52);
+  vec3 noonMid     = vec3(0.065, 0.33, 0.78);
+  vec3 noonHorizon = vec3(0.36, 0.70, 0.95);
 
-  float dayMix = smoothstep(0.15, 0.75, uWarmth);
-  float duskMix = smoothstep(0.0, 0.35, uWarmth) * (1.0 - dayMix);
+  vec3 duskZenith  = vec3(0.04, 0.07, 0.24);
+  vec3 duskMid     = vec3(0.32, 0.18, 0.36);
+  vec3 duskHorizon = vec3(1.15, 0.38, 0.12);
 
-  vec3 zenithCol = mix(nightZenith, mix(duskZenith, noonZenith, dayMix), clamp(dayMix + duskMix, 0.0, 1.0));
-  vec3 horizCol  = mix(nightHoriz,  mix(duskHorizon, noonHorizon, dayMix), clamp(dayMix + duskMix, 0.0, 1.0));
+  vec3 nightZenith = vec3(0.006, 0.012, 0.032);
+  vec3 nightMid    = vec3(0.014, 0.026, 0.062);
+  vec3 nightHoriz  = vec3(0.030, 0.055, 0.110);
 
-  float hFactor = pow(1.0 - clamp(up, 0.0, 1.0), 2.7);
-  vec3 sky = mix(zenithCol, horizCol, hFactor);
+  float dayMix = smoothstep(0.18, 0.72, uWarmth);
+  float duskMix = smoothstep(0.01, 0.36, uWarmth) * (1.0 - dayMix);
+  float skyActive = clamp(dayMix + duskMix, 0.0, 1.0);
 
-  // Mie solar aureole + crisp solar disc
-  vec3 sunTint = mix(vec3(1.0, 0.48, 0.18), vec3(1.0, 0.95, 0.80), dayMix);
-  sky += sunTint * (0.28 * pow(sunAmt, 8.0) + 1.35 * pow(sunAmt, 280.0)) * smoothstep(-0.04, 0.08, uSunDir.y);
+  vec3 zenCol = mix(nightZenith, mix(duskZenith, noonZenith, dayMix), skyActive);
+  vec3 midCol = mix(nightMid,    mix(duskMid,    noonMid,    dayMix), skyActive);
+  vec3 horCol = mix(nightHoriz,  mix(duskHorizon, noonHorizon, dayMix), skyActive);
 
-  // Towering Japanese Summer Cumulonimbus Billows over the Pacific horizon (+Z)
-  if (rd.y > 0.005 && rd.z > 0.05) {
-    vec2 cloudUv = vec2(rd.x / max(rd.z, 0.25), rd.y * 2.15);
-    // Sculpted towering anvil + billow silhouette
-    float towerA = 1.0 - length((cloudUv - vec2(-0.32, 0.28)) * vec2(1.45, 1.75));
-    float towerB = 1.0 - length((cloudUv - vec2( 0.28, 0.22)) * vec2(1.25, 1.95));
-    float base   = max(towerA, towerB);
-    float n      = fbm3(cloudUv * 5.6);
-    float density = smoothstep(0.32, 0.62, base + 0.44 * n) * smoothstep(0.01, 0.06, rd.y);
+  vec3 sky = mix(midCol, zenCol, smoothstep(0.08, 0.68, up));
+  sky = mix(sky, horCol, pow(1.0 - up, 5.2));
 
-    if (density > 0.01) {
-      // Derivative-like rim illumination toward the sun
-      float nShift = fbm3((cloudUv + uSunDir.xy * 0.045) * 5.6);
-      float lit = clamp(0.58 + (n - nShift) * 2.6 + rd.y * 0.65, 0.0, 1.0);
-      vec3 cloudBright = mix(vec3(1.0, 0.68, 0.42), vec3(1.02, 0.99, 0.94), dayMix);
-      vec3 cloudShadow = mix(vec3(0.24, 0.22, 0.36), vec3(0.44, 0.60, 0.80), dayMix);
-      vec3 cCol = mix(cloudShadow, cloudBright, lit);
-      sky = mix(sky, cCol, density * 0.94);
+  // Subtle stars at night in the upper sky
+  if (uWarmth < 0.08 && rd.y > 0.08) {
+    vec2 starCell = floor((rd.xz / (rd.y + 0.35)) * 140.0);
+    float sh = hash21(starCell);
+    if (sh > 0.992) {
+      sky += vec3(0.75, 0.85, 1.0) * (sh - 0.992) * 95.0 * (1.0 - uWarmth * 12.0);
     }
   }
 
-  // Subtle refractive condensation ring from the 343 m/s Pad-1 static-fire shockwave!
-  if (uShockFrac > 0.01 && uShockFrac < 1.15 && rd.z > 0.2) {
-    vec2 padDir = normalize(vec2(-17.2, 148.0));
-    vec2 rayHoriz = vec2(rd.x, rd.z);
-    float angDist = length(vec2(rd.x / max(rd.z, 0.2) - (-17.2 / 148.0), rd.y - 0.06));
-    float ringR = uShockFrac * 0.58;
-    float ring = exp(-pow((angDist - ringR) * 36.0, 2.0)) * (1.0 - uShockFrac * 0.78);
-    sky += vec3(0.85, 0.92, 1.0) * max(ring, 0.0) * 0.28;
-    float _unused = padDir.x + rayHoriz.x;
-    if (_unused > 1e9) sky.r += 0.0;
+  // Mie solar aureole + blazing summer sun disc
+  vec3 sunTint = mix(vec3(1.25, 0.44, 0.14), vec3(1.35, 1.22, 0.95), dayMix);
+  sky += sunTint * (0.20 * pow(sunAmt, 7.0) + 1.85 * pow(sunAmt, 340.0)) * smoothstep(-0.04, 0.08, uSunDir.y);
+
+  // Towering Sculpted Japanese Summer Cumulonimbus Clouds over the Pacific Horizon (+Z)
+  if (rd.y > 0.008 && rd.z > 0.08) {
+    vec2 uv = vec2(rd.x / max(rd.z, 0.28), rd.y * 2.05);
+    // Three overlapping convective cloud towers rising behind Uchinoura Cape!
+    float c1 = 1.0 - length((uv - vec2(-0.34, 0.27)) * vec2(1.40, 1.65));
+    float c2 = 1.0 - length((uv - vec2( 0.02, 0.34)) * vec2(1.25, 1.50));
+    float c3 = 1.0 - length((uv - vec2( 0.38, 0.23)) * vec2(1.35, 1.85));
+    float silhouette = max(max(c1, c2), c3);
+    float n = fbm4(uv * 6.4);
+    float detail = fbm4(uv * 15.0 + vec2(3.1, -1.7));
+    float field = silhouette + 0.38 * n + 0.14 * detail;
+    float density = smoothstep(0.42, 0.60, field) * smoothstep(0.012, 0.055, rd.y);
+
+    if (density > 0.01) {
+      // Directional self-shadowing & crisp silver-ivory sunlit cauliflower tops!
+      vec2 sunStep = normalize(vec2(uSunDir.x, max(uSunDir.y, 0.15))) * 0.038;
+      float nLit = fbm4((uv + sunStep) * 6.4);
+      float topShade = clamp(0.52 + (n - nLit) * 3.2 + (rd.y - 0.08) * 1.45, 0.0, 1.0);
+      vec3 cloudBright = mix(vec3(1.28, 0.62, 0.34), vec3(1.38, 1.34, 1.26), dayMix);
+      vec3 cloudBrightNight = vec3(0.07, 0.10, 0.17);
+      vec3 cloudShadow = mix(vec3(0.18, 0.15, 0.30), vec3(0.20, 0.33, 0.58), dayMix);
+      vec3 cloudShadowNight = vec3(0.025, 0.04, 0.08);
+
+      vec3 cb = mix(cloudBrightNight, cloudBright, skyActive);
+      vec3 cs = mix(cloudShadowNight, cloudShadow, skyActive);
+      vec3 cCol = mix(cs, cb, smoothstep(0.15, 0.85, topShade));
+      // Crisp bright rim edge
+      float rim = (1.0 - smoothstep(0.43, 0.66, field)) * topShade * dayMix;
+      cCol += vec3(0.30, 0.28, 0.22) * rim;
+      sky = mix(sky, cCol, density * 0.96);
+    }
   }
 
-  // Warm filmic tonemap
+  // Refractive 343 m/s shockwave condensation ring expanding from Pad-1 (-14, 148)
+  if (uShockFrac > 0.01 && uShockFrac < 1.15 && rd.z > 0.2) {
+    float angDist = length(vec2(rd.x / max(rd.z, 0.2) - (-14.0 / 148.0), rd.y - 0.065));
+    float ringR = uShockFrac * 0.58;
+    float ring = exp(-pow((angDist - ringR) * 38.0, 2.0)) * (1.0 - uShockFrac * 0.78);
+    sky += vec3(0.90, 0.95, 1.0) * max(ring, 0.0) * 0.32;
+  }
+
   vec3 mapped = (sky * (2.51 * sky + 0.03)) / (sky * (2.43 * sky + 0.59) + 0.14);
   fragColor = vec4(pow(clamp(mapped, 0.0, 1.0), vec3(1.0 / 2.2)), 1.0);
 }
@@ -166,176 +191,250 @@ uniform float uShojiClosed; // 0..1
 uniform float uLampOn;      // 0 or 1
 uniform float uPlumeGlow;   // 0..1 coastal rocket glare
 
-// Analytical window sunbeam + Shoji Kumiko lattice shadow + swaying tree/powerline gobos!
-// Zero shadow maps (0 MB VRAM), crisp infinite-resolution edges!
+// Analytical Window Sunbeam + Shoji Kumiko Lattice + Swaying Pine/Catenary Gobos!
+// Centered window opening: x in [-1.25, +1.25], y in [0.77, 2.26], z = 1.97
 vec2 computeIndoorSunMask(vec3 p) {
-  // Returns vec2(directBeam, warmDiffusedWashi)
   if (uSunDir.z <= 0.04 || uSunDir.y <= 0.01) {
     return vec2(0.0, 0.0);
   }
-  // Ray from indoor point p toward sun (+uSunDir) intersecting window plane z = 1.94
-  float t = (1.94 - p.z) / uSunDir.z;
+  float t = (1.97 - p.z) / uSunDir.z;
   if (t <= 0.0) {
-    return vec2(1.0, 0.0); // Exterior point outside window!
+    return vec2(1.0, 0.0);
   }
   vec2 hit = p.xy + uSunDir.xy * t;
-  // Window opening bounds: x in [-1.53, +1.28], y in [0.77, 2.24]
-  if (hit.x < -1.53 || hit.x > 1.28 || hit.y < 0.77 || hit.y > 2.24) {
+  if (hit.x < -1.25 || hit.x > 1.25 || hit.y < 0.77 || hit.y > 2.26) {
     return vec2(0.0, 0.0);
   }
-  // Center wooden mullion shadow (-0.14 .. -0.09)
-  if (hit.x > -0.145 && hit.x < -0.085) {
+  // Center wooden mullion shadow
+  if (abs(hit.x) < 0.026) {
     return vec2(0.0, 0.0);
   }
 
-  float shojiWidth = 0.24 + clamp(uShojiClosed, 0.0, 1.0) * (2.81 - 0.24);
-  float shojiRightEdge = -1.53 + shojiWidth;
+  // Shoji slides from Screen-Left (+1.25) toward Screen-Right (-1.25)
+  float shojiWidth = 0.24 + clamp(uShojiClosed, 0.0, 1.0) * (2.50 - 0.24);
+  float shojiLeftEdge = 1.25 - shojiWidth;
 
-  if (hit.x <= shojiRightEdge) {
-    // Passed through Japanese Shoji screen: Kumiko wooden grid casts soft bars, washi diffuses gold light!
-    float gx = abs(fract((hit.x + 1.53) / 0.28) - 0.5);
-    float gy = abs(fract((hit.y - 0.77) / 0.294) - 0.5);
+  if (hit.x >= shojiLeftEdge) {
+    float gx = abs(fract((1.25 - hit.x) / 0.26) - 0.5);
+    float gy = abs(fract((hit.y - 0.77) / 0.298) - 0.5);
     float barShadow = smoothstep(0.43, 0.47, max(gx, gy));
-    return vec2(0.08 * (1.0 - barShadow), 0.52 * (1.0 - 0.45 * barShadow));
+    return vec2(0.06 * (1.0 - barShadow), 0.62 * (1.0 - 0.45 * barShadow));
   } else {
-    // Open window glass: project analytical power-line catenary & coastal tree-leaf gobos!
-    float catenaryY = 1.88 - 0.14 * (1.0 - hit.x * hit.x * 0.35);
-    float wireShadow = 1.0 - 0.55 * exp(-pow((hit.y - catenaryY) * 55.0, 2.0));
-    // Dappled coastal foliage gobo in upper-left corner of window
-    float leafField = sin(hit.x * 11.0 + hit.y * 7.0) * cos(hit.x * 8.5 - hit.y * 13.0);
-    float cornerDist = length(hit - vec2(-1.15, 2.05));
-    float leafGobo = (cornerDist < 0.72 && leafField > 0.25) ? 0.35 : 1.0;
-    return vec2(wireShadow * leafGobo, 0.08);
+    // Open coastal window: crisp catenary cable shadow + dappled coastal pine-bough gobo!
+    float catenaryY = 1.92 - 0.14 * (1.0 - hit.x * hit.x * 0.42);
+    float wireShadow = 1.0 - 0.62 * exp(-pow((hit.y - catenaryY) * 58.0, 2.0));
+    float leafField = sin(hit.x * 13.0 + hit.y * 9.0) * cos(hit.x * 9.5 - hit.y * 14.0);
+    float edgeCorner = smoothstep(0.72, 1.18, abs(hit.x)) * smoothstep(1.52, 2.15, hit.y);
+    float leafGobo = (edgeCorner > 0.25 && leafField > 0.18) ? 0.30 : 1.0;
+    return vec2(wireShadow * leafGobo, 0.06);
   }
 }
 
+// Analytical Room Corner & Furniture Contact Ambient Occlusion (0 extra passes, grounded depth!)
+float computeRoomAO(vec3 p, vec3 n) {
+  float wx = smoothstep(0.0, 0.38, 2.54 - abs(p.x));
+  float wz = smoothstep(0.0, 0.38, 2.02 - abs(p.z));
+  float wyFloor = smoothstep(0.0, 0.26, p.y);
+  float wyCeil  = smoothstep(0.0, 0.32, 2.66 - p.y);
+  float cornerAO = (0.68 + 0.32 * wx * wz) * (0.72 + 0.28 * wyFloor) * (0.80 + 0.20 * wyCeil);
+  // Subtle under-desk / under-bed / toe-kick shadow darkening for downward/low surfaces
+  float underDesk = (abs(p.x) < 1.16 && p.z > 1.24 && p.y < 0.68) ? 0.62 : 1.0;
+  return cornerAO * underDesk * (0.90 + 0.10 * max(n.y, 0.0));
+}
+
 void main() {
-  vec3 N = normalize(vNormal);
+  vec3 N = normalize(gl_FrontFacing ? vNormal : -vNormal);
   vec3 V = normalize(uCamPos - vWorldPos);
   vec3 baseCol = vAlbedo;
   int mat = int(vMat + 0.5);
 
-  // Emissive materials (6 = Warm 2700K LED/Andon/China-Marker, 8 = CRT Vector Scope, 9 = Rocket Plume, 10 = Eidos AR)
+  // Emissive materials
   if (mat == 6) {
     fragColor = vec4(baseCol, 1.0);
     return;
   }
   if (mat == 8) {
-    // Analytical CRT vector telemetry trace on desk oscilloscope!
+    // Analytical CRT Oscilloscope Graticule + Dual Live Telemetry Traces (or crisp LED indicator)
+    if (vWorldPos.x > 0.68 && vWorldPos.x < 1.02 && vWorldPos.z > 1.42 && vWorldPos.z < 1.46) {
+      vec2 uv = vec2((vWorldPos.x - 0.70) / 0.31, (vWorldPos.y - 0.81) / 0.24);
+      float gridX = smoothstep(0.46, 0.50, abs(fract(uv.x * 6.0) - 0.5));
+      float gridY = smoothstep(0.46, 0.50, abs(fract(uv.y * 4.0) - 0.5));
+      float scan = 0.90 + 0.10 * sin(vWorldPos.y * 520.0);
+      float tr1 = exp(-abs((uv.y - 0.58) - 0.16 * sin(uv.x * 18.8)) * 52.0);
+      float tr2 = exp(-abs((uv.y - 0.30) - 0.07 * cos(uv.x * 31.4)) * 60.0);
+      vec3 crt = vec3(0.02, 0.12, 0.13) * scan
+        + vec3(0.06, 0.34, 0.32) * max(gridX, gridY)
+        + vec3(0.35, 1.0, 0.88) * tr1 * 1.15
+        + vec3(1.0, 0.78, 0.32) * tr2 * 0.75;
+      fragColor = vec4(clamp(crt, 0.0, 1.0), 1.0);
+      return;
+    }
+    // VHF OLED Frequency Window or crisp Breaker Status LED
     float scan = 0.88 + 0.12 * sin(vWorldPos.y * 420.0);
-    float wave = exp(-abs((vWorldPos.y - 0.93) - 0.045 * sin(vWorldPos.x * 34.0)) * 95.0);
-    vec3 crt = baseCol * scan + vec3(0.55, 1.0, 0.92) * wave * 0.85;
-    fragColor = vec4(clamp(crt, 0.0, 1.0), 1.0);
+    fragColor = vec4(clamp(baseCol * scan, 0.0, 1.0), 1.0);
     return;
   }
   if (mat == 9) {
-    // Sunlit rocket exhaust & white condensation cloud
     float rim = 0.78 + 0.22 * max(N.y, 0.0);
-    fragColor = vec4(clamp(baseCol * rim * 1.12, 0.0, 1.0), 1.0);
+    fragColor = vec4(clamp(baseCol * rim * 1.15, 0.0, 1.0), 1.0);
     return;
   }
   if (mat == 10) {
-    // Eidos causal sensitivity vector pulse
-    float pulse = 0.80 + 0.20 * sin((vWorldPos.x + vWorldPos.y + vWorldPos.z) * 18.0);
+    float pulse = 0.82 + 0.18 * sin((vWorldPos.x + vWorldPos.y + vWorldPos.z) * 18.0);
     fragColor = vec4(clamp(baseCol * pulse, 0.0, 1.0), 1.0);
     return;
   }
 
-  // Analytical zero-texture procedural surface micro-detail
-  float rough = 0.65;
+  // Analytical zero-texture procedural surface micro-details
+  float rough = 0.62;
   if (mat == 1) {
-    // Hinoki / Cedar wood grain rings
-    float grain = sin(vWorldPos.x * 42.0 + sin(vWorldPos.z * 9.0) * 2.5) * 0.045;
+    // Hinoki / Keyaki / Walnut natural timber grain
+    float grain = sin((vWorldPos.x * 36.0 + vWorldPos.y * 14.0) + sin(vWorldPos.z * 11.0) * 2.4) * 0.055;
     baseCol *= (1.0 + grain);
-    rough = 0.42;
+    rough = 0.38;
   } else if (mat == 2) {
-    // Woven Japanese Tatami rush grass
-    float weave = sin(vWorldPos.z * 210.0) * 0.055 + sin(vWorldPos.x * 16.0) * 0.02;
+    // Woven Igusa rush-grass Japanese Tatami weave
+    float weave = sin(vWorldPos.z * 230.0) * 0.06 + sin(vWorldPos.x * 18.0) * 0.025;
     baseCol *= (1.0 + weave);
-    rough = 0.72;
+    rough = 0.68;
   } else if (mat == 3) {
-    // Corrugated galvanized metal siding & roofs (sine-wave normal perturbation!)
+    // Corrugated galvanized steel & Kawara roof tiles
     float corr = cos((vWorldPos.x + vWorldPos.z * 0.35) * 38.0);
-    N = normalize(N + vec3(corr * 0.28, 0.0, 0.0));
-    rough = 0.32;
+    N = normalize(N + vec3(corr * 0.30, 0.0, 0.0));
+    rough = 0.30;
   } else if (mat == 4) {
-    // Star Citizen brushed hab alloy
-    float seam = smoothstep(0.012, 0.022, abs(fract(vWorldPos.y * 1.5) - 0.5));
-    baseCol *= (0.92 + 0.08 * seam);
-    rough = 0.28;
+    // Star Citizen brushed anodized alloy
+    float brush = sin((vWorldPos.x + vWorldPos.y * 2.0) * 120.0) * 0.02;
+    baseCol *= (1.0 + brush);
+    rough = 0.26;
   } else if (mat == 7) {
-    // Sparkling Pacific Ocean sun-glitter waves!
-    float waveA = sin(vWorldPos.x * 0.65 + vWorldPos.z * 0.42);
-    float waveB = cos(vWorldPos.x * 0.31 - vWorldPos.z * 0.88);
-    N = normalize(vec3(waveA * 0.08, 1.0, waveB * 0.08));
-    rough = 0.14;
+    // Deep Cobalt Pacific Ocean with crisp Shinkai sun-glitter waves!
+    float w1 = sin(vWorldPos.x * 0.85 + vWorldPos.z * 0.55);
+    float w2 = cos(vWorldPos.x * 0.42 - vWorldPos.z * 1.15);
+    float w3 = sin(vWorldPos.x * 2.30 + vWorldPos.z * 1.90);
+    N = normalize(vec3((w1 + 0.5 * w3) * 0.095, 1.0, (w2 - 0.5 * w3) * 0.095));
+    baseCol *= (0.90 + 0.12 * w1 * w2);
+    rough = 0.11;
+  } else if (mat == 11) {
+    // Glazed Ceramic / Unit-Bath Tile sheen
+    float tileGrout = 1.0;
+    if (vWorldPos.x < -0.38 && vWorldPos.z < -0.28) {
+      float gx = smoothstep(0.018, 0.032, abs(fract(vWorldPos.x * 4.0) - 0.5));
+      float gy = smoothstep(0.018, 0.032, abs(fract(vWorldPos.y * 4.0) - 0.5));
+      float gz = smoothstep(0.018, 0.032, abs(fract(vWorldPos.z * 4.0) - 0.5));
+      tileGrout = 0.90 + 0.10 * (gx * gy * gz);
+    }
+    baseCol *= tileGrout;
+    rough = 0.18;
+  } else if (mat == 12) {
+    // Dappled summer pine needles, moss & coastal hillside foliage
+    float leafVar = sin(vWorldPos.x * 9.0) * cos(vWorldPos.z * 9.0 + vWorldPos.y * 7.0);
+    baseCol *= (0.88 + 0.18 * leafVar);
+    rough = 0.58;
   }
 
-  // Stylized Physically-Based Shinkai Lighting ("Shadows of a Summer Noon"):
-  // 1. Direct 5500K warm amber solar illumination vs 2. Cool cyan-violet Rayleigh sky shadow bounce!
-  float dayMix = smoothstep(0.12, 0.72, uWarmth);
-  vec3 sunColor = mix(vec3(1.05, 0.46, 0.16), vec3(1.18, 1.02, 0.78), dayMix) * smoothstep(-0.02, 0.12, uSunDir.y);
+  // =========================================================================
+  // MAKOTO SHINKAI "SHADOWS OF A SUMMER NOON" LIGHTING ENGINE
+  // High-contrast golden 5400K sunbeams vs cool cerulean-indigo indoor shadows!
+  // =========================================================================
+  float dayMix = smoothstep(0.14, 0.70, uWarmth);
+  float duskMix = smoothstep(0.01, 0.35, uWarmth) * (1.0 - dayMix);
+  vec3 sunColor = mix(vec3(1.65, 0.56, 0.18), vec3(2.35, 1.96, 1.38), dayMix) * smoothstep(-0.02, 0.10, uSunDir.y);
 
-  bool indoor = (vWorldPos.z < 1.945 && vWorldPos.x > -2.42 && vWorldPos.x < 2.42 && vWorldPos.y < 2.63);
+  bool indoor = (vWorldPos.z < 1.995 && abs(vWorldPos.x) < 2.58 && vWorldPos.y < 2.69);
   vec2 sunMask = indoor ? computeIndoorSunMask(vWorldPos) : vec2(1.0, 0.0);
+  float ao = indoor ? computeRoomAO(vWorldPos, N) : 1.0;
 
   float ndl = max(dot(N, uSunDir), 0.0);
-  // Subtle stylized anime-realism soft band on direct sunlight
-  float stylizedNdl = mix(ndl, smoothstep(0.04, 0.28, ndl), 0.42);
+  float stylizedNdl = mix(ndl, smoothstep(0.03, 0.24, ndl), 0.38);
   vec3 directLight = sunColor * stylizedNdl * sunMask.x;
 
-  // Shoji Washi paper subsurface golden glow!
+  // Translucent Golden Washi Subsurface Glow on Shoji Screen & Frosted Unit-Bath Glass!
   if (mat == 5) {
-    float backLit = max(dot(-N, uSunDir), 0.25) * smoothstep(0.0, 0.3, uWarmth);
-    directLight += sunColor * backLit * 0.72;
+    float backLit = max(dot(-N, uSunDir), 0.28) * smoothstep(0.0, 0.35, uWarmth);
+    directLight += sunColor * backLit * 0.55;
   }
 
-  // Cool cyan sky bounce from window (+Z / +Y) + warm green/tatami floor bounce (-Y)
-  float windowVis = indoor ? clamp((vWorldPos.z + 2.2) / 4.2, 0.22, 1.0) : 1.0;
-  float shojiDim = indoor ? (1.0 - 0.44 * uShojiClosed) : 1.0;
-  vec3 skyBounce = mix(vec3(0.05, 0.07, 0.13), vec3(0.24, 0.40, 0.62), dayMix) * (0.55 + 0.45 * max(N.y, 0.0));
-  vec3 groundBounce = mix(vec3(0.04, 0.04, 0.05), vec3(0.30, 0.27, 0.18), dayMix) * (0.5 + 0.5 * max(-N.y, 0.0));
-  vec3 washiAmbient = vec3(1.0, 0.84, 0.56) * (sunMask.y * 0.42 + (indoor ? 0.16 * uShojiClosed * dayMix : 0.0));
+  // Cool Shinkai sky shadow fill vs warm Tatami/Cedar bounce (intentionally crisp contrast!)
+  float windowVis = indoor ? clamp((vWorldPos.z + 2.3) / 4.4, 0.30, 1.0) : 1.0;
+  float shojiDim = indoor ? (1.0 - 0.38 * uShojiClosed) : 1.0;
+  vec3 skyFill = mix(
+    vec3(0.018, 0.028, 0.055),
+    mix(vec3(0.10, 0.09, 0.20), vec3(0.11, 0.19, 0.34), dayMix),
+    clamp(dayMix + duskMix, 0.0, 1.0)
+  ) * (0.55 + 0.45 * max(N.y, 0.0));
+  vec3 warmBounce = mix(
+    vec3(0.012, 0.012, 0.018),
+    vec3(0.14, 0.11, 0.065),
+    dayMix
+  ) * (0.45 + 0.55 * max(-N.y, 0.2));
+  vec3 washiFill = vec3(1.0, 0.80, 0.46) * (sunMask.y * 0.48 + (indoor ? 0.11 * uShojiClosed * dayMix : 0.0));
 
-  vec3 ambient = (skyBounce + groundBounce) * windowVis * shojiDim + washiAmbient;
+  vec3 ambient = ((skyFill + warmBounce) * windowVis * shojiDim + washiFill) * ao;
+  if (!indoor) {
+    // Exterior sky hemisphere fill
+    ambient = mix(vec3(0.02, 0.03, 0.06), vec3(0.20, 0.34, 0.54), dayMix) * (0.60 + 0.40 * max(N.y, 0.0));
+  }
 
-  // Warm 2700K Japantown Shoji Floor Andon Lantern + Desk Task Lamp point lights!
+  // Interior Warm 2700K Architectural & Task Point Lights
   vec3 localLights = vec3(0.0);
-  if (indoor && uLampOn > 0.5) {
-    // Floor Andon at (2.02, 0.55, 0.78)
-    vec3 toAndon = vec3(2.02, 0.55, 0.78) - vWorldPos;
-    float dA2 = dot(toAndon, toAndon) + 0.28;
-    float lA = max(dot(N, normalize(toAndon)), 0.15) / dA2;
-    // Desk Lamp at (0.14, 1.04, 1.44)
-    vec3 toDesk = vec3(0.14, 1.04, 1.44) - vWorldPos;
-    float dD2 = dot(toDesk, toDesk) + 0.18;
-    float lD = max(dot(N, normalize(toDesk)), 0.1) / dD2;
-    localLights += vec3(1.0, 0.66, 0.28) * (lA * 0.52 + lD * 0.28);
-  }
-  // Bunk warm amber LED strip fill in back-left alcove
   if (indoor) {
-    vec3 toBunk = vec3(-1.45, 1.74, -1.36) - vWorldPos;
-    float dB2 = dot(toBunk, toBunk) + 0.45;
-    localLights += vec3(0.95, 0.62, 0.25) * (max(dot(N, normalize(toBunk)), 0.0) * 0.16 / dB2);
+    if (uLampOn > 0.5) {
+      // Top-Right Bonsai Table Washi Andon (-2.25, 0.76, 1.70)
+      vec3 toAndon = vec3(-2.25, 0.76, 1.70) - vWorldPos;
+      float dA2 = dot(toAndon, toAndon) + 0.26;
+      localLights += vec3(1.0, 0.64, 0.26) * (max(dot(N, normalize(toAndon)), 0.18) * 0.42 / dA2);
+
+      // Articulated Desk Lamp Shade Cone (-0.26, 1.06, 1.46)
+      vec3 toDesk = vec3(-0.26, 1.06, 1.46) - vWorldPos;
+      float dD2 = dot(toDesk, toDesk) + 0.14;
+      localLights += vec3(1.0, 0.74, 0.36) * (max(dot(N, normalize(toDesk)), 0.10) * 0.34 / dD2);
+    }
+    // Top-Left L-Kitchen Warm Under-Cabinet Task Strips
+    vec3 toGalley = vec3(1.98, 1.66, 1.45) - vWorldPos;
+    float dG2 = dot(toGalley, toGalley) + 0.42;
+    localLights += vec3(1.0, 0.70, 0.34) * (max(dot(N, normalize(toGalley)), 0.05) * 0.22 / dG2);
+
+    // Bottom-Left Bed Warm Overhead Reading Strip
+    vec3 toBed = vec3(1.48, 1.75, -1.46) - vWorldPos;
+    float dB2 = dot(toBed, toBed) + 0.48;
+    localLights += vec3(0.98, 0.64, 0.28) * (max(dot(N, normalize(toBed)), 0.05) * 0.22 / dB2);
+
+    // Bottom-Right Unit-Bath Interior Ceiling & Vanity Mirror Light
+    if (vWorldPos.x < -0.34 && vWorldPos.z < -0.10) {
+      vec3 toBath = vec3(-1.42, 2.25, -1.25) - vWorldPos;
+      float dT2 = dot(toBath, toBath) + 0.45;
+      localLights += vec3(1.0, 0.92, 0.78) * (max(dot(N, normalize(toBath)), 0.20) * 0.58 / dT2);
+    }
   }
 
-  // Blinn-Phong specular highlight on wood, alloy, and sparkling Pacific Ocean
+  // Crisp Specular Highlights (wood polish, brushed alloy, porcelain, and sparkling Pacific Ocean glitter!)
   vec3 H = normalize(uSunDir + V);
-  float specPow = mix(96.0, 12.0, rough);
+  float specPow = mix(128.0, 14.0, rough);
   float spec = pow(max(dot(N, H), 0.0), specPow) * (1.0 - rough) * sunMask.x;
-  vec3 specLight = sunColor * spec * (mat == 7 ? 1.85 : 0.35);
+  vec3 specLight = sunColor * spec * (mat == 7 ? 2.6 : 0.32);
 
   vec3 litColor = baseCol * (ambient + directLight + localLights) + specLight;
 
-  // Distant coastal aerial perspective haze for exterior objects (z > 12m)
-  if (!indoor && vWorldPos.z > 8.0) {
-    float haze = 1.0 - exp(-(vWorldPos.z - 8.0) * 0.0032);
-    vec3 hazeCol = mix(vec3(0.12, 0.16, 0.28), vec3(0.58, 0.83, 0.96), dayMix);
-    hazeCol += vec3(1.0, 0.78, 0.45) * uPlumeGlow * 0.12;
-    litColor = mix(litColor, hazeCol, clamp(haze, 0.0, 0.72));
+  // Subtle Analytical Tyndall Volumetric Sun-Shaft Shimmer inside the Sunlit Room!
+  // 2 ultra-lightweight ray march samples along camera->surface ray (zero extra draw calls!)
+  if (indoor && dayMix > 0.25 && uSunDir.z > 0.08) {
+    vec3 ray = vWorldPos - uCamPos;
+    float rayLen = clamp(length(ray), 0.0, 4.5);
+    vec2 m1 = computeIndoorSunMask(uCamPos + ray * 0.38);
+    vec2 m2 = computeIndoorSunMask(uCamPos + ray * 0.72);
+    float shaft = (m1.x + m2.x) * 0.5;
+    litColor += vec3(1.0, 0.86, 0.56) * shaft * rayLen * 0.028 * dayMix * (1.0 - 0.80 * uShojiClosed);
   }
 
-  // ACES-inspired warm filmic tonemapping + gamma 2.2
+  // Gentle coastal aerial perspective haze on far headlands (preserves vivid blue ocean & crisp town!)
+  if (!indoor && vWorldPos.z > 18.0) {
+    float haze = 1.0 - exp(-(vWorldPos.z - 18.0) * 0.0018);
+    vec3 hazeCol = mix(vec3(0.05, 0.08, 0.16), vec3(0.32, 0.64, 0.92), dayMix);
+    hazeCol += vec3(1.0, 0.78, 0.45) * uPlumeGlow * 0.14;
+    litColor = mix(litColor, hazeCol, clamp(haze, 0.0, 0.52));
+  }
+
   vec3 x = max(litColor, vec3(0.0));
   vec3 mapped = (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14);
   fragColor = vec4(pow(clamp(mapped, 0.0, 1.0), vec3(1.0 / 2.2)), 1.0);

@@ -22,9 +22,10 @@ const TARGET_INFO = {
   10: { name: 'ANALOG GAUGE 3 — HAB BUS VOLTAGE (V)', hint: '[Click] Inspect Provenance · [M + Click / Right-Click] Place Yellow China-Marker Prediction' },
   11: { name: 'VHF COASTAL PAD-1 TRANSCEIVER', hint: '[Click/Tap] Request Live Sounding-Rocket Static Fire on Cape Pad (2,820 m away)' },
   12: { name: 'PAD TECHNICIAN SHIFT CLIPBOARD', hint: '[Click/Tap] Read Day-1 Thermal/Bus Audit Card & Export Akashi Proof-of-Flight' },
-  13: { name: 'PORT OLISAR RECESSED SLEEPING BUNK', hint: '[Click/Tap] Rest (+2h 45m) · Advance Real Solar Ephemeris (Noon -> Golden Hour -> Night)' },
-  14: { name: 'STAINLESS ELECTRIC KETTLE (0.45 kg H2O)', hint: '[Click/Tap] Toggle 1,060 W Boil Cycle (Auto-Cutoffs at 100.0 °C)' },
-  15: { name: 'INDOOR AC EVAPORATOR COIL UNIT', hint: '[Click/Tap] Toggle Heat Pump · Inspect Carnot-Derated COP in Eidos Visor' },
+  13: { name: 'RECESSED SLEEPING BED ALCOVE', hint: '[Click/Tap] Rest · Cycle Uchinoura Solar Light (Morning Sunbeams -> High Noon -> Sunset -> Night)' },
+  14: { name: 'STAINLESS ELECTRIC KETTLE (0.45 kg H2O)', hint: '[Click/Tap] Toggle 1,060 W Boil Cycle on L-Galley Counter (Auto-Cutoffs at 100.0 °C)' },
+  15: { name: 'INDOOR SPLIT AC EVAPORATOR UNIT', hint: '[Click/Tap] Toggle Heat Pump · Inspect Carnot-Derated COP in Eidos Visor' },
+  16: { name: 'UNIT-BATH SLIDING POCKET DOOR', hint: '[Click/Tap] Slide Bathroom Door Open / Closed · Step Inside Modular Restroom Pod' },
 };
 
 // Pre-allocated matrices & vectors (0 allocations in frame loop — PERFORMANCE.md N4)
@@ -398,7 +399,7 @@ async function boot() {
       elPromptSub.textContent = info.hint;
     } else {
       elPromptMain.textContent = `${formatJstClock(t[10])} · Uchinoura Hab #204 · Cabin ${roomC.toFixed(1)} °C · Bus ${Math.round(busW)} W (${busV.toFixed(1)} V)`;
-      elPromptSub.textContent = `WASD Move · Drag / [L] Look · Click/Tap Shoji, Window, Breakers, Gauges, Kettle, VHF Radio, Clipboard, Bunk`;
+      elPromptSub.textContent = `WASD Move · Drag / [L] Look · Click/Tap Shoji, Window, Breakers, Gauges, Kettle, VHF Radio, Clipboard, Bed, Bath Door`;
     }
 
     // Coastal Pad-1 343 m/s Shockwave Propagation Banner
@@ -505,8 +506,7 @@ async function boot() {
     gl.enable(gl.DEPTH_TEST);
     gl.depthMask(true);
     gl.clear(gl.DEPTH_BUFFER_BIT);
-    gl.enable(gl.CULL_FACE);
-    gl.cullFace(gl.BACK);
+    gl.disable(gl.CULL_FACE);
 
     gl.useProgram(worldProg);
     gl.uniformMatrix4fv(worldLocs.uViewProj, false, vpMat);

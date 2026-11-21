@@ -5,8 +5,8 @@
   "type": "module",
   "description": "Odderon — Zero-asset Rust/WASM 3D aerospace engineering & coastal life simulator",
   "scripts": {
-    "dev": "node server.mjs",
-    "start": "node server.mjs",
+    "dev": "bun server.mjs || node server.mjs",
+    "start": "bun server.mjs || node server.mjs",
     "build:wasm": "bash scripts/build-wasm.sh"
   }
 }
