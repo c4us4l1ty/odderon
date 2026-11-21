@@ -1,0 +1,8 @@
+[package]
+name = "odderon-thermo"
+version = "0.1.0"
+edition = "2021"
+description = "Unified 1D thermal, vapour-compression heat pump, and electrical bus solver for Odderon"
+
+[dependencies]
+odderon-dmath = { path = "../odderon-dmath" }

@@ -1,0 +1,5 @@
+[package]
+name = "odderon-dmath"
+version = "0.1.0"
+edition = "2021"
+description = "Deterministic no_std math, i128 hierarchical frames, solar ephemeris, and Provenance<T> for Odderon"

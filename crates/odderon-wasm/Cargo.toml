@@ -1,0 +1,14 @@
+[package]
+name = "odderon-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "Zero-allocation WebAssembly C-ABI bridge for Odderon"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+odderon-dmath = { path = "../odderon-dmath" }
+odderon-thermo = { path = "../odderon-thermo" }
+odderon-geom = { path = "../odderon-geom" }
+odderon-sim = { path = "../odderon-sim" }
