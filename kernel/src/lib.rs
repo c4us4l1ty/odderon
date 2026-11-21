@@ -30,6 +30,10 @@ pub mod dmath {
     pub const TAU: f64 = 6.283_185_307_179_586_f64;
     /// π/2.
     pub const HALF_PI: f64 = 1.570_796_326_794_896_6_f64;
+    /// ln 2.
+    pub const LN2: f64 = 0.693_147_180_559_945_3_f64;
+    /// 1/ln 2.
+    pub const INV_LN2: f64 = 1.442_695_040_888_963_4_f64;
 
     /// Horner over ascending coefficients: `c0 + x*(c1 + x*(c2 + ...))`.
     #[inline]
@@ -104,7 +108,9 @@ pub mod dmath {
         sin(x + HALF_PI)
     }
 
-    /// e^x, by argument halving and Horner: exact at 0, monotone, and identical on every target.
+    /// e^x by reduction to [0, ln2) and a 17-term Taylor polynomial, exactly as the JavaScript
+    /// kernel does it. (The earlier version halved the argument and *squared the polynomial*, which
+    /// is not the same function; it is the sort of thing a parity test exists to catch.)
     pub fn exp(x: f64) -> f64 {
         if x > 709.0 {
             return f64::INFINITY;
@@ -112,13 +118,37 @@ pub mod dmath {
         if x < -745.0 {
             return 0.0;
         }
-        let n = (x / 0.693_147_180_559_945_3).round();
-        let r = (x - n * 0.693_147_180_559_945_3) * 0.5;
-        let e = poly(&EXP, r);
-        let e2 = e * e;
-        // 2^n, exactly, by exponent construction
-        scale(e2, n as i32)
+        let n = (x * INV_LN2).floor();
+        let mut r = x - n * LN2;
+        let mut n = n as i32;
+        if r < 0.0 {
+            r += LN2;
+            n -= 1;
+        }
+        poly(&EXP_C, r) * scale(1.0, n)
     }
+
+    /// 1/n! for n = 0..17, by power.
+    const EXP_C: [f64; 18] = [
+        1.0,
+        1.0,
+        1.0 / 2.0,
+        1.0 / 6.0,
+        1.0 / 24.0,
+        1.0 / 120.0,
+        1.0 / 720.0,
+        1.0 / 5040.0,
+        1.0 / 40_320.0,
+        1.0 / 362_880.0,
+        1.0 / 3_628_800.0,
+        1.0 / 39_916_800.0,
+        1.0 / 479_001_600.0,
+        1.0 / 6_227_020_800.0,
+        1.0 / 87_178_291_200.0,
+        1.0 / 1_307_674_368_000.0,
+        1.0 / 20_922_789_888_000.0,
+        1.0 / 355_687_428_096_000.0,
+    ];
 
     /// `m * 2^n`, exactly, without `powi`'s rounding surprises.
     pub fn scale(m: f64, n: i32) -> f64 {
