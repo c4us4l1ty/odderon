@@ -191,9 +191,24 @@ suite('the instruments live on the walls, and the mouse is captured');
 
   const before = app.cam.yaw;
   (env.listeners['d:pointermove'] || []).forEach(f => f({ movementX: 120, movementY: 0 }));
-  ok(Math.abs(app.cam.yaw - before) > 1e-3, 'moving the captured mouse turns the head');
+  ok(app.cam.yaw > before, 'moving the mouse right turns the head right, not left');
+  const pitchBefore = app.cam.pitch;
+  (env.listeners['d:pointermove'] || []).forEach(f => f({ movementX: 0, movementY: -120 }));
+  ok(app.cam.pitch > pitchBefore, 'pushing the mouse forward looks up');
+
+  // --- real UI keeps its clicks ---------------------------------------------------------------
+  env.win.document.pointerLockElement = null;
+  (env.listeners['d:pointerlockchange'] || []).forEach(f => f());
+  app.canvas._locked = false;
+  const bar = env.win.document.getElementById('bar');
+  bar.closest = (sel) => (sel.indexOf('#bar') >= 0 ? bar : null);
+  (env.listeners['d:pointerdown'] || []).forEach(f => f({ target: bar, clientX: 1, clientY: 1 }));
+  ok(app.canvas._locked === false, 'clicking the frame read-out does not capture the mouse');
 
   // --- Esc returns the cursor, and the view stops moving --------------------------------------
+  env.win.document.pointerLockElement = app.canvas;   // capture again, as the player would
+  (env.listeners['d:pointerlockchange'] || []).forEach(f => f());
+  env.win.document._exited = false;
   const kd = env.listeners.keydown || [];
   kd.forEach(f => f({ key: 'escape', preventDefault() {} }));
   ok(env.win.document._exited === true, 'Esc calls exitPointerLock, so the cursor comes back');
@@ -206,14 +221,14 @@ suite('the instruments live on the walls, and the mouse is captured');
   // --- the instruments are objects at real world positions -----------------------------------
   const cam = app._camera();
   const hud = app.hud;
-  const pr = hud.project([-2.02, 1.16, 2.34], cam, 1280, 720);
+  const pr = hud.project([2.33, 1.34, 1.55], cam, 1280, 720);
   ok(pr && pr.z > 0, 'the wall thermometer is in front of the camera at spawn, so it is readable');
   ok(pr.x > -40 && pr.x < 1320 && pr.y > -40 && pr.y < 760,
     'and it lands inside the frame when you look at the window');
   // turn 180 degrees: the gauge must now be behind the camera, i.e. it is not an overlay
   const turned = { pos: cam.pos, fwd: [-cam.fwd[0], cam.fwd[1], -cam.fwd[2]],
                    right: [-cam.right[0], cam.right[1], -cam.right[2]], up: cam.up, fov: cam.fov };
-  const behind = hud.project([-2.02, 1.16, 2.34], turned, 1280, 720);
+  const behind = hud.project([2.33, 1.34, 1.55], turned, 1280, 720);
   ok(behind === null, 'a gauge behind you is not drawn: instruments are not an overlay');
 }
 

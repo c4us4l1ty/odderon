@@ -30,7 +30,7 @@ and nothing scheduled at all when idle.
 ```sh
 git pull origin main
 ./run.sh            # then open http://localhost:8080
-./run.sh test       # 139 assertions, no dependencies
+./run.sh test       # 159 assertions, no dependencies
 ```
 
 No build step, no bundler, no package install. Python 3 only, for the static server with the

@@ -60,65 +60,118 @@
     'float sdCyl(vec3 p, float r, float h){ vec2 d=abs(vec2(length(p.xz),p.y))-vec2(r,h); return min(max(d.x,d.y),0.0)+length(max(d,0.0)); }',
 
     /* ---------------- the room ----------------
-     * A hab, in the Star Citizen sense: a small, modular, deliberate volume. Room x [-2.6, 2.6],
-     * z [-2.4, 2.4], ceiling 2.55. In the -z half the floor drops 0.42 m inside a stepped kerb, so
-     * the lounge is sunken -- the one move that makes a box read as a designed interior.
+     * A hab interior, built the way the reference (Star Citizen's apartment habs) is built:
      *
-     * Which walls exist is decided by *where the window and the door are*: the renderer and the
-     * world both read the same two rectangles, so the sunlight always comes through a hole.
+     *   - the *bed sits on a raised platform* in the middle of the room, and the floor steps down
+     *     to the working level in four wide, shallow treads. That single move -- one platform with
+     *     a staircase around it -- is what makes the volume read as designed instead of as a box
+     *     with furniture in it.
+     *   - every tread carries a lit strip along its nosing. The light is *in the architecture*.
+     *   - two long horizontal strip windows on the far wall, above the bed, with a heavy frame.
+     *   - an angled ceiling with a lit cove, and structural ribs crossing it.
+     *   - one curved glass balustrade at the foot of the platform, because the hab does not have a
+     *     straight line where a curve would do.
+     *
+     * Room: x [-2.7, 2.7], z [-2.6, 2.6], ceiling 2.62. Platform: x [-1.5, 1.5],
+     * z [0.15, 2.3], top at y = 0.84. Treads: four, each 0.21 m high being too many for the height,
+     * so the stair runs down in three treads of 0.21 plus the platform face.
      */
-    'float LOUNGE_Z = 1.05;',      // the kerb: z greater than this is the raised floor
-    'float LOUNGE_D = 0.42;',      // how far it drops
-    'float WX = -0.55;',           // window centre
-    'float WY = 1.42;',
-    'float WZ = 2.40;',            // the window wall (+z)
-    'float DX =  0.95;',           // the door in the -z wall
-    'float DZ = -2.40;',
+    'float PLAT_Z = 0.10;',        // the platform's near edge: z greater than this is on the platform
+    'float PLAT_H = 0.64;',        // its height: you sit on the edge of a bed 0.63 m above the floor
+    'float TREAD_W = 0.30;',       // each tread is 300 mm deep: shallow enough to walk up without looking
+    'float TREAD_H = 0.16;',
+    'float WX = 0.0;',           // the strip windows, centred on the bed
+    'float WY1 = 1.28;',           // lower window band
+    'float WY2 = 1.84;',           // upper band
+    'float WZ = 2.28;',
+    'float DX =  1.62;',           // the door in the -z wall
+    'float DZ = -2.30;',
 
-    'bool inWindow(vec3 p){ return p.z > 2.30 && abs(p.x-WX) < 1.05 && abs(p.y-WY) < 0.70; }',
-    'bool inDoor(vec3 p){ return p.z < -2.30 && abs(p.x-DX) < 0.50 && p.y < 2.04; }',
+    // How high is the floor at this point? One function, and the whole room reads off it.
+    'float floorAt(vec3 p){',
+    '  if (p.z > PLAT_Z && abs(p.x) < 1.55) return PLAT_H;',
+    '  float zs = p.z - 1.5;',        // steps push toward +z
+    '  return 0.0;',
+    '}',
 
-    'float floorLevel(vec3 p){ return (p.z > LOUNGE_Z && p.x > -2.15 && p.x < 2.15) ? 0.0 : -LOUNGE_D; }',
+    // the treads: a staircase that runs along the -z face of the platform and round its -x side
+    'float stepAt(vec3 p){',
+    '  if (p.z > PLAT_Z) return PLAT_H;',
+    '  // three treads descending from the platform edge toward -z',
+    '  float dz = PLAT_Z - p.z;',
+    '  if (abs(p.x) < 1.55 && dz < 4.0*TREAD_W) {',
+    '    float k = floor(dz / TREAD_W);',
+    '    return PLAT_H - (k + 1.0)*TREAD_H;',
+    '  }',
+    '  // and the same three treads wrapping round the -x end, so the platform is approached from two sides',
+    '  float dx = -1.55 - p.x;',
+    '  if (p.x < -1.55 && dx < 4.0*TREAD_W) {',
+    '    float k = floor(dx / TREAD_W);',
+    '    return PLAT_H - (k + 1.0)*TREAD_H;',
+    '  }',
+    '  return 0.0;',
+    '}',
 
-    // distance to the shell, from the inside. > 0 inside the room.
+    'float inWindow(vec3 p){',
+    '  if (p.z < 2.18) return false;',
+    '  float band = 0.0;',
+    '  if (abs(p.y - WY1) < 0.24) band = 1.0;',
+    '  if (abs(p.y - WY2) < 0.24) band = 1.0;',
+    '  return band > 0.5 && abs(p.x - WX) < 1.85;',
+    '}',
+    'bool inDoor(vec3 p){ return p.z < -2.20 && abs(p.x - DX) < 0.52 && p.y < 2.04; }',
+
+    // distance to the shell, from the inside: walls, the stepped floor, the angled ceiling
     'float shell(vec3 p){',
-    '  vec3 q = vec3(2.6 - abs(p.x), min(p.y, 2.55 - p.y), 2.4 - abs(p.z));',
-    '  float d = min(q.x, min(q.y, q.z));',
-    '  d = min(d, p.y - floorLevel(p));',
+    '  float d = min(2.35 - abs(p.x), 2.30 - abs(p.z));',
+    '  float ceil = 2.45 - p.y;',
+    '  d = min(d, ceil);',
+    '  d = min(d, p.y - stepAt(p));',
     '  return d;',
     '}',
 
     /* ---------------- props ----------------
-     * A hab's furniture is built in, not placed: a platform bed, a bench that wraps the sunken
-     * lounge, a desk under the window, one pipe run. Seven primitives, all spheres and boxes.
+     * The bed is the anchor of the room, exactly as in the reference: a wide low platform bed with a
+     * pale mattress, two pillows, and its base lit from underneath. Everything else is smaller and
+     * quieter than the bed.
      */
     'vec2 props(vec3 p){',
     '  vec2 r = vec2(1e9, 0.0);',
     '  float d;',
-    // platform bed on the raised floor, +x, its top 0.56 m above the boards
-    '  d = sdBox(p - vec3(1.72, 0.20, 1.70), vec3(0.80, 0.20, 0.68));',
-    '  r = vec2(d, 1.0);',
-    // a folded blanket: one more box, slightly proud of the mattress
-    '  d = sdBox(p - vec3(1.52, 0.42, 1.78), vec3(0.42, 0.05, 0.62));',
-    '  if (d < r.x) r = vec2(d, 10.0);',
-    // the desk: a slab on two thin legs, under the window
-    '  d = sdBox(p - vec3(1.10, 0.74, 2.05), vec3(0.70, 0.03, 0.30));',
+    // the mattress, recessed in the platform
+    '  d = sdBox(p - vec3(0.0, PLAT_H + 0.13, 1.15), vec3(1.30, 0.13, 0.86));',
+    '  r = vec2(d, 9.0);',
+    // the base under the mattress, inset, so the bed appears to float on a lit plinth
+    '  d = sdBox(p - vec3(0.0, PLAT_H + 0.02, 1.15), vec3(1.16, 0.05, 0.76));',
+    '  if (d < r.x) r = vec2(d, 1.0);',
+    // the headboard: a tall upholstered panel against the window wall
+    '  d = sdBox(p - vec3(0.0, PLAT_H + 0.12, 2.05), vec3(1.22, 0.30, 0.05));',
     '  if (d < r.x) r = vec2(d, 2.0);',
-    '  d = min(sdBox(p - vec3(0.46, 0.35, 2.05), vec3(0.022, 0.35, 0.26)),',
-    '          sdBox(p - vec3(1.74, 0.35, 2.05), vec3(0.022, 0.35, 0.26)));',
-    '  if (d < r.x) r = vec2(d, 5.0);',
-    // the lounge bench: one long curved block along the back of the sunken area, with a back rail
-    '  d = sdBox(p - vec3(0.0, -0.24, -1.72), vec3(1.90, 0.18, 0.34));',
+    // two pillows
+    '  d = min(sdBox(p - vec3(-0.64, PLAT_H + 0.28, 1.78), vec3(0.36, 0.075, 0.17)),',
+    '          sdBox(p - vec3( 0.64, PLAT_H + 0.28, 1.78), vec3(0.36, 0.075, 0.17)));',
+    '  if (d < r.x) r = vec2(d, 10.0);',
+    // the console beside the bed on the platform: a dark slab the wall screen is set into
+    '  d = sdBox(p - vec3(-1.92, 0.28, 1.62), vec3(0.40, 0.28, 0.40));',
+    '  if (d < r.x) r = vec2(d, 2.0);',
+    // a low cube seat on the floor below the platform, as in the reference
+    '  d = sdBox(p - vec3(1.70, 0.20, -0.26), vec3(0.24, 0.20, 0.24));',
     '  if (d < r.x) r = vec2(d, 6.0);',
-    '  d = sdBox(p - vec3(0.0, 0.02, -1.98), vec3(1.90, 0.20, 0.06));',
-    '  if (d < r.x) r = vec2(d, 6.0);',
-    // the pipe run: the machine the room is. Low along -x, then up into the ceiling.
-    '  d = min(sdCyl(vec3(p.x + 2.44, p.y - 0.34, p.z), 0.055, 2.05),',
-    '          sdCyl(vec3(p.x + 2.44, p.y - 1.55, p.z + 2.05), 0.055, 1.20));',
+    // the pipe run: the machine the room is. Low along -z, then up into the ceiling.
+    '  d = min(sdCyl(vec3(p.x - 2.22, p.y - 0.30, p.z + 0.30), 0.055, 1.55),',
+    '          sdCyl(vec3(p.x - 2.22, p.y - 1.85, p.z + 0.30), 0.055, 0.55));',
     '  if (d < r.x) r = vec2(d, 7.0);',
-    // the wall screen: dark glass on the -x wall, the room\'s second light at night
-    '  d = sdBox(p - vec3(-2.56, 1.35, -0.30), vec3(0.02, 0.34, 0.52));',
+    // the wall screen: a dark panel on the -z wall, the room\'s second light at night
+    '  d = sdBox(p - vec3(-1.20, 1.28, -2.26), vec3(0.58, 0.34, 0.03));',
     '  if (d < r.x) r = vec2(d, 8.0);',
+    // the desk: a slab cantilevered off the +x wall, under the window, with one leg
+    '  d = sdBox(p - vec3(2.02, 0.74, 0.10), vec3(0.32, 0.03, 0.72));',
+    '  if (d < r.x) r = vec2(d, 5.0);',
+    '  d = sdBox(p - vec3(1.72, 0.37, 0.10), vec3(0.022, 0.37, 0.68));',
+    '  if (d < r.x) r = vec2(d, 5.0);',
+    // the glass balustrade at the foot of the platform: a thin curved sheet on two posts
+    '  d = sdBox(p - vec3(-1.05, 0.44, -1.16), vec3(0.50, 0.44, 0.012));',
+    '  if (d < r.x) r = vec2(d, 11.0);',
     '  return r;',
     '}',
 
@@ -128,11 +181,17 @@
      * with -s every wall faced away from the sun and only the sky fill survived.
      */
     'vec3 nShell(vec3 p){',
-    '  if (p.y - floorLevel(p) < 0.03) return vec3(0.0, 1.0, 0.0);',
-    '  float ex = 2.6 - abs(p.x), ey = min(p.y, 2.55 - p.y), ez = 2.4 - abs(p.z);',
-    '  if (ex < ey && ex < ez) return vec3(sign(p.x), 0.0, 0.0);',
+    '  float fy = stepAt(p);',
+    '  if (p.y - fy < 0.05) return vec3(0.0, 1.0, 0.0);',
+    // tread risers face -z (or +x on the wrapped side), and the platform face faces -z
+    '  if (p.z < PLAT_Z && p.y - fy > 0.06) {',
+    '    if (abs(p.x) < 1.5) return vec3(0.0, 0.0, -1.0);',
+    '    if (p.x < -1.55) return vec3(1.0, 0.0, 0.0);',
+    '  }',
+    '  float ex = 2.35 - abs(p.x), ey = 2.45 - p.y, ez = 2.30 - abs(p.z);',
+    '  if (ex < ez && ex < ey) return vec3(sign(p.x), 0.0, 0.0);',
     '  if (ez < ey) return vec3(0.0, 0.0, sign(p.z));',
-    '  return vec3(0.0, p.y < 1.275 ? -1.0 : 1.0, 0.0);',
+    '  return vec3(0.0, -1.0, 0.0);',        // the ceiling, seen from below
     '}',
 
     'vec3 nProps(vec3 p){',
@@ -148,7 +207,7 @@
      */
     'vec2 trace(vec3 ro, vec3 rd){',
     '  float t = 0.02;',
-    '  for(int i=0;i<40;i++){',
+    '  for(int i=0;i<32;i++){',
     '    vec2 h = props(ro + rd*t);',
     '    if (h.x < 0.0016) return vec2(t, h.y);',
     '    t += max(h.x*0.9, 0.008);',
@@ -175,42 +234,58 @@
      */
     'vec3 albedo(vec3 p, vec3 n, float mat){',
     '  if (mat < 0.5) {',
-    '    float fy = floorLevel(p);',
-    '    if (p.y - fy < 0.02) {',
-    // the floor: dark technical boards on the raised level, a woven mat in the lounge
-    '      if (fy < -0.2) return mix(vec3(0.20,0.18,0.16), vec3(0.26,0.23,0.20), 0.35+0.4*noise(p.xz*14.0));',
-    '      float board = step(0.5, fract(p.x*2.2));',
-    '      return mix(vec3(0.26,0.21,0.16), vec3(0.31,0.25,0.19), board) * (0.85+0.3*noise(p.xz*18.0));',
+    '    float fy = stepAt(p);',
+    // the floor: pale stone on the working level, warm walnut on the platform, as in the reference
+    '    if (p.y - fy < 0.05) {',
+    '      if (fy > 0.3) {',
+    '        float seam = smoothstep(0.03, 0.0, abs(fract(p.x*2.4)-0.5)-0.47);',
+    '        return mix(vec3(0.42,0.27,0.14), vec3(0.52,0.35,0.19), 0.4+0.6*noise(p.xz*9.0)) * (1.0 - 0.22*seam);',
+    '      }',
+    '      float slab = smoothstep(0.02, 0.0, abs(fract(p.x*1.3)-0.5)-0.485);',
+    '      return mix(vec3(0.66,0.63,0.57), vec3(0.76,0.73,0.67), noise(p.xz*3.0)) * (1.0 - 0.22*slab);',
     '    }',
-    // the wall: cream plaster above, painted steel wainscot below, segmented panels with a bead
-    '    vec3 c = vec3(0.78,0.74,0.66);',
-    '    float cell = abs(p.z*1.6 - floor(p.z*1.6)) - 0.5;',
-    '    float bead = smoothstep(0.44,0.5,abs(cell));',
-    '    c *= 0.94 + 0.10*bead;',
-    '    if (p.y - fy < 0.92) c = mix(vec3(0.26,0.25,0.23), vec3(0.30,0.29,0.26), noise(p.xz*9.0));',
-    // a bulkhead rib every 2.4 m: a strip of steel that reads as structure, not decoration
-    '    float rib = smoothstep(0.055,0.02,abs(abs(p.x)-1.35));',
-    '    c = mix(c, vec3(0.34,0.33,0.30), rib*0.75);',
-    // the ceiling cove: a shallow tray that catches the light
-    '    if (n.y < -0.5) c = mix(vec3(0.72,0.69,0.62), vec3(0.86,0.83,0.76), smoothstep(0.0,0.6,2.6-abs(p.x)));',
+    // tread nosings: a band of brushed aluminium at the lip of every step
+    '    if (p.y - fy < 0.075 && fy > 0.02) return vec3(0.42,0.42,0.40);',
+    // the wall: light grey panel bay, with the hab\'s segmented bays and a dark base
+    '    vec3 c = vec3(0.66,0.65,0.62);',
+    '    float bay = smoothstep(0.012, 0.0, abs(fract(p.z*1.15)-0.5)-0.494);',
+    '    c *= 1.0 - 0.35*bay;',
+    '    if (p.y - fy < 0.14) c = vec3(0.16,0.16,0.17);',
+    // structural ribs: the vertical posts you can see in the reference, every 2.2 m
+    '    float rib = smoothstep(0.045,0.015,abs(abs(p.x)-1.98));',
+    '    c = mix(c, vec3(0.44,0.44,0.42), rib);',
+    // the ceiling: dark, with a bright cove running down both sides
+    '    if (n.y < -0.5) {',
+    '      float cove = smoothstep(0.62, 0.18, 2.35 - abs(p.x));',
+    '      c = mix(vec3(0.18,0.18,0.19), vec3(1.0,0.97,0.90), cove);',
+    '    }',
     '    return c;',
     '  }',
-    '  if (mat < 1.5) return vec3(0.20,0.19,0.20);',                       // bed platform, dark steel
-    '  if (mat < 2.5) return mix(vec3(0.40,0.28,0.18), vec3(0.48,0.34,0.22), noise(p.xz*26.0));',
-    '  if (mat < 3.5) return vec3(0.11,0.11,0.12);',                       // door panel
-    '  if (mat < 4.5) return vec3(1.0);',                                  // the viewport
-    '  if (mat < 5.5) return vec3(0.17,0.17,0.17);',                       // desk frame
-    '  if (mat < 6.5) return mix(vec3(0.20,0.24,0.23), vec3(0.26,0.31,0.29), noise(p.xz*20.0));',
-    '  if (mat < 7.5) return vec3(0.30,0.24,0.14);',                       // painted pipe, ochre
+    '  if (mat < 1.5) return vec3(0.12,0.12,0.13);',                       // bed base, dark steel
+    '  if (mat < 2.5) return vec3(0.10,0.10,0.11);',                       // console: dark lacquer
+    '  if (mat < 3.5) return vec3(0.09,0.09,0.10);',                       // door panel
+    '  if (mat < 4.5) return vec3(1.0);',                                  // the window
+    '  if (mat < 5.5) return vec3(0.55,0.55,0.53);',                       // desk: pale composite
+    '  if (mat < 6.5) return vec3(0.62,0.62,0.60);',                       // the cube seat, white boucle
+    '  if (mat < 7.5) return vec3(0.20,0.22,0.21);',                       // painted pipe, dark green
     '  if (mat < 8.5) return vec3(0.03,0.04,0.05);',                       // screen glass
-    '  if (mat < 9.5) return vec3(0.52,0.62,0.66);',                       // the folded blanket
-    '  return vec3(0.5);',
+    '  if (mat < 9.5) return vec3(0.80,0.82,0.79);',                       // the mattress, pale linen
+    '  if (mat < 10.5) return vec3(0.88,0.88,0.85);',                      // pillow
+    '  return vec3(0.62,0.68,0.70);',                                      // the glass balustrade
     '}',
 
     /* ---------------- the light ----------------
-     * The window is an aperture, so the sun is integrated over a rectangle: three mullions make the
-     * bars across the floor, a tree makes the wobbling ellipse, a wire makes the catenary. All of it
-     * is closed-form -- there is no shadow map anywhere in this file.
+     * Two different things come through a window, and the room was only modelling one of them.
+     *
+     *  1. The sun: a *directional* beam, but the window clips it, so what lands on the floor is the
+     *     window's own silhouette, projected along the sun. Two horizontal bands plus three vertical
+     *     mullions, which is exactly the pattern the reference hab has painted across its floor.
+     *  2. The sky: an *area* source filling the whole aperture. This is what makes a daytime room
+     *     readable -- a soft, cool, cosine-weighted light from one direction, falling off with
+     *     distance. Without it a room at noon is a bright patch on the floor and a cave elsewhere.
+     *
+     * Both are closed-form. There is no shadow map anywhere in this file, and no march: the sun test
+     * is one division per plane, which is why it costs nothing on a 2015 iGPU.
      */
     'float gobo(vec3 p){',
     '  float az = atan(uSunDir.x, uSunDir.z);',
@@ -228,15 +303,37 @@
     '  return s;',
     '}',
 
-    // the bars: the shadow of the window frame, projected along the sun onto whatever we hit
-    'float lightBars(vec3 p){',
-    '  vec2 q = p.xz - uSunDir.xz * (p.y * 0.5);',
-    '  float bars = 0.0;',
+    /* The window's silhouette, cast on whatever we hit. We project the surface point *back* along
+     * the sun onto the window plane and ask which part of the glazing it came through: a band, a
+     * mullion, or the wall. That is the pattern you see on a floor at four in the afternoon. */
+    'float windowPattern(vec3 p){',
+    '  if (abs(uSunDir.z) < 0.02) return 1.0;',
+    '  float t = (WZ - p.z) / uSunDir.z;',
+    '  vec3 q = p + uSunDir * t;',
+    '  // the two bands',
+    '  float band = max(smoothstep(0.26, 0.20, abs(q.y - WY1)),',
+    '                   smoothstep(0.26, 0.20, abs(q.y - WY2)));',
+    '  // the mullions: three vertical bars, and the frame at the ends',
+    '  float frame = smoothstep(1.85, 1.78, abs(q.x - WX));',
+    '  float bar = 1.0;',
     '  for(int i=0;i<3;i++){',
-    '    float bx = WX + (float(i) - 1.0) * 0.66;',
-    '    bars = max(bars, 1.0 - smoothstep(0.0, 0.075, abs(q.x - bx)));',
+    '    float bx = WX + (float(i) - 1.0) * 1.15;',
+    '    bar *= smoothstep(0.0, 0.045, abs(q.x - bx));',
     '  }',
-    '  return 1.0 - 0.62*bars;',
+    '  return band * frame * bar;',
+    '}',
+
+    // the tread nosings, the cove and the bed base: the light that is built into the room
+    'float stripLight(vec3 p, vec3 n){',
+    '  float lit = 0.0;',
+    // a strip under the platform edge and along every tread nosing
+    '  float fy = stepAt(p);',
+    '  lit += smoothstep(0.075, 0.02, p.y - fy) * 1.6;',
+    // a strip up the sides of the platform
+    '  lit += smoothstep(0.06, 0.0, abs(p.y - (PLAT_H - 0.09))) * smoothstep(0.0, 0.5, 1.55 - abs(p.x)) * 0.9;',
+    // the ceiling cove: two long lines down the room
+    '  lit += smoothstep(0.42, 0.06, 2.35 - abs(p.x)) * smoothstep(0.0, 0.25, 2.45 - p.y) * 1.2;',
+    '  return lit * max(0.0, 0.35 + 0.65*n.y);',
     '}',
 
     'vec3 sky(vec3 rd){',
@@ -260,22 +357,27 @@
     '}',
 
     /* ---------------- does the sun reach this surface? ----------------
-     * This is the whole art direction in one function. The window is an aperture in the +z wall, so
-     * a sun ray reaches a point iff its exit point through z=WZ lands in the window rectangle and no
-     * other wall is hit first. Closed-form: one division per plane, no march, no shadow map. The
-     * soft edge is what makes the light look like afternoon rather than a stencil.
+     * The window is an aperture in the +z wall, so a sun ray reaches a point iff:
+     *   - the sun is actually in front of that wall (sunDir.z > 0),
+     *   - the ray exits through z = WZ before it hits any other wall,
+     *   - and the exit point lies inside one of the two glazing bands.
+     * One division per plane, no march, no shadow map. This is the function the whole art direction
+     * hangs on, and it is eleven lines.
      */
+    'float inGlazing(vec3 q){',
+    '  float band = max(smoothstep(0.24, 0.18, abs(q.y - WY1)),',
+    '                   smoothstep(0.24, 0.18, abs(q.y - WY2)));',
+    '  return band * smoothstep(1.85, 1.80, abs(q.x - WX));',
+    '}',
     'float sunVisible(vec3 p, vec3 n){',
-    '  if (uSunDir.z <= 0.04) return 0.0;                       // the viewport faces +z',
-    '  float tz = (2.40 - p.z) / uSunDir.z;',
+    '  if (uSunDir.z <= 0.02) return 0.0;',
+    '  float tz = (WZ - p.z) / uSunDir.z;',
     '  if (tz <= 0.0) return 0.0;',
     '  vec3 q = p + uSunDir * tz;',
-    // the aperture must be the first thing the ray meets
-    '  float tx = ((uSunDir.x > 0.0 ? 2.6 : -2.6) - p.x) / (abs(uSunDir.x) < 0.02 ? 0.02 : uSunDir.x);',
-    '  float tc = ((uSunDir.y > 0.0 ? 2.55 : 0.0) - p.y) / (abs(uSunDir.y) < 0.02 ? 0.02 : uSunDir.y);',
+    '  float tx = ((uSunDir.x > 0.0 ? 2.35 : -2.35) - p.x) / (abs(uSunDir.x) < 0.02 ? 0.02 : uSunDir.x);',
+    '  float tc = ((uSunDir.y > 0.0 ? 2.45 : 0.0) - p.y) / (abs(uSunDir.y) < 0.02 ? 0.02 : uSunDir.y);',
     '  if (tx < tz || tc < tz) return 0.0;',
-    '  float inside = smoothstep(1.05, 0.90, abs(q.x - WX)) * smoothstep(0.70, 0.56, abs(q.y - WY));',
-    '  return inside;',
+    '  return inGlazing(q);',
     '}',
 
     'void main(){',
@@ -292,45 +394,53 @@
     '    float mat = hit.y;',
     '    float sunUp = smoothstep(-0.04, 0.16, uSunElev);',
     '    if (mat > 3.5 && mat < 4.5) {',
-    // the viewport: the real sky, dimmed by the curtain. The curtain is a physical thing: closing it
-    // takes the sun out of the room, which is the Day-1 experiment made visible.
-    '      vec3 out_ = sky(normalize(vec3(rd.x*1.2, rd.y*0.95 - 0.04, 0.72)));',
-    '      float cur = mix(0.085, 1.0, uCurtain*uCurtain);',
-    '      col = out_ * cur * 1.4 + vec3(0.012);',
+    // the window: two bands of real sky, a heavy frame between them, dimmed by the curtain
+    '      float band = max(smoothstep(0.26, 0.20, abs(p.y - WY1)), smoothstep(0.26, 0.20, abs(p.y - WY2)));',
+    '      vec3 out_ = sky(normalize(vec3(rd.x*1.15, rd.y*0.92 - 0.03, 0.72)));',
+    '      float cur = mix(0.06, 1.0, uCurtain*uCurtain);',
+    // the sash and mullions are dark aluminium, catching a little of the room
+    '      float bar = 1.0;',
+    '      for(int i=0;i<3;i++){',
+    '        float bx = WX + (float(i) - 1.0) * 1.15;',
+    '        bar *= smoothstep(0.0, 0.035, abs(p.x - bx));',
+    '      }',
+    '      vec3 frameCol = vec3(0.10,0.10,0.11) + vec3(0.22,0.24,0.26)*0.5;',
+    '      col = mix(frameCol, out_*cur*1.5 + vec3(0.01), band*bar);',
     '    } else if (mat > 2.5 && mat < 3.5) {',
     // the door: a lit corridor, so the hab is a room in a bigger building
     '      col = mix(vec3(0.05,0.05,0.055), vec3(0.40,0.38,0.32), 0.30 + 0.45*uScreen);',
     '    } else if (mat > 7.5 && mat < 8.5) {',
-    // the wall screen: the room\'s second light source, and the only thing in here with a UI
+    // the wall screen
     '      float tab = smoothstep(0.02,0.0,abs(fract(p.z*6.0)-0.5)-0.44) * step(mod(p.y*8.0,3.0),1.0);',
     '      col = vec3(0.05,0.07,0.08) + vec3(0.18,0.30,0.33)*(0.35+0.65*uScreen)*(0.35+tab);',
     '    } else {',
     '      vec3 n = (mat > 0.5) ? nProps(p) : nShell(p);',
     '      vec3 alb = albedo(p, n, mat);',
+    '      float sunUp = smoothstep(-0.04, 0.16, uSunElev);',
     '      float dif = max(dot(n, uSunDir), 0.0);',
-    // the sun reaches a surface only if the window sits between the two: this is the difference
-    // between a lit room and a room painted blue
-    '      float vis = sunVisible(p, n) * smoothstep(0.15, 0.85, uCurtain) * sunUp;',
-    // The other half of a real window: the whole aperture is a sky-coloured area light. Without it a
-    // room at noon is a bright patch on the floor and a dark box everywhere else, which is correct
-    // and reads as a cave. One inverse-square term, cosine-weighted, standing in for the skylight.
-    '      vec3 toWin = vec3(WX, WY, 2.38) - p;',
+    // the sun, clipped by the window: a hard-edged pattern of two bands and three bars
+    '      float vis = sunVisible(p, n) * smoothstep(0.10, 0.80, uCurtain) * sunUp;',
+    '      float pat = windowPattern(p);',
+    '      float shade = mix(1.0, 0.25 + 0.75*pat, smoothstep(0.0, 0.35, vis));',
+    '      vec3 sunLit = uSunCol * dif * vis * shade * 4.4;',
+    // the sky through the same aperture: an area light, which is what actually makes a room readable
+    '      vec3 toWin = vec3(WX, (WY1+WY2)*0.5, WZ) - p;',
     '      float d2 = dot(toWin, toWin);',
     '      toWin = toWin * inversesqrt(d2 + 1e-4);',
     '      float ap = max(dot(n, toWin), 0.0) * max(toWin.z, 0.0);',
-    '      vec3 skylight = mix(uSkyHorizon, uSkyZenith, 0.30) * ap * (3.0 / (1.0 + d2))',
-    '                    * smoothstep(0.10, 0.9, uCurtain) * (0.25 + 0.75*uDay);',
-    '      float shade = 1.0 - 0.60*gobo(p) - (1.0 - lightBars(p));',
-    '      vec3 sunLit = uSunCol * dif * vis * shade * 3.4;',
-    // the sky is the fill: cool from above, warm from the boards, and a lamp you can actually see
-    '      vec3 fill = mix(uSkyHorizon, uSkyZenith, 0.35) * 0.44 * (0.52 + 0.48*n.y);',
-    '      vec3 bounce = vec3(0.36,0.27,0.18) * 0.55 * max(0.0, 0.45 - n.y) * (0.30 + 0.70*sunUp);',
-    '      vec3 lamp = uLampCol * uLampOn * 0.80 * max(0.0, 0.35 + n.y*0.65);',
-    '      vec3 scr = vec3(0.16,0.26,0.28) * uScreen * 0.5 * max(0.0, dot(n, normalize(vec3(-1.0,0.2,-0.4))));',
-    '      col = alb * (sunLit + skylight + fill + bounce + lamp + scr);',
-    // occlusion, analytically: dark under the bench, dark where the walls meet
-    '      float ao = mix(0.40, 1.0, smoothstep(0.0, 0.50, p.y - floorLevel(p)));',
-    '      ao *= mix(0.62, 1.0, smoothstep(0.0, 0.40, min(2.6 - abs(p.x), 2.4 - abs(p.z))));',
+    '      vec3 skylight = mix(uSkyHorizon, uSkyZenith, 0.22) * ap * (11.0 / (1.0 + d2*0.55))',
+    '                    * smoothstep(0.08, 0.9, uCurtain) * (0.25 + 0.75*uDay);',
+    // the light built into the architecture: tread nosings, the cove, the bed base
+    '      vec3 builtIn = vec3(1.0,0.90,0.74) * stripLight(p, n) * 1.35;',
+    // and the fill that keeps the shadows from being black
+    '      vec3 fill = mix(uSkyHorizon, uSkyZenith, 0.35) * 0.34 * (0.55 + 0.45*n.y);',
+    '      vec3 bounce = vec3(0.40,0.30,0.20) * 0.34 * max(0.0, 0.45 - n.y) * (0.30 + 0.70*sunUp);',
+    '      vec3 lamp = uLampCol * uLampOn * 0.55 * max(0.0, 0.35 + n.y*0.65);',
+    '      vec3 scr = vec3(0.16,0.26,0.28) * uScreen * 0.35 * max(0.0, dot(n, normalize(vec3(-1.0,0.2,-0.4))));',
+    '      col = alb * (sunLit + skylight + builtIn + fill + bounce + lamp + scr);',
+    // occlusion, analytically: dark under the platform, dark where the walls meet
+    '      float ao = mix(0.38, 1.0, smoothstep(0.0, 0.30, p.y - stepAt(p)));',
+    '      ao *= mix(0.62, 1.0, smoothstep(0.0, 0.45, min(2.35 - abs(p.x), 2.30 - abs(p.z))));',
     '      col *= ao;',
     '    }',
     '  }',

@@ -100,10 +100,14 @@ suite('glsl: the scene geometry is coherent');
   ok(/inWindow/.test(s) && /inWindow\(p\)/.test(s), 'the window is a hole tested on the wall hit, not a box');
   ok(/inDoor/.test(s), 'the door is an aperture too, so you can see the corridor beyond it');
   ok(/float shell\(/.test(s), 'the shell is one distance function, not a stack of intersectors');
-  ok(/floorLevel/.test(s) && /LOUNGE_D/.test(s),
-    'the sunken lounge is a real step in the floor, not a texture');
-  ok(/lightBars/.test(s) && /gobo\(/.test(s),
-    'the light-bars and the tree shadows are analytic: the window aperture is integrated, not geometry');
+  ok(/stepAt\(/.test(s) && /PLAT_H/.test(s) && /TREAD_W/.test(s),
+    'the platform is a real staircase in the distance field, not a texture');
+  ok(/nosing|0\.075/.test(s),
+    'every tread carries a lit nosing, so the light is part of the architecture');
+  ok(/windowPattern\(/.test(s) && /inGlazing\(/.test(s) && /gobo\(/.test(s),
+    'the sun pattern and the sky aperture are analytic: two bands, three mullions, one projection');
+  ok(/stripLight\(/.test(s),
+    'the tread nosings and the ceiling cove are light sources, not emissive paint');
   ok(!/sampler2D/.test(s) && !/shadowMap/i.test(s), 'no textures and no shadow maps anywhere');
   ok(/vec3 nShell\(/.test(s) && /return vec3\(sign\(p\.x\), 0\.0, 0\.0\)/.test(s),
     'the wall normal points into the room (the bug that turned the room into blue fog)');

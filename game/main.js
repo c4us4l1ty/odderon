@@ -24,8 +24,9 @@
     running: false, t: 0, lastReal: 0, raf: 0, frames: 0, framesRequested: 0,
     curtain: 1.0, acOn: false, visor: false, visorPage: 'provenance',
     pointer: { x: 0, y: 0, down: false, locked: false },
-    // spawn in the sunken lounge, looking up at the window: the light is the first thing you see
-    cam: { pos: [1.35, 1.18, -1.05], yaw: -0.504, pitch: -0.05 },
+    // spawn on the working floor by the door, looking across the platform to the window: the light
+    // is the first thing you see, and the bed is the second
+    cam: { pos: [-2.10, 1.62, -1.60], yaw: 0.75, pitch: -0.12 },
     keys: {},
     marks: null, ledger: null, model: null, world: null, audio: null,
     hud: null, renderer: null,
@@ -256,6 +257,10 @@
         }
       }
       document.addEventListener('pointerdown', function (e) {
+        // Anything that is real UI keeps its click. Without this the document handler captured the
+        // pointer first and the frame read-out checkbox could never be ticked.
+        var t = e.target;
+        if (t && t.closest && t.closest('#bar,#help,[data-ui]')) { self._wake(); return; }
         if (!self.pointer.locked) requestLock();
         else self.pointer.down = true;
         self._wake();
@@ -267,7 +272,7 @@
       document.addEventListener('pointermove', function (e) {
         if (document.pointerLockElement) {
           var s = 0.0020;
-          self.cam.yaw -= (e.movementX || 0) * s;
+          self.cam.yaw += (e.movementX || 0) * s;
           self.cam.pitch = M.clamp(self.cam.pitch - (e.movementY || 0) * s, -1.35, 1.35);
           self._wake();
         } else {
@@ -278,8 +283,12 @@
         self.pointer.locked = !!document.pointerLockElement;
         var hint = document.getElementById('lockhint');
         if (hint) hint.style.opacity = self.pointer.locked ? '0' : '1';
+        // releasing the pointer must also release the keys, or you keep walking after Esc
+        if (!self.pointer.locked) self._clearKeys();
         self._wake();
       });
+      // and losing focus must not leave you pressed against a wall forever
+      addEventListener('blur', function () { self._clearKeys(); self.pointer.down = false; });
       c.addEventListener('touchstart', function (e) { self._touch(e, true); }, { passive: true });
       c.addEventListener('touchmove', function (e) { self._touch(e, false); }, { passive: true });
     },
@@ -289,11 +298,15 @@
       if (down) { this._tx = t.clientX; this._ty = t.clientY; }
       else {
         var dx = t.clientX - this._tx, dy = t.clientY - this._ty;
-        this.cam.yaw -= dx * 0.005;
+        this.cam.yaw += dx * 0.005;
         this.cam.pitch = M.clamp(this.cam.pitch - dy * 0.005, -1.2, 1.2);
         this._tx = t.clientX; this._ty = t.clientY;
       }
       this._askFrame();
+    },
+
+    _clearKeys: function () {
+      for (var k in this.keys) this.keys[k] = false;
     },
 
     _wake: function () {
@@ -437,10 +450,19 @@
       var L = this.world.light();
       var sol = L.sol, sky = L.sky;
       var elevDeg = sol.elev / M.DEG;
+      // ---- which way does the flat face? ------------------------------------------------------
+      // This is the bug that made the room flat for two rounds. The shader puts the window in the
+      // +z wall, and +z is *azimuth 0*, i.e. NORTH: at Tanegashima the sun is never in the north, so
+      // sunVisible() was always false and the room was lit by sky fill alone. A real flat on a
+      // summer evening has a west window, so the hab is oriented with +z facing 270 deg and the real
+      // sun is rotated into room space. 16:26 in August then means a low golden sun almost straight
+      // through the glazing, which is the whole reason for the room.
+      var roomAz = 270 * M.DEG;
+      var localAz = sol.az - roomAz;
       var sunDir = [
-        M.sin(sol.az) * M.cos(sol.elev),
+        M.sin(localAz) * M.cos(sol.elev),
         M.sin(sol.elev),
-        M.cos(sol.az) * M.cos(sol.elev)
+        M.cos(localAz) * M.cos(sol.elev)
       ];
       var warm = 1 - sky.gold;
       var sunCol = [
@@ -476,10 +498,10 @@
       // The two instruments are screwed to the walls, at real positions in the room:
       // the thermometer beside the window, the AC's ammeter on the wall screen.
       h.wallGauge('thermometer', {
-        at: [-2.02, 1.16, 2.34], cam: cam, value: T, mark: mark, ghost: null, label: 'ROOM'
+        at: [2.33, 1.34, 1.55], cam: cam, value: T, mark: mark, ghost: null, label: 'ROOM'
       });
       h.wallGauge('meter', {
-        at: [-2.52, 1.28, -0.30], cam: cam,
+        at: [-2.33, 1.10, -0.55], cam: cam,
         value: ac.p * (ac.on ? 1 : 0.02), duty: ac.duty || 0
       });
       h.drawer({ x: this.hud.w - 300, y: 24, w: 276, text: 'DRAWER  1  ·  ' + (this.drawer[0] || '').slice(0, 34) });
