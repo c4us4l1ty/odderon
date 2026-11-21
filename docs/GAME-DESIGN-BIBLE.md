@@ -665,20 +665,24 @@ Never a popup. Never "hint".
 Reference A: **2015 laptop**, Intel HD 520 / UHD 620 class, 2 cores, 4 GB RAM, 1366×768.
 Reference B: **Android 8**, 2017 mid-range SoC (Snapdragon 625 class), 2–3 GB RAM, Chrome.
 
-| Budget | A (desktop) | B (mobile) |
+**Full derivation, the millisecond ledger, and the nine techniques that get us there:
+[`PERFORMANCE.md`](PERFORMANCE.md).** Summary of the contract:
+
+| Budget | A (desktop, 1080p) | B (mobile, Android 8) |
 | --- | --- | --- |
-| Internal render resolution | 1152×648, upscaled | 960×540, adaptive down to 720×405 |
-| Target frame rate | 60, floor 30 | 30, adaptive |
-| Frame budget | 16.6 ms: ≤6 ms GPU, ≤4 ms main JS, ≤2 ms WASM sim | 33 ms: ≤12 ms GPU, ≤8 ms main, ≤4 ms sim |
-| Draw calls | ≤ 48 | ≤ 32 |
+| Output resolution | **1080p, true** | 1080p, adaptive to 720p |
+| Pixels actually shaded per frame | **~1/3** (progressive refinement) | ~1/4 |
+| Target frame rate | **60, floor 30** | 30, floor 24 |
+| Frame budget | ≤ 11 ms worst, ≤ 6 ms typical | ≤ 24 ms worst |
+| Draw calls | **≤ 8** | ≤ 8 |
 | Triangles, visible | ≤ 120 k | ≤ 60 k |
 | Shadow maps | **zero** (analytic gobos) | zero |
-| Full-screen passes | ≤ 2 (sky at half res, tone) | ≤ 1 |
+| MSAA | **none** (temporal + analytic edges) | none |
 | Textures | procedural only + 1 stroke font | same |
 | Resident memory | ≤ 180 MB | ≤ 120 MB |
 | Catalog tile cache | ≤ 32 MB (LRU) | ≤ 16 MB |
 | Initial download | ≤ 2.5 MB (wasm + js + font) | same |
-| **Idle** | **0 rAF/s, < 0.5 % CPU** | **0 rAF/s; screen-off friendly** |
+| **Idle** | **0 scheduled frames/s, 0 timers, no GPU work** | same; screen-off friendly |
 
 Platform notes I am committing to:
 - **WebGL2 required, WebGL1 fallback path maintained.** GLES 3.0 is present on Android 8 and on 2015
@@ -686,10 +690,16 @@ Platform notes I am committing to:
   optional.
 - Simulation runs in a **Web Worker**. `SharedArrayBuffer` when COOP/COEP headers allow; otherwise
   structured-clone snapshots at a low rate.
-- **Render-on-demand.** If nothing changed, we do not schedule a frame. This is also the mobile
-  battery story: a game that is idle most of the time is the only kind that survives a phone.
-- **Honest note:** 60 fps at 1080p on a 2015 UHD is not achievable for this visual target and I will
-  not promise it. 60 fps at ~648p internal is achievable; above that we upscale.
+- **There is no game loop** (PERFORMANCE.md I3). An event queue and a presenter replace
+  `while(true) { update(); draw(); }`. When nothing is pending, no frame is scheduled and the
+  compositor holds the last surface.
+- **Input latency is decoupled from frame rate** (PERFORMANCE.md I8). Audio runs at 48 kHz off the
+  sim's continuous state, so an interaction is *heard* within ~8 ms even on a 30 fps frame. This is
+  what makes the game feel responsive on a phone, and it is nearly free because all sound is
+  synthesized from kernel numbers.
+- **Idle claim, precisely:** `requestAnimationFrame` calls per second = 0; zero running timers; zero
+  allocation; package power at the device's desktop-idle floor. Not "0 % CPU" — *nothing scheduled*,
+  which is stronger and measurable.
 
 ---
 

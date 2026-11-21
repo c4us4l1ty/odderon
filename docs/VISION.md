@@ -98,7 +98,7 @@ Being honest about the collisions is more valuable than pretending they don't ex
 
 | Tension | Why it bites | Resolution |
 | --- | --- | --- |
-| **Zero CPU vs. first-person rendering** | A walking human is a continuous 60 Hz workload. "0.0% CPU" cannot be literally true while moving. | Strict split: **kernel** (event-driven, only advances inside the attention bubble) vs **presentation** (frame loop, stops entirely when camera + uniforms are unchanged). "Idle" is defined as *no input and no pending sim events* — there, rAF is not scheduled at all. The painting literally freezes. |
+| **Zero CPU vs. first-person rendering** | A walking human is a continuous 60 Hz workload. "0.0% CPU" cannot be literally true while moving. | **Resolved by architecture, not concession** (`PERFORMANCE.md` I1/I3/I8). There is no game loop: an event queue drives a presenter, and the renderer *samples* a state ring at whatever rate it likes — including zero. Kernel and presentation are decoupled, so idle is literally "nothing scheduled". While moving, the honest claim is not 0% but *bounded*: ≤ 11 ms worst case, measured and gated in CI, and input→audio latency held at ≤ 8 ms independent of frame rate. |
 | **Zero assets vs. text, sound, and human faces** | Fonts are assets. Voice is assets. Parametric human faces are the hardest problem in this document. | Whitelist, stated openly: a procedural **stroke font** (~4 KB of coordinates) for instrument faces and labels; the OS font stack for dialogue; **all** sound synthesized in WebAudio from kernel numbers; humans stylized, cel-shaded, and rarely close-up (Shinkai's own compositions favor backs, distance, and silhouette). No pre-rendered anything. |
 | **Real universe vs. 4000 ly of data** | Gaia is magnitude-limited and dust-extincted; completeness collapses beyond ~1–3 kpc. The catalog *has holes*. | That is the scientifically correct outcome, so we lean into it: model 3D dust extinction explicitly. The galactic interior is dim and hidden — as it truly is. Unexplored space is dark, and funding a survey is a real activity. Nothing is invented to fill the gap. |
 | **Determinism vs. live NASA sync** | Verifiable replays require a frozen universe; live updates change it. | **Universe epochs.** A catalog version is part of the epoch ID. Replays, leaderboards, and Esse are pinned to their epoch. A NASA delta-sync creates a new epoch; comparisons across epochs are marked as such, never silently averaged. |
@@ -276,8 +276,10 @@ antidote is a slice that is *small in scope but complete in promise*.
 window AC, power lines, swaying grass); analytic gobos; sky + cumulus shader; real solar ephemeris
 for the chosen town and date; a distant pad plume with shockwave arrival at 343 m/s; walking and
 object interaction; render-on-demand.
-*Acceptance:* 0 rAF/s when idle; 60 fps @1080p on an Intel UHD 620-class iGPU; < 3 MB download;
-zero binary assets.
+*Acceptance:* 0 scheduled frames/s and 0 timers when idle; **60 fps at 1080p output** on an Intel
+UHD 620-class iGPU at ≤ 11 ms worst-case frame time and ≤ 8 draw calls (see `PERFORMANCE.md`); < 3 MB
+download; zero binary assets. The frame budget is a CI gate, not an aspiration — a build that
+exceeds it fails.
 
 **M2 — "The Pad."** 1-D cryo/fluid network (chilldown, boil-off, ullage, cavitation), a static
 fire with a real failure mode, visor diagnosis, a hashed Prediction Card, Akashi HTML export.
