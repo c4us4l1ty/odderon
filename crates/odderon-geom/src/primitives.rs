@@ -146,12 +146,10 @@ impl MeshBuffer {
         col: [f32; 3],
         mat: f32,
     ) {
-        // Left jamb
-        self.add_box(Vec3::new(open_x0 - trim_w, open_y0, z0), Vec3::new(open_x0, open_y1 + trim_w, z1), col, mat);
-        // Right jamb
-        self.add_box(Vec3::new(open_x1, open_y0, z0), Vec3::new(open_x1 + trim_w, open_y1 + trim_w, z1), col, mat);
-        // Top header lintel
-        self.add_box(Vec3::new(open_x0, open_y1, z0), Vec3::new(open_x1, open_y1 + trim_w, z1), col, mat);
+        // Left & right jambs stop cleanly at `open_y1`; full-width lintel caps `[open_y1, open_y1 + trim_w]`!
+        self.add_box(Vec3::new(open_x0 - trim_w, open_y0, z0), Vec3::new(open_x0, open_y1, z1), col, mat);
+        self.add_box(Vec3::new(open_x1, open_y0, z0), Vec3::new(open_x1 + trim_w, open_y1, z1), col, mat);
+        self.add_box(Vec3::new(open_x0 - trim_w, open_y1, z0), Vec3::new(open_x1 + trim_w, open_y1 + trim_w, z1), col, mat);
     }
 
     /// Oriented beam of square cross-section between `a` and `b`.
@@ -372,7 +370,8 @@ impl MeshBuffer {
                 let i1 = grid[v * stride + u + 1];
                 let i2 = grid[(v + 1) * stride + u + 1];
                 let i3 = grid[(v + 1) * stride + u];
-                self.indices.extend_from_slice(&[i0, i1, i2, i0, i2, i3]);
+                // Outward CCW winding: `(+Y) x (+Z) = +X` at `(phi=0, th=0)`!
+                self.indices.extend_from_slice(&[i0, i3, i2, i0, i2, i1]);
             }
         }
     }
@@ -432,6 +431,15 @@ impl MeshBuffer {
             Vec3::new(x0, y_eave, z_eave),
             tile_col,
             MAT_KAWARA,
+        );
+        // Dark roasted-cedar eave underside soffit (`nokiten`, normal -Y/+Z so closed under CULL_FACE!)
+        self.push_quad(
+            Vec3::new(x0, y_eave - 0.05, z_eave + 0.12),
+            Vec3::new(x1, y_eave - 0.05, z_eave + 0.12),
+            Vec3::new(x1, y_ridge - 0.08, z_ridge),
+            Vec3::new(x0, y_ridge - 0.08, z_ridge),
+            wood_col,
+            MAT_WOOD,
         );
         // Timber eave soffit & fascia beam under front lip
         self.add_box(Vec3::new(x0, y_eave - 0.11, z_eave), Vec3::new(x1, y_eave, z_eave + 0.14), wood_col, MAT_WOOD);

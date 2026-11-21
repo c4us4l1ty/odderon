@@ -114,10 +114,10 @@ async function boot() {
   const canvas = document.getElementById('gl-canvas');
   const gl = canvas.getContext('webgl2', {
     alpha: false,
-    antialias: false, // PERFORMANCE.md: eliminate MSAA on Intel Gen9 shared bus!
+    antialias: true, // Eliminates 1px diagonal edge shimmer on walls, jambs & overhead wires!
     depth: true,
     stencil: false,
-    powerPreference: 'low-power',
+    powerPreference: 'default',
     preserveDrawingBuffer: false,
   });
 
@@ -178,7 +178,7 @@ async function boot() {
     gl.enableVertexAttribArray(2);
     gl.vertexAttribPointer(2, 4, gl.FLOAT, false, stride, 24);
     gl.bindVertexArray(null);
-    return { vao, vbo, ibo, indexCount: 0, vboCap: 0, iboCap: 0, usage };
+    return { vao, vbo, ibo, indexCount: 0, vboCap: 0, iboCap: 0, rev: 0, usage };
   }
 
   function uploadMesh(meshObj, vPtr, vLen, iPtr, iLen) {
@@ -217,24 +217,37 @@ async function boot() {
   const eidosMesh = setupMeshVao(gl.DYNAMIC_DRAW);
 
   function syncDynamicMeshes(visorDown) {
-    uploadMesh(
-      dynMesh,
-      wasm.odderon_dyn_verts_ptr(),
-      wasm.odderon_dyn_verts_len(),
-      wasm.odderon_dyn_indices_ptr(),
-      wasm.odderon_dyn_indices_len()
-    );
-    if (visorDown) {
+    const dRev = wasm.odderon_dyn_revision() >>> 0;
+    if (dynMesh.rev !== dRev) {
       uploadMesh(
-        eidosMesh,
-        wasm.odderon_eidos_verts_ptr(),
-        wasm.odderon_eidos_verts_len(),
-        wasm.odderon_eidos_indices_ptr(),
-        wasm.odderon_eidos_indices_len()
+        dynMesh,
+        wasm.odderon_dyn_verts_ptr(),
+        wasm.odderon_dyn_verts_len(),
+        wasm.odderon_dyn_indices_ptr(),
+        wasm.odderon_dyn_indices_len()
       );
+      dynMesh.rev = dRev;
+    }
+    if (visorDown) {
+      const eRev = wasm.odderon_eidos_revision() >>> 0;
+      if (eidosMesh.rev !== eRev) {
+        uploadMesh(
+          eidosMesh,
+          wasm.odderon_eidos_verts_ptr(),
+          wasm.odderon_eidos_verts_len(),
+          wasm.odderon_eidos_indices_ptr(),
+          wasm.odderon_eidos_indices_len()
+        );
+        eidosMesh.rev = eRev;
+      }
     }
   }
   syncDynamicMeshes(false);
+
+  function syncAudioAndAck(t) {
+    audio.syncFromTelemetry(t);
+    wasm.odderon_ack_audio();
+  }
 
   // 3. Adaptive Resolution Governor for 2015 Intel UHD (capped <= 1.30 Mpx, floor 0.55x)
   let qualityScale = 1.0;
@@ -246,11 +259,11 @@ async function boot() {
   function updateCanvasResolution() {
     const cssW = Math.max(window.innerWidth, 1);
     const cssH = Math.max(window.innerHeight, 1);
-    const dpr = Math.min(window.devicePixelRatio || 1.0, 1.0); // PERFORMANCE.md Round 2: cap DPR <= 1.0
+    const dpr = Math.min(window.devicePixelRatio || 1.0, 1.5);
     let targetW = Math.round(cssW * dpr * qualityScale);
     let targetH = Math.round(cssH * dpr * qualityScale);
     const pxCount = targetW * targetH;
-    const maxPx = 1_320_000;
+    const maxPx = 2_073_600;
     if (pxCount > maxPx) {
       const s = Math.sqrt(maxPx / pxCount);
       targetW = Math.max(480, Math.round(targetW * s));
@@ -353,7 +366,18 @@ async function boot() {
     return `${hh}:${mm} JST`;
   }
 
-  function updateDomOverlays(t) {
+  let prevPromptMain = '';
+  let prevPromptSub = '';
+  let prevWaveText = '';
+  let prevWaveVis = false;
+  let prevPerfHtml = '';
+  let lastHeavyDomMs = -1000;
+
+  function updateDomOverlays(t, forceHeavy = false) {
+    const nowDomMs = performance.now();
+    const allowHeavy = forceHeavy || isParked || (nowDomMs - lastHeavyDomMs >= 100);
+    if (allowHeavy) lastHeavyDomMs = nowDomMs;
+
     const visorDown = t[30] > 0.5;
     const hovered = Math.round(t[31]);
     const clipOpen = t[33] > 0.5;
@@ -377,17 +401,20 @@ async function boot() {
 
     elVisor.classList.toggle('down', visorDown);
     elBtnVisor.classList.toggle('on', visorDown);
-    elBtnVisor.textContent = visorDown ? '[V] EIDOS VISOR: DOWN' : '[V] EIDOS VISOR: UP';
+    const visorLabel = visorDown ? '[V] EIDOS VISOR: DOWN' : '[V] EIDOS VISOR: UP';
+    if (elBtnVisor.textContent !== visorLabel) elBtnVisor.textContent = visorLabel;
     elBtnMark.classList.toggle('mark-on', markMode);
     elBtnClip.classList.toggle('on', clipOpen);
     elClipSheet.classList.toggle('open', clipOpen);
     elReticle.classList.toggle('active', hovered !== 0);
 
-    // Contextual physical hand prompt
+    // Contextual physical hand prompt (diff-guarded so 0 DOM mutations when unchanged!)
     const info = TARGET_INFO[hovered];
+    let nextMain = '';
+    let nextSub = '';
     if (tripped && hovered !== 3) {
-      elPromptMain.textContent = `⚠ 15.0A HAB BUS TRIPPED (Overcurrent > 15A) — Walk to Window Breaker Panel & Reset Main Breaker!`;
-      elPromptSub.textContent = `Shed load (turn off 1,060W Kettle or close Shoji screen) before re-energizing.`;
+      nextMain = `⚠ 15.0A HAB BUS TRIPPED (Overcurrent > 15A) — Walk to Window Breaker Panel & Reset Main Breaker!`;
+      nextSub = `Shed load (turn off 1,060W Kettle or close Shoji screen) before re-energizing.`;
     } else if (info) {
       let extra = '';
       if (hovered === 1) extra = ` · Now ${shojiPct}% closed (Solar: ${Math.round(qSolar)} W)`;
@@ -396,28 +423,39 @@ async function boot() {
       if (hovered === 9) extra = ` · Reading: ${Math.round(busW)} W${t[51] >= 0 ? ` | Mark: ${Math.round(t[51])} W` : ''}`;
       if (hovered === 10) extra = ` · Reading: ${busV.toFixed(1)} V (${busA.toFixed(1)} A)${t[52] >= 0 ? ` | Mark: ${t[52].toFixed(1)} V` : ''}`;
       if (hovered === 14) extra = ` · Water: ${t[28].toFixed(1)} °C`;
-      elPromptMain.textContent = `${info.name}${extra}`;
-      elPromptSub.textContent = info.hint;
+      nextMain = `${info.name}${extra}`;
+      nextSub = info.hint;
     } else {
-      elPromptMain.textContent = `${formatJstClock(t[10])} · Uchinoura Hab #204 · Cabin ${roomC.toFixed(1)} °C · Bus ${Math.round(busW)} W (${busV.toFixed(1)} V)`;
-      elPromptSub.textContent = `WASD Move · Drag / [L] Look · Click/Tap Shoji, Window, Breakers, Gauges, Kettle, VHF Radio, Clipboard, Bed, Bath Door`;
+      nextMain = `${formatJstClock(t[10])} · Uchinoura Hab #204 · Cabin ${roomC.toFixed(1)} °C · Bus ${Math.round(busW)} W (${busV.toFixed(1)} V)`;
+      nextSub = `WASD Move · Drag / [L] Look · Click/Tap Shoji, Window, Breakers, Gauges, Kettle, VHF Radio, Clipboard, Bed, Bath Door`;
+    }
+    if (nextMain !== prevPromptMain) {
+      elPromptMain.textContent = nextMain;
+      prevPromptMain = nextMain;
+    }
+    if (nextSub !== prevPromptSub) {
+      elPromptSub.textContent = nextSub;
+      prevPromptSub = nextSub;
     }
 
     // Coastal Pad-1 343 m/s Shockwave Propagation Banner
-    if (plumeAge >= 0 && plumeAge < 12.5) {
-      elWaveBanner.style.display = 'block';
-      if (shockR < padDist) {
-        const eta = Math.max(0, (padDist - shockR) / Math.max(cSound, 300));
-        elWaveBanner.textContent = `PAD-1 STATIC FIRE OBSERVED (2.82 km SE) · Acoustic Wavefront: ${(shockR / 1000).toFixed(2)} km @ ${cSound.toFixed(1)} m/s · Impact in ${eta.toFixed(1)}s`;
-      } else {
-        elWaveBanner.textContent = `ACOUSTIC N-WAVE ARRIVED (Δt = ${(padDist / cSound).toFixed(2)}s @ ${cSound.toFixed(1)} m/s) — Window Sash Rattling!`;
+    const waveVis = plumeAge >= 0 && plumeAge < 12.5;
+    if (waveVis !== prevWaveVis) {
+      elWaveBanner.style.display = waveVis ? 'block' : 'none';
+      prevWaveVis = waveVis;
+    }
+    if (waveVis) {
+      const wTxt = shockR < padDist
+        ? `PAD-1 STATIC FIRE OBSERVED (2.82 km SE) · Acoustic Wavefront: ${(shockR / 1000).toFixed(2)} km @ ${cSound.toFixed(1)} m/s · Impact in ${Math.max(0, (padDist - shockR) / Math.max(cSound, 300)).toFixed(1)}s`
+        : `ACOUSTIC N-WAVE ARRIVED (Δt = ${(padDist / cSound).toFixed(2)}s @ ${cSound.toFixed(1)} m/s) — Window Sash Rattling!`;
+      if (wTxt !== prevWaveText) {
+        elWaveBanner.textContent = wTxt;
+        prevWaveText = wTxt;
       }
-    } else {
-      elWaveBanner.style.display = 'none';
     }
 
-    // Eidos AR Visor Causal Sensitivities & Provenance<T> Inspector
-    if (visorDown) {
+    // Eidos AR Visor Causal Sensitivities & Provenance<T> Inspector (throttled 10Hz to prevent DOM churn)
+    if (visorDown && allowHeavy) {
       const dQ = t[34];
       const dPac = t[35];
       const dTeq = t[36];
@@ -449,7 +487,7 @@ async function boot() {
       `;
     }
 
-    if (clipOpen) {
+    if (clipOpen && allowHeavy) {
       document.getElementById('clipboard-clock').textContent =
         `Epoch: ${formatJstClock(t[10])} · Sector [0,0,0] nm · Solar Gain ${Math.round(qSolar)} W · Bus ${busA.toFixed(1)} A`;
       document.getElementById('clip-task-1').className = 'clip-item' + (taskSolarDone ? ' done' : '');
@@ -458,18 +496,22 @@ async function boot() {
     }
 
     // Performance & Doctrine Verification HUD (`[H]`)
-    if (showPerfHud) {
+    if (showPerfHud && allowHeavy) {
       const hashLo = (wasm.odderon_state_hash_lo() >>> 0).toString(16).padStart(8, '0');
       const hashHi = (wasm.odderon_state_hash_hi() >>> 0).toString(16).padStart(8, '0');
       const statusHtml = isParked
         ? `<span class="parked-tag">0 rAF/s · PARKED (0.0% IDLE CPU/GPU)</span>`
         : `<span>${displayedRafHz} rAF/s · ACTIVE (${smoothedFrameCostMs.toFixed(2)} ms/frame)</span>`;
-      elPerfHud.innerHTML = `
+      const perfHtml = `
         <div><strong>ODDERON PERF DOCTRINE [H]</strong> · Rust→WASM (${wasmKb} KB, 0 Assets)</div>
         <div>Presenter: ${statusHtml}</div>
         <div>WebGL2 Draws: <strong>${lastDrawCalls}</strong> (Budget ≤ 8) · Shaded: ${fbWidth}×${fbHeight} (Q=${qualityScale.toFixed(2)})</div>
         <div>Proof-of-Flight Hash: <code>0x${hashHi}${hashLo}</code></div>
       `;
+      if (perfHtml !== prevPerfHtml) {
+        elPerfHud.innerHTML = perfHtml;
+        prevPerfHtml = perfHtml;
+      }
     }
   }
 
@@ -478,7 +520,7 @@ async function boot() {
     const aspect = fbWidth / Math.max(fbHeight, 1);
 
     computeCameraBasisAndView(t[0], t[1], t[2], t[3], t[4], t[5]);
-    perspectiveFieldOfView(projMat, FOV_Y_RAD, aspect, 0.12, 520.0);
+    perspectiveFieldOfView(projMat, FOV_Y_RAD, aspect, 0.16, 480.0);
     mulMat4(vpMat, projMat, viewMat);
 
     sunVec[0] = t[6]; sunVec[1] = t[7]; sunVec[2] = t[8];
@@ -503,11 +545,14 @@ async function boot() {
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     draws++;
 
-    // DRAW 2 & 3: Parametric Static World + Dynamic Moving Hardware
+    // DRAW 2 & 3: Parametric Static World + Dynamic Moving Hardware (strict CCW backface culling!)
     gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
     gl.depthMask(true);
     gl.clear(gl.DEPTH_BUFFER_BIT);
-    gl.disable(gl.CULL_FACE);
+    gl.frontFace(gl.CCW);
+    gl.cullFace(gl.BACK);
+    gl.enable(gl.CULL_FACE);
 
     gl.useProgram(worldProg);
     gl.uniformMatrix4fv(worldLocs.uViewProj, false, vpMat);
@@ -522,7 +567,6 @@ async function boot() {
     gl.drawElements(gl.TRIANGLES, staticMesh.indexCount, gl.UNSIGNED_INT, 0);
     draws++;
 
-    gl.disable(gl.CULL_FACE); // Fan blades & thin shoji ribs visible from both sides
     gl.bindVertexArray(dynMesh.vao);
     gl.drawElements(gl.TRIANGLES, dynMesh.indexCount, gl.UNSIGNED_INT, 0);
     draws++;
@@ -570,7 +614,7 @@ async function boot() {
 
     const t = getTelemetryView();
     syncDynamicMeshes(t[30] > 0.5);
-    audio.syncFromTelemetry(t);
+    syncAudioAndAck(t);
 
     updateCanvasResolution();
     renderWebGL(t);
@@ -578,8 +622,8 @@ async function boot() {
     const costMs = performance.now() - frameStart;
     smoothedFrameCostMs = smoothedFrameCostMs * 0.85 + costMs * 0.15;
 
-    // Adaptive governor for older 2015 Intel UHD / Android 8 GPUs (PERFORMANCE.md Round 2)
-    if (smoothedFrameCostMs > 22.0 && qualityScale > 0.58) {
+    // Adaptive governor for older 2015 Intel UHD / Android 8 GPUs
+    if (smoothedFrameCostMs > 18.0 && qualityScale > 0.58) {
       qualityScale = Math.max(0.55, qualityScale - 0.05);
     }
 
@@ -593,22 +637,22 @@ async function boot() {
       // PARK! Schedule 0 rAFs — compositor holds our crisp painted frame at 0.0% CPU / 0.0% GPU!
       isParked = true;
       displayedRafHz = 0;
-      updateDomOverlays(t);
+      updateDomOverlays(t, true);
       return;
     }
 
     isParked = false;
-    updateDomOverlays(t);
+    updateDomOverlays(t, false);
     rafId = requestAnimationFrame(presentFrame);
   }
 
   // Discrete scheduled distant Pad-1 morning static fire at T = 9.0s (wakes presenter via event, zero polling!)
   setTimeout(() => {
-    const t = getTelemetryView();
-    if (t[38] > 50.0) {
-      // Trigger Pad-1 static fire cleanly via Actuator ABI even if presenter was parked at 0 rAF/s!
+    if (wasm.odderon_auto_fire_done() === 0) {
       wasm.odderon_toggle_target(11);
-      syncDynamicMeshes(getTelemetryView()[30] > 0.5);
+      const t = getTelemetryView();
+      syncDynamicMeshes(t[30] > 0.5);
+      syncAudioAndAck(t);
       wakePresenter(30);
     }
   }, 9000);
@@ -644,21 +688,30 @@ async function boot() {
     if (e.code === 'KeyV') {
       const t = getTelemetryView();
       wasm.odderon_flip_visor(t[30] > 0.5 ? 0 : 1);
+      syncAudioAndAck(getTelemetryView());
+      updateDomOverlays(getTelemetryView(), true);
       wakePresenter(6);
     } else if (e.code === 'KeyM') {
       markMode = !markMode;
+      audio.playClick(0.5);
+      updateDomOverlays(getTelemetryView(), true);
       wakePresenter(3);
     } else if (e.code === 'KeyC') {
       wasm.odderon_toggle_target(12);
+      syncAudioAndAck(getTelemetryView());
+      updateDomOverlays(getTelemetryView(), true);
       wakePresenter(4);
     } else if (e.code === 'KeyF') {
       wasm.odderon_toggle_target(11);
+      syncAudioAndAck(getTelemetryView());
+      updateDomOverlays(getTelemetryView(), true);
       wakePresenter(30);
     } else if (e.code === 'KeyH') {
       showPerfHud = !showPerfHud;
       elPerfHud.classList.toggle('hidden', !showPerfHud);
       elBtnHud.classList.toggle('on', showPerfHud);
       elBtnHud.textContent = showPerfHud ? '[H] PERF: ON' : '[H] PERF: OFF';
+      updateDomOverlays(getTelemetryView(), true);
       wakePresenter(2);
     } else if (e.code === 'KeyL') {
       if (document.pointerLockElement === canvas) {
@@ -690,7 +743,8 @@ async function boot() {
     audio.ensureStarted();
     if (document.pointerLockElement === canvas) {
       wasm.odderon_hand_actuate(markMode ? 1 : 0, e.button === 2 ? 1 : 0);
-      audio.syncFromTelemetry(getTelemetryView());
+      syncAudioAndAck(getTelemetryView());
+      updateDomOverlays(getTelemetryView(), true);
       wakePresenter(16);
       return;
     }
@@ -740,8 +794,9 @@ async function boot() {
         markMode ? 1 : 0,
         e.button === 2 ? 1 : 0
       );
-      audio.syncFromTelemetry(getTelemetryView());
+      syncAudioAndAck(getTelemetryView());
       if (hit !== 0) {
+        updateDomOverlays(getTelemetryView(), true);
         wakePresenter(24);
       }
     }
@@ -795,7 +850,8 @@ async function boot() {
         if (dragMovedPx < 10) {
           const dir = unprojectClientRay(touch.clientX, touch.clientY);
           wasm.odderon_ray_actuate(dir[0], dir[1], dir[2], 0, markMode ? 1 : 0, 0);
-          audio.syncFromTelemetry(getTelemetryView());
+          syncAudioAndAck(getTelemetryView());
+          updateDomOverlays(getTelemetryView(), true);
           wakePresenter(24);
         }
       }
@@ -807,7 +863,8 @@ async function boot() {
     audio.ensureStarted();
     const t = getTelemetryView();
     wasm.odderon_flip_visor(t[30] > 0.5 ? 0 : 1);
-    audio.syncFromTelemetry(getTelemetryView());
+    syncAudioAndAck(getTelemetryView());
+    updateDomOverlays(getTelemetryView(), true);
     wakePresenter(8);
   });
 
@@ -815,25 +872,30 @@ async function boot() {
     audio.ensureStarted();
     markMode = !markMode;
     audio.playClick(0.5);
+    updateDomOverlays(getTelemetryView(), true);
     wakePresenter(3);
   });
 
   elBtnClip.addEventListener('click', () => {
     audio.ensureStarted();
     wasm.odderon_toggle_target(12);
-    audio.syncFromTelemetry(getTelemetryView());
+    syncAudioAndAck(getTelemetryView());
+    updateDomOverlays(getTelemetryView(), true);
     wakePresenter(6);
   });
 
   document.getElementById('btn-close-clip').addEventListener('click', () => {
     wasm.odderon_toggle_target(12);
+    syncAudioAndAck(getTelemetryView());
+    updateDomOverlays(getTelemetryView(), true);
     wakePresenter(4);
   });
 
   document.getElementById('btn-fire').addEventListener('click', () => {
     audio.ensureStarted();
     wasm.odderon_toggle_target(11);
-    audio.syncFromTelemetry(getTelemetryView());
+    syncAudioAndAck(getTelemetryView());
+    updateDomOverlays(getTelemetryView(), true);
     wakePresenter(30);
   });
 

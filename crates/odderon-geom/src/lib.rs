@@ -205,8 +205,8 @@ pub const GAUGE_CENTERS: [Vec3; 3] = [
 /// Switch X coordinates along bottom of the Top-Right Hab Control Panel (`y = 1.18, z = 1.954`).
 pub const PANEL_SWITCH_XS: [f32; 5] = [-1.50, -1.69, -1.88, -2.07, -2.26];
 
-/// Distant Uchinoura Pad-1 visual placement in exterior world coords (`z = 360m` ridge gap!).
-pub const EXTERIOR_PAD_POS: Vec3 = Vec3::new(2.2, 14.5, 360.0);
+/// Distant Uchinoura Pad-1 visual placement in exterior world coords (`z = 380m` framed in right-side sneak-view gap!).
+pub const EXTERIOR_PAD_POS: Vec3 = Vec3::new(-58.0, 17.8, 380.0);
 
 /// Builds the entire static Apartment + Exterior Japanese Street & Distant Pad in ONE draw call!
 pub fn build_static_world(buf: &mut MeshBuffer) {
@@ -310,5 +310,30 @@ mod tests {
         );
         let dyn_tris = dyn_buf.indices.len() / 3;
         assert!(dyn_tris > 50 && dyn_tris < 5_000, "dyn tris: {}", dyn_tris);
+
+        for (label, buf) in [("static", &static_buf), ("dynamic", &dyn_buf)] {
+            for tri in buf.indices.chunks_exact(3) {
+                let get_vn = |idx: u32| -> (Vec3, Vec3) {
+                    let b = (idx as usize) * FLOATS_PER_VERTEX;
+                    (
+                        Vec3::new(buf.verts[b], buf.verts[b + 1], buf.verts[b + 2]),
+                        Vec3::new(buf.verts[b + 3], buf.verts[b + 4], buf.verts[b + 5]),
+                    )
+                };
+                let (p0, n0) = get_vn(tri[0]);
+                let (p1, n1) = get_vn(tri[1]);
+                let (p2, n2) = get_vn(tri[2]);
+                let face_cross = p1.sub(p0).cross(p2.sub(p0));
+                if face_cross.dot(face_cross) > 1e-10 {
+                    let n_avg = n0.add(n1).add(n2);
+                    assert!(
+                        face_cross.dot(n_avg) > 0.0,
+                        "{} mesh has inverted triangle winding at {:?}",
+                        label,
+                        p0
+                    );
+                }
+            }
+        }
     }
 }

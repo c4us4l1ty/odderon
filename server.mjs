@@ -19,13 +19,19 @@ const MIME = {
 };
 
 const server = http.createServer((req, res) => {
-  const urlPath = (req.url || '/').split('?')[0];
+  let urlPath = '/';
+  try {
+    urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
+  } catch {
+    res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Bad request');
+    return;
+  }
   const rel = urlPath === '/' ? '/index.html' : urlPath;
-  const safePath = path.normalize(rel).replace(/^(\.\.(\/|\\|$))+/, '');
-  const fullPath = path.join(WEB_ROOT, safePath);
+  const fullPath = path.resolve(WEB_ROOT, '.' + rel);
 
-  if (!fullPath.startsWith(WEB_ROOT)) {
-    res.writeHead(403);
+  if (fullPath !== WEB_ROOT && !fullPath.startsWith(WEB_ROOT + path.sep)) {
+    res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('Forbidden');
     return;
   }
@@ -39,10 +45,15 @@ const server = http.createServer((req, res) => {
     const ext = path.extname(fullPath).toLowerCase();
     res.writeHead(200, {
       'Content-Type': MIME[ext] || 'application/octet-stream',
+      'Content-Length': data.byteLength,
       'Cache-Control': 'no-cache',
       'Access-Control-Allow-Origin': '*',
     });
-    res.end(data);
+    if (req.method === 'HEAD') {
+      res.end();
+    } else {
+      res.end(data);
+    }
   });
 });
 

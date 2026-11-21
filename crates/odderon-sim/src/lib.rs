@@ -95,6 +95,7 @@ pub struct SimWorld {
     pub pitch_rad: f32,
     pub head_bob_phase: f32,
     pub visor_down: bool,
+    pub last_ray_dir: Vec3,
     pub hovered_target: TargetId,
     pub selected_target: TargetId,
     pub clipboard_open: bool,
@@ -161,6 +162,7 @@ impl SimWorld {
             pitch_rad: -0.04,
             head_bob_phase: 0.0,
             visor_down: false,
+            last_ray_dir: Vec3::new(0.0, 0.0, 1.0),
             hovered_target: TargetId::None,
             selected_target: TargetId::ShojiScreen,
             clipboard_open: false,
@@ -341,7 +343,13 @@ impl SimWorld {
                 self.record_input(10, next as f32, 0.0);
             }
             TargetId::WindowSash => {
-                let next = if self.hab.window_open >= 0.90 {
+                let next = if secondary {
+                    if self.hab.window_open <= 0.05 {
+                        0.90
+                    } else {
+                        clamp_f64(self.hab.window_open - 0.45, 0.0, 1.0)
+                    }
+                } else if self.hab.window_open >= 0.90 {
                     0.0
                 } else {
                     clamp_f64(self.hab.window_open + 0.45, 0.0, 1.0)
@@ -531,7 +539,7 @@ impl SimWorld {
         let mut px = clamp_f32(self.player_pos.x + dx, -2.50 + r, 2.50 - r);
         let mut pz = clamp_f32(self.player_pos.z + dz, -1.96 + r, 1.96 - r);
 
-        let door_shift = self.toilet_door_open * 0.74;
+        let door_shift = self.toilet_door_open * 0.66;
         let colliders = [
             // 1. Top-Center Desk & Chair
             Box2D { x0: -1.18, z0: 1.24, x1: 1.18, z1: 2.02 },
@@ -633,10 +641,10 @@ impl SimWorld {
         let ac_box = Aabb3::new(Vec3::new(-2.44, 2.03, 1.65), Vec3::new(-1.36, 2.40, 2.02));
         let bunk_box = Aabb3::new(Vec3::new(0.42, 0.12, -2.02), Vec3::new(2.52, 0.70, -0.46));
 
-        let door_shift = self.toilet_door_open * 0.74;
+        let door_shift = self.toilet_door_open * 0.66;
         let toilet_door_box = Aabb3::new(
             Vec3::new(-1.56, 0.06, -0.37),
-            Vec3::new(-0.58 - door_shift * 0.75, 2.10, -0.22),
+            Vec3::new(-0.58 - door_shift, 2.10, -0.22),
         );
 
         let candidates = [
@@ -660,14 +668,19 @@ impl SimWorld {
     }
 
     pub fn update_hover_raycast(&mut self) {
-        self.hovered_target = self.cast_ray_target(self.look_dir());
+        let dir = self.look_dir();
+        self.last_ray_dir = dir;
+        self.hovered_target = self.cast_ray_target(dir);
     }
 
     pub fn actuate_world_ray(&mut self, dir: Vec3, hover_only: bool, mark_mode: bool, secondary: bool) -> TargetId {
-        let hit = self.cast_ray_target(dir);
+        let norm_dir = dir.normalized();
+        self.last_ray_dir = norm_dir;
+        let hit = self.cast_ray_target(norm_dir);
         self.hovered_target = hit;
         if !hover_only && hit != TargetId::None {
             self.actuate_target(hit, mark_mode, secondary);
+            self.hovered_target = self.cast_ray_target(norm_dir);
             self.prov_ids = self.hab.build_provenance(&self.solar, &mut self.prov_graph);
         }
         hit
@@ -702,6 +715,7 @@ impl SimWorld {
             if (self.toilet_door_target - self.toilet_door_open).abs() < 0.008 {
                 self.toilet_door_open = self.toilet_door_target;
             }
+            self.hovered_target = self.cast_ray_target(self.last_ray_dir);
         } else {
             self.toilet_door_open = self.toilet_door_target;
         }
@@ -862,12 +876,18 @@ impl SimWorld {
         let mut h = DetHasher::new();
         h.write_u64(self.tick_ms);
         h.write_f64(self.local_hour_jst);
+        h.write_f64(self.player_pos.x as f64);
+        h.write_f64(self.player_pos.z as f64);
+        h.write_f64(self.yaw_rad as f64);
+        h.write_f64(self.pitch_rad as f64);
         h.write_f64(self.hab.room_air_temp_k);
         h.write_f64(self.hab.total_bus_power_w);
         h.write_f64(self.hab.bus_voltage_v);
         h.write_f64(self.hab.shoji_closed);
         h.write_f64(self.hab.window_open);
         h.write_f64(self.toilet_door_open as f64);
+        h.write_u32((self.hab.breaker_tripped as u32) | ((self.visor_down as u32) << 1));
+        h.write_u32(self.calibration.count);
         h.write_u32(self.input_log.len() as u32);
         h.finish()
     }

@@ -1,19 +1,49 @@
 //! Zero-allocation C-ABI WebAssembly interface for Odderon.
-//! Exposes pre-allocated vertex/index buffers and a flat 64-float telemetry ring directly
-//! out of WASM linear memory so the browser frame loop allocates 0 bytes per frame.
+//! Exposes pre-allocated vertex/index buffers, revision counters for zero-upload unchanged frames,
+//! lossless audio impulse latching, and a flat 64-float telemetry ring out of WASM linear memory.
 
 use core::fmt::Write;
-use odderon_geom::{build_dynamic_parts, build_eidos_vectors, build_static_world, MeshBuffer};
+use odderon_geom::{
+    build_dynamic_parts, build_eidos_vectors, build_static_world, DynamicSceneParams, MeshBuffer,
+};
 use odderon_sim::{Actuator, SimWorld, TargetId, PAD_DISTANCE_M};
 use std::sync::Mutex;
 
 pub const TELEMETRY_FLOATS: usize = 64;
+
+#[inline]
+fn dyn_params_visually_equal(a: &DynamicSceneParams, b: &DynamicSceneParams) -> bool {
+    a.lamp_on == b.lamp_on
+        && a.main_breaker_on == b.main_breaker_on
+        && a.breaker_tripped == b.breaker_tripped
+        && a.ac_switch_on == b.ac_switch_on
+        && a.fan_switch_on == b.fan_switch_on
+        && a.kettle_switch_on == b.kettle_switch_on
+        && (a.shoji_closed - b.shoji_closed).abs() < 2e-4
+        && (a.window_open - b.window_open).abs() < 2e-4
+        && (a.window_rattle_m - b.window_rattle_m).abs() < 2e-5
+        && (a.fan_angle_rad - b.fan_angle_rad).abs() < 5e-4
+        && (a.toilet_door_open - b.toilet_door_open).abs() < 2e-4
+        && (a.room_temp_c - b.room_temp_c).abs() < 0.008
+        && (a.bus_power_w - b.bus_power_w).abs() < 0.35
+        && (a.bus_voltage_v - b.bus_voltage_v).abs() < 0.008
+        && (a.gauge_marks[0] - b.gauge_marks[0]).abs() < 1e-3
+        && (a.gauge_marks[1] - b.gauge_marks[1]).abs() < 1e-3
+        && (a.gauge_marks[2] - b.gauge_marks[2]).abs() < 1e-3
+        && (a.plume_intensity - b.plume_intensity).abs() < 5e-4
+        && ((a.plume_age_s >= 18.0 && b.plume_age_s >= 18.0)
+            || (a.plume_age_s - b.plume_age_s).abs() < 0.01)
+}
 
 pub struct EngineInstance {
     pub sim: SimWorld,
     pub static_mesh: MeshBuffer,
     pub dyn_mesh: MeshBuffer,
     pub eidos_mesh: MeshBuffer,
+    pub last_dyn_params: Option<DynamicSceneParams>,
+    pub last_eidos_key: Option<(u32, bool, bool)>,
+    pub dyn_revision: u32,
+    pub eidos_revision: u32,
     pub telemetry: [f32; TELEMETRY_FLOATS],
     pub export_buf: String,
 }
@@ -28,19 +58,20 @@ impl EngineInstance {
         let dp = sim.dynamic_scene_params();
         build_dynamic_parts(&mut dyn_mesh, &dp);
 
+        let ac_live = dp.ac_switch_on && dp.main_breaker_on && !dp.breaker_tripped;
+        let ket_live = dp.kettle_switch_on && dp.main_breaker_on && !dp.breaker_tripped;
         let mut eidos_mesh = MeshBuffer::new();
-        build_eidos_vectors(
-            &mut eidos_mesh,
-            dp.shoji_closed,
-            dp.ac_switch_on && dp.main_breaker_on && !dp.breaker_tripped,
-            dp.kettle_switch_on && dp.main_breaker_on && !dp.breaker_tripped,
-        );
+        build_eidos_vectors(&mut eidos_mesh, dp.shoji_closed, ac_live, ket_live);
 
         let mut inst = Self {
             sim,
             static_mesh,
             dyn_mesh,
             eidos_mesh,
+            last_dyn_params: Some(dp),
+            last_eidos_key: Some(((dp.shoji_closed * 1000.0) as u32, ac_live, ket_live)),
+            dyn_revision: 1,
+            eidos_revision: 1,
             telemetry: [0.0; TELEMETRY_FLOATS],
             export_buf: String::with_capacity(4096),
         };
@@ -50,14 +81,25 @@ impl EngineInstance {
 
     fn rebuild_dynamic(&mut self) {
         let dp = self.sim.dynamic_scene_params();
-        build_dynamic_parts(&mut self.dyn_mesh, &dp);
+        let needs_dyn = match &self.last_dyn_params {
+            Some(prev) => !dyn_params_visually_equal(prev, &dp),
+            None => true,
+        };
+        if needs_dyn {
+            build_dynamic_parts(&mut self.dyn_mesh, &dp);
+            self.last_dyn_params = Some(dp);
+            self.dyn_revision = self.dyn_revision.wrapping_add(1);
+        }
+
         if self.sim.visor_down {
-            build_eidos_vectors(
-                &mut self.eidos_mesh,
-                dp.shoji_closed,
-                dp.ac_switch_on && dp.main_breaker_on && !dp.breaker_tripped,
-                dp.kettle_switch_on && dp.main_breaker_on && !dp.breaker_tripped,
-            );
+            let ac_live = dp.ac_switch_on && dp.main_breaker_on && !dp.breaker_tripped;
+            let ket_live = dp.kettle_switch_on && dp.main_breaker_on && !dp.breaker_tripped;
+            let key = ((dp.shoji_closed * 1000.0) as u32, ac_live, ket_live);
+            if self.last_eidos_key != Some(key) {
+                build_eidos_vectors(&mut self.eidos_mesh, dp.shoji_closed, ac_live, ket_live);
+                self.last_eidos_key = Some(key);
+                self.eidos_revision = self.eidos_revision.wrapping_add(1);
+            }
         }
     }
 
@@ -121,10 +163,10 @@ impl EngineInstance {
         t[37] = dp.plume_intensity;
         t[38] = dp.plume_age_s;
         t[39] = dp.shockwave_radius_m;
-        // [40..50]: Audio physical impulses, settle flag, & Provenance sigmas
-        t[40] = click_imp;
-        t[41] = shock_imp;
-        t[42] = trip_imp;
+        // [40..50]: Latching audio impulses (never dropped before WebAudio consumes them!) & Provenance
+        t[40] = t[40].max(click_imp);
+        t[41] = t[41].max(shock_imp);
+        t[42] = t[42].max(trip_imp);
         t[43] = if s.is_visually_settled() { 1.0 } else { 0.0 };
         t[44] = s.speed_of_sound_mps() as f32;
         t[45] = PAD_DISTANCE_M as f32;
@@ -190,6 +232,30 @@ pub extern "C" fn odderon_init() {
 }
 
 #[no_mangle]
+pub extern "C" fn odderon_ack_audio() {
+    with_engine(|eng| {
+        eng.telemetry[40] = 0.0;
+        eng.telemetry[41] = 0.0;
+        eng.telemetry[42] = 0.0;
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn odderon_auto_fire_done() -> u32 {
+    with_engine(|eng| if eng.sim.auto_fire_triggered { 1 } else { 0 })
+}
+
+#[no_mangle]
+pub extern "C" fn odderon_dyn_revision() -> u32 {
+    with_engine(|eng| eng.dyn_revision)
+}
+
+#[no_mangle]
+pub extern "C" fn odderon_eidos_revision() -> u32 {
+    with_engine(|eng| eng.eidos_revision)
+}
+
+#[no_mangle]
 pub extern "C" fn odderon_step(
     dt_ms: u32,
     fwd: f32,
@@ -242,10 +308,13 @@ pub extern "C" fn odderon_ray_actuate(
             mark_mode != 0,
             secondary != 0,
         );
-        if hover_only == 0 {
+        if hover_only != 0 {
+            // Fast O(1) hover update: avoids recomputing state_hash & never clobbers latched audio impulses!
+            eng.telemetry[31] = (hit as u8) as f32;
+        } else {
             eng.rebuild_dynamic();
+            eng.sync_telemetry();
         }
-        eng.sync_telemetry();
         (hit as u8) as u32
     })
 }
@@ -407,4 +476,35 @@ pub extern "C" fn odderon_state_hash_lo() -> u32 {
 #[no_mangle]
 pub extern "C" fn odderon_state_hash_hi() -> u32 {
     with_engine(|eng| ((eng.sim.state_hash() >> 32) & 0xffff_ffff) as u32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dirty_flag_skips_mesh_rebuild_on_pure_camera_motion_and_latches_audio() {
+        let mut eng = EngineInstance::new();
+        let rev0 = eng.dyn_revision;
+        eng.sim.actuate(Actuator::Locomotion {
+            fwd: 1.0,
+            right: 0.0,
+            yaw_delta: 0.12,
+            pitch_delta: -0.05,
+            dt_s: 0.016,
+        });
+        eng.rebuild_dynamic();
+        assert_eq!(eng.dyn_revision, rev0, "Pure camera locomotion should not rebuild dynamic mesh!");
+
+        // Trigger switch click -> verify impulse stays latched across a subsequent step until acked!
+        eng.sim.actuate(Actuator::FlipVisor { down: true });
+        eng.rebuild_dynamic();
+        eng.sync_telemetry();
+        assert!(eng.telemetry[40] > 0.5);
+        eng.sim.step_ms(16);
+        eng.sync_telemetry();
+        assert!(eng.telemetry[40] > 0.5, "Click impulse must stay latched until acked by WebAudio!");
+        eng.telemetry[40] = 0.0;
+        assert_eq!(eng.telemetry[40], 0.0);
+    }
 }
