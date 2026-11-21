@@ -1,11 +1,11 @@
-//! Odderon Deterministic Simulation Kernel (Checkpoint 1A — Block 1: "The Sunlit Room").
+//! Odderon Deterministic Simulation Kernel (Checkpoint 1A v2 — Block 1: "The Sunlit Room").
 //! Enforces Law 4: all state mutations pass exclusively through physical `Actuator` variants.
 
 use odderon_dmath::{
     clamp_f32, clamp_f64, dcos, dexp, dsin, dsqrt, Aabb3, BarycentricPos, DetHasher, ProvGraph,
     SolarState, sun_state_uchinoura, Vec3, PI, TAU,
 };
-use odderon_geom::{DynamicSceneParams, GAUGE_CENTERS};
+use odderon_geom::{DynamicSceneParams, GAUGE_CENTERS, PANEL_SWITCH_XS};
 use odderon_thermo::{HabProvenanceIds, HabThermoState};
 
 pub const PAD_DISTANCE_M: f64 = 2820.0;
@@ -29,6 +29,7 @@ pub enum TargetId {
     SleepingBunk = 13,
     KettleBody = 14,
     AcUnit = 15,
+    ToiletDoor = 16,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -80,7 +81,7 @@ pub struct CalibrationRecord {
 
 pub struct SimWorld {
     pub tick_ms: u64,
-    /// Local Japan Standard Time in fractional hours (starts at 11.65 = 11:39 AM Summer Noon light!).
+    /// Local Japan Standard Time in fractional hours (starts at 10.15 = 10:09 AM Summer Noon light!).
     pub local_hour_jst: f64,
     pub world_pos: BarycentricPos,
     pub solar: SolarState,
@@ -88,9 +89,9 @@ pub struct SimWorld {
     pub prov_graph: ProvGraph,
     pub prov_ids: HabProvenanceIds,
 
-    // First-person astronaut/nobody physical body state inside room
-    pub player_pos: Vec3, // feet x, eye y, feet z
-    pub yaw_rad: f32,     // 0 = looking +Z directly at sunlit coastal window!
+    // First-person physical body state inside room
+    pub player_pos: Vec3,
+    pub yaw_rad: f32, // 0 = looking +Z directly at sunlit coastal window!
     pub pitch_rad: f32,
     pub head_bob_phase: f32,
     pub visor_down: bool,
@@ -101,6 +102,8 @@ pub struct SimWorld {
     // Mechanical animations & acoustic wavefronts
     pub fan_angle_rad: f32,
     pub fan_omega_rad_s: f32,
+    pub toilet_door_open: f32,
+    pub toilet_door_target: f32,
     pub gauge_marks: [f32; 3],
     pub mark_timer_s: [f32; 3],
     pub calibration: CalibrationRecord,
@@ -130,13 +133,12 @@ impl Default for SimWorld {
 
 impl SimWorld {
     pub fn new() -> Self {
-        let local_hour_jst = 9.75; // 09:45 AM Summer Sun slanting golden bars deep across desk & tatami!
+        let local_hour_jst = 10.15; // 10:09 AM Summer Sun slanting vivid golden bars across desk, chair & tatami!
         let solar = sun_state_uchinoura(local_hour_jst);
         let mut hab = HabThermoState::new_summer_morning();
-        // Start ceiling fan OFF so Render-On-Demand settles to 0 FPS immediately when still;
-        // flipping the physical Fan switch wakes continuous blade rotation!
+        // Start ceiling fan OFF so Render-On-Demand parks at 0 FPS immediately when still;
+        // flipping the physical Fan switch wakes continuous 60 Hz blade rotation!
         hab.fan_switch_on = false;
-        // Pre-settle compressor to initial equilibrium so boot state starts calm & parked at 0 rAF/s
         for _ in 0..80 {
             hab.step(0.2, local_hour_jst, &solar);
         }
@@ -153,18 +155,20 @@ impl SimWorld {
             prov_graph,
             prov_ids,
 
-            // Wake up standing beside the raised tatami & bunk, looking toward the sunlit window & desk!
-            player_pos: Vec3::new(-0.65, 1.66, -0.15),
-            yaw_rad: 0.16,
-            pitch_rad: -0.05,
+            // Wake up standing beside the bed & tatami, facing the sunlit window, desk, L-kitchen (left) & AC/bonsai (right)!
+            player_pos: Vec3::new(0.18, 1.62, -0.06),
+            yaw_rad: -0.04,
+            pitch_rad: -0.04,
             head_bob_phase: 0.0,
             visor_down: false,
             hovered_target: TargetId::None,
             selected_target: TargetId::ShojiScreen,
             clipboard_open: false,
 
-            fan_angle_rad: 0.35,
+            fan_angle_rad: 0.38,
             fan_omega_rad_s: 0.0,
+            toilet_door_open: 0.0,
+            toilet_door_target: 0.0,
             gauge_marks: [-1.0, -1.0, -1.0],
             mark_timer_s: [0.0, 0.0, 0.0],
             calibration: CalibrationRecord::default(),
@@ -192,22 +196,28 @@ impl SimWorld {
 
     #[inline]
     pub fn speed_of_sound_mps(&self) -> f64 {
-        // c = sqrt(gamma * R_specific * T_out) = 331.3 * sqrt(T / 273.15)
         331.3 * dsqrt(self.hab.outdoor_temp_k / 273.15)
     }
 
     #[inline]
     pub fn eye_pos(&self) -> Vec3 {
-        let floor_h = if self.player_pos.x < 0.38 && self.player_pos.z > -0.45 && self.player_pos.z < 1.72 {
-            0.12 // Stepped up onto raised Japanese tatami platform!
+        let on_tatami = self.player_pos.x > -1.55
+            && self.player_pos.x < 1.78
+            && self.player_pos.z > -0.42
+            && self.player_pos.z < 1.94;
+        let in_bath = self.player_pos.x < -0.40 && self.player_pos.z < -0.28;
+        let floor_h = if in_bath {
+            0.06
+        } else if on_tatami {
+            0.035
         } else {
             0.0
         };
-        let bob = 0.018 * (dsin(self.head_bob_phase as f64) as f32);
+        let bob = 0.016 * (dsin(self.head_bob_phase as f64) as f32);
         let rattle_cam = self.window_rattle_pos * 0.35;
         Vec3::new(
             self.player_pos.x + rattle_cam,
-            1.58 + floor_h + bob,
+            1.60 + floor_h + bob,
             self.player_pos.z,
         )
     }
@@ -218,7 +228,6 @@ impl SimWorld {
         let sp = dsin(self.pitch_rad as f64) as f32;
         let cy = dcos(self.yaw_rad as f64) as f32;
         let sy = dsin(self.yaw_rad as f64) as f32;
-        // yaw = 0 looks straight along +Z (out the sunlit coastal window!)
         Vec3::new(sy * cp, sp, cy * cp).normalized()
     }
 
@@ -275,6 +284,12 @@ impl SimWorld {
                         self.pending_click_impulse = 0.45;
                         self.record_input(3, value, 0.0);
                     }
+                    TargetId::ToiletDoor => {
+                        self.toilet_door_target = v as f32;
+                        self.selected_target = TargetId::ToiletDoor;
+                        self.pending_click_impulse = 0.50;
+                        self.record_input(5, value, 0.0);
+                    }
                     _ => {}
                 }
             }
@@ -287,7 +302,7 @@ impl SimWorld {
             } => {
                 if gauge_index < 3 {
                     self.gauge_marks[gauge_index] = predicted_value;
-                    self.mark_timer_s[gauge_index] = 6.0; // Evaluate settling accuracy after 6s!
+                    self.mark_timer_s[gauge_index] = 6.0;
                     self.pending_click_impulse = 0.55;
                     self.record_input(4, gauge_index as f32, predicted_value);
                 }
@@ -310,9 +325,12 @@ impl SimWorld {
         self.selected_target = target;
         match target {
             TargetId::ShojiScreen => {
-                // Step smoothly 0.0 -> 0.35 -> 0.70 -> 1.0 -> 0.0 (or reverse on secondary)
                 let next = if secondary {
-                    if self.hab.shoji_closed <= 0.05 { 1.0 } else { clamp_f64(self.hab.shoji_closed - 0.34, 0.0, 1.0) }
+                    if self.hab.shoji_closed <= 0.05 {
+                        1.0
+                    } else {
+                        clamp_f64(self.hab.shoji_closed - 0.34, 0.0, 1.0)
+                    }
                 } else if self.hab.shoji_closed >= 0.95 {
                     0.0
                 } else {
@@ -374,15 +392,30 @@ impl SimWorld {
                 self.record_input(18, if self.clipboard_open { 1.0 } else { 0.0 }, 0.0);
             }
             TargetId::SleepingBunk => {
-                // Diegetic sleep / rest cycles through Morning -> Summer Noon -> Shinkai Golden Hour -> Lantern Evening!
-                self.local_hour_jst += 2.75;
-                if self.local_hour_jst >= 24.0 {
-                    self.local_hour_jst -= 24.0;
+                // Cycle cleanly through 4 iconic Uchinoura Summer lighting presets:
+                // 10:10 (Vivid Summer Noon Sunbeams) -> 12:35 (High Blazing Noon) -> 17:42 (Shinkai Golden Sunset) -> 21:30 (Japantown Lantern Night)
+                self.local_hour_jst = if self.local_hour_jst < 11.5 {
+                    12.58
+                } else if self.local_hour_jst < 15.5 {
+                    17.70
+                } else if self.local_hour_jst < 19.5 {
+                    21.50
+                } else {
+                    10.15
+                };
+                // Automatically click warm lamp on at dusk/night for cozy Japantown ambiance!
+                if self.local_hour_jst >= 17.0 {
+                    self.hab.lamp_switch_on = true;
                 }
                 self.solar = sun_state_uchinoura(self.local_hour_jst);
                 self.hab.step(0.2, self.local_hour_jst, &self.solar);
                 self.pending_click_impulse = 0.60;
                 self.record_input(19, self.local_hour_jst as f32, 0.0);
+            }
+            TargetId::ToiletDoor => {
+                self.toilet_door_target = if self.toilet_door_target < 0.5 { 1.0 } else { 0.0 };
+                self.pending_click_impulse = 0.60;
+                self.record_input(24, self.toilet_door_target, 0.0);
             }
             TargetId::GaugeTemp | TargetId::GaugePower | TargetId::GaugeVoltage => {
                 let g_idx = match target {
@@ -391,16 +424,20 @@ impl SimWorld {
                     _ => 2,
                 };
                 if mark_mode || secondary {
-                    // Place or cycle a China-marker prediction tick right on the gauge glass!
                     let current = match g_idx {
                         0 => (self.hab.room_air_temp_k - 273.15) as f32,
                         1 => self.hab.total_bus_power_w as f32,
                         _ => self.hab.bus_voltage_v as f32,
                     };
-                    // Offset slightly in direction of current derivative or cycle handy tick
                     let delta = match g_idx {
                         0 => -1.2_f32,
-                        1 => if self.hab.shoji_closed < 0.5 { -260.0 } else { 240.0 },
+                        1 => {
+                            if self.hab.shoji_closed < 0.5 {
+                                -260.0
+                            } else {
+                                240.0
+                            }
+                        }
                         _ => -0.8,
                     };
                     let (lo, hi) = match g_idx {
@@ -411,11 +448,12 @@ impl SimWorld {
                     let pred = if self.gauge_marks[g_idx] < 0.0 {
                         clamp_f32(current + delta, lo, hi)
                     } else {
-                        let stepped = self.gauge_marks[g_idx] + match g_idx {
-                            0 => 1.0,
-                            1 => 150.0,
-                            _ => 1.0,
-                        };
+                        let stepped = self.gauge_marks[g_idx]
+                            + match g_idx {
+                                0 => 1.0,
+                                1 => 150.0,
+                                _ => 1.0,
+                            };
                         if stepped > hi { lo } else { stepped }
                     };
                     self.gauge_marks[g_idx] = pred;
@@ -423,7 +461,6 @@ impl SimWorld {
                     self.pending_click_impulse = 0.65;
                     self.record_input(20 + g_idx as u8, pred, 0.0);
                 } else {
-                    // Tap gauge to inspect Provenance lineage in Eidos!
                     self.visor_down = true;
                     self.pending_click_impulse = 0.45;
                 }
@@ -449,18 +486,58 @@ impl SimWorld {
         }
     }
 
+    fn is_pos_blocked(&self, x: f32, z: f32) -> bool {
+        // Outer apartment walls (`[-2.24, +2.24] x [-1.72, +1.68]`)
+        if x < -2.24 || x > 2.24 || z < -1.72 || z > 1.68 {
+            return true;
+        }
+        // 1. Top-Center Desk (`x in [-1.24, +1.24], z > 1.06`) & Ergonomic Chair (`x in [-0.30, +0.30], z in [0.50, 1.08]`)
+        if x > -1.24 && x < 1.24 && z > 1.06 {
+            return true;
+        }
+        if x > -0.32 && x < 0.32 && z > 0.50 && z < 1.08 {
+            return true;
+        }
+        // 2. Top-Left L-Kitchen Counter (`Leg A: x > 1.22, z > 1.22`; `Leg B: x > 1.68, z > 0.06`)
+        if x > 1.22 && z > 1.22 {
+            return true;
+        }
+        if x > 1.68 && z > 0.06 {
+            return true;
+        }
+        // 3. Top-Right Small Bonsai Table (`x < -1.32, z > 1.26`)
+        if x < -1.32 && z > 1.26 {
+            return true;
+        }
+        // 4. Bottom-Left Sleeping Bed (`x > 0.30, z < -0.34`)
+        if x > 0.30 && z < -0.34 {
+            return true;
+        }
+        // 5. Bottom-Center Small Shelf (`x in [-0.44, +0.36], z < -0.44`)
+        if x > -0.44 && x < 0.36 && z < -0.44 {
+            return true;
+        }
+        // 6. Bottom-Right Unit-Bath Walls & Pocket Door (`z = -0.28`, doorway `x in [-1.32, -0.64]`)
+        if x <= -0.36 && z < -0.14 {
+            // Allow walking through doorway into Unit-Bath ONLY when pocket door is open!
+            let in_open_doorway = self.toilet_door_open > 0.72
+                && x > -1.28
+                && x < -0.68
+                && z > -1.16;
+            if !in_open_doorway {
+                return true;
+            }
+        }
+        false
+    }
+
     fn apply_room_collision(&mut self, dx: f32, dz: f32) {
-        let nx = clamp_f32(self.player_pos.x + dx, -2.02, 1.52);
-        let nz = clamp_f32(self.player_pos.z + dz, -1.02, 1.06);
-
-        // Prevent walking into Sleeping Bunk (-2.36..-0.48, -1.96..-0.44)
-        let in_bunk_x = nx < -0.38 && self.player_pos.z < -0.36;
-        let in_bunk_z = nz < -0.36 && nx < -0.38;
-
-        if !in_bunk_x {
+        let nx = self.player_pos.x + dx;
+        if !self.is_pos_blocked(nx, self.player_pos.z) {
             self.player_pos.x = nx;
         }
-        if !in_bunk_z {
+        let nz = self.player_pos.z + dz;
+        if !self.is_pos_blocked(self.player_pos.x, nz) {
             self.player_pos.z = nz;
         }
     }
@@ -468,35 +545,35 @@ impl SimWorld {
     pub fn cast_ray_target(&self, dir: Vec3) -> TargetId {
         let eye = self.eye_pos();
         let dir = dir.normalized();
-        let max_d = 3.65_f32;
+        let max_d = 4.10_f32;
 
-        let switch_xs = [
-            (1.48_f32, TargetId::MainBreaker),
-            (1.63, TargetId::AcSwitch),
-            (1.78, TargetId::FanSwitch),
-            (1.93, TargetId::LampSwitch),
-            (2.08, TargetId::KettleSwitch),
+        let switch_ids = [
+            TargetId::MainBreaker,
+            TargetId::AcSwitch,
+            TargetId::FanSwitch,
+            TargetId::LampSwitch,
+            TargetId::KettleSwitch,
         ];
 
         let mut best_t = max_d;
         let mut best_id = TargetId::None;
 
-        for &(sx, tid) in &switch_xs {
+        for (i, &sx) in PANEL_SWITCH_XS.iter().enumerate() {
             let box_sw = Aabb3::new(
-                Vec3::new(sx - 0.068, 1.05, 1.84),
-                Vec3::new(sx + 0.068, 1.30, 1.96),
+                Vec3::new(sx - 0.068, 1.07, 1.88),
+                Vec3::new(sx + 0.068, 1.31, 1.99),
             );
             if let Some(t) = box_sw.ray_hit(eye, dir, best_t) {
                 best_t = t;
-                best_id = tid;
+                best_id = switch_ids[i];
             }
         }
 
         let gauge_ids = [TargetId::GaugeTemp, TargetId::GaugePower, TargetId::GaugeVoltage];
         for (i, &gc) in GAUGE_CENTERS.iter().enumerate() {
             let box_g = Aabb3::new(
-                Vec3::new(gc.x - 0.115, gc.y - 0.115, 1.87),
-                Vec3::new(gc.x + 0.115, gc.y + 0.115, 1.96),
+                Vec3::new(gc.x - 0.12, gc.y - 0.12, 1.91),
+                Vec3::new(gc.x + 0.12, gc.y + 0.12, 1.99),
             );
             if let Some(t) = box_g.ray_hit(eye, dir, best_t) {
                 best_t = t;
@@ -504,17 +581,23 @@ impl SimWorld {
             }
         }
 
-        let shoji_w = 0.28 + (self.hab.shoji_closed as f32) * (2.81 - 0.28);
+        let shoji_w = 0.24 + (self.hab.shoji_closed as f32) * (2.50 - 0.24);
         let shoji_box = Aabb3::new(
-            Vec3::new(-1.56, 0.78, 1.88),
-            Vec3::new(-1.53 + shoji_w.max(0.45), 2.24, 1.97),
+            Vec3::new(1.25 - shoji_w.max(0.42), 0.77, 1.92),
+            Vec3::new(1.27, 2.26, 2.00),
         );
-        let win_box = Aabb3::new(Vec3::new(-0.14, 0.78, 1.97), Vec3::new(1.30, 2.24, 2.08));
-        let radio_box = Aabb3::new(Vec3::new(0.46, 0.74, 1.38), Vec3::new(1.04, 1.04, 1.84));
-        let clip_box = Aabb3::new(Vec3::new(-0.42, 0.73, 1.28), Vec3::new(0.08, 0.83, 1.72));
-        let kettle_box = Aabb3::new(Vec3::new(0.94, 0.89, -1.66), Vec3::new(1.30, 1.20, -1.30));
-        let ac_box = Aabb3::new(Vec3::new(1.36, 2.02, 1.62), Vec3::new(2.28, 2.40, 1.98));
-        let bunk_box = Aabb3::new(Vec3::new(-2.34, 0.38, -1.92), Vec3::new(-0.56, 0.72, -0.50));
+        let win_box = Aabb3::new(Vec3::new(-1.26, 0.77, 2.00), Vec3::new(1.26, 2.26, 2.10));
+        let radio_box = Aabb3::new(Vec3::new(-1.08, 0.75, 1.41), Vec3::new(-0.51, 1.02, 1.82));
+        let clip_box = Aabb3::new(Vec3::new(-0.22, 0.74, 1.31), Vec3::new(0.27, 0.83, 1.70));
+        let kettle_box = Aabb3::new(Vec3::new(1.46, 0.90, 1.50), Vec3::new(1.80, 1.22, 1.82));
+        let ac_box = Aabb3::new(Vec3::new(-2.44, 2.03, 1.65), Vec3::new(-1.36, 2.40, 2.02));
+        let bunk_box = Aabb3::new(Vec3::new(0.42, 0.12, -2.02), Vec3::new(2.52, 0.70, -0.46));
+
+        let door_shift = self.toilet_door_open * 0.70;
+        let toilet_door_box = Aabb3::new(
+            Vec3::new(-1.42 - door_shift, 0.06, -0.36),
+            Vec3::new(-0.56, 2.10, -0.23),
+        );
 
         let candidates = [
             (radio_box, TargetId::VhfPadRadio),
@@ -522,6 +605,7 @@ impl SimWorld {
             (kettle_box, TargetId::KettleBody),
             (ac_box, TargetId::AcUnit),
             (bunk_box, TargetId::SleepingBunk),
+            (toilet_door_box, TargetId::ToiletDoor),
             (shoji_box, TargetId::ShojiScreen),
             (win_box, TargetId::WindowSash),
         ];
@@ -549,7 +633,7 @@ impl SimWorld {
         hit
     }
 
-    /// Advances simulation by `dt_ms` milliseconds using deterministic fixed-step sub-stepping.
+    /// Advances simulation by `dt_ms` milliseconds.
     pub fn step_ms(&mut self, dt_ms: u32) {
         let clamped_ms = if dt_ms > 250 { 250 } else { dt_ms };
         if clamped_ms == 0 {
@@ -559,7 +643,6 @@ impl SimWorld {
         self.tick_ms += clamped_ms as u64;
         let dt_s = (clamped_ms as f64) * 0.001;
 
-        // Real-time progression of solar angle (1 real sec = 1 real sec!)
         self.local_hour_jst += dt_s / 3600.0;
         if self.local_hour_jst >= 24.0 {
             self.local_hour_jst -= 24.0;
@@ -569,6 +652,18 @@ impl SimWorld {
 
         if !prev_tripped && self.hab.breaker_tripped {
             self.pending_breaker_trip = true;
+        }
+
+        // Smooth sliding Unit-Bath pocket door animation
+        let door_diff = self.toilet_door_target - self.toilet_door_open;
+        if door_diff.abs() > 0.004 {
+            let step = clamp_f32((dt_s as f32) * 4.2, 0.0, 1.0);
+            self.toilet_door_open += door_diff * step;
+            if (self.toilet_door_target - self.toilet_door_open).abs() < 0.008 {
+                self.toilet_door_open = self.toilet_door_target;
+            }
+        } else {
+            self.toilet_door_open = self.toilet_door_target;
         }
 
         // Ceiling fan rotational inertia
@@ -584,7 +679,7 @@ impl SimWorld {
             self.fan_angle_rad -= TAU as f32;
         }
 
-        // Evaluate China-marker predictions when timer completes (Competence Mirror, Bible §2.2a!)
+        // Evaluate China-marker predictions when timer completes
         let actuals = [
             (self.hab.room_air_temp_k - 273.15) as f32,
             self.hab.total_bus_power_w as f32,
@@ -613,9 +708,8 @@ impl SimWorld {
             }
         }
 
-        // Distant Coastal Pad-1 Static Fire & 343 m/s Acoustic Wavefront Propagation!
+        // Distant Coastal Pad-1 Static Fire & 343 m/s Acoustic Wavefront Propagation
         let now_s = self.sim_time_s();
-        // Trigger first unscripted morning static fire at T+9.0s (Bible §8: "count ~8s, then the windows rattle")
         if !self.auto_fire_triggered && now_s >= 9.0 {
             self.auto_fire_triggered = true;
             self.trigger_pad_static_fire();
@@ -631,7 +725,6 @@ impl SimWorld {
                 let win_coupling = 0.55 + 0.45 * (self.hab.window_open as f32);
                 self.shockwave_hit_pulse = 1.0 * win_coupling;
             }
-            // Exact analytical closed-form damped 18 Hz glass-pane oscillation after shockwave arrival!
             if self.shockwave_arrived {
                 let tau = (age - t_arrival).max(0.0);
                 if tau < 2.2 {
@@ -660,6 +753,7 @@ impl SimWorld {
         let plume_done = !self.static_fire_active;
         let rattle_done = self.window_rattle_pos.abs() < 2e-5 && self.window_rattle_vel.abs() < 2e-4;
         let kettle_idle = !self.hab.kettle_switch_on;
+        let door_settled = (self.toilet_door_target - self.toilet_door_open).abs() < 0.008;
         let bus_live = self.hab.main_breaker_on && !self.hab.breaker_tripped;
         let temp_err = self.hab.room_air_temp_k - self.hab.ac_setpoint_k;
         let target_mod = if bus_live && self.hab.ac_switch_on {
@@ -676,7 +770,7 @@ impl SimWorld {
             0.0
         };
         let comp_settled = (target_mod - self.hab.ac_compressor_mod).abs() < 0.025;
-        fan_still && plume_done && rattle_done && kettle_idle && comp_settled
+        fan_still && plume_done && rattle_done && kettle_idle && door_settled && comp_settled
     }
 
     pub fn dynamic_scene_params(&self) -> DynamicSceneParams {
@@ -686,7 +780,6 @@ impl SimWorld {
         } else {
             99.0
         };
-        // 5.2-second static-fire rocket burn profile
         let plume_intensity = if self.static_fire_active && age >= 0.0 && age < 5.2 {
             let ramp_in = clamp_f32(age / 0.35, 0.0, 1.0);
             let ramp_out = clamp_f32((5.2 - age) / 0.6, 0.0, 1.0);
@@ -711,6 +804,7 @@ impl SimWorld {
             ac_switch_on: self.hab.ac_switch_on,
             fan_switch_on: self.hab.fan_switch_on,
             kettle_switch_on: self.hab.kettle_switch_on,
+            toilet_door_open: self.toilet_door_open,
             room_temp_c: (self.hab.room_air_temp_k - 273.15) as f32,
             bus_power_w: self.hab.total_bus_power_w as f32,
             bus_voltage_v: self.hab.bus_voltage_v as f32,
@@ -721,7 +815,6 @@ impl SimWorld {
         }
     }
 
-    /// Computes the deterministic 64-bit Proof-of-Flight state hash.
     pub fn state_hash(&self) -> u64 {
         let mut h = DetHasher::new();
         h.write_u64(self.tick_ms);
@@ -731,6 +824,7 @@ impl SimWorld {
         h.write_f64(self.hab.bus_voltage_v);
         h.write_f64(self.hab.shoji_closed);
         h.write_f64(self.hab.window_open);
+        h.write_f64(self.toilet_door_open as f64);
         h.write_u32(self.input_log.len() as u32);
         h.finish()
     }
@@ -747,13 +841,11 @@ mod tests {
         w.trigger_pad_static_fire();
         assert!(!w.shockwave_arrived);
 
-        // At +7.5s, 7.5 * 349 m/s = 2617 m < 2820 m -> MUST NOT have arrived yet!
         for _ in 0..75 {
             w.step_ms(100);
         }
         assert!(!w.shockwave_arrived, "Shockwave arrived too early before 2820m / c_sound!");
 
-        // By +8.4s, 8.4 * 349 m/s = 2931 m > 2820 m -> MUST have arrived and rattled the window!
         for _ in 0..10 {
             w.step_ms(100);
         }
