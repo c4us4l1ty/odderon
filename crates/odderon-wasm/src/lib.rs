@@ -398,3 +398,13 @@ pub extern "C" fn odderon_build_proof_json() -> *const u8 {
 pub extern "C" fn odderon_proof_json_len() -> usize {
     with_engine(|eng| eng.export_buf.len())
 }
+
+#[no_mangle]
+pub extern "C" fn odderon_state_hash_lo() -> u32 {
+    with_engine(|eng| (eng.sim.state_hash() & 0xffff_ffff) as u32)
+}
+
+#[no_mangle]
+pub extern "C" fn odderon_state_hash_hi() -> u32 {
+    with_engine(|eng| ((eng.sim.state_hash() >> 32) & 0xffff_ffff) as u32)
+}

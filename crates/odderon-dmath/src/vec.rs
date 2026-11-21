@@ -8,6 +8,8 @@ pub struct Vec3 {
 }
 
 impl Vec3 {
+    pub const ZERO: Self = Self::new(0.0, 0.0, 0.0);
+
     #[inline]
     pub const fn new(x: f32, y: f32, z: f32) -> Self {
         Self { x, y, z }
