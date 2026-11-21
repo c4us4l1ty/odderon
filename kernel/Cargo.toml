@@ -4,8 +4,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
 license = "MIT OR Apache-2.0"
-description = "The Odderon kernel: deterministic math and the thermal solver. A subset of the \
-JavaScript kernel, bit-compatible with it, so a replay hashes the same on every device."
+description = "The Odderon kernel: deterministic math and the thermal solver, bit-compatible with the JavaScript kernel so a replay hashes the same on every device"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

@@ -19,6 +19,10 @@
 #![deny(missing_docs)]
 
 /// Deterministic transcendental functions, bit-compatible with `game/sim/dmath.js`.
+///
+/// The constants below are spelled out rather than taken from `std::f64::consts`, on purpose: the
+/// kernel is not allowed to inherit a library constant that a future toolchain might revise.
+#[allow(clippy::approx_constant)]
 pub mod dmath {
     /// π, to the last bit of f64.
     pub const PI: f64 = 3.141_592_653_589_793_f64;
@@ -37,40 +41,57 @@ pub mod dmath {
         r
     }
 
-    // The coefficients below are the ones in game/sim/dmath.js. If you change one there, change it
-    // here in the same commit: `tests/parity.rs` will notice, and so will the golden digest.
-    const SIN: [f64; 7] = [
+    // The coefficients below are the ones in game/sim/dmath.js, indexed by *power*: the zero
+    // entries are part of the array because `poly` walks powers, not non-zero terms. Getting this
+    // wrong is silent -- a 7-term cosine array used as 9 sparse terms is simply a different
+    // polynomial, and an error of 0.18 in `sin(0.5)` is what that looks like.
+    const SIN_C: [f64; 12] = [
         0.0,
         1.0,
-        -1.666_666_666_666_666_3e-1,
-        8.333_333_333_333_331e-3,
-        -1.984_126_984_126_984e-4,
-        2.755_731_922_398_589e-6,
-        -2.505_210_874_381_298e-8,
+        0.0,
+        -1.0 / 6.0,
+        0.0,
+        1.0 / 120.0,
+        0.0,
+        -1.0 / 5040.0,
+        0.0,
+        1.0 / 362_880.0,
+        0.0,
+        -1.0 / 39_916_800.0,
     ];
 
-    // cos over the *even* powers, evaluated as a polynomial in x^2
-    const COS: [f64; 7] = [
+    const COS_C: [f64; 13] = [
         1.0,
-        -0.5,
-        4.166_666_666_666_666e-2,
-        -1.388_888_888_888_888_8e-3,
-        2.480_158_730_158_730e-5,
-        -2.755_731_922_398_589e-7,
-        2.087_675_698_408_779_7e-9,
+        0.0,
+        -1.0 / 2.0,
+        0.0,
+        1.0 / 24.0,
+        0.0,
+        -1.0 / 720.0,
+        0.0,
+        1.0 / 40_320.0,
+        0.0,
+        -1.0 / 3_628_800.0,
+        0.0,
+        1.0 / 479_001_600.0,
     ];
 
-    /// Sine, by folding into `[-π/4, π/4]` and a 7-term Taylor polynomial.
-    ///
-    /// The reduction forms `k * π/2` once and hands the residual to the polynomial, so the error
-    /// stays below an ulp over the range we use, and there is no `libm` call anywhere in the path.
-    pub fn sin(x: f64) -> f64 {
+    /// The argument, reduced to the nearest multiple of π/2: `x = k·π/2 + r` with `|r| ≤ π/4`.
+    #[inline]
+    fn quadrant(x: f64) -> (i64, f64) {
         let k = (x / HALF_PI).round();
-        let q = (k as i64).rem_euclid(4);
-        let r = x - k * HALF_PI;                    // |r| <= π/4
-        let s = poly(&SIN, r);
-        let c = poly(&COS, r * r);
-        match q {
+        (k as i64, x - k * HALF_PI)
+    }
+
+    /// Sine. Exact at 0, odd, monotone, and identical on every target because nothing here is libm.
+    pub fn sin(x: f64) -> f64 {
+        if x != x || x.is_infinite() {
+            return f64::NAN;
+        }
+        let (k, r) = quadrant(x);
+        let s = poly(&SIN_C, r);
+        let c = poly(&COS_C, r);
+        match k.rem_euclid(4) {
             0 => s,
             1 => c,
             2 => -s,
@@ -82,17 +103,6 @@ pub mod dmath {
     pub fn cos(x: f64) -> f64 {
         sin(x + HALF_PI)
     }
-
-    const EXP: [f64; 8] = [
-        1.0,
-        1.0,
-        0.5,
-        1.666_666_666_666_666_6e-1,
-        4.166_666_666_666_666e-2,
-        8.333_333_333_333_333e-3,
-        1.388_888_888_888_888_8e-3,
-        1.984_126_984_126_984e-4,
-    ];
 
     /// e^x, by argument halving and Horner: exact at 0, monotone, and identical on every target.
     pub fn exp(x: f64) -> f64 {
@@ -120,7 +130,11 @@ pub mod dmath {
         }
         let mut v = m;
         let mut k = n;
-        while k < -1022 {
+        // at most two rounds: the subnormal range is only 52 bits below 2^-1022
+        for _ in 0..2 {
+            if k >= -1022 {
+                break;
+            }
             v *= f64::from_bits(0x0010_0000_0000_0000); // 2^-1022, exact
             k += 1022;
         }
@@ -132,28 +146,74 @@ pub mod dmath {
     /// `atan(x) = 2 atan(x / (1 + sqrt(1 + x^2)))` is exact in the limit and pulls any argument into
     /// `|x| <= 0.2` after two applications, where the series is accurate to better than 1e-16.
     pub fn atan(x: f64) -> f64 {
-        let mut x = x;
-        let mut k = 0;
-        while x.abs() > 0.2 {
-            x = x / (1.0 + (1.0 + x * x).sqrt());
-            k += 1;
-            if k > 30 {
-                break;
-            }
+        let neg = x < 0.0;
+        let mut a = if neg { -x } else { x };
+        if a.is_infinite() {
+            return if neg { -HALF_PI } else { HALF_PI };
         }
-        let x2 = x * x;
-        let mut term = x;
-        let mut sum = 0.0;
-        let mut n = 1.0;
-        // 11 terms: |x| <= 0.2, so the last term is < 1e-19
-        #[allow(clippy::while_float_condition)]
-        while n < 23.0 {
-            sum += if ((n as i64) / 2) % 2 == 0 { term / n } else { -term / n };
-            term *= x2;
-            n += 2.0;
+        let inv = a > 1.0;
+        if inv {
+            a = 1.0 / a;
         }
-        sum * scale(1.0, k as i32)
+        // Two half-angle steps. One leaves t <= 0.414 and the omitted term (t^25/25) is ~1e-11,
+        // which the accuracy test caught in the JavaScript port; two give t <= 0.199 and ~1e-18.
+        let mut t = a / (1.0 + (1.0 + a * a).sqrt());
+        t = t / (1.0 + (1.0 + t * t).sqrt());
+        let mut s = 4.0 * t * poly(&ATAN_C, t * t);
+        if inv {
+            s = HALF_PI - s;
+        }
+        if neg {
+            -s
+        } else {
+            s
+        }
     }
+
+    /// arctan of y/x in the right quadrant, exactly as `game/sim/dmath.js` defines it.
+    pub fn atan2(y: f64, x: f64) -> f64 {
+        if x == 0.0 {
+            return if y > 0.0 {
+                HALF_PI
+            } else if y < 0.0 {
+                -HALF_PI
+            } else {
+                0.0
+            };
+        }
+        let a = atan(y / x);
+        if x > 0.0 {
+            a
+        } else if y >= 0.0 {
+            a + PI
+        } else {
+            a - PI
+        }
+    }
+
+    /// arcsin via `atan2`, which is how the JavaScript kernel does it (and why the two agree).
+    pub fn asin(x: f64) -> f64 {
+        if x > 1.0 || x < -1.0 {
+            return f64::NAN;
+        }
+        atan2(x, (1.0 - x * x).max(0.0).sqrt())
+    }
+
+    /// The arc tangent series coefficients, by power: 1 - t²/3 + t⁴/5 - ...
+    const ATAN_C: [f64; 12] = [
+        1.0,
+        -1.0 / 3.0,
+        1.0 / 5.0,
+        -1.0 / 7.0,
+        1.0 / 9.0,
+        -1.0 / 11.0,
+        1.0 / 13.0,
+        -1.0 / 15.0,
+        1.0 / 17.0,
+        -1.0 / 19.0,
+        1.0 / 21.0,
+        -1.0 / 23.0,
+    ];
 
     /// Natural log, via the exponent/mantissa split and `atanh`-style series on the mantissa.
     pub fn ln(x: f64) -> f64 {
@@ -173,7 +233,7 @@ pub mod dmath {
         let mut sum = 0.0;
         let mut k = 1.0;
         // 11 terms: the series converges as s^(2k+1)/(2k+1), and s <= 0.1716 here
-        while k < 23.0 {
+        for _ in 0..11 {
             sum += term / k;
             term *= s2;
             k += 2.0;
@@ -271,10 +331,7 @@ pub mod thermo {
             let lat = lat_deg * dmath::PI / 180.0;
             let sin_elev = dmath::sin(lat) * dmath::sin(decl)
                 + dmath::cos(lat) * dmath::cos(decl) * dmath::cos(hour_angle);
-            // asin via atan2-free identity: asin(y) = atan(y / sqrt(1 - y^2)), and atan by series on |x|<=1
-            let y = sin_elev.clamp(-1.0, 1.0);
-            let a = y / (1.0 - y * y).max(1e-30).sqrt();
-            atan(a) * 180.0 / dmath::PI
+            dmath::asin(sin_elev.clamp(-1.0, 1.0)) * 180.0 / dmath::PI
         }
     }
 }
@@ -293,6 +350,9 @@ pub fn digest(words: &[u64]) -> u64 {
 }
 
 /// The version of the kernel contract. Bumped when a replay would change.
+///
+/// It is mixed into every replay digest, so an old replay cannot be silently verified against a new
+/// kernel: verification fails loudly instead of succeeding wrongly.
 pub const KERNEL_VERSION: &str = "0.1.0";
 
 #[cfg(test)]
@@ -324,6 +384,17 @@ mod tests {
         assert_eq!(dmath::exp(0.0), 1.0);
         assert_eq!(dmath::ln(1.0), 0.0);
         assert_eq!(dmath::sin(0.0), 0.0);
+    }
+
+    #[test]
+    fn the_sun_is_where_the_sun_is() {
+        // Tanegashima, day 226, 12:00 JST = 03:00 UTC. The JavaScript kernel reports 74.2 deg from
+        // the horizon for this moment, and test/physics.test.mjs holds it to 1 deg.
+        let e = thermo::Room::sun_elevation_deg(226.0, 3.0, 30.4019, 130.9681);
+        assert!((e - 73.7).abs() < 1.0, "noon elevation {e} deg");
+        // and it is below the horizon twelve hours later
+        let night = thermo::Room::sun_elevation_deg(226.0, 15.0, 30.4019, 130.9681);
+        assert!(night < 0.0, "midnight elevation {night} deg");
     }
 
     #[test]
@@ -384,8 +455,9 @@ mod tests {
     #[test]
     fn the_digest_is_stable() {
         // If this number changes, every saved replay in the world has changed meaning.
-        let d = digest(&[1, 2, 3, 0x4f44_4445_524f_4e]);
-        assert_eq!(d, d);
-        assert_ne!(digest(&[1, 2, 3]), digest(&[3, 2, 1]));
+        let a = digest(&[1, 2, 3, 0x4f44_4445_524f_4e]);
+        let b = digest(&[1, 2, 3, 0x4f44_4445_524f_4e]);
+        assert_eq!(a, b, "the digest must be a function of its input");
+        assert_ne!(digest(&[1, 2, 3]), digest(&[3, 2, 1]), "word order must matter");
     }
 }

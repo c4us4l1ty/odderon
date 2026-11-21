@@ -52,7 +52,7 @@ jobs:
       - name: clippy
         run: cargo clippy --all-targets -- -D warnings
       - name: test (including rust<->js parity)
-        run: cargo test --all-targets
+        run: cargo test --all-targets -- --nocapture
 
   wasm:
     name: wasm32 (${{ matrix.profile }})
@@ -78,12 +78,14 @@ jobs:
             | tar -xz -C /tmp
           echo "/tmp/binaryen-version_123/bin" >> $GITHUB_PATH
       - name: build (${{ matrix.profile }})
+        # the cdylib is the artifact; the rlib has no wasm target and would fail to link, so we build
+        # the library only (--lib) and never the test harness
         run: |
           if [ "${{ matrix.profile }}" = "size" ]; then
-            # size profile: opt-level="z" via RUSTFLAGS, LTO already on in Cargo.toml
-            RUSTFLAGS="-C opt-level=z -C panic=abort" cargo build --release --target wasm32-unknown-unknown
+            # size profile: opt-level="z"; LTO and codegen-units are already set in Cargo.toml
+            RUSTFLAGS="-C opt-level=z" cargo build --release --lib --target wasm32-unknown-unknown
           else
-            cargo build --release --target wasm32-unknown-unknown
+            cargo build --release --lib --target wasm32-unknown-unknown
           fi
       - name: optimise
         run: |
