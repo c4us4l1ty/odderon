@@ -330,6 +330,15 @@ knowledge into reputation without flying anything.
 Each transition is a *promotion, not a purchase*, and each one is earned by a specific, observable
 act of judgement — usually catching something. This is the LPP structure from 2.2(b).
 
+**And the ladder is not a ladder.** It is a set of companies with different ladders, and a career is
+a path through several of them. You may resign — a physical act: you hand back the clipboard. You may
+be hired laterally at a rank *above* where you left, because what is being bought is your Esse and
+your Akashi, not your seniority. Moving from pad technician at a struggling sounding-rocket outfit to
+junior engineer at a bigger one is simultaneously an advance (title, hardware) and a regression
+(smaller budget, less trust, someone else's procedures). The game represents both. Reputation is
+portable; that is what makes the exported report the real currency, and it is why the protégé is a
+consequence of *role* rather than of time in service.
+
 ### 4.3 Esse — the rating, defined precisely
 
 Esse must be three numbers, not one, because they measure three genuinely different faculties, and
@@ -1123,12 +1132,33 @@ threshold — are standard HCI results applied in Section 5.)*
 
 ---
 
-## What I need from you to proceed
+## Decisions (closed)
 
-1. **Is the Loop of Consequence the right spine?** Everything else in this document descends from it.
-2. **The refusals in 2.3** — anything there you want to keep? (Say it now; they get much more
-   expensive later.)
-3. **The block ladder in 17** — is Block 1 = *The Room* the right place to start, or do you want to
-   see the clipboard and the static fire sooner?
-4. **Esse as three numbers** — does that match what you imagined, or did you picture one rating?
-5. **The protégé and the Museum** — both are large commitments. Are they in, or Parked?
+| # | Question | Decision | Where it landed |
+| --- | --- | --- | --- |
+| 1 | Is the Loop of Consequence the right spine? | **Yes.** The grease pencil, the ghost twin, the provenance graph, the one-solver apartment and the epistemic peak are all integrated, and each one *reduces* the code we write. | §0, §6, §9.5 |
+| 2 | The refusals in §2.3 | **Kept as written.** No streaks, no variable-ratio rewards, nothing purchasable touches Esse, no fake difficulty, no punishment for absence, no lying about uncertainty, no cutscene awe, no "easy mode", no score inflation. | §2.3 |
+| 3 | Block ladder | **Block 1 = *The Room***, exactly as specified, and it is built: `index.html`. | §17 |
+| 4 | Esse | **Three numbers**: calibration (proper scoring), Pareto contribution, blind anomaly resolution. Never one. | §4.3 |
+| 5 | Protégé and Museum | **Both in.** Protégé at Block 5; Museum at Block 7, with its foundation laid at Block 1 — every wreck is recorded the moment it happens, because a museum cannot be retro-fitted. | §11.4 |
+
+### One tacit rule, made explicit: the ladder is not a ladder
+
+The career is **not** a single ordered climb, and saying so out loud matters because a rule that
+lives only in the author's head becomes an invisible bug.
+
+- You **can resign.** Leaving a company is an action, not a menu: you hand in the clipboard, and the
+  rest of the town keeps its opinion of you.
+- You **can be hired laterally.** Another company may take you at a rank *above* where you left,
+  because the thing they are buying is your Esse and your Akashi, not your seniority. A player who
+  spends four years as a pad technician at a struggling sounding-rocket outfit, then moves to a
+  competitor as a **junior engineer with a better title but a smaller budget**, has genuinely
+  advanced and genuinely regressed, and the game must represent both.
+- The **protégé is a consequence of role, not of time.** You get a junior when you hold a role that
+  has one, wherever you are. Resign and you lose the protégé; be hired above them and you inherit
+  someone else's.
+- Companies therefore have **different ladders**, and a career is a path through several of them —
+  which is also the only honest model of how aerospace engineers actually move.
+
+This is recorded in §4.2 as **lateral movement** and it is load-bearing for the economy: it is what
+makes reputation portable, which is what makes Akashi worth exporting, which is the whole product.
