@@ -221,7 +221,7 @@ shared, reviewed, sold on an in-game market, or pasted into a real PLC discussio
 
 | Concept | Concrete implementation |
 | --- | --- |
-| **Predict → Execute → Debrief** | A typed Prediction Card, hashed and committed *before* approval. After flight, the debrief overlays predicted vs. actual curves and names the divergence point. |
+| **Predict → Execute → Debrief** | A **grease-pencil mark** (gauge, scope, or blueprint), hashed and committed *before* the act. After flight, the debrief overlays predicted vs. actual curves and names the divergence point. |
 | **Eidos ("visual partial derivative")** | Because every model is analytic, the kernel can produce exact or finite-difference **sensitivities** on demand in milliseconds. Hover the nozzle expansion ratio and the sim returns ∂Δv/∂ε, ∂T/∂ε — real numbers, drawn as flow lines. Eidos is nearly free *because* we refused to make the sim a black box. |
 | **Debrief root cause** | The divergence is attributed automatically via the same sensitivities: "T+42 s: you used vacuum Isp 348 s; at sea level the wide nozzle was over-expanded, actual Isp 265 s, flow separation." No hand-written string required. |
 | **Ghost Run** | One counterfactual replay, side by side with the real flight. The fastest intuition-building mechanic in the game. |
@@ -282,7 +282,8 @@ download; zero binary assets. The frame budget is a CI gate, not an aspiration �
 exceeds it fails.
 
 **M2 — "The Pad."** 1-D cryo/fluid network (chilldown, boil-off, ullage, cavitation), a static
-fire with a real failure mode, visor diagnosis, a hashed Prediction Card, Akashi HTML export.
+fire with a real failure mode, visor diagnosis, a grease-pencil mark and ghost-twin debrief, Akashi
+HTML export.
 *Acceptance:* the failure is reproducible from the input log; the report explains it from
 sensitivities, not from a script.
 

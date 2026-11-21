@@ -14,16 +14,36 @@ claims get earned). Hardware target set by you: **2015-era laptop, Intel UHD, 4 
 Every mechanic in this bible is the same mechanic wearing different clothes.
 
 ```
-        ┌──────────────────────────────────────────────────────────────┐
-        │                                                              │
-        │   EXPECT  ──►  ACT  ──►  CONSEQUENCE  ──►  ATTRIBUTION       │
-        │      ▲                                        │              │
-        │      │                                        ▼              │
-        │      └────────────  UPDATED MODEL  ◄──────────┘              │
-        │                                                              │
-        │   "I thought X would happen. It didn't. Here is exactly why." │
-        │                                                              │
-        └──────────────────────────────────────────────────────────────┘
+   ┌────────────────────────────────────────────────────────────────────────┐
+   │                        THE LOOP OF CONSEQUENCE                         │
+   │                                                                        │
+   │   GREASE PENCIL ──►  THE HAND  ──►  PHYSICS  ──►  GHOST DIFF           │
+   │    (Expectation)      (Act)        (Reality)     (Attribution)         │
+   │          ▲                                             │               │
+   │          │                                             ▼               │
+   │          └────────────  UPDATED INTUITION  ◄───────────┘               │
+   │                              │                                         │
+   │                              ▼                                         │
+   │            PERSISTENT ARTIFACT  (Akashi / Esse)                        │
+   │     "a stranger can click any number and verify my work"               │
+   └────────────────────────────────────────────────────────────────────────┘
+
+   Stage   The player does            The kernel does                    What usually fails
+   ─────   ──────────────────────     ───────────────────────────────    ─────────────────────
+   1 EXPECT  a 0.5 s grease mark      captures the player's implicit     tedious forms, or no
+             on a gauge / scope /     model M_expected                   prediction at all
+             blueprint
+   2 ACT     pulls a valve, throttles  runs the unified solver           a button that says
+             an engine, commits a     M_actual                           "Execute burn"
+             design
+   3 CONSEQ  watches and *hears* the  enforces conservation laws,        fake RNG urgency or
+             machine answer; sees the  propagates Provenance<T>           arbitrary explosions
+             gap δ from their mark
+   4 ATTRIB  flips the visor down     highlights argmax|∂δ/∂xᵢ| on the  a red "MISSION FAILED"
+             to see the ghost diff     physical hardware itself           screen, or a wall of text
+   5 ARTIFACT signs the log, turns    hashes the telemetry into a        ephemeral points that
+             off the lamp at golden     verifiable Akashi report           mean nothing outside
+             hour                                                         the game
 ```
 
 Call it **the Loop of Consequence**. It is the reward-prediction-error circuit that Schultz, Dayan
@@ -48,8 +68,26 @@ once-in-a-generation game:
 | The prediction you committed to, the flight you actually flew, the failure you diagnosed, and the report you wrote **outlive the session and leave the game as something a stranger can verify.** That is what turns a loop into a career, and a game into a credential. |
 
 **The one-sentence design law I will enforce in code review:**
-> Never let the player learn something the game could have shown them, and never show them a number
-> the game cannot defend.
+> **The Law of Odderon.** Never tell the player in words what the physics could have done to their
+> hands, and never show them a number the kernel cannot defend.
+
+### The five mechanisms that make the loop cheap
+
+The loop is only worth defending if it is cheap enough to fire 30 times an hour. Each of the
+following is a **reduction** in code, not an addition: they replace a system we would otherwise have
+had to write.
+
+| | Mechanism | What it replaces | Spec |
+| --- | --- | --- | --- |
+| **A** | **The grease-pencil mark** — expectation is a 0.5-second hand gesture, never a form | The Prediction Card's typing, the calculator, the "Submit" button, and the entire prediction UI | §6.1 |
+| **B** | **The ghost twin** — attribution is a translucent overlay of *your assumed model* against reality, at the divergence point, with one arrow on the part responsible | The debrief paragraph, the tutorial text, the "why did this fail" screen | §6.2 |
+| **C** | **Provenance as a type** — every observable is a lineage node; uncertainty propagates by construction | Ten thousand hand-written tooltips, and the entire "explain this number" UI | §6.6 |
+| **D** | **The apartment *is* a spacecraft** — the Day-1 room runs on the same vapor-compression, thermal-network and DC-bus solver as the lunar base | Every "domestic" system we would otherwise have had to write, and the whole prologue | §6.7 |
+| **E** | **The epistemic peak** — the game finds *your* moment of maximum δ-resolution and turns it into the ending | Difficulty tuning, session-length heuristics, and the "when should we let them stop" problem | §9.5 |
+
+All five are derived, not invented: A and B are the same sensitivity machinery Eidos already needs
+(PERFORMANCE.md, VISION.md §6); C is the `Provenance` type already required by Pillar 1; D is a
+constraint on how the solver is written on day one; E is a detector over data we already record.
 
 ---
 
@@ -60,9 +98,10 @@ A pillar you cannot fail is decoration. Each of these has a test that can be run
 ### P1 — Honesty over comfort
 The game never manufactures stakes it hasn't simulated, never rations information the player has
 earned, and never presents an assumption as an observation.
-*Test:* pick any number on any screen. There must be a UI path, reachable in one click, showing where
-it came from, its uncertainty, and (if it is an assumption) who made it. If any number cannot pass
-this, it is a bug. This is enforced by the `Provenance` type in the kernel, not by discipline.
+*Test:* pick any number on any screen. One click must unfold its lineage: the equation, the sensor
+noise bar, and — highlighted in yellow — every input the player *guessed* rather than measured. If
+any number cannot pass this, it is a bug. Enforced by the `Provenance` type in the kernel (§6.6), not
+by discipline: no display-facing system may accept a raw `f64`.
 
 ### P2 — Consequence over instruction
 Nothing is taught before it is needed. The player's own design, not a tutorial, produces the lesson.
@@ -71,6 +110,12 @@ debrief, not in a wall of text before the mission.
 *Test:* read the mission-start screen. If it contains a paragraph explaining a concept, delete the
 paragraph and make the concept observable instead.
 
+*The wreckage is always examinable.* Never cut to black on failure. The simulation continues through
+the aftermath: the smoke clears, you can walk out of the blockhouse, put your hand on the ruptured
+metal, and rewind the last 500 ms of thermal and pressure stress **on the scorched hardware itself**.
+A failure screen destroys attribution; the wreck preserves it — and the wreck is content we never
+have to author.
+
 ### P3 — Authorship over ownership
 The player should feel they *built* their vehicle, not that they *bought* it. Labor creates
 attachment — but only labor that completes, and only labor above a triviality threshold (the IKEA
@@ -78,11 +123,32 @@ effect has four preconditions, and failure to complete *inverts* the effect).
 *Test:* every design the player flies must contain at least one choice with no default and at least
 one consequence they can trace to their own hands.
 
+*Enforcement:* **no working defaults, only broken primitives.** Every new domain hands the player a
+physically complete machine with one fatal, glaring flaw — an inherited sounding rocket whose throat
+is too narrow and overpressures the chamber; a life-support loop with no scrubber regeneration heat.
+Never a blank CAD screen (completion fails, and the IKEA effect inverts into frustration), and never a
+working default (zero authorship). One fatal bottleneck, diagnosable in about three minutes: the
+effort crosses the non-triviality threshold, completion is guaranteed, and the player claims the whole
+machine. We call it **the almost-working inherited machine**, and it is the cheapest onboarding
+mechanism in the document.
+
 ### P4 — Small room, big sky
 The opening space is deliberately cramped, ordinary and *completely* simulated. The universe is
 vast not because the map is big but because the first room was small and real.
 *Test:* measure the ratio of fidelity to floor area. It should be absurd. Twenty-five square metres
 of room should have more simulation detail than a city block.
+
+*Enforcement:* **the apartment is a spacecraft.** We do not write "apartment mechanics". The window AC
+unit is a closed-loop vapour-compression heat pump (compressor → condenser → expansion valve →
+evaporator) rejecting heat to the summer air. The roof collector is a radiative thermal collector. The
+fuse box is a DC bus with breakers. The room is a 25 m² pressurised atmospheric volume exchanging
+solar radiative heat through glazing and convective heat through its walls.
+
+The same ~500 lines of network solver then run the capsule, the lunar base, and the O'Neill cylinder.
+The player can test this on Day 1: close the curtain and the solar gain through 3 m² of glazing falls
+from ~1440 W to ~120 W, the AC's electrical draw drops by roughly 440 W · h⁻¹ of cooling, and the room
+cools by several kelvin. **On Day 1, in a cramped room on Earth, they are already living inside the
+spacecraft physics engine** — and we have written one solver instead of two games.
 
 ### P5 — The game ends well
 Players remember the peak and the ending, not the average (duration neglect). Sessions, missions,
@@ -107,7 +173,7 @@ column matters more than the mechanism column.
 | 1 | **Productive failure** — struggling with a problem before instruction beats instruction-then-practice, especially for transfer | Kapur 2008, 2016; Kapur & Rummel 2012 | The player's first cryo load is under-specified on purpose. It froths, the pump cavitates, the test article dies cheaply on the stand. *Then* the debrief explains chilldown. | Unstructured struggle → frustration, not learning. It needs a *consolidation* step immediately after, and the problem must be within reach. Our debrief is that step. |
 | 2 | **Desirable difficulties** — spacing, interleaving, retrieval, generation all hurt immediate performance and help long-term retention | Bjork & Bjork 2011; Soderstrom & Bjork 2015; Roediger & Karpicke 2006 | The Academy never gives a lecture twice. It gives you a *new situation* that requires the old knowledge, spaced days apart. | Difficulty without feedback is just noise. Every difficulty must emit a legible result. |
 | 3 | **Felt-learning paradox** — students learn more in active conditions but *feel* they learned less | Deslauriers et al. 2019, PNAS | The single most important risk to this game. Productive failure feels bad. We must engineer an honest competence signal into every debrief: "you predicted 412 kg, you had 418 kg — that is a 1.4% error, better than 84% of first attempts." | Without it, players quit believing the game is unfair. This is the #1 churn cause I expect, and it is a *design* problem, not a difficulty problem. |
-| 4 | **Reward prediction error** — learning is driven by the *difference* between expected and actual, not the reward | Schultz, Dayan & Montague 1997 | The Prediction Card. The player states an expectation *before* the act and it is hashed. The consequence is therefore always surprising in the right way. | A perfectly predicted outcome gives zero learning signal. Do not flatten the variance; make the prediction harder instead. |
+| 4 | **Reward prediction error** — learning is driven by the *difference* between expected and actual, not the reward | Schultz, Dayan & Montague 1997 | The grease-pencil mark (§6.1). A 0.5 s physical commitment to an expectation, visible on the gauge as a yellow tick, so δ is perceived as *a gap on glass* rather than a number in a table. | A perfectly predicted outcome gives zero learning signal. Do not flatten the variance; make the prediction harder instead. |
 | 5 | **Curiosity gap** — curiosity is deprivation caused by an awareness of a *specific, near* gap in knowledge | Loewenstein 1994; Zeigarnik 1927 | Open anomalies: a 3% thrust discrepancy you cannot explain yet. It sits in a drawer. It is small enough to almost solve. | Gaps too big → indifference. Too small → nothing. Also: unlimited open loops become anxiety. We cap it (see 7.3). |
 | 6 | **Peak–end rule / duration neglect** — remembered experience is (peak + ending), not the average | Kahneman et al. 1993; Redelmeier & Kahneman 1996 | Session architecture (Section 9). Missions end with a landing, a report, and a warm walk home — never with a failure screen. | Manufacturing fake peaks destroys trust. The peak must be *earned by the sim*. |
 | 7 | **Autonomy, competence, relatedness** — intrinsic motivation needs all three; external rewards can *undermine* it | Deci & Ryan 1985; Ryan, Rigby & Przybylski 2006 | No XP bars, no daily streaks, no loot. Progression is *access and trust*, which reads as autonomy. The protégé and the async world supply relatedness. | Over-rewarding a task the player already enjoys reduces intrinsic motivation. Never pay the player for something they'd do anyway. |
@@ -289,7 +355,7 @@ E_an   Anomaly         Blind, ranked, clocked root-cause resolution. Duel-style 
 Rules that make it trustworthy:
 1. **Proper scoring rules only.** Never accuracy percentage, never "points". A proper rule cannot be
    gamed by hedging or by claiming impossible certainty.
-2. **Committed before execution.** The Prediction Card is hashed and timestamped before the sim
+2. **Committed before execution.** The grease mark is hashed and timestamped before the sim
    advances. You cannot retro-fit a prediction.
 3. **Epoch-scoped.** Live catalog sync changes the universe. Ratings are pinned to an epoch; we never
    silently compare across epochs.
@@ -349,6 +415,23 @@ Text { field, string }      // for checklists, notes, procedures
 That is all. There is **no verb** for *add propellant*, *execute burn*, *repair*, *refuel*, or
 *unlock*. Those are all consequences of the verbs above. A CI lint rejects new kernel entry points
 that are not actuators (see `VISION.md` §3, law 4).
+
+### 5.1b The second verb: the mark
+
+The actuator set in §5.1 is the *acting* grammar. There is one more verb, and it belongs to the
+*expecting* grammar:
+
+```
+Mark { instrument, value, band }   // a yellow tick on glass, a chalk tick on a scope, a pin on a print
+```
+
+It is not a UI element; it is a physical object with physical behaviour:
+- it is a **China marker**, and it lives in your coveralls pocket, so it can be *forgotten* (a player
+  who forgets to mark flies uncalibrated, and their Esse says so),
+- it **stays on the glass** for the session, accumulating a visible record of your own predictions,
+- it can be **wiped off** with a thumb, which is the honest way to abandon a prediction you no longer
+  believe — and it is recorded, because a wiped mark is data about you too,
+- long-press widens it into a **band**: the physical form of "I don't know yet".
 
 ### 5.2 Canonical gestures
 
@@ -419,34 +502,75 @@ Promotion to Rank 2 gives you a junior. This is a *mechanic*, not a character:
 
 ## 6. The pedagogy machine
 
-### 6.1 The Prediction Card
+The loop must fire **30 times an hour — once every two minutes** — with no forms, no typing, and no
+paragraphs. That constraint is what produced the five mechanisms in §0. This section specifies them.
 
-Before execution, a *short* card (3–5 items max; more and it becomes homework). Each item is:
-- a quantity with an uncertainty (a range, not a point),
-- or a categorical call with a stated confidence (*"will the remaining 3 engines reach orbit?"* — yes, 70%).
+### 6.1 Expectation is a grease pencil, not a form
 
-The card is hashed and committed. Its purpose is not to test the player; it is to **manufacture a
-prediction error**, which is the only thing that makes learning happen.
+*Replaces: the Prediction Card's typing, the calculator, and the entire prediction UI.*
 
-Difficulty scaling is implicit: early cards ask for a number you can eyeball. Later cards ask for a
-number whose error will be *amplified* by a system you don't yet understand. The card is where the
-curriculum lives.
+Real test pilots, flight engineers and submarine mechanics carry a **China marker**. Before they open
+a valve or throttle up, they put a quick yellow mark on the glass face of the pressure gauge where
+they expect the needle to settle. Odderon's expectation gesture is exactly that, and it costs half a
+second:
 
-### 6.2 The debrief
+| Scale | Where you mark | What you mark | Loop frequency |
+| --- | --- | --- | --- |
+| **Micro** | gauge glass, switch cap, lever travel | where the needle will settle | every 1–2 min |
+| **Meso** | trajectory scope, docking reticle, porkchop | where the periapsis / intercept / arrival will move | every 5–15 min |
+| **Macro** | CAD blueprint, ledger, habitat cross-section | where the thrust/mass ratio, margin, or NPV will land | every 30–60 min |
 
-Three panels, always in this order:
-1. **What you said** (your committed prediction).
-2. **What happened** (the actual curve).
-3. **Why they diverge** — attributed automatically via the same sensitivities Eidos uses, so it is
-   never a hardcoded string:
+**The gesture:** hover the gauge → a faint yellow ghost tick follows at the pointer (*this already
+commits nothing*) → one click snaps a yellow mark onto the glass → you pull the lever.
 
-> *T+42 s: velocity 180 m/s below prediction. Cause: vacuum Isp (348 s) was used for a nozzle that is
-> over-expanded at 1 atm; actual Isp 265 s. Flow separation began at 4.2 km. Sensitivity:
-> ∂v_final/∂ε = +14 m/s per unit expansion ratio at vacuum, −22 kN liftoff thrust at sea level.*
+**The payoff:** when the needle swings past your mark into the red, the gap between the yellow mark
+and the steel needle **is δ**, and the brain registers the violation in about 50 ms with no words. The
+grease mark stays on the glass for the rest of the session as a record of the gap. Over a session, the
+player accumulates a row of yellow marks on their own instruments — a visible, private calibration
+chart, made of nothing but their own predictions.
 
-That is a real, computed paragraph. It is also the reason the whole architecture insists on analytic
-models.
+Design constrains, so this cannot become a chore:
+- **Optional, never required.** A mark that isn't there simply produces no δ — and the player feels the
+  absence. Nothing nags.
+- **Uncertainty is a blur, not a number.** Long-press a mark to widen it into a band. A wide band is an
+  honest "I don't know yet", and it scores honestly (proper scoring rules, §4.3).
+- **Captured implicitly.** The mark records the player's *assumed model* — constant Isp, rigid hull, no
+  boil-off — because the kernel knows which simplification the mark implies. That is what makes §6.2
+  possible with no extra input.
 
+### 6.2 Attribution is a ghost twin, not a paragraph
+
+*Replaces: the debrief paragraph, the tutorial text, and the "why did this fail" screen.*
+
+The player committed to an expectation, so the kernel holds **two models**:
+
+- **M_expected** — the player's implicit model, at the moment of the mark (vacuum Isp, rigid hull, no
+  boil-off, no flex).
+- **M_actual** — the real solver, with atmospheric back-pressure, structural compliance, and thermal
+  leak.
+
+On divergence, Eidos overlays **the translucent yellow ghost of what you assumed** onto solid reality,
+frozen at the divergence instant, and computes
+
+```
+argmax over xᵢ of | ∂(Actual − Expected) / ∂xᵢ |
+```
+
+then draws **one glowing vector arrow on the physical part responsible** — for example, air vectors
+pressing inward on the over-expanded nozzle lip while your ghost rocket pulls ahead of the real one.
+No paragraph. The player sees the atmosphere crushing their exhaust plume relative to their own
+assumption, and the sentence is *unnecessary* — which is why the Law of Odderon forbids writing it.
+
+Three rules that keep this honest:
+1. **One arrow, not five.** The single largest contributor. Five arrows is a lecture.
+2. **The ghost is the player's model, not a best guess.** If their assumption was crude, the ghost is
+   crude, and it is labelled with a China-marker yellow so it can never be mistaken for data.
+3. **The textual debrief still exists — but behind the visor, and it is generated, never authored**
+   (*"T+42 s: velocity 180 m/s below prediction; ∂v_final/∂ε = +14 m/s per unit expansion ratio at
+   vacuum, −22 kN liftoff thrust at sea level"*). It exists for the report and for professional users,
+   and it is what the Akashi export prints. The player is never *required* to read it.
+
+### 6.3 The Ghost Run
 ### 6.3 The Ghost Run
 
 One counterfactual, played back side by side with the real flight: only the input you changed. This
@@ -469,6 +593,69 @@ Never: glossary, tooltip-on-hover for a concept the player hasn't met, "tutorial
 
 After a productive failure, the game does not explain. It **shows the divergence, then hands back
 control.** The player re-flies it. The lesson is theirs.
+
+### 6.6 Provenance as a type, not a tooltip policy
+
+*Replaces: ten thousand hand-written tooltips, and the entire "explain this number" UI.*
+
+**The architectural decision:** no display-facing system may accept a raw `f64`. Every observable
+quantity is a **lineage node**:
+
+```rust
+struct Prov {
+    value: f64,                  // what the gauge points at
+    sigma: f64,                  // standard uncertainty, propagated not hand-set
+    source: EpistemicSource,     // MeasuredBy(Sensor) | Catalog(GaiaDR3) | DerivedFrom(Eq)
+                                 //   | Assumed(by: Player) | Modeled(name, sigma)
+    inputs: NodeRange,           // the lineage DAG (indices, not a tree of boxes)
+}
+```
+
+Two candidate implementations, and the choice matters enormously for performance:
+
+| | A. wrapper on every operation | B. node graph built once per design *(chosen)* |
+| --- | --- | --- |
+| in-loop cost | ~120 ns per operation → **~1 s of CPU per second of flight**. Fatal. | **0**: the integrator runs flat `f64` |
+| when provenance is built | continuously | once, when a design/gauge changes (~120 nodes) |
+| when uncertainty is computed | continuously | on demand: a Jacobian, ~720 flop for 120 nodes × 6 inputs |
+| cost of clicking a gauge | — | ~0.7 µs. Free. |
+| failure mode | the game does not run on the target hardware | none we can see |
+
+So the **hot path stays flat arithmetic**, and the **lineage is a small graph evaluated lazily**. That
+is the whole trick, and it is why Pillar 1 costs us nothing instead of costing us the frame rate.
+
+What this buys, with zero per-number UI work:
+- Click any gauge, ledger entry, or orbital element anywhere in the 4,000 light-years → the provenance
+  tree unfolds: the equation, the sensor noise bar, and **every input highlighted in yellow that the
+  player guessed rather than measured**.
+- Uncertainty propagates by construction (`σ_f = √Σ(∂f/∂xᵢ·σ_xᵢ)²`), so a number can never silently
+  acquire false precision.
+- The telescope's angular error bars, the exoplanet hypothesis weights, and the atmosphere model's
+  declared validity range are all **the same mechanism**. The Law of Odderon stops being a promise and
+  becomes a type error.
+
+### 6.7 The apartment is a spacecraft
+
+*Replaces: every "domestic system" we would otherwise write, and the entire prologue.*
+
+We do not write apartment mechanics. We write one solver, and the apartment is a use of it:
+
+| In the room | What it actually is | Same code later runs |
+| --- | --- | --- |
+| Window AC unit humming | closed-loop vapour-compression heat pump: compressor → condenser → expansion valve → evaporator, rejecting heat to outdoor air | capsule ECLSS cooling, habitat thermal control |
+| Roof solar collector | radiative thermal collector with a fluid loop and a stagnation limit | lunar base heating, O'Neill cylinder agriculture |
+| Fuse box on the wall | DC bus, breakers, load budget, voltage sag under startup inrush | every spacecraft power bus in the game |
+| The room itself | 25 m² pressurised atmospheric volume: solar radiative gain through glazing, convective loss through walls, infiltration | capsule cabin, habitat sector, ark ship compartment |
+| The kettle, the fridge, the lamp | real loads on the real bus with real duty cycles | — |
+
+The Day-1 experiment, which the player will find without being told: **close the curtain.** Peak
+summer solar gain through 3 m² of glazing at 800 W/m² and SHGC 0.6 is ~1440 W; closed it is ~120 W.
+The room cools by several kelvin over minutes, and the AC's electrical draw visibly drops on the wall
+meter. **On Day 1, in a cramped room on Earth, the player is already living inside the spacecraft
+physics engine** — and we have shipped one solver instead of two games.
+
+This is also why the room can be modelled to absurd fidelity without any bespoke content: fidelity is
+a property of the solver, and the solver is the whole game.
 
 ---
 
@@ -533,7 +720,7 @@ after watching people play. Written minute-by-minute, with the mechanism each be
 | 6:00 | Clipboard handed over. One item is wrong. | LPP (11); productive failure (1) | Nobody explains anything |
 | 9:00 | The hose. The *fill* gesture. Frost line. A gauge that doesn't move. | Embodied cue (12) | First real system, one valve |
 | 13:00 | The wrong checklist item causes a vent to be missed; pressure alarm. | Productive failure, low cost | Failure is *small* and *attributable* |
-| 16:00 | Static fire. Your first Prediction Card: two items. One you'll be wrong about. | RPE (4), commitment | Prediction before consequence, always |
+| 16:00 | Static fire. Two yellow marks on two gauges: one you'll be right about, one you won't. | RPE (4), grease pencil | Prediction before consequence, always — and it costs half a second |
 | 18:00 | Fire. Sound. The stand shakes. Something is *off* in the pitch. | Peak (6); ears as instrument | The peak is earned |
 | 22:00 | Debrief. Your prediction vs reality. A number about *you*. | Competence mirror (3) | Felt-learning fix, non-negotiable |
 | 25:00 | Walk home in the late light. The pad is an ember. | Warm ending (6) | Sessions end on the return, not the fire |
@@ -571,6 +758,49 @@ black — because the opening scene is pure fragment shader and needs no simulat
 Full doctrine, including the 8.6-order-of-magnitude descent problem, the nine rules, and the CI-gated
 hitch budget: [`IMMERSION.md`](IMMERSION.md). Also note **N8: no teleportation.** The absence of a
 loading screen is a commitment to the absence of fast travel — travel costs what physics says.
+
+### 9.5 The epistemic peak, and the golden hour
+
+*Replaces: difficulty tuning, session-length heuristics, and the "when may they stop" problem.*
+
+Most simulators end when the player is exhausted at 02:00 after a failed launch — which guarantees a
+negative memory of the session (peak–end, §2.1 mechanism 6). We can do better, because we *record the
+data needed to detect the peak*.
+
+**The detector.** During play, the game tracks a scalar: the **epistemic peak score** — how sharply
+the loop just closed. It is computed from quantities we already have:
+
+```
+peak_score ≈ |δ| / σ(prediction)        // how surprising, normalised by your own stated uncertainty
+           × convergence                 // did you nail it, or did nobody know?
+           × stakes                      // mass × energy × irreversibility of what was at risk
+           × novelty                     // first time you have seen this class of divergence
+```
+
+So the two moments that score highest are the two that matter: *"I called it within 1%"* and *"I had no
+idea and reality showed me something new."* Rote repetition scores near zero, which is correct.
+
+**The choreography.** When the score crosses a threshold after ≥ 40 minutes of play, three things
+happen, and none of them is a menu:
+
+1. **The light changes.** The local environment transitions to **golden hour** — long amber
+   *Shinkai* shadows across the workshop floor, cicadas giving way to crickets. This is a lighting
+   parameter, not a cutscene, and it costs nothing (PERFORMANCE.md I7).
+2. **A partial packet arrives.** The dot-matrix telemetry printer on the desk chirps and prints the
+   *first half* of something high-stakes:
+   `RADAR, LUNAR SOUTH POLE — subsurf. dielectric anomaly at 14 m depth, reflec.—`
+   (the rest of the line is cut off by the sheet feed: a curiosity gap opened with a physical object)
+3. **A physical choice, not a prompt.** A small card is taped to the desk lamp switch:
+   *"Call it a day at the peak? The log is saved. One unread signature on the desk."*
+   You click the lamp off. The warm room falls into cool twilight. The session ends at its highest
+   point, with one loop open — Zeigarnik, budgeted, and *printed on paper*.
+
+**Why this is the correct engineering.** The ending is not authored content; it is a reaction to a
+measured property of the player's own session. It cannot be exploited (it fires on real δ), it cannot
+be repeated for reward (novelty decays), and it turns the peak–end rule from a thing we hope for into a
+thing we schedule. The game is literally **designed to be put down at the right moment** — which is the
+opposite of every retention mechanic in the industry, and the reason an adult with a job can play it
+for a decade.
 
 ---
 
@@ -769,9 +999,9 @@ you `git pull` and play, then we iterate.** So each block must be *complete enou
 
 | Block | Codename | What you will be able to do | Why this block exists | Promises it proves |
 | --- | --- | --- | --- | --- |
-| **1** | *The Room* | Wake up. Walk. Open a window. Flip the visor. Watch the sky, the gobos, a distant plume with a late shockwave. | Prove the art direction and the cost model on your hardware. | P4, zero-asset, render-on-demand, WebGL2+WASM pipeline |
-| **2** | *The Clipboard* | Get to work. Catch the wrong checklist item. Fill, bleed, chill. Static fire with one real failure mode. | Prove Zero-UI input and productive failure. | P2, actuator-only verbs, the hand |
-| **3** | *The Card* | Predict before firing. Get a real debrief with an attributed cause. Export an Akashi page. | Prove the pedagogy machine and the artifact pipeline. | P1, P3, the Loop of Consequence end-to-end |
+| **1** | *The Room* | Wake up. Walk. Close the curtain and watch the room cool and the AC's draw fall. Flip the visor. Watch the sky, the gobos, a distant plume with a late shockwave. | Prove the art direction, the cost model on your hardware, **and that the apartment is a spacecraft** (6.7). | P4, one-solver, zero-asset, render-on-demand, WebGL2+WASM pipeline |
+| **2** | *The Clipboard* | Get to work. Catch the wrong checklist item. Fill, bleed, chill. Static fire, one real failure mode — and the wreck stays on the stand, examinable. | Prove Zero-UI input and productive failure. | P2, actuator-only verbs, the hand |
+| **3** | *The Mark* | Yellow-tick two gauges before the fire. See the ghost twin with one arrow on the offending part. Export an Akashi page. | Prove the pedagogy machine and the artifact pipeline. | P1, P3, the Loop of Consequence end-to-end at 30 fires/hour |
 | **4** | *The Sounding Rocket* | Author a small vehicle, fly it, recover it, launch one for a customer. | Prove authorship, flight, and the first money. | IKEA, the ladder begins, first Esse event |
 | **5** | *The Drawer* | Persist anomalies across sessions; rescue a failed test; automate a procedure with the logic rack. | Prove failure design and the session architecture. | P5, peak-end, Zeigarnik budget |
 | **6** | *The Orbit* | First orbital mission; light-time comms; the first real rendezvous. | Prove the astro kernel and the light-cone ledger. | Simulation depth, async presence |
@@ -790,7 +1020,11 @@ Every feature must trace to a mechanism. If a feature appears with no row here, 
 | Feature | Mechanism(s) | Section |
 | --- | --- | --- |
 | The clipboard with the wrong item | Productive failure; LPP | 2.2(b), 4.2 |
-| Prediction Card (hashed) | RPE; commitment; proper scoring | 6.1, 4.3 |
+| Grease-pencil mark (hashed) | RPE; commitment; proper scoring | 6.1, 4.3 |
+| Ghost twin diff + single arrow | Attribution without text; argmax sensitivity | 6.2 |
+| Provenance node graph | Honesty; zero-cost uncertainty | 6.6 |
+| The apartment's AC / bus / volume | One solver, two games | 6.7 |
+| Golden hour at the epistemic peak | Peak–end; Zeigarnik, scheduled | 9.5 |
 | Debrief attribution paragraph | RPE; self-explanation; curiosity gap closure | 6.2 |
 | Competence mirror | Felt-learning paradox fix | 2.2(a) |
 | Ghost Run | Counterfactual; desirable difficulty | 6.3 |
