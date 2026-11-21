@@ -25,6 +25,24 @@ and nothing scheduled at all when idle.
 | [`IMPORTANT-1.md`](IMPORTANT-1.md) | The founding vision: real physics, real universe, Eidos / Akashi / Esse, zero-UI, zero-asset, mega-structures |
 | [`IMPORTANT-2.md`](IMPORTANT-2.md) | "Shadows of a Summer Noon": the art direction and the "Nobody on Earth" opening |
 
-## Status
+## Play it (Block 1)
 
-Block 0 (design + credibility docs) — **awaiting review**. Code begins at Block 1, *The Room*.
+```sh
+git pull origin main
+./run.sh            # then open http://localhost:8080
+./run.sh test       # 107 assertions, no dependencies
+```
+
+No build step, no bundler, no package install. Python 3 only, for the static server with the
+cross-origin-isolation headers. Total download: **90.8 KB**, zero binary assets.
+
+**Block 1 — *The Room*** is playable: you wake in a 25 m² apartment on Tanegashima at 16:26 with the
+real sun where the sun actually is. Walk, open the curtain, switch the air conditioner on, mark the
+thermometer with a grease pencil before you act, and let reality answer. Flip the visor to see the
+provenance of the number on the wall and the ghost of what you assumed.
+
+The window AC is not set dressing: it is a vapour-compression heat pump on the same solver that will
+run your capsule, and at midday it *loses* — the unit saturates, the room climbs, and the wall meter
+tells you why.
+
+See [`game/README.md`](game/README.md) for the controls and the architecture.
