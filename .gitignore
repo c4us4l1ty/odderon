@@ -9,3 +9,7 @@ kernel/out/
 # reference photographs consulted while designing the room: never committed, because the repo
 # ships zero binary assets and every pixel in the game is arithmetic
 image-search/
+
+# CPU renders of the room (test/scene-probe.mjs output): never committed, because the repo ships
+# zero binary assets and every pixel in the game is arithmetic
+.probe-*.png

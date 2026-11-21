@@ -5,7 +5,8 @@ from `docs/` on real hardware, and nothing here exists for decoration.
 
 ```sh
 ./run.sh          # http://localhost:8080
-./run.sh test     # 139 assertions, no dependencies
+./run.sh test     # 159 assertions, no dependencies
+node test/scene-probe.mjs /tmp/room.png 0.75 -0.12 -2.10 -1.60   # render the room on the CPU
 node test/vectors.mjs   # the JS kernel's answers, for the Rust kernel to be held to (CI does this)
 ```
 
@@ -14,8 +15,9 @@ node test/vectors.mjs   # the JS kernel's answers, for the Rust kernel to be hel
 | | |
 | --- | --- |
 | **click** | capture the mouse — the pointer is locked and the view follows your hand |
-| **`Esc`** | release the mouse and get your cursor back (press it again to lift the visor) |
-| `W A S D` | walk (you step down into the sunken lounge) |
+| **`Esc`** | release the mouse and get your cursor back, and drop every held key |
+| `W A S D` | walk (you step up onto the platform, or down the treads) |
+| the read-out box | clickable: real UI keeps its click, and never steals the pointer |
 | `E` | open / close the curtain |
 | `F` | the air conditioner |
 | `M` | **grease-pencil the thermometer** — mark where you think the needle will settle |
@@ -41,7 +43,9 @@ node test/vectors.mjs   # the JS kernel's answers, for the Rust kernel to be hel
 | The sun is where the sun is | `sim/world.js` — NOAA solar position | `test/physics.test.mjs` |
 | There is no game loop | `main.js` `_idle()` — when nothing changes, no frame is requested | `test/dom.test.mjs` |
 | The shaders are well-formed | `test/glsl.test.mjs` — delimiters, declaration order, GLSL ES 3.00 literal rules, and a march bound of 56 steps | CI |
-| The mouse is captured, and Esc returns it | `main.js` — `requestPointerLock` on the scene canvas, not the `pointer-events:none` overlay; `Esc` → `exitPointerLock` → the cursor comes back | `test/dom.test.mjs` |
+| The mouse is captured, and Esc returns it | `main.js` — `requestPointerLock` on the scene canvas, not the `pointer-events:none` overlay; `Esc` → `exitPointerLock` → the cursor comes back, and every held key is released | `test/dom.test.mjs` |
+| The previews are the same room the shader draws | `test/scene-probe.mjs` — the shader's geometry ported to JS and ray-traced on the CPU, so the room can be *looked at* without a GPU; `test/scene.test.mjs` asserts the composition invariants | `test/scene.test.mjs` |
+| The sun actually reaches the floor | `main.js` orients the hab: the window wall faces 270°, so at 16:26 the low sun is 0.85 of the way through the glass. Before this, `+z` was *north* and no sunlight ever entered the room | `test/scene.test.mjs` |
 | The instruments are objects, not an overlay | `ui/hud.js` `project()` inverts the shader's own camera, so the gauge is drawn on the plaster at a real position; turn away and it is gone | `test/dom.test.mjs` |
 | A still room cannot repaint itself | `sim/schedule.js` — a pure, tested function: no time term in the image, a present quantised to its bucket, idle request rate → 0 | `test/schedule.test.mjs` |
 | Rust and JavaScript are the same kernel | `kernel/` compiles in CI (native + `wasm32-unknown-unknown`), and `kernel/tests/parity.rs` replays the vectors that `test/vectors.mjs` extracts from the JavaScript kernel: transcendentals to 1e-14, and 2 h of the thermal solver to 1e-9 K | `.github/workflows/ci.yml` |
@@ -89,6 +93,26 @@ There is no Rust toolchain on the machine this was written on, so **the compiler
 
 The wasm artifacts are uploaded per run, so a build from any commit can be downloaded and inspected
 without a toolchain anywhere.
+
+## The room, as built (round 3)
+
+The reference is Star Citizen's apartment habs, and what they are actually built from is:
+
+- **a raised platform with wide shallow treads**, not a flat floor. The bed sits up on it; you walk
+  up three 160 mm steps to reach it, and the treads wrap round two sides of the platform. This one
+  move is most of why the reference reads as designed rather than as a box.
+- **light inside the architecture**: a lit strip on every tread nosing, a strip under the platform
+  edge, and a bright cove down both sides of the ceiling. `stripLight()` is a light source in the
+  shading, not emissive paint.
+- **two long horizontal strip windows** above the bed with a heavy frame and three mullions, which
+  project a hard-edged pattern of bands and bars across the floor.
+- **pale stone below, warm walnut on the platform, white bedding**, pale grey panel walls with
+  structural ribs, a dark skirting. That palette is why the room now reads as bright instead of grey.
+- a curved glass balustrade, one dark lacquer console, one ochre pipe run hugging a wall, a cube
+  seat, a cantilevered desk.
+
+The frame's whole job is the window, the bed and the sun patch, which is what `test/scene.test.mjs`
+checks at the spawn point.
 
 ## What is deliberately *not* here yet
 
