@@ -470,6 +470,7 @@ impl SimWorld {
     }
 
     pub fn trigger_pad_static_fire(&mut self) {
+        self.auto_fire_triggered = true;
         self.static_fire_active = true;
         self.static_fire_start_s = self.sim_time_s();
         self.shockwave_arrived = false;
@@ -486,60 +487,84 @@ impl SimWorld {
         }
     }
 
-    fn is_pos_blocked(&self, x: f32, z: f32) -> bool {
-        // Outer apartment walls (`[-2.24, +2.24] x [-1.72, +1.68]`)
-        if x < -2.24 || x > 2.24 || z < -1.72 || z > 1.68 {
-            return true;
+    fn apply_room_collision(&mut self, dx: f32, dz: f32) {
+        #[derive(Clone, Copy)]
+        struct Box2D {
+            x0: f32,
+            z0: f32,
+            x1: f32,
+            z1: f32,
         }
-        // 1. Top-Center Desk (`x in [-1.24, +1.24], z > 1.06`) & Ergonomic Chair (`x in [-0.30, +0.30], z in [0.50, 1.08]`)
-        if x > -1.24 && x < 1.24 && z > 1.06 {
-            return true;
-        }
-        if x > -0.32 && x < 0.32 && z > 0.50 && z < 1.08 {
-            return true;
-        }
-        // 2. Top-Left L-Kitchen Counter (`Leg A: x > 1.22, z > 1.22`; `Leg B: x > 1.68, z > 0.06`)
-        if x > 1.22 && z > 1.22 {
-            return true;
-        }
-        if x > 1.68 && z > 0.06 {
-            return true;
-        }
-        // 3. Top-Right Small Bonsai Table (`x < -1.32, z > 1.26`)
-        if x < -1.32 && z > 1.26 {
-            return true;
-        }
-        // 4. Bottom-Left Sleeping Bed (`x > 0.30, z < -0.34`)
-        if x > 0.30 && z < -0.34 {
-            return true;
-        }
-        // 5. Bottom-Center Small Shelf (`x in [-0.44, +0.36], z < -0.44`)
-        if x > -0.44 && x < 0.36 && z < -0.44 {
-            return true;
-        }
-        // 6. Bottom-Right Unit-Bath Walls & Pocket Door (`z = -0.28`, doorway `x in [-1.32, -0.64]`)
-        if x <= -0.36 && z < -0.14 {
-            // Allow walking through doorway into Unit-Bath ONLY when pocket door is open!
-            let in_open_doorway = self.toilet_door_open > 0.72
-                && x > -1.28
-                && x < -0.68
-                && z > -1.16;
-            if !in_open_doorway {
-                return true;
+
+        #[inline]
+        fn push_circle_out_of_box(px: &mut f32, pz: &mut f32, r: f32, b: Box2D) {
+            let cx = clamp_f32(*px, b.x0, b.x1);
+            let cz = clamp_f32(*pz, b.z0, b.z1);
+            let vx = *px - cx;
+            let vz = *pz - cz;
+            let d2 = vx * vx + vz * vz;
+            if d2 > 1e-8 && d2 < r * r {
+                let d = dsqrt(d2 as f64) as f32;
+                let push = r - d;
+                *px += (vx / d) * push;
+                *pz += (vz / d) * push;
+            } else if d2 <= 1e-8 {
+                // Center is inside box: push out along shallowest penetration face!
+                let pen_l = (*px - b.x0).abs();
+                let pen_r = (b.x1 - *px).abs();
+                let pen_b = (*pz - b.z0).abs();
+                let pen_t = (b.z1 - *pz).abs();
+                let min_pen = pen_l.min(pen_r).min(pen_b).min(pen_t);
+                if (min_pen - pen_l).abs() < 1e-5 {
+                    *px = b.x0 - r;
+                } else if (min_pen - pen_r).abs() < 1e-5 {
+                    *px = b.x1 + r;
+                } else if (min_pen - pen_b).abs() < 1e-5 {
+                    *pz = b.z0 - r;
+                } else {
+                    *pz = b.z1 + r;
+                }
             }
         }
-        false
-    }
 
-    fn apply_room_collision(&mut self, dx: f32, dz: f32) {
-        let nx = self.player_pos.x + dx;
-        if !self.is_pos_blocked(nx, self.player_pos.z) {
-            self.player_pos.x = nx;
+        let r = 0.22_f32;
+        let mut px = clamp_f32(self.player_pos.x + dx, -2.50 + r, 2.50 - r);
+        let mut pz = clamp_f32(self.player_pos.z + dz, -1.96 + r, 1.96 - r);
+
+        let door_shift = self.toilet_door_open * 0.74;
+        let colliders = [
+            // 1. Top-Center Desk & Chair
+            Box2D { x0: -1.18, z0: 1.24, x1: 1.18, z1: 2.02 },
+            Box2D { x0: -0.25, z0: 0.60, x1: 0.25, z1: 1.06 },
+            // 2. Top-Left L-Kitchen
+            Box2D { x0: 1.32, z0: 1.36, x1: 2.56, z1: 2.04 },
+            Box2D { x0: 1.85, z0: 0.14, x1: 2.56, z1: 1.40 },
+            // 3. Top-Right Bonsai Table
+            Box2D { x0: -2.48, z0: 1.42, x1: -1.42, z1: 2.00 },
+            // 4. Bottom-Left Bed Alcove
+            Box2D { x0: 0.42, z0: -2.06, x1: 2.56, z1: -0.46 },
+            // 5. Bottom-Center Small Shelf
+            Box2D { x0: -0.38, z0: -2.06, x1: 0.42, z1: -0.48 },
+            // 6. Bottom-Right Unit-Bath Partition, Front Wall Piers, Sliding Pocket Door & Fixtures!
+            Box2D { x0: -0.45, z0: -2.06, x1: -0.35, z1: -0.23 }, // Side partition wall
+            Box2D { x0: -0.60, z0: -0.35, x1: -0.36, z1: -0.23 }, // Left jamb pier
+            Box2D { x0: -2.56, z0: -0.35, x1: -1.34, z1: -0.23 }, // Right pocket wall pier
+            Box2D { x0: -1.35 - door_shift, z0: -0.32, x1: -0.59 - door_shift, z1: -0.26 }, // Sliding door leaf
+            Box2D { x0: -2.20, z0: -1.98, x1: -1.68, z1: -1.26 }, // Washlet toilet inside bath
+            Box2D { x0: -1.28, z0: -1.98, x1: -0.68, z1: -1.56 }, // Vanity sink inside bath
+        ];
+
+        // 2 solver passes guarantee clean corner sliding with zero sticking!
+        for _ in 0..2 {
+            for c in &colliders {
+                push_circle_out_of_box(&mut px, &mut pz, r, *c);
+            }
+            px = clamp_f32(px, -2.50 + r, 2.50 - r);
+            pz = clamp_f32(pz, -1.96 + r, 1.96 - r);
         }
-        let nz = self.player_pos.z + dz;
-        if !self.is_pos_blocked(self.player_pos.x, nz) {
-            self.player_pos.z = nz;
-        }
+
+        self.player_pos.x = px;
+        self.player_pos.z = pz;
     }
 
     pub fn cast_ray_target(&self, dir: Vec3) -> TargetId {
@@ -557,6 +582,21 @@ impl SimWorld {
 
         let mut best_t = max_d;
         let mut best_id = TargetId::None;
+
+        // First seed `best_t` with solid interior partition walls so rays cannot click targets through walls!
+        let occluder_walls = [
+            Aabb3::new(Vec3::new(-0.44, 0.0, -2.06), Vec3::new(-0.36, 2.68, -0.24)),   // Unit-Bath side wall
+            Aabb3::new(Vec3::new(-2.55, 0.0, -0.35), Vec3::new(-1.34, 2.68, -0.235)),  // Unit-Bath pocket wall
+            Aabb3::new(Vec3::new(-0.60, 0.0, -0.35), Vec3::new(-0.36, 2.68, -0.235)),  // Unit-Bath left jamb pier
+            Aabb3::new(Vec3::new(-1.34, 2.08, -0.35), Vec3::new(-0.60, 2.68, -0.235)), // Unit-Bath doorway header
+            Aabb3::new(Vec3::new(0.36, 0.0, -2.04), Vec3::new(0.42, 2.68, -0.46)),     // Shelf-to-bed wood divider
+            Aabb3::new(Vec3::new(-0.36, 0.0, -1.24), Vec3::new(0.36, 2.68, -1.16)),    // Shelf back Spine
+        ];
+        for wall in &occluder_walls {
+            if let Some(t) = wall.ray_hit(eye, dir, best_t) {
+                best_t = t;
+            }
+        }
 
         for (i, &sx) in PANEL_SWITCH_XS.iter().enumerate() {
             let box_sw = Aabb3::new(
@@ -593,10 +633,10 @@ impl SimWorld {
         let ac_box = Aabb3::new(Vec3::new(-2.44, 2.03, 1.65), Vec3::new(-1.36, 2.40, 2.02));
         let bunk_box = Aabb3::new(Vec3::new(0.42, 0.12, -2.02), Vec3::new(2.52, 0.70, -0.46));
 
-        let door_shift = self.toilet_door_open * 0.70;
+        let door_shift = self.toilet_door_open * 0.74;
         let toilet_door_box = Aabb3::new(
-            Vec3::new(-1.42 - door_shift, 0.06, -0.36),
-            Vec3::new(-0.56, 2.10, -0.23),
+            Vec3::new(-1.56, 0.06, -0.37),
+            Vec3::new(-0.58 - door_shift * 0.75, 2.10, -0.22),
         );
 
         let candidates = [
@@ -770,7 +810,10 @@ impl SimWorld {
             0.0
         };
         let comp_settled = (target_mod - self.hab.ac_compressor_mod).abs() < 0.025;
-        fan_still && plume_done && rattle_done && kettle_idle && door_settled && comp_settled
+        let mark_done = self.mark_timer_s[0] <= 0.0
+            && self.mark_timer_s[1] <= 0.0
+            && self.mark_timer_s[2] <= 0.0;
+        fan_still && plume_done && rattle_done && kettle_idle && door_settled && comp_settled && mark_done
     }
 
     pub fn dynamic_scene_params(&self) -> DynamicSceneParams {
@@ -872,5 +915,113 @@ mod tests {
         let h1 = run();
         let h2 = run();
         assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn player_walks_into_and_out_of_bathroom_without_getting_stuck() {
+        let mut w = SimWorld::new();
+        // Position player in front of Unit-Bath doorway (`x = -0.96, z = 0.05`)
+        w.player_pos = Vec3::new(-0.96, 0.0, 0.05);
+        w.yaw_rad = PI as f32; // facing `-Z` toward bathroom doorway (`fwd = (0, 0, -1)`)
+
+        // Open bathroom pocket door via toggle
+        w.actuate(Actuator::ToggleSwitch {
+            target: TargetId::ToiletDoor,
+        });
+        for _ in 0..25 {
+            w.step_ms(50);
+        }
+        assert!(w.toilet_door_open > 0.99, "Toilet door should slide fully open");
+
+        // Walk forward (`+1.0` along `fwd = -Z`) straight through doorway into bathroom!
+        for _ in 0..30 {
+            w.actuate(Actuator::Locomotion {
+                fwd: 1.0,
+                right: 0.0,
+                yaw_delta: 0.0,
+                pitch_delta: 0.0,
+                dt_s: 0.05,
+            });
+        }
+        assert!(
+            w.player_pos.z < -0.80,
+            "Player should walk freely inside Unit-Bath (got z = {})",
+            w.player_pos.z
+        );
+
+        // Strafe left/right inside bathroom and walk right back out into main room!
+        for _ in 0..15 {
+            w.actuate(Actuator::Locomotion {
+                fwd: 0.0,
+                right: 0.6,
+                yaw_delta: 0.0,
+                pitch_delta: 0.0,
+                dt_s: 0.05,
+            });
+        }
+        // Re-align with doorway center (`x = -0.96`) and walk backward (`-1.0` -> `+Z`) out!
+        w.player_pos.x = -0.96;
+        for _ in 0..35 {
+            w.actuate(Actuator::Locomotion {
+                fwd: -1.0,
+                right: 0.0,
+                yaw_delta: 0.0,
+                pitch_delta: 0.0,
+                dt_s: 0.05,
+            });
+        }
+        assert!(
+            w.player_pos.z > 0.15,
+            "Player should walk cleanly back out of Unit-Bath without ever getting stuck (got z = {})",
+            w.player_pos.z
+        );
+    }
+
+    #[test]
+    fn solid_walls_occlude_raycasts_while_toilet_door_remains_clickable_inside_and_out() {
+        let mut w = SimWorld::new();
+        // Stand inside Unit-Bath behind the solid pocket wall (`x = -1.85, z = -1.10`) looking `+Z` toward breaker switches!
+        w.player_pos = Vec3::new(-1.85, 0.0, -1.10);
+        let hit_through_wall = w.cast_ray_target(Vec3::new(0.0, -0.10, 1.0));
+        assert_eq!(
+            hit_through_wall,
+            TargetId::None,
+            "Solid Unit-Bath wall must block raycasts to switches/gauges behind it"
+        );
+
+        // Looking at closed bathroom door from inside (`x = -0.96, z = -1.00 -> dir +Z`) must hit ToiletDoor!
+        w.player_pos = Vec3::new(-0.96, 0.0, -1.00);
+        assert_eq!(w.cast_ray_target(Vec3::new(0.0, -0.2, 1.0)), TargetId::ToiletDoor);
+    }
+
+    #[test]
+    fn china_marker_keeps_sim_unsettled_until_scored_and_manual_fire_never_double_triggers() {
+        let mut w = SimWorld::new();
+        // Trigger manual VHF fire at t = 0.5s (`< 9.0s`): must NOT re-trigger at t = 9.0s!
+        w.step_ms(250);
+        w.step_ms(250);
+        w.actuate(Actuator::ToggleSwitch {
+            target: TargetId::VhfPadRadio,
+        });
+        assert!((w.static_fire_start_s - 0.5).abs() < 1e-6);
+        for _ in 0..40 {
+            w.step_ms(250);
+        }
+        assert!(
+            (w.static_fire_start_s - 0.5).abs() < 1e-6,
+            "Auto-fire at 9.0s must not overwrite manual VHF static fire!"
+        );
+
+        // Place China-marker prediction and verify `is_visually_settled()` stays false while counting down
+        w.actuate(Actuator::PlaceMark {
+            gauge_index: 0,
+            predicted_value: 26.5,
+        });
+        assert!(!w.is_visually_settled(), "Sim must stay awake while 6s China-marker timer counts down");
+        for _ in 0..80 {
+            w.step_ms(250);
+        }
+        assert_eq!(w.calibration.count, 1, "China-marker prediction should be scored after 6s");
+        assert!(w.is_visually_settled(), "Sim should settle to 0 rAF/s once plume & marker timer finish");
     }
 }

@@ -32,9 +32,9 @@ const TARGET_INFO = {
 const projMat = new Float32Array(16);
 const viewMat = new Float32Array(16);
 const vpMat = new Float32Array(16);
-const camFwd = new Float32Array(3);
-const camRight = new Float32Array(3);
-const camUp = new Float32Array(3);
+const camFwd = new Float32Array([0, 0, 1]);
+const camRight = new Float32Array([-1, 0, 0]);
+const camUp = new Float32Array([0, 1, 0]);
 const sunVec = new Float32Array(3);
 const unprojDir = new Float32Array(3);
 
@@ -126,9 +126,10 @@ async function boot() {
     return;
   }
 
-  // 1. Load 105 KB Pure-Rust WASM Kernel
+  // 1. Load Pure-Rust WASM Kernel
   const resp = await fetch('./wasm/odderon_wasm.wasm');
   const bytes = await resp.arrayBuffer();
+  const wasmKb = Math.round(bytes.byteLength / 1024);
   const { instance } = await WebAssembly.instantiate(bytes, {});
   const wasm = instance.exports;
   wasm.odderon_init();
@@ -458,13 +459,13 @@ async function boot() {
 
     // Performance & Doctrine Verification HUD (`[H]`)
     if (showPerfHud) {
-      const hashLo = (t[59] >>> 0).toString(16).padStart(8, '0');
-      const hashHi = (t[60] >>> 0).toString(16).padStart(8, '0');
+      const hashLo = (wasm.odderon_state_hash_lo() >>> 0).toString(16).padStart(8, '0');
+      const hashHi = (wasm.odderon_state_hash_hi() >>> 0).toString(16).padStart(8, '0');
       const statusHtml = isParked
         ? `<span class="parked-tag">0 rAF/s · PARKED (0.0% IDLE CPU/GPU)</span>`
         : `<span>${displayedRafHz} rAF/s · ACTIVE (${smoothedFrameCostMs.toFixed(2)} ms/frame)</span>`;
       elPerfHud.innerHTML = `
-        <div><strong>ODDERON PERF DOCTRINE [H]</strong> · Rust→WASM (105 KB, 0 Assets)</div>
+        <div><strong>ODDERON PERF DOCTRINE [H]</strong> · Rust→WASM (${wasmKb} KB, 0 Assets)</div>
         <div>Presenter: ${statusHtml}</div>
         <div>WebGL2 Draws: <strong>${lastDrawCalls}</strong> (Budget ≤ 8) · Shaded: ${fbWidth}×${fbHeight} (Q=${qualityScale.toFixed(2)})</div>
         <div>Proof-of-Flight Hash: <code>0x${hashHi}${hashLo}</code></div>
@@ -477,7 +478,7 @@ async function boot() {
     const aspect = fbWidth / Math.max(fbHeight, 1);
 
     computeCameraBasisAndView(t[0], t[1], t[2], t[3], t[4], t[5]);
-    perspectiveFieldOfView(projMat, FOV_Y_RAD, aspect, 0.08, 520.0);
+    perspectiveFieldOfView(projMat, FOV_Y_RAD, aspect, 0.12, 520.0);
     mulMat4(vpMat, projMat, viewMat);
 
     sunVec[0] = t[6]; sunVec[1] = t[7]; sunVec[2] = t[8];
@@ -601,12 +602,13 @@ async function boot() {
     rafId = requestAnimationFrame(presentFrame);
   }
 
-  // Discrete scheduled coastal Pad-1 morning static fire at T = 9.0s (wakes presenter via event, zero polling!)
+  // Discrete scheduled distant Pad-1 morning static fire at T = 9.0s (wakes presenter via event, zero polling!)
   setTimeout(() => {
     const t = getTelemetryView();
     if (t[38] > 50.0) {
-      // Advance sim clock to 9.1s if presenter was parked so the distant coastal rocket ignites!
-      wasm.odderon_step(9100, 0, 0, 0, 0);
+      // Trigger Pad-1 static fire cleanly via Actuator ABI even if presenter was parked at 0 rAF/s!
+      wasm.odderon_toggle_target(11);
+      syncDynamicMeshes(getTelemetryView()[30] > 0.5);
       wakePresenter(30);
     }
   }, 9000);
@@ -624,9 +626,21 @@ async function boot() {
     wakePresenter(4);
   });
 
+  window.addEventListener('blur', () => {
+    for (const k in keys) keys[k] = false;
+    isMouseDragging = false;
+    walkTouchId = null;
+    lookTouchId = null;
+    touchWalkFwd = 0;
+    touchWalkRight = 0;
+  });
+
   window.addEventListener('keydown', (e) => {
     audio.ensureStarted();
     keys[e.code] = true;
+    if (e.repeat && (e.code === 'KeyV' || e.code === 'KeyM' || e.code === 'KeyC' || e.code === 'KeyF' || e.code === 'KeyH' || e.code === 'KeyL')) {
+      return;
+    }
     if (e.code === 'KeyV') {
       const t = getTelemetryView();
       wasm.odderon_flip_visor(t[30] > 0.5 ? 0 : 1);
