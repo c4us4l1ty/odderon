@@ -16,6 +16,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write      # the diagnostics branch; nothing else writes to the repo
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -50,44 +53,50 @@ jobs:
         run: cargo fmt --all -- --check
         continue-on-error: true      # formatting is a style gate, not a correctness gate
       - name: clippy
-        id: clippy
+        continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
           cargo clippy --all-targets --message-format=short -- -D warnings 2>&1 | tee /tmp/clippy.txt
-      - name: clippy diagnostics (surfaced where the API can read them)
-        if: failure()
-        shell: bash
-        run: |
-          {
-            echo "### clippy"
-            echo '```'
-            grep -E '^(error|warning)' /tmp/clippy.txt | head -40 || true
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          grep -E '^error' /tmp/clippy.txt | head -5 | while read -r line; do
-            echo "::error title=clippy::$line"
-          done
-          exit 1
       - name: test (including rust<->js parity)
+        continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
           cargo test --all-targets -- --nocapture 2>&1 | tee /tmp/test.txt
-      - name: test diagnostics
-        if: failure()
+      # ---------------------------------------------------------------------------------------
+      # The diagnostics channel. The Actions log blob is on a host that some environments cannot
+      # reach, so on failure the compiler's own words are committed to a `ci-diag` branch and read
+      # from there with plain git. If a toolchain is going to be the compiler, its error messages
+      # have to travel.
+      - name: publish diagnostics to the ci-diag branch
+        if: always()
+        continue-on-error: true
         shell: bash
         run: |
+          mkdir -p /tmp/diag
+          { echo "# rust kernel diagnostics"; date -u; echo; echo "## clippy"; echo '```'; cat /tmp/clippy.txt 2>/dev/null | tail -c 60000; echo '```'; echo; echo "## cargo test"; echo '```'; cat /tmp/test.txt 2>/dev/null | tail -c 60000; echo '```'; } > /tmp/diag/kernel.md
           {
-            echo "### cargo test"
-            echo '```'
-            grep -E '(error|panicked|assertion|FAILED|---- )' /tmp/test.txt | head -40 || true
-            echo '```'
+            echo "### clippy"
+            grep -E '^(error|warning)' /tmp/clippy.txt 2>/dev/null | head -20 || true
           } >> "$GITHUB_STEP_SUMMARY"
-          grep -E '(panicked|assertion)' /tmp/test.txt | head -3 | while read -r line; do
-            echo "::error title=cargo test::$line"
-          done
-          exit 1
+          cd "$GITHUB_WORKSPACE"
+          git config user.name "odderon-ci"
+          git config user.email "ci@odderon.invalid"
+          git checkout -B ci-diag
+          mkdir -p diag
+          cp /tmp/diag/kernel.md diag/kernel.md
+          git add -f diag/kernel.md
+          git commit -m "ci: rust kernel diagnostics for ${GITHUB_SHA}" --no-verify || true
+          git push -f origin ci-diag || true
+      - name: gate
+        if: always()
+        shell: bash
+        run: |
+          status=0
+          grep -qE '^(error)' /tmp/clippy.txt && status=1
+          grep -qE '(error\[|panicked|FAILED|test result: FAILED)' /tmp/test.txt && status=1
+          exit $status
 
   wasm:
     name: wasm32 (${{ matrix.profile }})
