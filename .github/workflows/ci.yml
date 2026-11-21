@@ -50,9 +50,44 @@ jobs:
         run: cargo fmt --all -- --check
         continue-on-error: true      # formatting is a style gate, not a correctness gate
       - name: clippy
-        run: cargo clippy --all-targets -- -D warnings
+        id: clippy
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo clippy --all-targets --message-format=short -- -D warnings 2>&1 | tee /tmp/clippy.txt
+      - name: clippy diagnostics (surfaced where the API can read them)
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo "### clippy"
+            echo '```'
+            grep -E '^(error|warning)' /tmp/clippy.txt | head -40 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          grep -E '^error' /tmp/clippy.txt | head -5 | while read -r line; do
+            echo "::error title=clippy::$line"
+          done
+          exit 1
       - name: test (including rust<->js parity)
-        run: cargo test --all-targets -- --nocapture
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --all-targets -- --nocapture 2>&1 | tee /tmp/test.txt
+      - name: test diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo "### cargo test"
+            echo '```'
+            grep -E '(error|panicked|assertion|FAILED|---- )' /tmp/test.txt | head -40 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          grep -E '(panicked|assertion)' /tmp/test.txt | head -3 | while read -r line; do
+            echo "::error title=cargo test::$line"
+          done
+          exit 1
 
   wasm:
     name: wasm32 (${{ matrix.profile }})
