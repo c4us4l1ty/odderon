@@ -291,4 +291,4 @@ Bayesian Scientific Exploration (collapsing real NASA observational uncertainty 
 Diegetic First-Person Engineering ("Do it by hand, automate it by mind", physical physiological feedback, and no magic UI buttons), and
 Eidos, Akashi, & Esse (transforming gameplay into verifiable, real-world aerospace intuition and an exportable engineering portfolio),
 Odderon stops being "just a game." It becomes the Flight Simulator of the Interstellar Age—a living laboratory where a teenager on a budget laptop can start by launching a sounding rocket in the desert, and end up designing a closed-cycle nuclear-electric tug or a counter-rotating O'Neill Cylinder whose schematics would make a chief engineer at SpaceX or JPL nod in respect.
-
+One more thing: Almost no loading screens like Entering or leaving a planet - no loading screens, the game should be extremely immersive.
