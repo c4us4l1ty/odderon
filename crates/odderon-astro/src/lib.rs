@@ -57,6 +57,10 @@ fn positive(x: f64) -> bool {
     x > 0.0
 }
 
+/// J2 secular drift — the oblateness perturbation that makes an orbit a schedule rather than an
+/// ellipse. See [`j2::secular_rates`] and [`j2::propagate_j2_secular`].
+pub mod j2;
+
 /// Gravitational parameters, km³/s².
 ///
 /// Values from the IAU/JPL published constants. They are *data*, not physics: a body's `mu` is a
@@ -814,7 +818,7 @@ fn to_reference_frame(v: Vec3, p_axis: Vec3, q_axis: Vec3, w_axis: Vec3) -> Vec3
 /// the same reason the rest of the arithmetic does — to specify the behaviour rather than inherit it.
 /// NaN propagates, which is what we want.
 #[inline]
-fn wrap_two_pi(x: f64) -> f64 {
+pub(crate) fn wrap_two_pi(x: f64) -> f64 {
     if x < 0.0 {
         x + odderon_dmath::TAU
     } else {
