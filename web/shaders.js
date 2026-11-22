@@ -17,8 +17,17 @@ void main() {
 }
 `;
 
+// ---- NEW SKY FRAGMENT (spliced into shaders.js by tools/… no, by hand) ----
 export const SKY_FRAG_GL2 = `#version 300 es
+// highp matters here: pow(sunAmt, 2400.0) in a 10-bit mantissa prints
+// concentric rings around the sun instead of a disc. Fragment highp is optional
+// in GLSL ES 3.00, so fall back rather than failing to compile on a GPU that
+// only has mediump in the fragment stage.
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
 precision mediump float;
+#endif
 in vec2 vNdc;
 out vec4 fragColor;
 
@@ -48,15 +57,19 @@ float noise2(vec2 p) {
   return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
-float fbm4(vec2 p) {
-  float v = 0.50 * noise2(p);
-  p = p * 2.04 + vec2(1.7, -1.2);
-  v += 0.26 * noise2(p);
-  p = p * 2.07 + vec2(-2.3, 0.9);
-  v += 0.15 * noise2(p);
-  p = p * 2.03 + vec2(0.8, 1.9);
-  v += 0.09 * noise2(p);
+float fbm3(vec2 p) {
+  float v = 0.54 * noise2(p);
+  p = p * 2.07 + vec2(1.7, -1.2);
+  v += 0.29 * noise2(p);
+  p = p * 2.11 + vec2(-2.3, 0.9);
+  v += 0.17 * noise2(p);
   return v;
+}
+
+// Narkowicz ACES approximation — the same curve the world uses, so cloud
+// highlights and lit facades roll off together instead of clipping separately.
+vec3 aces(vec3 x) {
+  return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
 
 void main() {
@@ -69,86 +82,117 @@ void main() {
   float up = clamp(rd.y, 0.0, 1.0);
   float sunAmt = max(dot(rd, uSunDir), 0.0);
 
-  // Deep Photographic Japanese Summer Noon Cobalt-Cerulean Sky Palette (image-18 & image-15 reference!)
-  vec3 noonZenith  = vec3(0.014, 0.110, 0.420);
-  vec3 noonMid     = vec3(0.042, 0.255, 0.585);
-  vec3 noonHorizon = vec3(0.240, 0.485, 0.700);
-
-  vec3 duskZenith  = vec3(0.035, 0.065, 0.195);
-  vec3 duskMid     = vec3(0.280, 0.145, 0.260);
-  vec3 duskHorizon = vec3(0.980, 0.340, 0.110);
-
-  vec3 nightZenith = vec3(0.005, 0.010, 0.026);
-  vec3 nightMid    = vec3(0.012, 0.022, 0.050);
-  vec3 nightHoriz  = vec3(0.026, 0.045, 0.088);
-
   float dayMix = smoothstep(0.18, 0.72, uWarmth);
   float duskMix = smoothstep(0.01, 0.36, uWarmth) * (1.0 - dayMix);
   float skyActive = clamp(dayMix + duskMix, 0.0, 1.0);
+  float sunAbove = smoothstep(-0.05, 0.10, uSunDir.y);
 
-  vec3 zenCol = mix(nightZenith, mix(duskZenith, noonZenith, dayMix), skyActive);
-  vec3 midCol = mix(nightMid,    mix(duskMid,    noonMid,    dayMix), skyActive);
-  vec3 horCol = mix(nightHoriz,  mix(duskHorizon, noonHorizon, dayMix), skyActive);
+  // ---------------------------------------------------------------------
+  // Rayleigh-ish gradient. The three stops are the *linear* values read off
+  // the reference frame: a cobalt zenith, a cerulean mid-sky and a humid
+  // pale-cyan horizon band. Falling off with exp() (not smoothstep) keeps the
+  // saturation high well up the sky, which is what makes an anime noon read
+  // as "deep" instead of "washed".
+  // ---------------------------------------------------------------------
+  // Sampled off the reference: its noon sky is a humid cyan-blue, not a
+  // mid-latitude cobalt - green sits at ~0.75 of blue where cobalt puts it at 0.6.
+  vec3 zenN  = vec3(0.005, 0.050, 0.170);
+  vec3 midN  = vec3(0.018, 0.168, 0.360);
+  vec3 horN  = vec3(0.100, 0.330, 0.420);
+  vec3 zenD  = vec3(0.030, 0.048, 0.150);
+  vec3 midD  = vec3(0.180, 0.105, 0.235);
+  vec3 horD  = vec3(0.880, 0.330, 0.110);
+  vec3 zenNt = vec3(0.004, 0.008, 0.024);
+  vec3 midNt = vec3(0.011, 0.020, 0.048);
+  vec3 horNt = vec3(0.024, 0.042, 0.082);
 
-  vec3 sky = mix(midCol, zenCol, smoothstep(0.06, 0.62, up));
-  sky = mix(sky, horCol, pow(1.0 - up, 5.2));
+  vec3 zen = mix(zenNt, mix(zenD, zenN, dayMix), skyActive);
+  vec3 mid = mix(midNt, mix(midD, midN, dayMix), skyActive);
+  vec3 hor = mix(horNt, mix(horD, horN, dayMix), skyActive);
 
+  vec3 sky = mix(mid, zen, smoothstep(0.10, 0.95, up));
+  sky = mix(sky, hor, exp(-up * 15.0));
+
+  // Stars, only when the sun is really down.
   if (uWarmth < 0.08 && rd.y > 0.08) {
     vec2 starCell = floor((rd.xz / (rd.y + 0.35)) * 140.0);
     float sh = hash21(starCell);
     if (sh > 0.992) {
-      sky += vec3(0.75, 0.85, 1.0) * (sh - 0.992) * 90.0 * (1.0 - uWarmth * 12.0);
+      sky += vec3(0.75, 0.85, 1.0) * (sh - 0.992) * 60.0 * (1.0 - uWarmth * 12.0);
     }
   }
 
-  vec3 sunTint = mix(vec3(1.10, 0.40, 0.14), vec3(1.15, 0.98, 0.72), dayMix);
-  sky += sunTint * (0.10 * pow(sunAmt, 9.0) + 1.35 * pow(sunAmt, 380.0)) * smoothstep(-0.04, 0.08, uSunDir.y);
+  // ---------------------------------------------------------------------
+  // Sun: a tight disc, a warm aureole, and a very wide forward-scatter veil.
+  // Three terms, because a single pow() always looks like a lens flare.
+  // ---------------------------------------------------------------------
+  vec3 sunTint = mix(vec3(1.10, 0.42, 0.15), vec3(1.20, 1.02, 0.80), dayMix);
+  float disc = pow(sunAmt, 2400.0) * 6.0;
+  float aureole = pow(sunAmt, 90.0) * 0.55;
+  float veil = pow(sunAmt, 5.0) * 0.052;
+  sky += sunTint * (disc + aureole + veil) * sunAbove;
+  sky += vec3(0.55, 0.66, 0.85) * veil * 0.5 * skyActive;
 
-  // 360-Degree Towering Japanese Summer Cumulonimbus Clouds (image-18 -Z street view AND image-15 +Z window vista!)
-  if (rd.y > 0.015) {
-    float az = atan(rd.x, rd.z);
-    // Project smoothly onto panoramic sky coordinates without seam artifacts!
-    vec2 uv = vec2(az * 0.62, rd.y * 1.92);
+  // ---------------------------------------------------------------------
+  // Cumulonimbus on a horizontal cloud deck (proper perspective: the deck is
+  // projected as rd.xz/rd.y, so distant towers converge at the horizon
+  // instead of smearing like the old azimuth-space hack).
+  // ---------------------------------------------------------------------
+  // Lit cumulus sits a stop and a half under paper white: at 0.90 the backs
+    // clip to 255 and the towers lose their body entirely.
+    vec3 cloudLit = mix(vec3(0.86, 0.44, 0.24), vec3(0.700, 0.706, 0.686), dayMix);
+  vec3 cloudShade = mix(vec3(0.10, 0.09, 0.17), vec3(0.180, 0.248, 0.372), dayMix);
+  vec3 cb = mix(vec3(0.020, 0.026, 0.048), cloudLit, skyActive);
+  vec3 cs = mix(vec3(0.008, 0.010, 0.020), cloudShade, skyActive);
 
-    // Sculpted +Z vista towers (around az = 0) AND towering -Z summer cumulonimbus anvils behind Uchinoura Maison (az ~ +-PI)!
-    float dBack = min(abs(az - 3.02), abs(az + 3.26));
-    float dBackL = min(abs(az + 2.48), abs(az - 3.80));
-    float dBackR = min(abs(az - 2.38), abs(az + 3.90));
+  if (rd.y > 0.008) {
+    float hy = max(rd.y, 0.020);
+    vec2 deck = rd.xz / hy;                       // cloud-deck coordinates
+    vec2 q = deck * 0.95;
+    // Domain warp: this is what turns fbm mush into discrete billows.
+    vec2 warp = vec2(fbm3(q * 0.55 + vec2(3.1, 1.7)), fbm3(q * 0.55 + vec2(9.7, 4.3))) - 0.5;
+    vec2 qw = q + warp * 2.2;
 
-    float cPos1 = 1.0 - length(vec2((az + 0.11) * 1.95, (uv.y - 0.34) * 1.55));
-    float cPos2 = 1.0 - length(vec2((az - 0.14) * 2.05, (uv.y - 0.44) * 1.58));
-    float cPos3 = 1.0 - length(vec2((az + 0.34) * 2.10, (uv.y - 0.38) * 1.70));
+    // Three scales: the grouping of the towers, the billow shape, and a fine
+    // octave used to ERODE the rim. Without the erosion every cloud has the
+    // same soft edge and the whole deck reads as out-of-focus smoke.
+    float mass = fbm3(qw * 0.48 + vec2(11.0, 5.0));
+    float body = fbm3(qw * 1.35 + vec2(3.0, 8.0));
+    float detail = fbm3(qw * 5.50 + vec2(21.0, 7.0));
+    float field = mass * 0.62 + body * 0.40;
+    field -= (1.0 - smoothstep(0.28, 0.78, body)) * 0.14;
+    field += (detail - 0.5) * 0.12;
+    // Fair-weather cumulus band: quantity of cloud peaks 15-40 deg up, which is
+    // where the reference frame's towers stand over the ridge line, and the
+    // zenith stays comparatively open.
+    field += 0.050 * smoothstep(0.04, 0.22, rd.y) * (1.0 - smoothstep(0.50, 0.92, rd.y));
+    float density = smoothstep(0.470, 0.560, field);
+    density *= smoothstep(0.010, 0.075, rd.y);
 
-    float cNeg1 = 1.04 - length(vec2(dBack  * 1.45, (uv.y - 0.52) * 1.28));
-    float cNeg2 = 0.98 - length(vec2(dBackL * 1.55, (uv.y - 0.38) * 1.45));
-    float cNeg3 = 0.96 - length(vec2(dBackR * 1.60, (uv.y - 0.42) * 1.48));
-    float cSide1 = 0.92 - length(vec2((abs(az) - 1.45) * 1.75, (uv.y - 0.36) * 1.65));
+    if (density > 0.004) {
+      // Shadowing: compare the field with itself offset toward the sun. Cheap,
+      // and it gives the "top of the tower glows, base goes blue" structure.
+      vec2 sunStep = vec2(uSunDir.x, uSunDir.z) * 0.075 * (1.0 / max(uSunDir.y, 0.25));
+      float lit = fbm3((qw + sunStep * 1.2) * 1.35 + vec2(3.0, 8.0));
+      float thick = smoothstep(0.50, 0.86, field);
+      float selfShade = clamp(0.62 + (body - lit) * 4.5 - thick * 0.30, 0.0, 1.0);
+      // Low elevations see the flat, self-shadowed bases of the towers.
+      selfShade *= mix(0.45, 1.0, smoothstep(0.02, 0.34, rd.y));
+      vec3 cCol = mix(cs, cb, selfShade);
 
-    float silhouette = max(max(max(cPos1, cPos2), max(cPos3, cSide1)), max(max(cNeg1, cNeg2), cNeg3));
-    if (silhouette > -0.10) {
-      vec2 noiseP = vec2(sin(az) * 1.85 + cos(az) * 0.95, uv.y * 1.45) * 3.8;
-      float n = fbm4(noiseP);
-      float detail = fbm4(noiseP * 2.45 + vec2(3.1, -1.7));
-      float field = silhouette + 0.40 * n + 0.15 * detail;
-      float density = smoothstep(0.44, 0.60, field) * smoothstep(0.02, 0.09, rd.y);
+      // Silver lining where the billow thins toward the solar side.
+      float lining = smoothstep(0.500, 0.545, field) * (1.0 - smoothstep(0.555, 0.640, field));
+      cCol += cb * lining * 0.60 * pow(max(sunAmt, 0.0), 1.4);
 
-      if (density > 0.008) {
-        vec2 sunStep = vec2(-0.035, 0.048);
-        float nLit = fbm4(noiseP + sunStep * 4.2);
-        float topShade = clamp(0.52 + (n - nLit) * 3.8 + (rd.y - 0.10) * 1.55, 0.0, 1.0);
-        float silverRim = smoothstep(0.44, 0.52, field) * (1.0 - smoothstep(0.54, 0.68, field));
-        vec3 cloudBright = mix(vec3(1.10, 0.54, 0.30), vec3(1.16, 1.11, 1.02), dayMix);
-        vec3 cloudShadow = mix(vec3(0.14, 0.12, 0.22), vec3(0.16, 0.27, 0.44), dayMix);
-        vec3 cb = mix(vec3(0.05, 0.07, 0.12), cloudBright, skyActive);
-        vec3 cs = mix(vec3(0.018, 0.028, 0.055), cloudShadow, skyActive);
-        vec3 cCol = mix(cs, cb, smoothstep(0.14, 0.82, topShade));
-        cCol += cb * silverRim * 0.24 * dayMix;
-        sky = mix(sky, cCol, density * 0.97);
-      }
+      // Horizon haze eats the far cloud deck.
+      vec3 hazeCol = mix(vec3(0.02, 0.03, 0.06), vec3(0.34, 0.50, 0.66), dayMix);
+      cCol = mix(cCol, hazeCol, smoothstep(0.16, 0.02, rd.y) * 0.55);
+
+      sky = mix(sky, cCol, density * 0.97);
     }
   }
 
-  // Distant 343 m/s shockwave condensation ring expanding from far mountain Pad-1 (-58, 17.8, 380)
+  // Distant 343 m/s shockwave condensation ring expanding from far mountain Pad-1
   if (uShockFrac > 0.01 && uShockFrac < 1.15 && rd.z > 0.2) {
     float angDist = length(vec2(rd.x / max(rd.z, 0.2) - (-58.0 / 380.0), rd.y - 0.048));
     float ringR = uShockFrac * 0.34;
@@ -156,8 +200,16 @@ void main() {
     sky += vec3(0.92, 0.95, 1.0) * max(ring, 0.0) * 0.24;
   }
 
-  vec3 mapped = (sky * (2.51 * sky + 0.03)) / (sky * (2.43 * sky + 0.59) + 0.14);
-  fragColor = vec4(pow(clamp(mapped, 0.0, 1.0), vec3(1.0 / 2.2)), 1.0);
+  // ---------------------------------------------------------------------
+  // Same filmic film as the world pass: ACES -> sRGB -> a touch of highlight
+  // warm / shadow cool so sky and buildings grade together.
+  // ---------------------------------------------------------------------
+  vec3 mapped = aces(sky * 1.02);
+  mapped = pow(mapped, vec3(1.0 / 2.2));
+  float l = dot(mapped, vec3(0.2126, 0.7152, 0.0722));
+  mapped += vec3(0.020, 0.014, -0.012) * (1.0 - smoothstep(0.0, 0.45, l));
+  mapped = clamp(mix(vec3(l), mapped, 1.10), 0.0, 1.0);
+  fragColor = vec4(mapped, 1.0);
 }
 `;
 
@@ -200,6 +252,7 @@ uniform float uShojiClosed;
 uniform float uEntryDoorOpen;
 uniform float uLampOn;
 uniform float uPlumeGlow;
+uniform float uDebugMode;  // 0 = beauty; tools/screenshot.mjs passes ?debug=N for AOVs
 
 // Analytical Window Sunbeam + Shoji Kumiko Lattice + Foreground Utility-Cable Gobos + Interior Wall Occlusion
 vec2 computeIndoorSunMask(vec3 p) {
@@ -258,103 +311,183 @@ float computeRoomAO(vec3 p, vec3 n) {
 }
 
 // High-Contrast Summer Noon Architectural Eave, Balcony, Stair & Dappled Foliage Gobo Shadows (image-18 & image-15!)
+// Fine gobos only: dappled zelkova canopy where the trees actually stand, and
+// the utility pole / overhead-wire stripes on the ground plane. No per-storey
+// y-band "eave shadows" any more - those ignored the sun and read as dirt;
+// the real eaves are now geometric boxes in streetSunVis().
 float computeExteriorEaveShadow(vec3 p) {
-  float sh = 1.0;
-  float raking = p.x * 0.075;
-
-  // A. +Z Street Row (House #1 & House #2 seen from Hab #204 window, z in [10.1, 12.6])
-  if (p.z > 10.1 && p.z < 12.6) {
-    float underUpperEave = smoothstep(1.48 + raking, 2.34 + raking, p.y) * (1.0 - smoothstep(2.42, 2.54, p.y));
-    float underLowerEave = smoothstep(-2.05 + raking, -0.36 + raking, p.y) * (1.0 - smoothstep(-0.30, -0.14, p.y));
-    sh *= (1.0 - 0.88 * max(underUpperEave, underLowerEave));
-
-    float leafField = sin(p.x * 1.35 + p.y * 1.15) * cos(p.x * 0.85 - p.y * 1.65)
-      + 0.45 * sin(p.x * 3.4 + p.y * 2.9);
-    float edgeCanopy = smoothstep(5.2, 8.6, p.x) + smoothstep(-5.8, -8.8, p.x);
-    float dapple = smoothstep(0.05, 0.52, leafField + edgeCanopy * 0.55) * clamp(edgeCanopy + 0.22, 0.0, 1.0);
-    sh *= (1.0 - 0.72 * dapple);
+  float g = 1.0;
+  float treeZone = clamp(smoothstep(-3.9, -6.4, p.x) + smoothstep(3.2, 5.8, p.x), 0.0, 1.0);
+  if (treeZone > 0.002) {
+    float f = sin(p.x * 1.55 - p.y * 1.35 + p.z * 0.75) * cos(p.x * 0.95 + p.y * 1.75)
+            + 0.48 * sin(p.x * 3.8 + p.y * 3.1 - p.z * 1.6);
+    g *= 1.0 - 0.50 * smoothstep(-0.05, 0.55, f) * treeZone;
   }
-
-  // B. -Z Street Row: Uchinoura Maison, Corrugated Steel Annex, Sister Kominka Machiya & Bus Stop (image-18!)
-  if (p.z > -0.6 && p.z < 5.05) {
-    // 1. Deep Kawara 2F roof-eave shadow band across Uchinoura Maison 2F plaster & shutters (x in [-3.1, 3.1])
-    if (p.x > -3.12 && p.x < 3.12 && p.z > 2.05 && p.z < 3.10) {
-      float eave2F = smoothstep(1.72 - raking, 2.52 - raking, p.y) * (1.0 - smoothstep(2.74, 2.84, p.y));
-      sh *= (1.0 - 0.86 * eave2F);
-    }
-    // 2. Dramatic 2F Wooden Balcony + 1F Kawara Hisashi Eave overhang shadow across 1F roasted-cedar wall & noren!
-    if (p.x > -3.92 && p.x < 2.86 && p.z > 2.24 && p.z < 3.18 && p.y < -0.10) {
-      float hisashi1F = smoothstep(-2.35 - raking * 0.8, -0.55 - raking * 0.8, p.y) * (1.0 - smoothstep(2.96, 3.18, p.z));
-      sh *= (1.0 - 0.88 * hisashi1F);
-    }
-    // 3. Deep canopy & deck shadow under 2F Breezeway Gallery & Entry Doorway (x in [-5.50, -2.64])
-    if (p.x > -5.50 && p.x < -2.64 && p.z > -0.35 && p.z < 1.75) {
-      float underCanopy = smoothstep(1.35, 2.15, p.y) * (1.0 - smoothstep(2.28, 2.40, p.y));
-      float underDeck = 1.0 - smoothstep(-0.22, -0.05, p.y);
-      sh *= (1.0 - 0.84 * max(underCanopy, underDeck));
-    }
-    // 4. Sister Kominka Machiya (#3, x in [-13.4, -5.7]) 2F & 1F Kawara eave shadows + Bus Stop roof shade!
-    if (p.x > -13.4 && p.x < -5.7 && p.z > 1.15 && p.z < 3.30) {
-      float sisUpper = smoothstep(1.45 - raking, 2.28 - raking, p.y) * (1.0 - smoothstep(2.42, 2.56, p.y));
-      float sisLower = smoothstep(-2.15 - raking, -0.45 - raking, p.y) * (1.0 - smoothstep(-0.28, -0.12, p.y));
-      sh *= (1.0 - 0.88 * max(sisUpper, sisLower));
-    }
-    if (p.x > -7.85 && p.x < -5.85 && p.z > 3.72 && p.z < 4.78 && p.y < -0.82) {
-      float underBusRoof = smoothstep(-2.65, -1.15, p.y);
-      sh *= (1.0 - 0.78 * underBusRoof);
-    }
-    // 5. Diagonal Dappled Zelkova Foliage Gobo cast across Corrugated Annex (x > 2.9, image-18 left!) & West Trees (x < -4.4)!
-    float leafGobo = sin(p.x * 1.55 - p.y * 1.35 + p.z * 0.75) * cos(p.x * 0.95 + p.y * 1.75)
-      + 0.48 * sin(p.x * 3.8 + p.y * 3.1 - p.z * 1.6);
-    float eastTreeZone = smoothstep(2.9, 6.2, p.x) * smoothstep(-2.9, 2.4, p.y);
-    float westTreeZone = smoothstep(-4.1, -7.8, p.x);
-    float canopyMask = clamp(eastTreeZone * 0.88 + westTreeZone * 0.92, 0.0, 1.0);
-    float gobo = smoothstep(-0.08, 0.44, leafGobo) * canopyMask;
-    sh *= (1.0 - 0.80 * gobo);
-
-    // 6. Crisp diagonal Staircase & Wooden Balustrade shadow cast onto near sidewalk & 1F corner!
-    if (p.y < -2.75 && p.x > -5.55 && p.x < -3.15 && p.z > 1.55 && p.z < 4.75) {
-      float treadStripe = smoothstep(0.15, 0.45, abs(fract((p.z + p.x * 0.18) * 4.4) - 0.5));
-      sh *= mix(0.22, 0.72, treadStripe);
-    }
-  }
-
-  // C. Ground-Plane Shadows on Near Sidewalk, Asphalt Road & Far Sidewalk (building cast + utility pole + crisp overhead wires!)
-  if (p.y < -2.90 && p.z > 2.35 && p.z < 11.4) {
-    float farBuildingCast = smoothstep(8.35, 9.85, p.z + p.x * 0.05);
-    sh *= (1.0 - 0.82 * farBuildingCast);
-
-    // Diagonal utility-pole shadow across near sidewalk & asphalt from pole at (1.08, 5.35)
+  if (p.y < -2.88) {
     float poleLine = (p.x - 1.08) + (p.z - 5.35) * 0.62;
-    if (p.z < 5.42 && p.z > 2.40) {
-      sh *= (1.0 - 0.76 * exp(-pow(poleLine * 7.5, 2.0)));
-    }
-    // Crisp overhead power-line & service-drop shadows slicing across sunlit concrete & asphalt (image-18!)
-    float wNear = 3.88 - 0.11 * p.x;
-    float wz1   = 6.68 + 0.08 * p.x;
-    float wz2   = 7.14 + 0.08 * p.x;
-    sh *= (1.0 - 0.62 * exp(-pow((p.z - wNear) * 24.0, 2.0)));
-    sh *= (1.0 - 0.58 * exp(-pow((p.z - wz1) * 20.0, 2.0)));
-    sh *= (1.0 - 0.52 * exp(-pow((p.z - wz2) * 22.0, 2.0)));
-
-    // Dappled tree-canopy pools on the near sidewalk & curb (x < -4.2 and x > 3.6, image-18 foreground!)
-    float groundLeaf = sin(p.x * 1.45 + p.z * 1.65) * cos(p.x * 1.05 - p.z * 1.35)
-      + 0.42 * sin(p.x * 3.6 + p.z * 3.2);
-    float roadEdgeTrees = smoothstep(-3.8, -7.2, p.x) + smoothstep(3.4, 6.8, p.x);
-    float roadDapple = smoothstep(0.02, 0.46, groundLeaf) * clamp(roadEdgeTrees, 0.0, 1.0);
-    sh *= (1.0 - 0.78 * roadDapple);
+    g *= 1.0 - 0.55 * exp(-pow(poleLine * 7.5, 2.0));
+    g *= 1.0 - 0.34 * exp(-pow((p.z - (3.88 - 0.11 * p.x)) * 24.0, 2.0));
+    g *= 1.0 - 0.30 * exp(-pow((p.z - (6.68 + 0.08 * p.x)) * 20.0, 2.0));
+    g *= 1.0 - 0.26 * exp(-pow((p.z - (7.14 + 0.08 * p.x)) * 22.0, 2.0));
   }
-  return clamp(sh, 0.06, 1.0);
+  return clamp(g, 0.0, 1.0);
 }
 
-void main() {
-  vec3 N = normalize(gl_FrontFacing ? vNormal : -vNormal);
-  vec3 V = normalize(uCamPos - vWorldPos);
-  vec3 baseCol = vAlbedo;
-  int mat = int(vMat + 0.5);
 
+// ===========================================================================
+// SUMMER-NOON SURFACE & LIGHT ENGINE
+// ---------------------------------------------------------------------------
+// Everything below is analytic: no texture fetch, no shadow map, no UBO upload
+// (PERFORMANCE.md I5/I7, VISION.md Law 5). Three ideas carry the look:
+//
+//  1. VALUE STRUCTURE FIRST. A single warm key (≈2.6× albedo) against a cool,
+//     low sky fill (≈0.15×) gives the ~10:1 lit/shadow ratio the reference
+//     frame lives on. Ambient is deliberately weak; depth comes from shadow,
+//     not from global brightness.
+//  2. MATERIAL MICRO-SURFACE. A triplanar height field (board seams, kawara
+//     ridges, corrugation, plaster mottle, aggregate) modulates albedo *and*
+//     tilts the normal from its analytic derivative, which is free.
+//  3. ONE FILM. ACES → sRGB → a cool-shadow/warm-highlight grade, shared with
+//     the sky pass so clouds and walls roll off together.
+// ===========================================================================
+float hash21(vec2 p) {
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 45.32);
+  return fract(p.x * p.y);
+}
+
+float vnoise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  float a = hash21(i);
+  float b = hash21(i + vec2(1.0, 0.0));
+  float c = hash21(i + vec2(0.0, 1.0));
+  float d = hash21(i + vec2(1.0, 1.0));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+float fbm2(vec2 p) {
+  return 0.62 * vnoise(p) + 0.38 * vnoise(p * 2.13 + vec2(4.7, -2.1));
+}
+
+float fbm3s(vec2 p) {
+  return 0.55 * vnoise(p) + 0.29 * vnoise(p * 2.07 + vec2(1.7, -1.2))
+       + 0.16 * vnoise(p * 4.11 + vec2(-2.3, 0.9));
+}
+
+// Cheap triplanar basis: pick the dominant normal axis, return planar UV plus
+// the two world tangents that correspond to it.
+vec2 planarUV(vec3 p, vec3 n, out float major, out vec3 tU, out vec3 tV) {
+  vec3 a = abs(n);
+  if (a.y >= a.x && a.y >= a.z) {
+    major = 1.0; tU = vec3(1.0, 0.0, 0.0); tV = vec3(0.0, 0.0, 1.0);
+    return vec2(p.x, p.z);
+  }
+  if (a.x >= a.z) {
+    major = 0.0; tU = vec3(0.0, 0.0, 1.0); tV = vec3(0.0, 1.0, 0.0);
+    return vec2(p.z, p.y);
+  }
+  major = 2.0; tU = vec3(1.0, 0.0, 0.0); tV = vec3(0.0, 1.0, 0.0);
+  return vec2(p.x, p.y);
+}
+
+vec3 aces(vec3 x) {
+  return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+}
+
+
+// ===========================================================================
+// ANALYTIC SUN OCCLUSION
+// ---------------------------------------------------------------------------
+// The old model painted architectural shadow with hand-tuned x/y/z bands, so a
+// facade was "in shade" whether or not the sun was actually behind its eave,
+// and the sun direction could drift without the shadows following. Instead we
+// ray-test the coarse machiya massing (the same volumes town.rs builds) against
+// the *real* light vector. Five-ish slab tests, no shadow map, no depth
+// texture, no extra draw call — and the shadows rotate correctly through the
+// day (PERFORMANCE.md I7, VISION.md Law 6).
+//
+// Boxes are intentionally coarse: an eave is one slab, a house is one volume.
+// Detail inside a shaded band comes from the gobo function below, not from more
+// boxes.
+// ===========================================================================
+float boxOcclusion(vec3 p, vec3 L, vec3 bmin, vec3 bmax) {
+  // Points on (or inside) a box are never shadowed by it.
+  if ((p.x > bmin.x && p.x < bmax.x && p.y > bmin.y && p.y < bmax.y &&
+       p.z > bmin.z && p.z < bmax.z)) {
+    return 0.0;
+  }
+  vec3 ro = p + L * 0.03;
+  vec3 Ls = sign(L) * max(abs(L), vec3(1e-5));
+  vec3 inv = 1.0 / Ls;
+  vec3 t0 = (bmin - ro) * inv;
+  vec3 t1 = (bmax - ro) * inv;
+  vec3 tn3 = min(t0, t1);
+  vec3 tf3 = max(t0, t1);
+  float tn = max(max(tn3.x, tn3.y), tn3.z);
+  float tf = min(min(tf3.x, tf3.y), tf3.z);
+  // tf - tn is how much of the ray actually travels inside the box: deep hits
+  // are fully shadowed, grazing hits only partly, which is what stops long slab
+  // shadows from reading as hard-edged decals on a wall. The penumbra is capped
+  // twice - by distance (a long shadow keeps a soft edge) and by the box's own
+  // thinnest extent, otherwise a 0.18 m hisashi slab would only be 60 % opaque
+  // from across the street and leak light onto the wall behind it.
+  vec3 ext = bmax - bmin;
+  float thin = min(min(ext.x, ext.y), ext.z);
+  float pen = min(0.04 + 0.030 * max(tn, 0.0), min(0.30, 0.5 * thin + 0.02));
+  return smoothstep(0.0, pen, tf - max(tn, 0.0));
+}
+
+// Coarse street massing, +-Z machiya rows and their eaves. Boxes come straight
+// from town.rs (near row: facade z = 2.22, bodies extend to -Z; far row:
+// facades z = 11.45 / 11.75, bodies extend to +Z). Anything that is not a
+// building or roof slab is left to the fine gobo, so shadow direction follows
+// the art sun instead of being painted on.
+float streetSunVis(vec3 p, vec3 L) {
+  if (p.y > 3.9 || abs(p.x) > 34.0 || p.z < -12.0 || p.z > 30.0) return 1.0;
+  float occ = 0.0;
+  // Every test below is guarded: once a box has swallowed the ray the remaining
+  // thirteen cannot add anything, and most street pixels are decided by the
+  // first two.
+  // ---- near row: bodies (facades at z = 2.22) ----
+  occ = max(occ, boxOcclusion(p, L, vec3(-3.10, -3.10, -4.30), vec3(3.10, 2.56, 2.24)));   // Uchinoura Maison
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(-13.30, -3.10, -4.20), vec3(-5.70, 2.36, 2.24))); // House #3
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(2.80, -3.10, -2.52), vec3(8.50, 3.00, 2.44)));    // corrugated annex
+  // ---- near row: eaves / hisashi slabs (thin, they only shade what is below) ----
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(-3.20, 2.30, 2.10), vec3(3.20, 2.58, 3.42)));     // 2F kawara eave
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(-3.20, -0.30, 2.10), vec3(3.20, -0.12, 3.30)));   // 1F hisashi
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(-5.52, 1.32, -0.38), vec3(-2.60, 2.18, 1.82)));   // gallery canopy
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(-13.40, 2.30, 2.10), vec3(-5.60, 2.62, 2.62)));   // House #3 eave
+  // ---- far row: bodies (facades at z = 11.45 / 11.75) ----
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(-0.30, -3.10, 11.42), vec3(7.80, 2.34, 18.25)));  // House #1
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(-10.95, -3.10, 11.72), vec3(-3.55, 2.34, 18.35))); // House #2
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(8.05, -3.10, 10.85), vec3(13.80, 3.30, 17.20)));  // far annex
+  // ---- far row: eaves overhanging the street (-Z side) ----
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(-0.40, 2.28, 10.55), vec3(7.90, 2.56, 18.25)));   // House #1 2F eave
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(-0.40, -0.32, 10.50), vec3(7.90, -0.14, 18.25))); // House #1 1F hisashi
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(-11.05, 2.28, 10.85), vec3(-3.45, 2.56, 18.35))); // House #2 2F eave
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(-11.05, -0.32, 10.80), vec3(-3.45, -0.14, 18.35)));// House #2 1F hisashi
+  return 1.0 - occ;
+}
+
+
+void main() {
+  vec3 N0 = normalize(gl_FrontFacing ? vNormal : -vNormal);
+  vec3 V = normalize(uCamPos - vWorldPos);
+  int mat = int(vMat + 0.5);
+  vec3 baseCol = vAlbedo;
+
+  // ---- Emissive / special materials -------------------------------------
   if (mat == 6) {
-    fragColor = vec4(baseCol, 1.0);
+    // Warm 2700 K paper lantern / andon. Slight paper fibre mottle so it reads
+    // as washi rather than a flat glowing cylinder.
+    vec2 luv = vec2(vWorldPos.x + vWorldPos.z, vWorldPos.y);
+    float fibre = fbm2(luv * 26.0);
+    float wrapDark = 0.86 + 0.14 * fibre;
+    vec3 em = baseCol * wrapDark * 1.55 + vec3(0.30, 0.16, 0.05);
+    vec3 e = aces(em);
+    fragColor = vec4(pow(e, vec3(1.0 / 2.2)), 1.0);
     return;
   }
   if (mat == 8) {
@@ -377,7 +510,7 @@ void main() {
     return;
   }
   if (mat == 9) {
-    float rim = 0.78 + 0.22 * max(N.y, 0.0);
+    float rim = 0.78 + 0.22 * max(N0.y, 0.0);
     fragColor = vec4(clamp(baseCol * rim * 1.12, 0.0, 1.0), 1.0);
     return;
   }
@@ -387,218 +520,389 @@ void main() {
     return;
   }
 
-  bool indoor = (vWorldPos.z < 1.995 && vWorldPos.z > -2.10 && abs(vWorldPos.x) < 2.58 && vWorldPos.y > -0.06 && vWorldPos.y < 2.695);
+  bool indoor = (vWorldPos.z < 1.995 && vWorldPos.z > -2.10 && abs(vWorldPos.x) < 2.58
+                 && vWorldPos.y > -0.06 && vWorldPos.y < 2.695);
+  float dist = length(uCamPos - vWorldPos);
+  float detailFade = 1.0 - smoothstep(9.0, 30.0, dist);
 
-  // Photographic Procedural Material Micro-Surface & Weathered Patina (0 texture bytes!)
+  // ---- Triplanar micro-surface ------------------------------------------
+  float major;
+  vec3 tU, tV;
+  vec2 uv = planarUV(vWorldPos, N0, major, tU, tV);
+  vec2 dH = vec2(0.0);          // height gradient in UV space
+  float bumpAmt = 0.0;
   float rough = 0.62;
+
   if (mat == 0) {
-    if (!indoor && vWorldPos.z < 26.0) {
-      // Aged Japanese sand-lime stucco mottling & street moisture patina near ground
-      float mottle = sin(vWorldPos.x * 3.8 + cos(vWorldPos.y * 3.1)) * 0.055
-        + sin(vWorldPos.x * 13.0 - vWorldPos.y * 9.5) * 0.025;
-      float dampBase = smoothstep(-3.08, -2.35, vWorldPos.y);
-      baseCol *= (0.96 + mottle) * (0.76 + 0.24 * dampBase);
-      rough = 0.82;
+    // Plaster / concrete / asphalt all share MAT_MATTE and are told apart by
+    // world height and by how flat the surface is.
+    bool ground = (!indoor && vWorldPos.y < -2.95);
+    if (ground) {
+      // Weathered asphalt & poured sidewalk aggregate.
+      float agg = fbm3s(uv * 26.0);
+      baseCol *= (0.78 + 0.24 * agg);
+      float patchy = fbm2(uv * 0.55 + 3.0);
+      baseCol *= 0.92 + 0.16 * patchy;
+      // Slab joints on the sidewalk, 1.4 m on centre.
+      if (vWorldPos.y > -3.02) {
+        float jx = abs(fract(uv.x / 1.4) - 0.5);
+        float jz = abs(fract(uv.y / 1.4) - 0.5);
+        float joint = 1.0 - smoothstep(0.48, 0.5, max(jx, jz));
+        baseCol *= 1.0 - 0.30 * joint;
+        dH += vec2(jx, jz) * joint * 2.0;
+      }
+      dH += (vec2(vnoise(uv * 26.0), vnoise(uv * 26.0 + 7.0)) - 0.5) * 0.35;
+      rough = 0.86;
+      bumpAmt = 0.05 * detailFade;
     } else if (indoor) {
-      float trowel = sin(vWorldPos.x * 6.5 + cos(vWorldPos.y * 5.2 + vWorldPos.z * 6.0)) * 0.022;
-      baseCol *= (1.0 + trowel);
-      rough = 0.76;
+      float trowel = fbm2(uv * 5.0 + 11.0);
+      baseCol *= 0.97 + 0.06 * trowel;
+      rough = 0.74;
+      bumpAmt = 0.02 * detailFade;
+    } else {
+      // Aged sand-lime plaster: coarse mottling, long vertical rain streaks,
+      // drip stains under the eaves and rising damp at the plinth.
+      // Fine first: big soft octaves read as coffee stains at close range.
+      float mottle = fbm3s(uv * 2.60 + 4.0);
+      float coarse = fbm2(uv * 1.10 + 21.0);
+      baseCol *= 0.84 + 0.26 * mottle + 0.07 * coarse;
+      baseCol *= vec3(0.94, 0.92, 0.87);          // warm cream, not white paper
+
+      float streakU = (vWorldPos.x + vWorldPos.z) * 6.0;
+      float streak = fbm2(vec2(streakU, vWorldPos.y * 0.22 + 5.0));
+      baseCol *= 1.0 - 0.18 * smoothstep(0.46, 0.80, streak);
+
+      // Drip staining directly under each storey's eave line.
+      float underEave = fract((vWorldPos.y + 3.06) / 3.02);
+      baseCol *= mix(0.74, 1.0, smoothstep(0.0, 0.16, underEave));
+
+      float damp = 1.0 - smoothstep(-3.02, -2.10, vWorldPos.y);
+      baseCol *= mix(1.0, 0.60, damp * damp);
+      baseCol = mix(baseCol, baseCol * vec3(0.86, 0.96, 0.90), damp * 0.7);
+
+      // Sparse hairline cracks / render patch seams.
+      float crack = smoothstep(0.485, 0.5, abs(fract(fbm2(uv * 0.9) * 6.0) - 0.5));
+      baseCol *= 1.0 - 0.22 * crack * (0.4 + 0.6 * detailFade);
+
+      dH += vec2(vnoise(uv * 9.0), vnoise(uv * 9.0 + 3.0)) * (mottle - 0.5) * 1.1;
+      rough = 0.86;
+      bumpAmt = 0.06 * detailFade;
     }
   } else if (mat == 1) {
-    // Roasted Yakisugi / Hinoki / Keyaki timber plank seams + coffered ceiling plank grain
-    float grainCoord = (abs(N.y) > 0.5)
-      ? (vWorldPos.x * 28.0 + vWorldPos.z * 14.0 + sin(vWorldPos.z * 9.0) * 2.0)
-      : (vWorldPos.x * 38.0 + vWorldPos.y * 16.0 + sin(vWorldPos.z * 12.0) * 2.4);
-    float grain = sin(grainCoord) * 0.075;
-    float plank = (abs(N.y) > 0.5)
-      ? (0.93 + 0.07 * smoothstep(0.03, 0.09, abs(fract(vWorldPos.x * 4.5) - 0.5)))
-      : ((!indoor) ? (0.92 + 0.08 * smoothstep(0.04, 0.12, abs(fract(vWorldPos.x * 5.5) - 0.5))) : 1.0);
-    baseCol *= (1.0 + grain) * plank;
-    rough = 0.44;
+    // Roasted cedar / hinoki boards. Walls get vertical boards (shouji-ita),
+    // floors and ceilings get boards running along +X.
+    bool wall = (major != 1.0);
+    float across = wall ? uv.x : uv.y;
+    float along = wall ? uv.y : uv.x;
+    float bw = wall ? 0.185 : 0.30;
+    float boardF = across / bw;
+    float bi = floor(boardF);
+    float f = fract(boardF);
+    float tone = hash21(vec2(bi, wall ? 3.0 : 17.0)) - 0.5;
+    float seam = smoothstep(0.0, 0.055, f) * smoothstep(1.0, 0.945, f);
+
+    // Grain streaks run along the board: high frequency across, low along.
+    float grain = fbm3s(vec2(along * 1.7, across * 34.0) + bi * 7.3);
+
+    baseCol *= vec3(0.87, 0.81, 0.77);          // palette: weathered, not varnished
+    baseCol *= (1.0 + tone * 0.34) * (0.40 + 0.60 * seam);
+    baseCol *= 0.84 + 0.30 * grain;
+    // Long silvered weathering streaks: sun-greyed in the middle of a board,
+    // dark where water runs at the seams.
+    float weather = fbm2(vec2(along * 0.9, across * 6.0) + 31.0);
+    baseCol *= 0.90 + 0.20 * weather;
+    // Sun-bleaching and warm red shift where the timber faces the sky.
+    baseCol = mix(baseCol, baseCol * vec3(1.14, 1.03, 0.86), clamp(N0.y, 0.0, 1.0) * 0.55);
+    baseCol *= 0.94 + 0.12 * smoothstep(-3.0, 2.4, vWorldPos.y);
+
+    // Analytic sawtooth derivative -> board edges catch the sun.
+    float dhAcross = -sin(f * 6.28318) * 0.9;
+    if (wall) dH.x = dhAcross * 1.0; else dH.y = dhAcross * 1.0;
+    rough = 0.52;
+    bumpAmt = 0.075 * detailFade;
   } else if (mat == 2) {
-    // Woven Igusa rush-grass Japanese Tatami weave
-    float weave = sin(vWorldPos.z * 230.0) * 0.065 + sin(vWorldPos.x * 18.0) * 0.025;
-    baseCol *= (1.0 + weave);
-    rough = 0.70;
+    // Igusa tatami: rush weave, fine across, coarse along.
+    float weave = sin(uv.x * 210.0) * 0.5 + sin(uv.y * 22.0) * 0.5;
+    baseCol *= 1.0 + weave * 0.05;
+    float band = smoothstep(0.02, 0.08, abs(fract(uv.y / 1.79) - 0.5));
+    baseCol *= 0.90 + 0.10 * band;
+    rough = 0.72;
+    bumpAmt = 0.02 * detailFade;
   } else if (mat == 3) {
-    // Corrugated galvanized steel annex siding with subtle rust/weathering streaks (image-15 far left!)
-    float corr = cos(vWorldPos.x * 26.0 + vWorldPos.z * 26.0);
-    N = normalize(N + vec3(corr * 0.30, 0.0, -corr * 0.18));
-    float rust = clamp(sin(vWorldPos.x * 4.7) * cos(vWorldPos.y * 2.3), 0.0, 1.0);
-    baseCol = mix(baseCol, vec3(0.28, 0.18, 0.12), rust * 0.24);
-    rough = 0.38;
+    // Galvanised corrugated siding: 80 mm ribs, rust bloom at the fixings.
+    float rib = sin(uv.x * 78.0);
+    float rust = smoothstep(0.62, 1.02, fbm2(uv * vec2(2.2, 1.1) + 9.0));
+    float rustH = 1.0 - smoothstep(-3.05, -1.4, vWorldPos.y);
+    // Near-neutral steel: a blue-biased albedo times a blue sky fill goes
+    // navy in shade, which reads as a hole rather than as shadow.
+    baseCol *= vec3(0.73, 0.77, 0.80);           // galvanised grey
+    baseCol *= 0.80 + 0.24 * rib;
+    baseCol = mix(baseCol, vec3(0.22, 0.135, 0.085), rust * (0.16 + 0.28 * rustH));
+    baseCol *= 0.92 + 0.16 * fbm2(vec2(uv.x * 3.0, uv.y * 0.6));
+    dH.x = cos(uv.x * 78.0) * 0.55;
+    rough = 0.40;
+    bumpAmt = 0.09 * detailFade;
   } else if (mat == 4) {
-    float brush = sin((vWorldPos.x + vWorldPos.y * 2.0) * 120.0) * 0.020;
-    baseCol *= (1.0 + brush);
-    rough = 0.28;
+    float brush = sin((uv.x + uv.y * 2.0) * 120.0) * 0.5 + fbm2(uv * 9.0) * 0.5;
+    baseCol *= 0.96 + brush * 0.06;
+    rough = 0.26;
+  } else if (mat == 5) {
+    // Washi: long kozo fibres, warm transparency.
+    float fibre = fbm2(vec2(uv.x * 6.0, uv.y * 40.0));
+    baseCol *= 0.97 + 0.07 * fibre;
+    rough = 0.88;
   } else if (mat == 11) {
-    float tileGrout = 1.0;
     if (indoor && vWorldPos.x < -0.36 && vWorldPos.z < -0.24) {
       float gx = smoothstep(0.018, 0.032, abs(fract(vWorldPos.x * 4.0) - 0.5));
       float gy = smoothstep(0.018, 0.032, abs(fract(vWorldPos.y * 4.0) - 0.5));
       float gz = smoothstep(0.018, 0.032, abs(fract(vWorldPos.z * 4.0) - 0.5));
-      tileGrout = 0.90 + 0.10 * (gx * gy * gz);
+      baseCol *= 0.90 + 0.10 * (gx * gy * gz);
     }
-    baseCol *= tileGrout;
-    rough = 0.20;
+    baseCol *= 0.96 + 0.08 * fbm2(uv * 30.0);
+    rough = 0.18;
   } else if (mat == 12) {
-    float leafVar = sin(vWorldPos.x * 8.5) * cos(vWorldPos.z * 8.5 + vWorldPos.y * 6.5);
-    baseCol *= (0.86 + 0.18 * leafVar);
-    rough = 0.62;
+    // Foliage: two-tone leaf clusters; the tip colour shift is done in lighting
+    // (subsurface) so grass and canopy share one model.
+    // Blades are patterned in their own UV (each blade gets its own tone); the
+    // flat cover quads - verge strips and the meadow - are patterned in world
+    // space, because a 0..1 box UV stretched over 60 m of hillside prints the
+    // noise grid as a visible checkerboard.
+    float coverQuad = smoothstep(0.85, 0.96, N0.y);
+    float leafVar = mix(fbm3s(vec2(uv.x * 7.0, uv.y * 9.0)),
+                        fbm3s(vWorldPos.xz * 0.55 + vWorldPos.y * 0.13),
+                        coverQuad);
+    // Aerial perspective: the meadow is the backdrop, so it has to lose
+    // saturation with distance instead of glowing as the greenest thing on
+    // screen. Blades are close by definition and are left alone.
+    float leafDist = distance(vWorldPos, uCamPos);
+    leafVar = mix(leafVar, 0.58, smoothstep(30.0, 120.0, leafDist));
+    baseCol *= 0.72 + 0.55 * leafVar;
+    baseCol = mix(baseCol, baseCol * vec3(1.20, 1.10, 0.72), smoothstep(0.55, 1.0, leafVar) * 0.55);
+    // NOTE: the hillside's checkerboard is baked per-plot vertex colour (rice
+    // paddies), not noise. Washing the albedo toward a haze colour here only
+    // turns the hill into a grey-blue wall - the haze pass tints it again - so
+    // the plots are left alone and only the noise octave fades.
+    rough = 0.66;
   } else if (mat == 13) {
-    // Dark Charcoal Kawara S-curve clay roof tiles (sangawara, image-15!)
-    float wave = sin(vWorldPos.x * 22.0);
-    float tier = smoothstep(0.0, 0.14, fract(vWorldPos.z * 2.8));
-    N = normalize(N + vec3(cos(vWorldPos.x * 22.0) * 0.36, 0.0, 0.0));
-    baseCol *= (0.84 + 0.16 * wave) * (0.85 + 0.15 * tier);
-    rough = 0.26;
+    // Kawara: rounded sangawara ridges down the slope, stepped courses across.
+    float ridgePhase = uv.x * 20.5;
+    float ridge = sin(ridgePhase);
+    if (major == 1.0) {
+      // Roof plane: ridges run along Z, courses along X.
+      ridgePhase = vWorldPos.x * 20.5;
+      ridge = sin(ridgePhase);
+      float course = fract(vWorldPos.z * 3.4);
+      float courseShade = 0.78 + 0.22 * smoothstep(0.0, 0.22, course);
+      baseCol *= (0.82 + 0.22 * ridge) * courseShade;
+      dH = vec2(cos(ridgePhase) * 0.75, (0.5 - course) * 0.35);
+    } else {
+      baseCol *= 0.86 + 0.18 * ridge;
+      dH.x = cos(ridgePhase) * 0.75;
+    }
+    float tileTone = hash21(floor(vec2(uv.x * 3.2, uv.y * 3.2)));
+    baseCol *= (0.92 + 0.16 * tileTone) * 0.90;
+    rough = 0.30;
+    bumpAmt = 0.10 * (0.35 + 0.65 * detailFade);
   }
 
+  // Apply the analytic bump.
+  vec3 N = normalize(N0 - (dH.x * tU + dH.y * tV) * bumpAmt);
+
   // =========================================================================
-  // PHOTOGRAPHIC "SUMMER NOON" HIGH-CONTRAST LIGHTING ENGINE (image-18 & image-15!)
-  // Coherent single-sun 3D form shading + golden highlights + deep indigo/espresso shadows!
+  // LIGHT STRUCTURE
   // =========================================================================
   float dayMix = smoothstep(0.14, 0.70, uWarmth);
   float duskMix = smoothstep(0.01, 0.35, uWarmth) * (1.0 - dayMix);
-  vec3 sunColor = mix(vec3(1.32, 0.44, 0.14), vec3(1.58, 1.22, 0.80), dayMix) * smoothstep(-0.02, 0.10, uSunDir.y);
+  vec3 sunColor = mix(vec3(1.34, 0.46, 0.15), vec3(1.62, 1.17, 0.74), dayMix)
+                * smoothstep(-0.02, 0.10, uSunDir.y);
 
+  vec3 dbgL = uSunDir;
   vec3 directLight = vec3(0.0);
+  vec3 ambient = vec3(0.0);
   float ao = 1.0;
+  float shadowVis = 1.0;
   vec2 sunMask = vec2(1.0, 0.0);
-  float extShadow = 1.0;
 
   if (indoor) {
     sunMask = computeIndoorSunMask(vWorldPos);
-    extShadow = sunMask.x;
+    shadowVis = sunMask.x;
     ao = computeRoomAO(vWorldPos, N);
     float ndl = max(dot(N, uSunDir), 0.0);
-    directLight = sunColor * ndl * extShadow;
+    float wrap = clamp((ndl + 0.10) / 1.10, 0.0, 1.0);
+    // Sun patches on tatami clip first: 2.8 keeps the patch reading as a patch
+    // instead of a white hole in the floor.
+    directLight = sunColor * 2.80 * wrap * shadowVis;
+
+    // Cool window-driven sky fill + warm timber bounce, both occluded.
+    float shojiDim = 1.0 - 0.38 * uShojiClosed;
+    vec3 skyFill = mix(vec3(0.080, 0.096, 0.146), vec3(0.335, 0.412, 0.610), dayMix);
+    vec3 bounceFill = mix(vec3(0.052, 0.037, 0.027), vec3(0.418, 0.302, 0.183), dayMix);
+    float upness = 0.5 + 0.5 * N.y;
+    ambient = (mix(bounceFill, skyFill, upness) * (0.55 + 0.45 * (0.5 + 0.5 * N.y))
+              + vec3(0.90, 0.72, 0.44) * (sunMask.y * 0.30)) * ao * shojiDim;
+    ambient *= mix(0.78, 1.0, shadowVis);
   } else {
-    // Coherent single directional sun per block — NEVER lighting two opposite faces of the same 3D prop!
-    vec3 nearSun = normalize(vec3(-0.38, max(uSunDir.y, 0.68), max(uSunDir.z, 0.46)));
-    vec3 farSun  = normalize(vec3(-0.38, max(uSunDir.y, 0.68), -0.44));
-    vec3 activeExtSun = normalize(mix(nearSun, farSun, smoothstep(8.2, 9.8, vWorldPos.z)));
-    float ndlExt = max(dot(N, activeExtSun), 0.0);
-    extShadow = computeExteriorEaveShadow(vWorldPos);
+    // One coherent "art sun" that keeps the raking angle of the reference even
+    // when the ephemeris puts the sun overhead at solar noon: the *elevation*
+    // is compressed, the azimuth (which side of the street is lit) is real.
+    // The street runs along X, so a sun that is merely *above* the ridge line
+    // drops the whole canyon into shade. Bias the art sun toward the street
+    // axis (-X) so light rakes along the facades the way it does in the
+    // reference frame, while keeping the real azimuth's sign and the real
+    // elevation bracketed. The interior keeps the true ephemeris vector.
+    // The art sun is raking (azimuth biased along the street, -X) and its
+    // Z-lean follows the surface: a facade that faces +Z is lit from +Z, one
+    // that faces -Z from -Z, and ground/roofs pick the row they are nearest to.
+    // Blending two opposite unit vectors would cancel the Z component and put
+    // an almost-vertical sun over a north-south street, which is what made the
+    // whole canyon read as night. Keep |z| fixed and only flip its sign.
+    float zLean;
+    if (abs(N0.z) > 0.25) {
+      zLean = sign(N0.z);
+    } else {
+      zLean = mix(1.0, -1.0, smoothstep(5.2, 7.6, vWorldPos.z));
+    }
+    float sunElev = clamp(uSunDir.y, 0.40, 0.60);
+    vec3 nearSun = normalize(vec3(-0.66, sunElev, 0.56));
+    vec3 farSun  = normalize(vec3(-0.66, sunElev, -0.56));
+    vec3 artSun  = normalize(vec3(-0.66, sunElev, 0.56 * zLean));
+    // Which of the two "art suns" a surface sees is chosen by its *normal*,
+    // not by where it is: a facade that faces +Z is lit by the +Z sun, one that
+    // faces -Z by the -Z sun, and a roof (N.z ~ 0) gets the blend, i.e. a
+    // raking side light. That keeps both sides of a narrow street sunlit —
+    // physically impossible with one sun, but it is exactly what the reference
+    // frame does, and it removes the "half the street is night" failure.
+    vec3 L = artSun;
+    dbgL = L;
+    // Real eave/building occlusion from the massing, then the fine gobos
+    // (foliage dapple, overhead wires, poles, stair treads) on top.
+    shadowVis = streetSunVis(vWorldPos, L) * computeExteriorEaveShadow(vWorldPos);
+    shadowVis = clamp(shadowVis, 0.0, 1.0);
 
-    // Rich ground & corner contact AO on sidewalks, plinths & eaves
+    float ndl = max(dot(N, L), 0.0);
+    float wrap = clamp((ndl + 0.03) / 1.03, 0.0, 1.0);
+    directLight = sunColor * 1.50 * wrap * shadowVis;
+
+    // Ground proximity AO on the street + a soft soffit term so eaves and the
+    // underside of balconies go genuinely dark.
     float streetAO = (abs(vWorldPos.z) < 26.0)
-      ? (0.64 + 0.36 * smoothstep(-3.06, -2.52, vWorldPos.y))
-      : 1.0;
-    ao = streetAO;
-    directLight = sunColor * ndlExt * extShadow;
+      ? (0.52 + 0.48 * smoothstep(-3.06, -2.30, vWorldPos.y)) : 1.0;
+    float soffit = mix(0.55, 1.0, smoothstep(-0.35, 0.55, N.y));
+    ao = streetAO * soffit;
 
-    // Sunlit Summer Grass & Leaf Subsurface Golden-Chartreuse Translucency (image-18 foreground grass!)
-    if (mat == 12 && dayMix > 0.1) {
-      float grassRim = pow(clamp(1.0 - abs(dot(N, V)), 0.0, 1.0), 1.4) + 0.45 * max(N.y, 0.0);
-      directLight += vec3(0.68, 0.92, 0.14) * grassRim * extShadow * dayMix * 0.55;
+    float upness = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
+    vec3 skyFill = mix(vec3(0.140, 0.168, 0.272), vec3(0.425, 0.495, 0.742), dayMix);
+    vec3 groundFill = mix(vec3(0.070, 0.058, 0.048), vec3(0.240, 0.200, 0.150), dayMix);
+    ambient = mix(groundFill, skyFill, upness) * ao;
+    // Shade is dimmer than sun, but it is still *sky*, so keep most of the fill:
+    // the reference's shaded timber is a deep blue-brown, never black.
+    ambient *= mix(0.58, 1.0, shadowVis);
+    // Sunlight that lands on the street bounces sideways into shaded
+    // verticals, which is why real shade is dirty-amber, not blue.
+    ambient += groundFill * (1.0 - shadowVis) * dayMix * (1.0 - upness) * 0.15;
+    // Down-facing soffits look at the sunlit street, not at the sky: without
+    // this fill every eave underside renders as a flat black bar.
+    ambient = mix(ambient, ambient * 1.85 + groundFill * 0.55 * dayMix,
+                 smoothstep(-0.25, -0.75, N.y));
+
+    // Backlit foliage / grass translucency: the reference's grass is a
+    // different colour from its shadowed neighbours because the sun is *in it*.
+    if (mat == 12) {
+      float thin = pow(clamp(1.0 - abs(dot(N, V)), 0.0, 1.0), 1.2);
+      float scatter = 0.42 + 0.58 * thin;
+      // Only *blades* get the translucency. A flat up-facing MAT_FOLIAGE quad is
+      // the verge strip or the meadow, which must stay ground, not glow.
+      float bladeMask = 1.0 - smoothstep(0.85, 0.96, N.y);
+      // Sun *inside* the blade (subsurface), plus a green ambient floor so
+      // grass in street shade still reads as grass instead of black wire.
+      directLight += vec3(0.62, 0.95, 0.14) * scatter * dayMix * (0.30 + 0.70 * shadowVis) * 0.72 * bladeMask;
+      directLight += vec3(0.98, 0.94, 0.40) * max(N.y, 0.0) * shadowVis * dayMix * 0.22 * bladeMask;
+      ambient += vec3(0.052, 0.112, 0.018) * dayMix * ao * (0.55 + 0.45 * shadowVis) * bladeMask;
     }
   }
 
-  // Translucent Golden Washi Subsurface Glow on Shoji Screen, Chouchin Lanterns & Frosted Door
+  // Translucent washi / frosted glass self-glow when backlit.
   if (mat == 5) {
-    float backLit = max(dot(-N, uSunDir), 0.28) * smoothstep(0.0, 0.35, uWarmth);
-    directLight += sunColor * backLit * (indoor ? 0.38 : 0.22);
+    float backLit = max(dot(-N, uSunDir), 0.30) * smoothstep(0.0, 0.35, uWarmth);
+    directLight += sunColor * backLit * (indoor ? 0.30 : 0.18);
   }
 
-  // Grounded cinematic shadow ambient (deep cobalt-slate sky fill + subtle warm wood/stone bounce — ~13:1 contrast!)
-  float windowVis = indoor ? clamp((vWorldPos.z + 2.3) / 4.4, 0.32, 1.0) : 1.0;
-  float shojiDim = indoor ? (1.0 - 0.34 * uShojiClosed) : 1.0;
-  vec3 skyFill = mix(
-    vec3(0.010, 0.014, 0.026),
-    mix(vec3(0.055, 0.048, 0.078), vec3(0.068, 0.086, 0.112), dayMix),
-    clamp(dayMix + duskMix, 0.0, 1.0)
-  ) * (0.48 + 0.52 * max(N.y, 0.0));
-  vec3 warmBounce = mix(
-    vec3(0.012, 0.010, 0.014),
-    vec3(0.115, 0.088, 0.054),
-    dayMix
-  ) * (0.42 + 0.85 * max(-N.y, 0.18));
-  vec3 washiFill = vec3(0.95, 0.76, 0.44) * (sunMask.y * 0.24 + (indoor ? 0.06 * (1.0 - 0.5 * uShojiClosed) * dayMix : 0.0));
+  // ---- Specular: tight on glazed kawara and alloy, broad on plaster ------
+  vec3 extArtSun = normalize(vec3(-0.66, clamp(uSunDir.y, 0.40, 0.60),
+      0.56 * (abs(N0.z) > 0.25 ? sign(N0.z)
+              : mix(1.0, -1.0, smoothstep(5.2, 7.6, vWorldPos.z)))));
+  vec3 H = normalize((indoor ? uSunDir : extArtSun) + V);
+  float specPow = mix(160.0, 12.0, rough);
+  float spec = pow(max(dot(N, H), 0.0), specPow) * (1.0 - rough) * shadowVis;
+  vec3 specLight = sunColor * spec * (mat == 13 ? 0.55 : 0.16);
 
-  vec3 ambient = ((skyFill + warmBounce) * windowVis * shojiDim + washiFill) * ao;
-  if (!indoor) {
-    // Deep rich summer shadow ambient: cool cerulean sky bounce from above + subtle warm sunlit-asphalt bounce from below!
-    vec3 extSky = mix(vec3(0.008, 0.013, 0.026), vec3(0.036, 0.058, 0.098), dayMix) * (0.38 + 0.62 * max(N.y, 0.0));
-    vec3 extGround = mix(vec3(0.004, 0.004, 0.007), vec3(0.026, 0.020, 0.012), dayMix) * (0.35 + 0.65 * max(-N.y, 0.12));
-    ambient = (extSky + extGround) * ao;
-  }
+  // ---- Cool sky rim, only where the sun is not ---------------------------
+  float rim = pow(clamp(1.0 - abs(dot(N, V)), 0.0, 1.0), 3.0);
+  vec3 rimLight = mix(vec3(0.010, 0.014, 0.028), vec3(0.045, 0.070, 0.125), dayMix)
+                * rim * (1.0 - shadowVis) * 0.55;
 
-  // Interior Warm 2700K Architectural & Task Point Lights + Coffered Ceiling Cove Wash
-  vec3 localLights = vec3(0.0);
-  if (indoor) {
-    localLights += vec3(1.0, 0.80, 0.48) * (0.09 * smoothstep(2.10, 2.68, vWorldPos.y));
-    if (uLampOn > 0.5) {
-      vec3 toAndon = vec3(-2.25, 0.76, 1.70) - vWorldPos;
-      float dA2 = dot(toAndon, toAndon) + 0.30;
-      localLights += vec3(1.0, 0.66, 0.28) * (max(dot(N, normalize(toAndon)), 0.16) * 0.28 / dA2);
+  vec3 litColor = baseCol * (ambient + directLight) + specLight + rimLight;
 
-      vec3 toDesk = vec3(-0.26, 1.06, 1.46) - vWorldPos;
-      float dD2 = dot(toDesk, toDesk) + 0.18;
-      localLights += vec3(1.0, 0.74, 0.38) * (max(dot(N, normalize(toDesk)), 0.10) * 0.24 / dD2);
-    }
-    vec3 toGalley = vec3(1.98, 1.66, 1.45) - vWorldPos;
-    float dG2 = dot(toGalley, toGalley) + 0.50;
-    localLights += vec3(1.0, 0.70, 0.34) * (max(dot(N, normalize(toGalley)), 0.06) * 0.15 / dG2);
-
-    vec3 toBed = vec3(1.48, 1.75, -1.46) - vWorldPos;
-    float dB2 = dot(toBed, toBed) + 0.55;
-    float bedAlcoveMask = smoothstep(0.32, 0.44, vWorldPos.x);
-    localLights += vec3(0.96, 0.64, 0.30) * (max(dot(N, normalize(toBed)), 0.06) * 0.15 * bedAlcoveMask / dB2);
-
-    if (vWorldPos.x < -0.35 && vWorldPos.z < -0.18) {
-      vec3 toBath = vec3(-1.42, 2.52, -1.18) - vWorldPos;
-      float dT2 = dot(toBath, toBath) + 0.38;
-      localLights += vec3(1.0, 0.92, 0.78) * (max(dot(N, normalize(toBath)), 0.30) * 0.62 / dT2);
-    }
-    // Natural coastal sky spill pouring through the open -X Apartment Entry Doorway into the genkan!
-    if (uEntryDoorOpen > 0.04 && dayMix > 0.05) {
-      vec3 toEntry = vec3(-2.62, 1.15, 0.70) - vWorldPos;
-      float dE2 = dot(toEntry, toEntry) + 0.42;
-      localLights += vec3(0.76, 0.88, 1.0) * (uEntryDoorOpen * dayMix * max(dot(N, normalize(toEntry)), 0.18) * 0.48 / dE2);
-    }
-  }
-
-  // Physical Micro-Facet Specular Glints on Kawara Tiles, Corrugated Steel & Rounded Wood Fillets
-  vec3 extSpecSun = normalize(mix(
-    normalize(vec3(-0.38, max(uSunDir.y, 0.68), max(uSunDir.z, 0.46))),
-    normalize(vec3(-0.38, max(uSunDir.y, 0.68), -0.44)),
-    smoothstep(8.2, 9.8, vWorldPos.z)
-  ));
-  vec3 specDir = indoor ? uSunDir : extSpecSun;
-  vec3 H = normalize(specDir + V);
-  float specPow = mix(110.0, 14.0, rough);
-  float spec = pow(max(dot(N, H), 0.0), specPow) * (1.0 - rough) * extShadow;
-  vec3 specLight = sunColor * spec * 0.24;
-
-  vec3 litColor = baseCol * (ambient + directLight + localLights) + specLight;
-
-  // Subtle Analytical Golden Sunbeam Shaft inside the Room
+  // ---- Interior sunbeam shafts -------------------------------------------
   if (indoor && dayMix > 0.25 && uSunDir.z > 0.08) {
     vec3 ray = vWorldPos - uCamPos;
     float rayLen = clamp(length(ray), 0.0, 4.5);
     vec2 m1 = computeIndoorSunMask(uCamPos + ray * 0.38);
     vec2 m2 = computeIndoorSunMask(uCamPos + ray * 0.72);
     float shaft = (m1.x + m2.x) * 0.5;
-    litColor += vec3(1.0, 0.84, 0.52) * shaft * rayLen * 0.014 * dayMix * (1.0 - 0.82 * uShojiClosed);
+    litColor += vec3(1.0, 0.86, 0.56) * shaft * rayLen * 0.030 * dayMix * (1.0 - 0.82 * uShojiClosed);
   }
 
-  // Summer coastal atmospheric perspective on distant +Z AND -Z forested mountain ridges (|z| > 62 m)
-  if (!indoor && abs(vWorldPos.z) > 62.0) {
-    float haze = 1.0 - exp(-(abs(vWorldPos.z) - 62.0) * 0.0026);
-    vec3 hazeCol = mix(vec3(0.03, 0.05, 0.10), vec3(0.18, 0.39, 0.58), dayMix);
-    hazeCol += vec3(1.0, 0.76, 0.42) * uPlumeGlow * 0.12;
-    litColor = mix(litColor, hazeCol, clamp(haze, 0.0, 0.54));
+  // ---- Aerial perspective ------------------------------------------------
+  // Aerial perspective keyed to distance from the eye, not to |z|: the green
+  // bank at the end of the street is close in world units but far in screen
+  // terms, and z-only haze left it reading as a flat green wall.
+  float eyeDist = length(vWorldPos - uCamPos);
+  if (!indoor && eyeDist > 22.0) {
+    float haze = 1.0 - exp(-(eyeDist - 22.0) * 0.0160);
+    vec3 hazeCol = mix(vec3(0.016, 0.026, 0.060), vec3(0.150, 0.280, 0.430), dayMix);
+    hazeCol += vec3(1.0, 0.74, 0.40) * uPlumeGlow * 0.12;
+    litColor = mix(litColor, hazeCol, clamp(haze, 0.0, 0.72));
   }
 
-  vec3 x = max(litColor, vec3(0.0));
-  vec3 mapped = (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14);
-  if (!indoor) {
-    // Crisp Summer-Noon filmic contrast & sunlit vibrance (image-18 golden highs + deep espresso shadows!)
-    mapped = pow(clamp(mapped, 0.0, 1.0), vec3(1.07));
-    float luma = dot(mapped, vec3(0.2126, 0.7152, 0.0722));
-    mapped = clamp(mix(vec3(luma), mapped, 1.0 + 0.14 * dayMix), 0.0, 1.0);
+  // ---- One film -----------------------------------------------------------
+  // Reference frame is a low-key image: mean luma 0.29, a quarter of it below
+  // 0.09 and almost nothing above 0.70. Shoot for that, not for a bright
+  // product render, then add a gentle S so the shaded half stays "ink".
+  vec3 mapped = aces(max(litColor, vec3(0.0)) * 0.52);
+  mapped = pow(mapped, vec3(1.0 / 2.2));
+  mapped = pow(mapped, vec3(1.10));
+  mapped = mix(mapped, mapped * mapped * (3.0 - 2.0 * mapped), 0.22);
+
+  float luma = dot(mapped, vec3(0.2126, 0.7152, 0.0722));
+  // Vibrance: push saturated mids harder than neutrals, then a little global
+  // chroma so foliage and tiles read as pigment rather than grey plastic.
+  float sat = max(max(mapped.r, mapped.g), mapped.b) - min(min(mapped.r, mapped.g), mapped.b);
+  mapped = mix(vec3(luma), mapped, 1.05 + 0.46 * (1.0 - sat));
+  // Split tone: cool violet shade, warm amber light — the two-temperature
+  // grade the reference frame is built on.
+  mapped += vec3(-0.004, 0.010, 0.030) * (1.0 - smoothstep(0.0, 0.45, luma));
+  mapped *= mix(vec3(0.975, 0.990, 1.030), vec3(1.045, 1.005, 0.945), smoothstep(0.30, 1.0, luma));
+  // Lifted black point. ACES has a quadratic toe, so an eave soffit lit only by
+  // sky fill lands at 0.01 and reads as a hole punched in the wall. Print film
+  // and the reference frame both sit their blacks near 0.03.
+  mapped = mapped * 0.975 + vec3(0.012, 0.011, 0.014);
+  mapped = clamp(mapped, 0.0, 1.0);
+  fragColor = vec4(mapped, 1.0);
+
+  // Dev-only AOVs for art iteration (never set in normal play).
+  if (uDebugMode > 0.5) {
+    vec3 dbg;
+    if (uDebugMode < 1.5)       dbg = vec3(shadowVis);                                   // sun visibility
+    else if (uDebugMode < 2.5)  dbg = vec3(ao);                                          // ambient occlusion
+    else if (uDebugMode < 3.5)  dbg = vec3(float(mat) / 13.0);                           // material id
+    else if (uDebugMode < 4.5)  dbg = vec3(directLight / (directLight + ambient + 1e-4)); // sun share
+    else if (uDebugMode < 5.5)  dbg = vec3(baseCol.r, baseCol.g, baseCol.b);             // albedo × detail
+    else if (uDebugMode < 6.5)  dbg = N0 * 0.5 + 0.5;                                     // world normal
+    else if (uDebugMode < 7.5)  dbg = vec3(streetSunVis(vWorldPos, dbgL));                // box occlusion only
+    else if (uDebugMode < 8.5)  dbg = vec3(computeExteriorEaveShadow(vWorldPos));         // gobos only
+    else                        dbg = dbgL * 0.5 + 0.5;                                   // art sun vector
+    fragColor = vec4(dbg, 1.0);
   }
-  fragColor = vec4(pow(clamp(mapped, 0.0, 1.0), vec3(1.0 / 2.2)), 1.0);
 }
 `;

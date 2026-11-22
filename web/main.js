@@ -33,6 +33,29 @@ const TARGET_INFO = {
   21: { name: 'ROADSIDE BEVERAGE VENDING MACHINE (自動販売機)', hint: '[Click/Tap] Buy Cold Uchinoura Canned Coffee (¥130 from Bank Account)' },
 };
 
+// ---------------------------------------------------------------------------
+// DEV CAPTURE HOOK (`tools/screenshot.mjs` / `tools/art-compare.mjs`)
+// Zero cost in normal play: with no `?capture=` query string every branch below is a
+// single string test done once at boot. Used by the art-direction iteration tooling
+// so a screenshot is reproducible from a URL instead of a hand-driven keyboard.
+//   ?capture=1&cam=x,y,z,yawDeg,pitchDeg&sun=x,y,z&warmth=0.65&hud=0
+// ---------------------------------------------------------------------------
+const CAPTURE_QS = new URLSearchParams(location.search);
+const CAPTURE_MODE = CAPTURE_QS.has('capture');
+const CAPTURE_HIDE_HUD = CAPTURE_QS.get('hud') === '0';
+const CAPTURE_CAM = CAPTURE_QS.get('cam');
+const CAPTURE_SUN = CAPTURE_QS.get('sun');
+const CAPTURE_WARMTH = CAPTURE_QS.get('warmth');
+const captureCamPose = CAPTURE_CAM ? CAPTURE_CAM.split(',').map(Number) : null;
+const captureSunDir = CAPTURE_SUN ? CAPTURE_SUN.split(',').map(Number) : null;
+const captureWarmth = CAPTURE_WARMTH !== null ? Number(CAPTURE_WARMTH) : null;
+// ?debug=N is a dev-only AOV switch (never set in play):
+//   1 sun visibility  2 ambient occlusion  3 material id   4 sun share
+//   5 albedo          6 world normal       7 massing boxes  8 fine gobos
+//   9 art-sun vector
+// tools/screenshot.mjs and tools/art-compare.mjs use it for art iteration.
+const captureDebugMode = CAPTURE_MODE ? Number(CAPTURE_QS.get('debug') || 0) : 0;
+
 // Pre-allocated matrices & vectors (0 allocations in frame loop — PERFORMANCE.md N4)
 const projMat = new Float32Array(16);
 const viewMat = new Float32Array(16);
@@ -164,6 +187,7 @@ async function boot() {
     uShojiClosed: gl.getUniformLocation(worldProg, 'uShojiClosed'),
     uLampOn: gl.getUniformLocation(worldProg, 'uLampOn'),
     uPlumeGlow: gl.getUniformLocation(worldProg, 'uPlumeGlow'),
+    uDebugMode: gl.getUniformLocation(worldProg, 'uDebugMode'),
   };
 
   const emptyVao = gl.createVertexArray();
@@ -254,6 +278,61 @@ async function boot() {
     wasm.odderon_ack_audio();
   }
 
+  // Dev-only: override the presented eye / sun so a screenshot is a pure function of a URL.
+  function applyCaptureOverrides(t) {
+    if (captureCamPose) {
+      const yaw = (captureCamPose[3] || 0) * Math.PI / 180;
+      const pitch = (captureCamPose[4] || 0) * Math.PI / 180;
+      const cp = Math.cos(pitch);
+      t[0] = captureCamPose[0];
+      t[1] = captureCamPose[1];
+      t[2] = captureCamPose[2];
+      t[3] = Math.sin(yaw) * cp;
+      t[4] = Math.sin(pitch);
+      t[5] = Math.cos(yaw) * cp;
+    }
+    if (captureSunDir) {
+      const l = Math.hypot(captureSunDir[0], captureSunDir[1], captureSunDir[2]) || 1;
+      t[6] = captureSunDir[0] / l;
+      t[7] = captureSunDir[1] / l;
+      t[8] = captureSunDir[2] / l;
+    }
+    if (captureWarmth !== null) t[9] = captureWarmth;
+  }
+
+  // Dev-only: paint exactly one frame from the URL override and stop. The
+  // presenter parks itself when the sim settles, and a parked page keeps
+  // whatever was last composited, so `freeze()` must draw rather than just flip
+  // a flag - otherwise a capture can grab the default start pose.
+  function presentCaptureFrame() {
+    const t = getTelemetryView();
+    if (CAPTURE_MODE) applyCaptureOverrides(t);
+    syncDynamicMeshes(t[30] > 0.5);
+    updateCanvasResolution();
+    renderWebGL(t);
+    updateDomOverlays(t, true);
+  }
+
+  // Dev-only introspection surface for `tools/screenshot.mjs` (frame budget + pose read-out).
+  let captureFrozen = false;
+  if (CAPTURE_MODE) {
+    globalThis.__odderonCapture = {
+      pose: () => Array.from(getTelemetryView()).slice(0, 10),
+      frame: () => ({ ms: smoothedFrameCostMs, draws: lastDrawCalls, quality: qualityScale,
+                      px: [fbWidth, fbHeight], parked: isParked }),
+      freeze: () => { captureFrozen = true; presentCaptureFrame(); },
+      thaw: () => { captureFrozen = false; wakePresenter(4); },
+    };
+  }
+
+  if (CAPTURE_MODE && CAPTURE_HIDE_HUD) {
+    for (const id of ['brow-bar', 'wave-banner', 'eidos-visor', 'perf-hud', 'clipboard-sheet',
+                      'touch-walk-zone', 'hand-prompt', 'reticle']) {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    }
+  }
+
   // 3. Adaptive Resolution Governor for 2015 Intel UHD (capped <= 1.30 Mpx, floor 0.55x)
   let qualityScale = 1.0;
   let fbWidth = 0;
@@ -336,8 +415,20 @@ async function boot() {
   const elCausalBody = document.getElementById('eidos-causal-body');
   const elProvBody = document.getElementById('eidos-prov-body');
 
+  // Cached telemetry window. `new Float32Array(mem, ptr, n)` is cheap but it is
+  // still an allocation, and this is called several times per frame from the
+  // presenter and the DOM overlays (PERFORMANCE.md N4: zero allocations in the
+  // frame loop). The view also *detaches* if the wasm heap ever grows, so it is
+  // rebuilt whenever the underlying ArrayBuffer identity changes.
+  let telemetryView = null;
+  let telemetryBuffer = null;
   function getTelemetryView() {
-    return new Float32Array(wasm.memory.buffer, wasm.odderon_telemetry_ptr(), 76);
+    const buffer = wasm.memory.buffer;
+    if (buffer !== telemetryBuffer) {
+      telemetryBuffer = buffer;
+      telemetryView = new Float32Array(buffer, wasm.odderon_telemetry_ptr(), 76);
+    }
+    return telemetryView;
   }
 
   function unprojectClientRay(clientX, clientY) {
@@ -365,11 +456,20 @@ async function boot() {
     if (isParked && parkedAtWallMs > 0) {
       let sleptMs = Math.min(120000, Math.max(0, Math.round(performance.now() - parkedAtWallMs)));
       parkedAtWallMs = 0;
+      // A capture has to be a pure function of its URL. Letting the world gain
+      // time while the presenter is parked made the shuttle bus land anywhere
+      // on its 90 s schedule, so the same view photographed a different street
+      // every run (and half the art comparisons were measuring a bus grille).
+      if (CAPTURE_MODE) sleptMs = 0;
+      // 250 ms is the sim's own per-call clamp; going coarser would silently
+      // drop time. The catch-up loop uses the quiet path, so the dynamic mesh
+      // is rebuilt once below instead of once per chunk.
       while (sleptMs > 0) {
         const chunk = Math.min(250, sleptMs);
-        wasm.odderon_step(chunk, 0, 0, 0, 0);
+        wasm.odderon_advance_ms(chunk);
         sleptMs -= chunk;
       }
+      wasm.odderon_step(0, 0, 0, 0, 0);
       const t = getTelemetryView();
       syncDynamicMeshes(t[30] > 0.5);
       syncAudioAndAck(t);
@@ -480,7 +580,10 @@ async function boot() {
     }
 
     // Coastal Pad-1 343 m/s Shockwave Propagation Banner
-    const waveVis = plumeAge >= 0 && plumeAge < 12.5;
+    // ?capture=1&hud=0 must stay clean for the screenshot harness (the banner
+    // is re-shown every time the plume state changes, so hiding it at boot is
+    // not enough).
+    const waveVis = !(CAPTURE_MODE && CAPTURE_HIDE_HUD) && plumeAge >= 0 && plumeAge < 12.5;
     if (waveVis !== prevWaveVis) {
       elWaveBanner.style.display = waveVis ? 'block' : 'none';
       prevWaveVis = waveVis;
@@ -612,6 +715,7 @@ async function boot() {
     gl.uniform1f(worldLocs.uEntryDoorOpen, t[65] || 0.0);
     gl.uniform1f(worldLocs.uLampOn, (t[22] > 0.5 && t[26] > 0.5) ? 1.0 : 0.0);
     gl.uniform1f(worldLocs.uPlumeGlow, t[37]);
+    gl.uniform1f(worldLocs.uDebugMode, captureDebugMode);
 
     gl.bindVertexArray(staticMesh.vao);
     gl.drawElements(gl.TRIANGLES, staticMesh.indexCount, gl.UNSIGNED_INT, 0);
@@ -635,7 +739,10 @@ async function boot() {
   function presentFrame(nowMs) {
     rafId = 0;
     const frameStart = performance.now();
-    const dtMs = Math.min(100, Math.max(1, Math.round(nowMs - lastFrameTimeMs)));
+    // Capture mode holds the world clock still: otherwise the sun angle and the
+    // shuttle's position depend on how long the page took to load, and two runs
+    // of the same view differ by a few hundred milliseconds of simulation.
+    const dtMs = CAPTURE_MODE ? 0 : Math.min(100, Math.max(1, Math.round(nowMs - lastFrameTimeMs)));
     lastFrameTimeMs = nowMs;
 
     rafCountWindow++;
@@ -663,6 +770,7 @@ async function boot() {
     pendingPitch = 0;
 
     const t = getTelemetryView();
+    if (CAPTURE_MODE) applyCaptureOverrides(t);
     syncDynamicMeshes(t[30] > 0.5);
     syncAudioAndAck(t);
 
@@ -700,21 +808,36 @@ async function boot() {
       return;
     }
 
+    // Dev-only: `__odderonCapture.freeze()` parks the presenter so a software-rasterised
+    // screenshot is not competing with a 60 Hz loop on the main thread.
+    if (CAPTURE_MODE && captureFrozen) {
+      isParked = true;
+      parkedAtWallMs = performance.now();
+      displayedRafHz = 0;
+      updateDomOverlays(t, true);
+      return;
+    }
+
     isParked = false;
     updateDomOverlays(t, false);
     rafId = requestAnimationFrame(presentFrame);
   }
 
   // Discrete scheduled distant Pad-1 morning static fire at T = 9.0s (wakes presenter via event, zero polling!)
-  setTimeout(() => {
-    if (wasm.odderon_auto_fire_done() === 0) {
-      wasm.odderon_toggle_target(11);
-      const t = getTelemetryView();
-      syncDynamicMeshes(t[30] > 0.5);
-      syncAudioAndAck(t);
-      wakePresenter(30);
-    }
-  }, 9000);
+  // Wall-clock scheduled, so a capture taken more than nine seconds after load
+  // would sometimes catch a 300 m plume and sometimes not - the single biggest
+  // source of "the same view looks different every run".
+  if (!CAPTURE_MODE) {
+    setTimeout(() => {
+      if (wasm.odderon_auto_fire_done() === 0) {
+        wasm.odderon_toggle_target(11);
+        const t = getTelemetryView();
+        syncDynamicMeshes(t[30] > 0.5);
+        syncAudioAndAck(t);
+        wakePresenter(30);
+      }
+    }, 9000);
+  }
 
   // Fade open wake-up eyelids immediately (IMMERSION.md N1)
   requestAnimationFrame(() => {

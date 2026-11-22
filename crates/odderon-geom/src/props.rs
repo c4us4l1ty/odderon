@@ -452,39 +452,106 @@ pub fn bus_stop_shelter(buf: &mut MeshBuffer, pose: Pose) {
     });
 }
 
-/// Lush 3D Sunlit Japanese Summer Grass Verge (`image-18.png` foreground blades, double-sided outward CCW!).
+/// Lush 3D sunlit Japanese summer grass verge.
+///
+/// The original tuft was three flat green spikes per cluster, which read as
+/// neon plastic against the road. This builds a real tuft: five tapered,
+/// two-segment blades, each bent at the knee, with a dark root colour grading
+/// to a backlit chartreuse tip. Blades are double-sided (the world pass culls
+/// back faces), so one blade costs 8 triangles — a 20-cluster strip is ~800
+/// triangles, which is why the static budget was widened.
+///
+/// The root-to-tip gradient is deliberate: shade at the root stops the verge
+/// floating off the soil, and the bright tip is what the foliage subsurface
+/// term in the world shader lights up ("the sun is inside the grass").
 pub fn summer_grass_strip(buf: &mut MeshBuffer, pose: Pose, length_x: f32, clusters: usize, seed: u32) {
     buf.with_pose(pose, |b| {
         let s = seed as usize;
+        let blade_count: usize = 5;
         for c in 0..clusters {
             let fx = (c as f32 + 0.5) / (clusters as f32) - 0.5;
             let h1 = (((c * 73 + s * 17 + 19) % 29) as f32) / 29.0;
             let h2 = (((c * 41 + s * 13 + 7) % 23) as f32) / 23.0;
-            let cx = fx * length_x + (h1 - 0.5) * 0.16;
-            let cz = (h2 - 0.5) * 0.22;
-            // 3 angled grass blades per cluster (`6` tris = `18` indices total per cluster!)
-            for k in 0..3 {
-                let ang_x = (k as f32 - 1.0) * 0.11 + (h1 - 0.5) * 0.08;
-                let blade_h = 0.34 + h2 * 0.26 + (k as f32) * 0.05;
-                let w = 0.026;
-                let bx = cx + (k as f32 - 1.0) * 0.055;
-                let bz = cz + ((k % 2) as f32 - 0.5) * 0.06;
-                let p0 = Vec3::new(bx - w, 0.0, bz);
-                let p1 = Vec3::new(bx + w, 0.0, bz);
-                let tip = Vec3::new(bx + ang_x, blade_h, bz + (h1 - 0.5) * 0.07);
-                let g_col = [0.20 + h1 * 0.12, 0.46 + h2 * 0.18, 0.10 + h1 * 0.06];
-                // Front (+Z) & back (-Z) triangles with exact outward normals!
-                let n_f = p1.sub(p0).cross(tip.sub(p0)).normalized();
-                let i_f = b.push_vert(p0, n_f, g_col, MAT_FOLIAGE);
-                b.push_vert(p1, n_f, g_col, MAT_FOLIAGE);
-                b.push_vert(tip, n_f, [g_col[0] + 0.10, g_col[1] + 0.14, g_col[2] + 0.04], MAT_FOLIAGE);
-                b.indices.extend_from_slice(&[i_f, i_f + 1, i_f + 2]);
+            let h3 = (((c * 59 + s * 29 + 11) % 31) as f32) / 31.0;
+            // Tufts jitter along the strip and lean with the prevailing breeze.
+            let cx = fx * length_x + (h1 - 0.5) * 0.20;
+            let cz = (h2 - 0.5) * 0.26;
 
-                let n_b = n_f.scale(-1.0);
-                let i_b = b.push_vert(p1, n_b, g_col, MAT_FOLIAGE);
-                b.push_vert(p0, n_b, g_col, MAT_FOLIAGE);
-                b.push_vert(tip, n_b, [g_col[0] + 0.10, g_col[1] + 0.14, g_col[2] + 0.04], MAT_FOLIAGE);
-                b.indices.extend_from_slice(&[i_b, i_b + 1, i_b + 2]);
+            for k in 0..blade_count {
+                let kf = k as f32;
+                // Golden-angle fan: every blade faces a different azimuth, so a
+                // tuft reads as volume from any direction instead of as a
+                // billboard card.
+                let theta = kf * 2.399 + h3 * 1.7;
+                let sx = theta.cos();
+                let sz = theta.sin();
+                let fan = (kf / (blade_count as f32 - 1.0)) - 0.5;
+                // Lean outward from the tuft centre, with a breeze bias along +X.
+                let lean_x = fan * (sx * 0.24) + 0.06 + (h1 - 0.5) * 0.10;
+                let lean_z = fan * (sz * 0.24) + (h3 - 0.5) * 0.16;
+                // Verge grass in the reference is waist-high and blocks the bottom of
+                // the frame; the thin blades keep it from reading as leeks.
+                let blade_h = 0.38 + h2 * 0.42 + (0.5 - fan.abs()) * 0.20 + kf * 0.014;
+                // Real blades are ~5 mm across; at 20 mm they read as leeks
+                // in a close-up, so the width is kept well under the height.
+                let w = 0.010 + h1 * 0.007;
+                let bx = cx + sx * fan * 0.06;
+                let bz = cz + sz * fan * 0.06;
+
+                // Dark root -> glowing tip.
+                let root = [0.045 + h1 * 0.018, 0.130 + h2 * 0.042, 0.036 + h3 * 0.014];
+                let mid = [0.105 + h2 * 0.048, 0.275 + h1 * 0.085, 0.050 + h3 * 0.024];
+                let tip = [0.240 + h1 * 0.100, 0.455 + h2 * 0.120, 0.082 + h3 * 0.038];
+
+                // Knee: two thirds of the way up, already leaning.
+                let knee_h = blade_h * 0.62;
+                let kx = bx + lean_x * 0.42;
+                let kz = bz + lean_z * 0.42;
+                let tx = bx + lean_x;
+                let tz = bz + lean_z;
+
+                let wm = w * 0.55;
+                let wt = w * 0.10;
+
+                // Surface normal: perpendicular to the blade, biased upward so a
+                // blade picks up sky light the way real grass does.
+                let n_front = Vec3::new(-sz, 0.55, sx).normalized();
+
+                for &flip in &[1.0f32, -1.0] {
+                    let n = n_front.scale(flip);
+                    let (b0, b1, k0, k1, t0, t1) = if flip > 0.0 {
+                        (
+                            Vec3::new(bx - w * sx, 0.0, bz - w * sz),
+                            Vec3::new(bx + w * sx, 0.0, bz + w * sz),
+                            Vec3::new(kx - wm * sx, knee_h, kz - wm * sz),
+                            Vec3::new(kx + wm * sx, knee_h, kz + wm * sz),
+                            Vec3::new(tx - wt * sx, blade_h, tz - wt * sz),
+                            Vec3::new(tx + wt * sx, blade_h, tz + wt * sz),
+                        )
+                    } else {
+                        (
+                            Vec3::new(bx + w * sx, 0.0, bz + w * sz),
+                            Vec3::new(bx - w * sx, 0.0, bz - w * sz),
+                            Vec3::new(kx + wm * sx, knee_h, kz + wm * sz),
+                            Vec3::new(kx - wm * sx, knee_h, kz - wm * sz),
+                            Vec3::new(tx + wt * sx, blade_h, tz + wt * sz),
+                            Vec3::new(tx - wt * sx, blade_h, tz - wt * sz),
+                        )
+                    };
+
+                    let i = b.push_vert(b0, n, root, MAT_FOLIAGE);
+                    b.push_vert(b1, n, root, MAT_FOLIAGE);
+                    b.push_vert(k1, n, mid, MAT_FOLIAGE);
+                    b.push_vert(k0, n, mid, MAT_FOLIAGE);
+                    b.push_vert(t1, n, tip, MAT_FOLIAGE);
+                    b.push_vert(t0, n, tip, MAT_FOLIAGE);
+                    b.indices.extend_from_slice(&[
+                        i, i + 1, i + 2,
+                        i, i + 2, i + 3,
+                        i + 3, i + 2, i + 4,
+                        i + 3, i + 4, i + 5,
+                    ]);
+                }
             }
         }
     });

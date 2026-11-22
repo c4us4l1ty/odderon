@@ -1,0 +1,17 @@
+{
+  "name": "odderon-tools",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Developer tooling for Odderon (headless screenshots, art-direction comparison). NOT part of the shipped 0-asset build.",
+  "scripts": {
+    "shot": "node screenshot.mjs",
+    "art": "node art-compare.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.65.1"
+  },
+  "dependencies": {
+    "@sparticuz/chromium": "^153.0.0"
+  }
+}

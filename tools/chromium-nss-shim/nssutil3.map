@@ -1,0 +1,5 @@
+NSSUTIL_3.12.3 {
+  global:
+    NSS_SetAlgorithmPolicy;
+  local: *;
+};

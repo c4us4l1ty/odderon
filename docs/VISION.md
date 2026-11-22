@@ -39,7 +39,8 @@ So the real product is not "a space sim". It is:
 
 ### The emotional engine (not decoration)
 
-The art direction is not a coat of paint on a simulator; it is the simulator's pacing device.
+The art direction is not a coat of paint on a simulator; it is the simulator's pacing device. How the look is actually achieved under the zero-asset budget is
+written down in [`ART-DIRECTION.md`](ART-DIRECTION.md).
 
 - **Warm vs. cold.** A sunlit corrugated workshop and cicadas on one side; 2.7 K background and
   silent razor physics on the other. The contrast only exists if both ends are rendered with
