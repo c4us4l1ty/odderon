@@ -113,15 +113,15 @@ pub fn build_hab_204_static(buf: &mut MeshBuffer) {
     buf.add_box(Vec3::new(-2.68, 2.12, 0.165), Vec3::new(-2.515, 2.185, 1.235), alloy_dark, MAT_ALLOY);
     // Steel threshold plate & dark ribbed genkan doormat
     buf.add_box(Vec3::new(-2.68, 0.001, 0.222), Vec3::new(-2.52, 0.012, 1.178), [0.28, 0.30, 0.33], MAT_ALLOY);
-    buf.add_rounded_box(Vec3::new(-2.46, 0.003, 0.24), Vec3::new(-1.84, 0.018, 1.16), 0.008, [0.13, 0.15, 0.17], MAT_ALLOY);
+    buf.add_box(Vec3::new(-2.46, 0.003, 0.24), Vec3::new(-1.84, 0.018, 1.16), [0.13, 0.15, 0.17], MAT_ALLOY);
     // Interior door access switch bezel + green indicator
-    buf.add_rounded_box(Vec3::new(-2.535, 1.12, 1.33), Vec3::new(-2.495, 1.28, 1.41), 0.006, alloy_dark, MAT_ALLOY);
+    buf.add_box(Vec3::new(-2.535, 1.12, 1.33), Vec3::new(-2.495, 1.28, 1.41), alloy_dark, MAT_ALLOY);
     buf.add_box(Vec3::new(-2.494, 1.16, 1.35), Vec3::new(-2.486, 1.24, 1.39), [0.20, 0.86, 0.52], MAT_EMISSIVE_WARM);
 
     // Genkan lived-in micro-details: indoor slippers + wall hook rail + Pad Technician Yellow Hard-Hat!
     for &sz in &[0.02_f32, 0.11] {
         buf.add_box(Vec3::new(-2.36, 0.004, sz), Vec3::new(-2.12, 0.020, sz + 0.075), [0.14, 0.20, 0.32], MAT_MATTE);
-        buf.add_rounded_box(Vec3::new(-2.32, 0.020, sz + 0.006), Vec3::new(-2.20, 0.050, sz + 0.069), 0.008, [0.18, 0.26, 0.40], MAT_MATTE);
+        buf.add_box(Vec3::new(-2.32, 0.020, sz + 0.006), Vec3::new(-2.20, 0.050, sz + 0.069), [0.18, 0.26, 0.40], MAT_MATTE);
     }
     buf.add_box(Vec3::new(-2.535, 1.56, -0.18), Vec3::new(-2.505, 1.62, 0.12), walnut_warm, MAT_WOOD);
     // Yellow safety hard-hat hanging on wall hook (`z = -0.04, y = 1.52`)!
@@ -137,10 +137,10 @@ pub fn build_hab_204_static(buf: &mut MeshBuffer) {
     buf.add_box(Vec3::new(1.34, 0.082, 1.40), Vec3::new(2.532, 0.86, 1.988), alloy_dark, MAT_ALLOY);
     buf.add_box(Vec3::new(1.88, 0.082, 0.16), Vec3::new(2.532, 0.86, 1.398), alloy_dark, MAT_ALLOY);
 
-    buf.add_rounded_box(Vec3::new(1.37, 0.12, 1.374), Vec3::new(1.84, 0.82, 1.396), 0.012, walnut_warm, MAT_WOOD);
+    buf.add_box(Vec3::new(1.37, 0.12, 1.374), Vec3::new(1.84, 0.82, 1.396), walnut_warm, MAT_WOOD);
     buf.add_cylinder(Vec3::new(1.50, 0.75, 1.364), Vec3::new(1.71, 0.75, 1.364), 0.007, 0.007, 8, chrome, MAT_ALLOY, true);
     for &(z0, z1) in &[(0.20_f32, 0.76_f32), (0.80, 1.36)] {
-        buf.add_rounded_box(Vec3::new(1.854, 0.12, z0), Vec3::new(1.876, 0.82, z1), 0.012, walnut_warm, MAT_WOOD);
+        buf.add_box(Vec3::new(1.854, 0.12, z0), Vec3::new(1.876, 0.82, z1), walnut_warm, MAT_WOOD);
         buf.add_cylinder(Vec3::new(1.844, 0.75, z0 + 0.16), Vec3::new(1.844, 0.75, z1 - 0.16), 0.007, 0.007, 8, chrome, MAT_ALLOY, true);
     }
 
@@ -150,19 +150,19 @@ pub fn build_hab_204_static(buf: &mut MeshBuffer) {
     buf.add_box(Vec3::new(1.34, 0.914, 1.96), Vec3::new(2.532, 1.05, 1.990), [0.56, 0.58, 0.58], MAT_CERAMIC);
     buf.add_box(Vec3::new(2.502, 0.914, 0.16), Vec3::new(2.532, 1.05, 1.958), [0.56, 0.58, 0.58], MAT_CERAMIC);
 
-    buf.add_rounded_box(Vec3::new(1.98, 0.913, 0.32), Vec3::new(2.44, 0.922, 0.84), 0.012, [0.46, 0.49, 0.52], MAT_ALLOY);
+    buf.add_box(Vec3::new(1.98, 0.913, 0.32), Vec3::new(2.44, 0.922, 0.84), [0.46, 0.49, 0.52], MAT_ALLOY);
     buf.add_box(Vec3::new(2.03, 0.923, 0.37), Vec3::new(2.39, 0.928, 0.79), [0.12, 0.14, 0.17], MAT_ALLOY);
     buf.add_cylinder(Vec3::new(2.44, 0.915, 0.58), Vec3::new(2.44, 1.15, 0.58), 0.014, 0.012, 12, chrome, MAT_ALLOY, true);
     buf.add_cylinder(Vec3::new(2.44, 1.15, 0.58), Vec3::new(2.30, 1.22, 0.58), 0.012, 0.010, 12, chrome, MAT_ALLOY, true);
     buf.add_cylinder(Vec3::new(2.30, 1.22, 0.58), Vec3::new(2.25, 1.12, 0.58), 0.010, 0.009, 12, chrome, MAT_ALLOY, true);
-    buf.add_rounded_box(Vec3::new(1.98, 0.913, 0.96), Vec3::new(2.42, 0.924, 1.32), 0.008, [0.08, 0.09, 0.11], MAT_ALLOY);
+    buf.add_box(Vec3::new(1.98, 0.913, 0.96), Vec3::new(2.42, 0.924, 1.32), [0.08, 0.09, 0.11], MAT_ALLOY);
     // Ceramic chopstick jar & drying plates beside sink
     buf.add_lathe_y(Vec3::new(2.36, 0.914, 0.24), &[(0.0, 0.032), (0.11, 0.035)], 12, [0.76, 0.74, 0.68], MAT_CERAMIC, true);
     buf.add_cylinder(Vec3::new(2.35, 1.00, 0.24), Vec3::new(2.33, 1.17, 0.22), 0.003, 0.002, 6, hinoki_light, MAT_WOOD, true);
     buf.add_cylinder(Vec3::new(2.37, 1.00, 0.24), Vec3::new(2.39, 1.17, 0.26), 0.003, 0.002, 6, hinoki_light, MAT_WOOD, true);
 
     props::kettle_set(buf, Pose::at(1.62, 0.913, 1.66));
-    buf.add_rounded_box(Vec3::new(1.94, 0.913, 1.54), Vec3::new(2.24, 0.933, 1.78), 0.008, hinoki_light, MAT_WOOD);
+    buf.add_box(Vec3::new(1.94, 0.913, 1.54), Vec3::new(2.24, 0.933, 1.78), hinoki_light, MAT_WOOD);
     for &(cx, cz, col) in &[(2.04_f32, 1.64_f32, [0.18, 0.30, 0.34]), (2.15, 1.69, [0.72, 0.69, 0.62])] {
         buf.add_lathe_y(Vec3::new(cx, 0.934, cz), &[(0.0, 0.025), (0.015, 0.032), (0.068, 0.035), (0.074, 0.032)], 14, col, MAT_CERAMIC, true);
     }
@@ -179,7 +179,7 @@ pub fn build_hab_204_static(buf: &mut MeshBuffer) {
     for &lx in &[-1.08_f32, 1.08] {
         buf.add_cylinder(Vec3::new(lx, 0.037, 1.33), Vec3::new(lx, 0.708, 1.33), 0.022, 0.020, 12, alloy_dark, MAT_ALLOY, true);
         buf.add_cylinder(Vec3::new(lx, 0.037, 1.87), Vec3::new(lx, 0.708, 1.87), 0.022, 0.020, 12, alloy_dark, MAT_ALLOY, true);
-        buf.add_rounded_box(Vec3::new(lx - 0.032, 0.037, 1.28), Vec3::new(lx + 0.032, 0.064, 1.92), 0.012, alloy_dark, MAT_ALLOY);
+        buf.add_box(Vec3::new(lx - 0.032, 0.037, 1.28), Vec3::new(lx + 0.032, 0.064, 1.92), alloy_dark, MAT_ALLOY);
     }
     buf.add_cylinder(Vec3::new(-1.08, 0.22, 1.82), Vec3::new(1.08, 0.22, 1.82), 0.015, 0.015, 10, alloy_dark, MAT_ALLOY, false);
     buf.add_rounded_box(Vec3::new(0.68, 0.40, 1.34), Vec3::new(1.05, 0.706, 1.86), 0.016, alloy_mid, MAT_ALLOY);
@@ -189,11 +189,11 @@ pub fn build_hab_204_static(buf: &mut MeshBuffer) {
     props::architect_lamp(buf, Pose::at(-0.38, 0.756, 1.71));
     props::vhf_transceiver(buf, Pose::at(-0.80, 0.756, 1.62));
 
-    buf.add_rounded_box(Vec3::new(-0.14, 0.756, 1.34), Vec3::new(0.24, 0.770, 1.68), 0.006, walnut_warm, MAT_WOOD);
+    buf.add_box(Vec3::new(-0.14, 0.756, 1.34), Vec3::new(0.24, 0.770, 1.68), walnut_warm, MAT_WOOD);
     buf.add_box(Vec3::new(-0.11, 0.771, 1.37), Vec3::new(0.21, 0.776, 1.64), [0.84, 0.82, 0.76], MAT_MATTE);
     buf.add_box(Vec3::new(-0.09, 0.778, 1.58), Vec3::new(0.19, 0.783, 1.62), [0.18, 0.28, 0.38], MAT_MATTE);
     buf.add_box(Vec3::new(-0.09, 0.778, 1.39), Vec3::new(0.01, 0.783, 1.47), [0.86, 0.74, 0.28], MAT_MATTE);
-    buf.add_rounded_box(Vec3::new(-0.01, 0.777, 1.62), Vec3::new(0.11, 0.794, 1.67), 0.005, chrome, MAT_ALLOY);
+    buf.add_box(Vec3::new(-0.01, 0.777, 1.62), Vec3::new(0.11, 0.794, 1.67), chrome, MAT_ALLOY);
     buf.add_cylinder(Vec3::new(-0.20, 0.764, 1.40), Vec3::new(-0.23, 0.764, 1.58), 0.0055, 0.0045, 10, brass, MAT_ALLOY, true);
 
     // =========================================================================
@@ -239,13 +239,13 @@ pub fn build_hab_204_static(buf: &mut MeshBuffer) {
     for &(tx, tz) in &[(-2.39_f32, 1.50_f32), (-1.51, 1.50), (-2.39, 1.90), (-1.51, 1.90)] {
         buf.add_cylinder(Vec3::new(tx, 0.004, tz), Vec3::new(tx, 0.486, tz), 0.020, 0.026, 10, cedar_dark, MAT_WOOD, false);
     }
-    buf.add_rounded_box(Vec3::new(-2.40, 0.15, 1.50), Vec3::new(-1.50, 0.18, 1.90), 0.008, cedar_dark, MAT_WOOD);
-    buf.add_rounded_box(Vec3::new(-2.34, 0.182, 1.55), Vec3::new(-1.96, 0.36, 1.85), 0.012, hinoki_light, MAT_WOOD);
+    buf.add_box(Vec3::new(-2.40, 0.15, 1.50), Vec3::new(-1.50, 0.18, 1.90), cedar_dark, MAT_WOOD);
+    buf.add_box(Vec3::new(-2.34, 0.182, 1.55), Vec3::new(-1.96, 0.36, 1.85), hinoki_light, MAT_WOOD);
     props::bonsai_planter(buf, Pose::at(-1.76, 0.541, 1.69));
 
     let (ax0, ax1, az0, az1) = (-2.36_f32, -2.14_f32, 1.59_f32, 1.81_f32);
-    buf.add_rounded_box(Vec3::new(ax0 - 0.012, 0.541, az0 - 0.012), Vec3::new(ax1 + 0.012, 0.568, az1 + 0.012), 0.006, cedar_dark, MAT_WOOD);
-    buf.add_rounded_box(Vec3::new(ax0 - 0.016, 0.945, az0 - 0.016), Vec3::new(ax1 + 0.016, 0.975, az1 + 0.016), 0.006, cedar_dark, MAT_WOOD);
+    buf.add_box(Vec3::new(ax0 - 0.012, 0.541, az0 - 0.012), Vec3::new(ax1 + 0.012, 0.568, az1 + 0.012), cedar_dark, MAT_WOOD);
+    buf.add_box(Vec3::new(ax0 - 0.016, 0.945, az0 - 0.016), Vec3::new(ax1 + 0.016, 0.975, az1 + 0.016), cedar_dark, MAT_WOOD);
     for &(px, pz) in &[(ax0, az0), (ax1, az0), (ax1, az1), (ax0, az1)] {
         buf.add_cylinder(Vec3::new(px, 0.568, pz), Vec3::new(px, 0.945, pz), 0.009, 0.009, 8, cedar_dark, MAT_WOOD, false);
     }
@@ -271,7 +271,7 @@ pub fn build_hab_204_static(buf: &mut MeshBuffer) {
     buf.add_box(Vec3::new(0.36, 0.004, -2.032), Vec3::new(0.42, 2.674, -0.46), walnut_warm, MAT_WOOD);
     buf.add_box(Vec3::new(-0.358, 0.004, -1.24), Vec3::new(0.358, 2.674, -1.16), cedar_dark, MAT_WOOD);
     for &sy in &[0.08_f32, 0.56, 1.04, 1.52, 2.02] {
-        buf.add_rounded_box(Vec3::new(-0.358, sy, -1.158), Vec3::new(0.358, sy + 0.036, -0.52), 0.010, hinoki_light, MAT_WOOD);
+        buf.add_box(Vec3::new(-0.358, sy, -1.158), Vec3::new(0.358, sy + 0.036, -0.52), hinoki_light, MAT_WOOD);
     }
     for &(bx0, bx1, bh, bcol) in &[
         (-0.26_f32, -0.202_f32, 0.28_f32, [0.58, 0.19, 0.14]),
@@ -279,7 +279,7 @@ pub fn build_hab_204_static(buf: &mut MeshBuffer) {
         (-0.122, -0.062, 0.27, [0.66, 0.52, 0.20]),
         (-0.052, 0.008, 0.29, [0.16, 0.34, 0.26]),
     ] {
-        buf.add_rounded_box(Vec3::new(bx0, 1.078, -0.94), Vec3::new(bx1, 1.078 + bh, -0.64), 0.006, bcol, MAT_MATTE);
+        buf.add_box(Vec3::new(bx0, 1.078, -0.94), Vec3::new(bx1, 1.078 + bh, -0.64), bcol, MAT_MATTE);
     }
     buf.add_lathe_y(Vec3::new(0.16, 1.558, -0.84), &[(0.0, 0.045), (0.09, 0.072), (0.18, 0.035), (0.23, 0.042)], 14, [0.72, 0.68, 0.60], MAT_CERAMIC, true);
     buf.add_rounded_box(Vec3::new(-0.24, 0.598, -1.00), Vec3::new(0.22, 0.82, -0.64), 0.016, alloy_mid, MAT_ALLOY);
@@ -297,7 +297,7 @@ pub fn build_hab_204_static(buf: &mut MeshBuffer) {
     buf.add_box(Vec3::new(-0.359, 2.625, -1.918), Vec3::new(-0.325, 2.676, -0.245), cedar_dark, MAT_WOOD);
 
     buf.add_u_frame_xy(-1.34, -0.60, 0.056, 2.08, -0.362, -0.228, 0.058, cedar_dark, MAT_WOOD);
-    buf.add_rounded_box(Vec3::new(-0.505, 1.245, -0.244), Vec3::new(-0.465, 1.315, -0.232), 0.005, alloy_dark, MAT_ALLOY);
+    buf.add_box(Vec3::new(-0.505, 1.245, -0.244), Vec3::new(-0.465, 1.315, -0.232), alloy_dark, MAT_ALLOY);
     buf.add_box(Vec3::new(-0.495, 1.262, -0.231), Vec3::new(-0.475, 1.298, -0.226), [0.22, 0.88, 0.52], MAT_EMISSIVE_WARM);
 
     // Waterproof Floor Pan + Stainless Drain Grate + Hinoki Duckboard + Tile Walls + Recessed Ceiling Panel
@@ -325,7 +325,7 @@ pub fn build_hab_204_static(buf: &mut MeshBuffer) {
 
     // Chrome Towel Rail on `+X` Partition Wall (`x = -0.445`) + Folded Crisp White Hand Towel!
     buf.add_cylinder(Vec3::new(-0.485, 1.12, -1.16), Vec3::new(-0.485, 1.12, -0.68), 0.008, 0.008, 8, chrome, MAT_ALLOY, true);
-    buf.add_rounded_box(Vec3::new(-0.502, 0.84, -1.04), Vec3::new(-0.472, 1.132, -0.80), 0.008, [0.91, 0.92, 0.90], MAT_MATTE);
+    buf.add_box(Vec3::new(-0.502, 0.84, -1.04), Vec3::new(-0.472, 1.132, -0.80), [0.91, 0.92, 0.90], MAT_MATTE);
 
     // Vanity Sink + Recessed Basin + Chrome P-Trap + Soap Pump + Cup + Backlit Mirror!
     buf.add_rounded_box(Vec3::new(-1.28, 0.76, -1.978), Vec3::new(-0.68, 0.88, -1.58), 0.028, porcelain, MAT_CERAMIC);
@@ -335,8 +335,8 @@ pub fn build_hab_204_static(buf: &mut MeshBuffer) {
     buf.add_cylinder(Vec3::new(-0.98, 0.882, -1.90), Vec3::new(-0.98, 1.01, -1.81), 0.013, 0.010, 12, chrome, MAT_ALLOY, true);
     buf.add_lathe_y(Vec3::new(-1.19, 0.882, -1.86), &[(0.0, 0.026), (0.09, 0.028), (0.12, 0.010)], 10, [0.24, 0.44, 0.42], MAT_CERAMIC, true);
     buf.add_lathe_y(Vec3::new(-0.77, 0.882, -1.86), &[(0.0, 0.024), (0.085, 0.028)], 10, [0.86, 0.85, 0.80], MAT_CERAMIC, true);
-    buf.add_rounded_box(Vec3::new(-1.22, 1.12, -1.980), Vec3::new(-0.74, 1.82, -1.966), 0.012, [1.0, 0.86, 0.62], MAT_EMISSIVE_WARM);
-    buf.add_rounded_box(Vec3::new(-1.19, 1.15, -1.962), Vec3::new(-0.77, 1.79, -1.948), 0.010, [0.58, 0.66, 0.72], MAT_ALLOY);
+    buf.add_box(Vec3::new(-1.22, 1.12, -1.980), Vec3::new(-0.74, 1.82, -1.966), [1.0, 0.86, 0.62], MAT_EMISSIVE_WARM);
+    buf.add_box(Vec3::new(-1.19, 1.15, -1.962), Vec3::new(-0.77, 1.79, -1.948), [0.58, 0.66, 0.72], MAT_ALLOY);
 
     // =========================================================================
     // 9. OVERHEAD CEILING FAN MEDALLION & MOTOR HUB (`(0.0, 2.38..2.678, 0.35)`)
@@ -352,73 +352,160 @@ pub fn build_hab_204_static(buf: &mut MeshBuffer) {
     );
 
     // =========================================================================
-    // 10. APARTMENT 2ND-FLOOR BALCONY + CHECKPOINT 1B `UCHINOURA MAISON` EXTERIOR & STAIRWELL!
+    // 10. KOMINKA `UCHINOURA MAISON` EXTERIOR, WOODEN `TE-SURI` BALCONY & TIMBER STAIRWELL (`image-18.png`!)
     // =========================================================================
-    buf.add_box(Vec3::new(-2.70, -0.10, 2.13), Vec3::new(2.70, 0.01, 2.90), [0.46, 0.45, 0.41], MAT_MATTE);
-    buf.add_cylinder(Vec3::new(-2.62, 1.00, 2.84), Vec3::new(2.62, 1.00, 2.84), 0.020, 0.020, 10, alloy_dark, MAT_ALLOY, true);
-    buf.add_cylinder(Vec3::new(-2.62, 0.52, 2.84), Vec3::new(2.62, 0.52, 2.84), 0.010, 0.010, 8, alloy_dark, MAT_ALLOY, false);
-    for i in -4..=4 {
-        let bx = (i as f32) * 0.62;
-        buf.add_cylinder(Vec3::new(bx, 0.01, 2.84), Vec3::new(bx, 1.00, 2.84), 0.013, 0.013, 8, alloy_dark, MAT_ALLOY, false);
+    let kominka_timber = [0.12, 0.062, 0.030];
+    let kominka_plank = [0.19, 0.100, 0.048];
+    let kominka_rail = [0.16, 0.085, 0.040];
+    let kawara_tile = [0.10, 0.11, 0.13];
+
+    // 2F Exterior Kominka Post-and-Beam Joinery (`hashira` & `nuki`) framing Hab #204's plaster walls!
+    for &px in &[-2.60_f32, -1.32, 1.32, 2.60] {
+        buf.add_box(Vec3::new(px - 0.065, -0.02, 2.121), Vec3::new(px + 0.065, 2.72, 2.175), kominka_timber, MAT_WOOD);
+    }
+    for &py in &[0.02_f32, 0.70, 2.29, 2.64] {
+        buf.add_box(Vec3::new(-2.665, py, 2.121), Vec3::new(2.665, py + 0.075, 2.158), kominka_timber, MAT_WOOD);
+    }
+    // Exterior `-X` gallery-wall timber posts & `amado` wooden shutter box (`tobuku`) beside 2F window!
+    for &pz in &[-1.98_f32, 0.14, 1.24, 1.98] {
+        buf.add_box(Vec3::new(-2.71, -0.02, pz - 0.055), Vec3::new(-2.661, 2.72, pz + 0.055), kominka_timber, MAT_WOOD);
+    }
+    buf.add_box(Vec3::new(1.39, 0.77, 2.122), Vec3::new(2.18, 2.26, 2.195), kominka_plank, MAT_WOOD);
+
+    // Cantilevered Kominka Wooden `Te-suri` Balcony (`z in [2.13, 2.86]`, `image-18.png` 2nd-floor balcony!)
+    buf.add_box(Vec3::new(-2.70, -0.09, 2.13), Vec3::new(2.70, 0.01, 2.86), kominka_timber, MAT_WOOD);
+    for j in -4..=4 {
+        let jx = (j as f32) * 0.62;
+        buf.add_box(Vec3::new(jx - 0.035, -0.16, 2.13), Vec3::new(jx + 0.035, -0.09, 2.88), kominka_timber, MAT_WOOD);
+    }
+    // Chunky wooden balcony corner/bay posts + horizontal rails + vertical wooden lattice slats (`koushi`)!
+    buf.add_box(Vec3::new(-2.66, 0.92, 2.79), Vec3::new(2.66, 0.99, 2.86), kominka_rail, MAT_WOOD);
+    buf.add_box(Vec3::new(-2.66, 0.46, 2.80), Vec3::new(2.66, 0.51, 2.85), kominka_rail, MAT_WOOD);
+    buf.add_box(Vec3::new(-2.66, 0.12, 2.80), Vec3::new(2.66, 0.17, 2.85), kominka_rail, MAT_WOOD);
+    for &bx in &[-2.62_f32, -1.32, 0.0, 1.32, 2.62] {
+        buf.add_box(Vec3::new(bx - 0.042, 0.01, 2.785), Vec3::new(bx + 0.042, 1.01, 2.865), kominka_timber, MAT_WOOD);
+    }
+    for s in -12..=12 {
+        let sx = (s as f32) * 0.205;
+        buf.add_box(Vec3::new(sx - 0.012, 0.17, 2.815), Vec3::new(sx + 0.012, 0.92, 2.838), kominka_plank, MAT_WOOD);
     }
     props::outdoor_ac_condenser(buf, Pose::at(-1.98, 0.02, 2.42));
 
-    // --- CHECKPOINT 1B: Full 2-Story `Uchinoura Maison` Ground Floor (`y = -3.20 .. -0.16`) & Roof (`y = 2.82 .. 3.68`) ---
+    // --- 1st-Floor Kominka `Uchinoura Maison` (`y = -3.20 .. -0.15`, dark cedar planks + Oya-stone plinth + Kawara `hisashi` eave!) ---
     let ground_y = -3.20_f32;
-    let maison_stucco = [0.58, 0.54, 0.45];
-    buf.add_box(Vec3::new(-3.82, ground_y + 0.14, -2.20), Vec3::new(2.72, -0.162, 2.34), maison_stucco, MAT_MATTE);
-    // Dark alloy weather-flashing cap sealing the 1F-to-2F beltcourse (`z in [-2.22, 2.38]`)!
-    buf.add_box(Vec3::new(-3.85, -0.161, -2.22), Vec3::new(2.74, -0.115, 2.38), alloy_dark, MAT_ALLOY);
-    // 1st-floor steel roll-up garage/workshop shutter (`x in [0.15, 2.35], z = 2.35`)
-    buf.add_box(Vec3::new(0.15, ground_y + 0.15, 2.342), Vec3::new(2.35, -0.45, 2.375), [0.30, 0.34, 0.39], MAT_CORRUGATED);
-    buf.add_u_frame_xy(0.15, 2.35, ground_y + 0.15, -0.45, 2.33, 2.40, 0.06, alloy_dark, MAT_ALLOY);
-    // Twin Japanese LP-Gas Cylinders (`プロパンガス`) + Electric Meter Box on ground-floor front wall!
-    for &gx in &[-2.85_f32, -2.45] {
-        buf.add_lathe_y(Vec3::new(gx, ground_y + 0.142, 2.52), &[(0.0, 0.14), (0.86, 0.14), (0.98, 0.05)], 12, [0.56, 0.58, 0.57], MAT_ALLOY, true);
+    let maison_plaster = [0.48, 0.41, 0.31];
+    buf.add_box(Vec3::new(-3.82, ground_y + 0.14, -2.20), Vec3::new(2.72, -0.16, 2.34), maison_plaster, MAT_MATTE);
+    // Weathered Oya-stone foundation plinth along front & side (`y = -3.06 .. -2.70`)
+    buf.add_box(Vec3::new(-3.86, ground_y + 0.14, -2.22), Vec3::new(2.76, ground_y + 0.48, 2.39), [0.34, 0.33, 0.30], MAT_MATTE);
+    // Deep roasted vertical cedar plank cladding across 1st-floor facade (`image-18.png`!)
+    buf.add_box(Vec3::new(-3.76, ground_y + 0.48, 2.341), Vec3::new(2.66, -0.22, 2.368), kominka_plank, MAT_WOOD);
+    for &px in &[-3.76_f32, -2.05, -0.12, 2.62] {
+        buf.add_box(Vec3::new(px - 0.07, ground_y + 0.48, 2.369), Vec3::new(px + 0.07, -0.16, 2.435), kominka_timber, MAT_WOOD);
     }
-    buf.add_rounded_box(Vec3::new(-3.45, -1.65, 2.342), Vec3::new(-3.12, -1.18, 2.46), 0.012, [0.68, 0.67, 0.63], MAT_ALLOY);
-
-    // Overhanging Kawara/Timber Roof capping our 2-story `Uchinoura Maison` (`y = 2.82 .. 3.68`, outward +Y normals!)
+    // Traditional dark wooden lattice `koushi-do` sliding workshop entrance (`x in [0.05, 2.42]`) + warm `noren`!
+    buf.add_box(Vec3::new(0.05, ground_y + 0.15, 2.369), Vec3::new(2.42, -0.58, 2.392), [0.11, 0.09, 0.07], MAT_WOOD);
+    for k in 0..=8 {
+        let kx = 0.08 + (k as f32) * 0.29;
+        buf.add_box(Vec3::new(kx - 0.015, ground_y + 0.15, 2.393), Vec3::new(kx + 0.015, -0.58, 2.418), kominka_timber, MAT_WOOD);
+    }
+    for n in 0..3 {
+        let nx = 0.42 + (n as f32) * 0.52;
+        buf.add_box(Vec3::new(nx, -1.28, 2.45), Vec3::new(nx + 0.46, -0.62, 2.48), [0.76, 0.73, 0.66], MAT_MATTE);
+    }
+    // Projecting 1st-floor dark Kawara `hisashi` eave (`z: 2.34 -> 3.06`, `y: -0.12 -> -0.36`) + black iron `amadoi` downspout!
     buf.push_quad(
-        Vec3::new(-5.45, 2.82, 2.95),
-        Vec3::new(3.15, 2.82, 2.95),
-        Vec3::new(3.15, 3.68, 0.15),
-        Vec3::new(-5.45, 3.68, 0.15),
-        [0.13, 0.14, 0.16],
+        Vec3::new(-3.88, -0.36, 3.06),
+        Vec3::new(2.82, -0.36, 3.06),
+        Vec3::new(2.82, -0.10, 2.34),
+        Vec3::new(-3.88, -0.10, 2.34),
+        kawara_tile,
         MAT_KAWARA,
     );
     buf.push_quad(
-        Vec3::new(3.15, 2.82, -2.45),
-        Vec3::new(-5.45, 2.82, -2.45),
-        Vec3::new(-5.45, 3.68, 0.15),
-        Vec3::new(3.15, 3.68, 0.15),
-        [0.13, 0.14, 0.16],
+        Vec3::new(2.82, -0.39, 3.06),
+        Vec3::new(-3.88, -0.39, 3.06),
+        Vec3::new(-3.88, -0.14, 2.34),
+        Vec3::new(2.82, -0.14, 2.34),
+        kominka_timber,
+        MAT_WOOD,
+    );
+    buf.add_cylinder(Vec3::new(2.68, ground_y + 0.15, 2.50), Vec3::new(2.68, -0.36, 2.50), 0.028, 0.028, 7, [0.08, 0.09, 0.10], MAT_ALLOY, false);
+    buf.add_cylinder(Vec3::new(2.68, -0.36, 2.50), Vec3::new(2.68, -0.38, 3.02), 0.028, 0.028, 7, [0.08, 0.09, 0.10], MAT_ALLOY, true);
+
+    // Twin LP-Gas Cylinders tucked neatly under timber shelter + cast-iron electric meter box
+    for &gx in &[-2.88_f32, -2.46] {
+        buf.add_lathe_y(Vec3::new(gx, ground_y + 0.142, 2.54), &[(0.0, 0.135), (0.84, 0.135), (0.96, 0.048)], 10, [0.44, 0.46, 0.45], MAT_ALLOY, true);
+    }
+    buf.add_box(Vec3::new(-3.08, -2.02, 2.36), Vec3::new(-2.26, -1.96, 2.74), kominka_timber, MAT_WOOD);
+    buf.add_box(Vec3::new(-3.48, -1.65, 2.370), Vec3::new(-3.16, -1.20, 2.46), [0.36, 0.37, 0.35], MAT_ALLOY);
+
+    // --- Stepped Main Kawara Gable Roof (`x in [-3.08, +3.08], y = 2.78 .. 3.74`) + Exposed Rafters (`taruki`) ---
+    buf.push_quad(
+        Vec3::new(-3.08, 2.78, 3.08),
+        Vec3::new(3.08, 2.78, 3.08),
+        Vec3::new(3.08, 3.74, -0.05),
+        Vec3::new(-3.08, 3.74, -0.05),
+        kawara_tile,
         MAT_KAWARA,
     );
-    buf.add_box(Vec3::new(-5.45, 2.71, -2.45), Vec3::new(3.15, 2.82, 2.95), cedar_dark, MAT_WOOD);
-    buf.add_cylinder(Vec3::new(-5.48, 3.71, 0.15), Vec3::new(3.18, 3.71, 0.15), 0.09, 0.09, 8, [0.10, 0.11, 0.13], MAT_KAWARA, true);
+    buf.push_quad(
+        Vec3::new(3.08, 2.78, -2.52),
+        Vec3::new(-3.08, 2.78, -2.52),
+        Vec3::new(-3.08, 3.74, -0.05),
+        Vec3::new(3.08, 3.74, -0.05),
+        kawara_tile,
+        MAT_KAWARA,
+    );
+    buf.add_box(Vec3::new(-3.04, 2.68, -2.42), Vec3::new(3.04, 2.78, 2.98), kominka_timber, MAT_WOOD);
+    for r in -5..=5 {
+        let rx = (r as f32) * 0.56;
+        buf.add_beam(Vec3::new(rx, 3.02, 2.15), Vec3::new(rx, 2.74, 3.06), 0.032, kominka_timber, MAT_WOOD);
+    }
+    buf.add_cylinder(Vec3::new(-3.12, 3.78, -0.05), Vec3::new(3.12, 3.78, -0.05), 0.095, 0.095, 8, [0.08, 0.09, 0.11], MAT_KAWARA, true);
 
-    // --- 2nd-Floor Exterior Breezeway Gallery (`x in [-5.32, -2.665], z in [-0.18, 1.46], y = 0.0`) ---
-    buf.add_box(Vec3::new(-5.34, -0.15, -0.20), Vec3::new(-2.665, 0.0, 1.46), [0.44, 0.43, 0.39], MAT_MATTE);
-    // Support steel columns under gallery (`x = -5.22`, `x = -3.82`)
-    for &(cx, cz) in &[(-5.22_f32, -0.08_f32), (-5.22, 1.38), (-3.82, -0.08), (-3.82, 1.38)] {
-        buf.add_cylinder(Vec3::new(cx, ground_y + 0.14, cz), Vec3::new(cx, -0.15, cz), 0.048, 0.048, 10, alloy_dark, MAT_ALLOY, false);
+    // --- 2nd-Floor Exterior Breezeway Gallery (`x in [-5.34, -2.665]`) + Tiered Corrugated/Timber Canopy & Timber Staircase! ---
+    buf.add_box(Vec3::new(-5.36, -0.15, -0.20), Vec3::new(-2.665, 0.0, 1.46), kominka_timber, MAT_WOOD);
+    // Stout square Kominka timber posts (`11cm x 11cm`) from ground up to the lower gallery canopy (`y = 2.42`)!
+    for &(cx, cz) in &[(-5.26_f32, -0.10_f32), (-5.26, 1.38), (-3.84, -0.10), (-3.84, 1.38)] {
+        buf.add_box(Vec3::new(cx - 0.055, ground_y + 0.14, cz - 0.055), Vec3::new(cx + 0.055, 2.38, cz + 0.055), kominka_timber, MAT_WOOD);
     }
-    // Gallery steel & cedar safety railings (leaving `x in [-5.25, -3.85]` at `z = 1.45` open for stairs!)
-    buf.add_cylinder(Vec3::new(-5.30, 1.02, -0.16), Vec3::new(-2.68, 1.02, -0.16), 0.022, 0.022, 10, cedar_dark, MAT_WOOD, true);
-    buf.add_cylinder(Vec3::new(-5.30, 1.02, -0.16), Vec3::new(-5.30, 1.02, 1.45), 0.022, 0.022, 10, cedar_dark, MAT_WOOD, true);
-    buf.add_cylinder(Vec3::new(-3.85, 1.02, 1.44), Vec3::new(-2.68, 1.02, 1.44), 0.022, 0.022, 10, cedar_dark, MAT_WOOD, true);
-    for &rx in &[-5.28_f32, -4.60, -3.92, -3.25] {
-        buf.add_cylinder(Vec3::new(rx, 0.0, -0.16), Vec3::new(rx, 1.02, -0.16), 0.014, 0.014, 8, alloy_dark, MAT_ALLOY, false);
+    // Diagonal timber knee-braces (`houzue`) under gallery
+    buf.add_beam(Vec3::new(-5.26, -0.75, 1.38), Vec3::new(-4.65, -0.12, 1.38), 0.042, kominka_timber, MAT_WOOD);
+    buf.add_beam(Vec3::new(-3.84, -0.75, 1.38), Vec3::new(-4.45, -0.12, 1.38), 0.042, kominka_timber, MAT_WOOD);
+
+    // Lower stepped corrugated-galvanized canopy roof sheltering the 2F Gallery & Entry Door (`y: 2.64 -> 2.32`)!
+    buf.push_quad(
+        Vec3::new(-5.48, 2.32, 1.72),
+        Vec3::new(-2.64, 2.32, 1.72),
+        Vec3::new(-2.64, 2.64, -0.36),
+        Vec3::new(-5.48, 2.64, -0.36),
+        [0.22, 0.27, 0.32],
+        MAT_CORRUGATED,
+    );
+    buf.push_quad(
+        Vec3::new(-2.64, 2.29, 1.72),
+        Vec3::new(-5.48, 2.29, 1.72),
+        Vec3::new(-5.48, 2.61, -0.36),
+        Vec3::new(-2.64, 2.61, -0.36),
+        kominka_timber,
+        MAT_WOOD,
+    );
+
+    // Chunky Kominka wooden gallery balustrades (leaving `x in [-5.25, -3.85]` at `z = 1.45` open for stairs!)
+    buf.add_box(Vec3::new(-5.32, 0.96, -0.18), Vec3::new(-2.68, 1.03, -0.11), kominka_rail, MAT_WOOD);
+    buf.add_box(Vec3::new(-5.32, 0.96, -0.18), Vec3::new(-5.24, 1.03, 1.45), kominka_rail, MAT_WOOD);
+    buf.add_box(Vec3::new(-3.86, 0.96, 1.40), Vec3::new(-2.68, 1.03, 1.47), kominka_rail, MAT_WOOD);
+    for &rx in &[-4.85_f32, -4.35, -3.85, -3.25] {
+        buf.add_box(Vec3::new(rx - 0.018, 0.0, -0.16), Vec3::new(rx + 0.018, 0.96, -0.13), kominka_plank, MAT_WOOD);
     }
-    for &rz in &[0.25_f32, 0.65, 1.05, 1.42] {
-        buf.add_cylinder(Vec3::new(-5.30, 0.0, rz), Vec3::new(-5.30, 1.02, rz), 0.014, 0.014, 8, alloy_dark, MAT_ALLOY, false);
+    for &rz in &[0.22_f32, 0.62, 1.02] {
+        buf.add_box(Vec3::new(-5.30, 0.0, rz - 0.018), Vec3::new(-5.26, 0.96, rz + 0.018), kominka_plank, MAT_WOOD);
     }
-    for &rx in &[-3.84_f32, -3.35, -2.85] {
-        buf.add_cylinder(Vec3::new(rx, 0.0, 1.44), Vec3::new(rx, 1.02, 1.44), 0.014, 0.014, 8, alloy_dark, MAT_ALLOY, false);
+    for &rx in &[-3.55_f32, -3.12] {
+        buf.add_box(Vec3::new(rx - 0.018, 0.0, 1.42), Vec3::new(rx + 0.018, 0.96, 1.45), kominka_plank, MAT_WOOD);
     }
 
-    // --- 14-Tread Exterior Steel-and-Cedar Staircase (`x in [-5.25, -3.85], z: 1.45 -> 4.53, y: 0.0 -> -3.06`) ---
+    // --- 14-Tread Kominka Timber Staircase (`x in [-5.25, -3.85], z: 1.45 -> 4.53, y: 0.0 -> -3.06`) ---
     let steps = 14usize;
     let z_start = 1.45_f32;
     let z_end = 4.53_f32;
@@ -427,19 +514,19 @@ pub fn build_hab_204_static(buf: &mut MeshBuffer) {
         let f0 = (s as f32) / (steps as f32);
         let f1 = ((s + 1) as f32) / (steps as f32);
         let tz0 = z_start + (z_end - z_start) * f0;
-        let tz1 = z_start + (z_end - z_start) * f1 + 0.025;
+        let tz1 = z_start + (z_end - z_start) * f1 + 0.03;
         let ty = y_bot * f1;
-        buf.add_box(Vec3::new(-5.22, ty - 0.045, tz0), Vec3::new(-3.88, ty, tz1), hinoki_light, MAT_WOOD);
+        buf.add_box(Vec3::new(-5.22, ty - 0.052, tz0), Vec3::new(-3.88, ty, tz1), [0.38, 0.24, 0.12], MAT_WOOD);
     }
-    // Twin diagonal steel stair stringers & continuous sloped cedar/steel handrails!
-    for &sx in &[-5.26_f32, -3.84] {
-        buf.add_beam(Vec3::new(sx, -0.08, z_start), Vec3::new(sx, y_bot - 0.06, z_end), 0.045, alloy_dark, MAT_ALLOY);
-        buf.add_cylinder(Vec3::new(sx, 1.02, z_start), Vec3::new(sx, y_bot + 0.98, z_end), 0.022, 0.022, 10, cedar_dark, MAT_WOOD, true);
+    // Deep roasted-cedar diagonal stair stringers, square newel posts & chunky wooden handrails!
+    for &sx in &[-5.27_f32, -3.83] {
+        buf.add_beam(Vec3::new(sx, -0.09, z_start), Vec3::new(sx, y_bot - 0.05, z_end), 0.068, kominka_timber, MAT_WOOD);
+        buf.add_beam(Vec3::new(sx, 1.00, z_start), Vec3::new(sx, y_bot + 0.96, z_end), 0.036, kominka_rail, MAT_WOOD);
         for post in 0..=4 {
             let pf = (post as f32) / 4.0;
             let pz = z_start + (z_end - z_start) * pf;
             let py = y_bot * pf;
-            buf.add_cylinder(Vec3::new(sx, py, pz), Vec3::new(sx, py + 1.00, pz), 0.014, 0.014, 8, alloy_dark, MAT_ALLOY, false);
+            buf.add_box(Vec3::new(sx - 0.028, py, pz - 0.028), Vec3::new(sx + 0.028, py + 0.98, pz + 0.028), kominka_timber, MAT_WOOD);
         }
     }
 }

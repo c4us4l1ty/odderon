@@ -69,10 +69,10 @@ void main() {
   float up = clamp(rd.y, 0.0, 1.0);
   float sunAmt = max(dot(rd, uSunDir), 0.0);
 
-  // Deep Photographic Japanese Summer Noon Teal-Cerulean Sky Palette (image-15 reference)
-  vec3 noonZenith  = vec3(0.016, 0.125, 0.340);
-  vec3 noonMid     = vec3(0.042, 0.235, 0.460);
-  vec3 noonHorizon = vec3(0.185, 0.390, 0.520);
+  // Deep Photographic Japanese Summer Noon Cobalt-Cerulean Sky Palette (image-18 & image-15 reference!)
+  vec3 noonZenith  = vec3(0.014, 0.110, 0.420);
+  vec3 noonMid     = vec3(0.042, 0.255, 0.585);
+  vec3 noonHorizon = vec3(0.240, 0.485, 0.700);
 
   vec3 duskZenith  = vec3(0.035, 0.065, 0.195);
   vec3 duskMid     = vec3(0.280, 0.145, 0.260);
@@ -104,30 +104,46 @@ void main() {
   vec3 sunTint = mix(vec3(1.10, 0.40, 0.14), vec3(1.15, 0.98, 0.72), dayMix);
   sky += sunTint * (0.10 * pow(sunAmt, 9.0) + 1.35 * pow(sunAmt, 380.0)) * smoothstep(-0.04, 0.08, uSunDir.y);
 
-  // Sculpted Japanese Summer Cumulus Clouds (framed cleanly over the sneak-view gap & rooflines!)
-  if (rd.y > 0.02 && rd.z > 0.08) {
-    vec2 uv = vec2(rd.x / max(rd.z, 0.28), rd.y * 1.95);
-    float c1 = 1.0 - length((uv - vec2(-0.18, 0.34)) * vec2(1.22, 1.55));
-    float c2 = 1.0 - length((uv - vec2( 0.22, 0.44)) * vec2(1.28, 1.58));
-    float c3 = 1.0 - length((uv - vec2(-0.52, 0.38)) * vec2(1.35, 1.72));
-    float silhouette = max(max(c1, c2), c3);
-    // Exact upper bound of (0.37*n + 0.14*detail) is 0.51, so silhouette <= -0.08 is guaranteed zero cloud density!
-    if (silhouette > -0.08) {
-      float n = fbm4(uv * 6.4);
-      float detail = fbm4(uv * 15.0 + vec2(3.1, -1.7));
-      float field = silhouette + 0.37 * n + 0.14 * detail;
-      float density = smoothstep(0.45, 0.61, field) * smoothstep(0.03, 0.10, rd.y);
+  // 360-Degree Towering Japanese Summer Cumulonimbus Clouds (image-18 -Z street view AND image-15 +Z window vista!)
+  if (rd.y > 0.015) {
+    float az = atan(rd.x, rd.z);
+    // Project smoothly onto panoramic sky coordinates without seam artifacts!
+    vec2 uv = vec2(az * 0.62, rd.y * 1.92);
 
-      if (density > 0.01) {
-        vec2 sunStep = normalize(vec2(uSunDir.x - 0.18, max(uSunDir.y, 0.22))) * 0.040;
-        float nLit = fbm4((uv + sunStep) * 6.4);
-        float topShade = clamp(0.50 + (n - nLit) * 3.4 + (rd.y - 0.10) * 1.45, 0.0, 1.0);
-        vec3 cloudBright = mix(vec3(1.08, 0.54, 0.30), vec3(1.06, 1.02, 0.94), dayMix);
-        vec3 cloudShadow = mix(vec3(0.14, 0.12, 0.22), vec3(0.18, 0.28, 0.40), dayMix);
+    // Sculpted +Z vista towers (around az = 0) AND towering -Z summer cumulonimbus anvils behind Uchinoura Maison (az ~ +-PI)!
+    float dBack = min(abs(az - 3.02), abs(az + 3.26));
+    float dBackL = min(abs(az + 2.48), abs(az - 3.80));
+    float dBackR = min(abs(az - 2.38), abs(az + 3.90));
+
+    float cPos1 = 1.0 - length(vec2((az + 0.11) * 1.95, (uv.y - 0.34) * 1.55));
+    float cPos2 = 1.0 - length(vec2((az - 0.14) * 2.05, (uv.y - 0.44) * 1.58));
+    float cPos3 = 1.0 - length(vec2((az + 0.34) * 2.10, (uv.y - 0.38) * 1.70));
+
+    float cNeg1 = 1.04 - length(vec2(dBack  * 1.45, (uv.y - 0.52) * 1.28));
+    float cNeg2 = 0.98 - length(vec2(dBackL * 1.55, (uv.y - 0.38) * 1.45));
+    float cNeg3 = 0.96 - length(vec2(dBackR * 1.60, (uv.y - 0.42) * 1.48));
+    float cSide1 = 0.92 - length(vec2((abs(az) - 1.45) * 1.75, (uv.y - 0.36) * 1.65));
+
+    float silhouette = max(max(max(cPos1, cPos2), max(cPos3, cSide1)), max(max(cNeg1, cNeg2), cNeg3));
+    if (silhouette > -0.10) {
+      vec2 noiseP = vec2(sin(az) * 1.85 + cos(az) * 0.95, uv.y * 1.45) * 3.8;
+      float n = fbm4(noiseP);
+      float detail = fbm4(noiseP * 2.45 + vec2(3.1, -1.7));
+      float field = silhouette + 0.40 * n + 0.15 * detail;
+      float density = smoothstep(0.44, 0.60, field) * smoothstep(0.02, 0.09, rd.y);
+
+      if (density > 0.008) {
+        vec2 sunStep = vec2(-0.035, 0.048);
+        float nLit = fbm4(noiseP + sunStep * 4.2);
+        float topShade = clamp(0.52 + (n - nLit) * 3.8 + (rd.y - 0.10) * 1.55, 0.0, 1.0);
+        float silverRim = smoothstep(0.44, 0.52, field) * (1.0 - smoothstep(0.54, 0.68, field));
+        vec3 cloudBright = mix(vec3(1.10, 0.54, 0.30), vec3(1.16, 1.11, 1.02), dayMix);
+        vec3 cloudShadow = mix(vec3(0.14, 0.12, 0.22), vec3(0.16, 0.27, 0.44), dayMix);
         vec3 cb = mix(vec3(0.05, 0.07, 0.12), cloudBright, skyActive);
         vec3 cs = mix(vec3(0.018, 0.028, 0.055), cloudShadow, skyActive);
-        vec3 cCol = mix(cs, cb, smoothstep(0.16, 0.84, topShade));
-        sky = mix(sky, cCol, density * 0.95);
+        vec3 cCol = mix(cs, cb, smoothstep(0.14, 0.82, topShade));
+        cCol += cb * silverRim * 0.24 * dayMix;
+        sky = mix(sky, cCol, density * 0.97);
       }
     }
   }
@@ -241,42 +257,94 @@ float computeRoomAO(vec3 p, vec3 n) {
   return cornerAO * underDesk * (0.86 + 0.14 * max(n.y, 0.0));
 }
 
-// High-Contrast Summer Noon Exterior Eave, Balcony & Dappled Tree-Canopy Shadows (image-15 reference!)
+// High-Contrast Summer Noon Architectural Eave, Balcony, Stair & Dappled Foliage Gobo Shadows (image-18 & image-15!)
 float computeExteriorEaveShadow(vec3 p) {
   float sh = 1.0;
-  // Deep diagonal eave shadows under 1st-floor (y ~ -0.35) and 2nd-floor (y ~ 2.42) Kawara roofs!
-  if (p.z > 10.1 && p.z < 12.6) {
-    float diag = p.x * 0.065;
-    float underUpperEave = smoothstep(1.52 + diag, 2.36 + diag, p.y) * (1.0 - smoothstep(2.42, 2.54, p.y));
-    float underLowerEave = smoothstep(-1.95 + diag, -0.36 + diag, p.y) * (1.0 - smoothstep(-0.30, -0.14, p.y));
-    sh *= (1.0 - 0.84 * max(underUpperEave, underLowerEave));
+  float raking = p.x * 0.075;
 
-    // Organic dappled summer foliage gobo cast across left corrugated wall & plaster edges (image-15!)
+  // A. +Z Street Row (House #1 & House #2 seen from Hab #204 window, z in [10.1, 12.6])
+  if (p.z > 10.1 && p.z < 12.6) {
+    float underUpperEave = smoothstep(1.48 + raking, 2.34 + raking, p.y) * (1.0 - smoothstep(2.42, 2.54, p.y));
+    float underLowerEave = smoothstep(-2.05 + raking, -0.36 + raking, p.y) * (1.0 - smoothstep(-0.30, -0.14, p.y));
+    sh *= (1.0 - 0.88 * max(underUpperEave, underLowerEave));
+
     float leafField = sin(p.x * 1.35 + p.y * 1.15) * cos(p.x * 0.85 - p.y * 1.65)
       + 0.45 * sin(p.x * 3.4 + p.y * 2.9);
     float edgeCanopy = smoothstep(5.2, 8.6, p.x) + smoothstep(-5.8, -8.8, p.x);
-    float dapple = smoothstep(0.05, 0.55, leafField + edgeCanopy * 0.55) * clamp(edgeCanopy + 0.22, 0.0, 1.0);
-    sh *= (1.0 - 0.62 * dapple);
+    float dapple = smoothstep(0.05, 0.52, leafField + edgeCanopy * 0.55) * clamp(edgeCanopy + 0.22, 0.0, 1.0);
+    sh *= (1.0 - 0.72 * dapple);
   }
 
-  // Deep shadow cast across sidewalk & street asphalt + overhead power-line shadows!
-  if (p.y < -2.92 && p.z > 4.2 && p.z < 11.4) {
-    float buildingCast = smoothstep(8.2, 9.9, p.z + p.x * 0.05);
-    sh *= (1.0 - 0.72 * buildingCast);
-    float wz1 = 6.75 + 0.08 * p.x;
-    float wz2 = 7.18 + 0.08 * p.x;
-    sh *= (1.0 - 0.52 * exp(-pow((p.z - wz1) * 18.0, 2.0)));
-    sh *= (1.0 - 0.46 * exp(-pow((p.z - wz2) * 20.0, 2.0)));
+  // B. -Z Street Row: Uchinoura Maison, Corrugated Steel Annex, Sister Kominka Machiya & Bus Stop (image-18!)
+  if (p.z > -0.6 && p.z < 5.05) {
+    // 1. Deep Kawara 2F roof-eave shadow band across Uchinoura Maison 2F plaster & shutters (x in [-3.1, 3.1])
+    if (p.x > -3.12 && p.x < 3.12 && p.z > 2.05 && p.z < 3.10) {
+      float eave2F = smoothstep(1.72 - raking, 2.52 - raking, p.y) * (1.0 - smoothstep(2.74, 2.84, p.y));
+      sh *= (1.0 - 0.86 * eave2F);
+    }
+    // 2. Dramatic 2F Wooden Balcony + 1F Kawara Hisashi Eave overhang shadow across 1F roasted-cedar wall & noren!
+    if (p.x > -3.92 && p.x < 2.86 && p.z > 2.24 && p.z < 3.18 && p.y < -0.10) {
+      float hisashi1F = smoothstep(-2.35 - raking * 0.8, -0.55 - raking * 0.8, p.y) * (1.0 - smoothstep(2.96, 3.18, p.z));
+      sh *= (1.0 - 0.88 * hisashi1F);
+    }
+    // 3. Deep canopy & deck shadow under 2F Breezeway Gallery & Entry Doorway (x in [-5.50, -2.64])
+    if (p.x > -5.50 && p.x < -2.64 && p.z > -0.35 && p.z < 1.75) {
+      float underCanopy = smoothstep(1.35, 2.15, p.y) * (1.0 - smoothstep(2.28, 2.40, p.y));
+      float underDeck = 1.0 - smoothstep(-0.22, -0.05, p.y);
+      sh *= (1.0 - 0.84 * max(underCanopy, underDeck));
+    }
+    // 4. Sister Kominka Machiya (#3, x in [-13.4, -5.7]) 2F & 1F Kawara eave shadows + Bus Stop roof shade!
+    if (p.x > -13.4 && p.x < -5.7 && p.z > 1.15 && p.z < 3.30) {
+      float sisUpper = smoothstep(1.45 - raking, 2.28 - raking, p.y) * (1.0 - smoothstep(2.42, 2.56, p.y));
+      float sisLower = smoothstep(-2.15 - raking, -0.45 - raking, p.y) * (1.0 - smoothstep(-0.28, -0.12, p.y));
+      sh *= (1.0 - 0.88 * max(sisUpper, sisLower));
+    }
+    if (p.x > -7.85 && p.x < -5.85 && p.z > 3.72 && p.z < 4.78 && p.y < -0.82) {
+      float underBusRoof = smoothstep(-2.65, -1.15, p.y);
+      sh *= (1.0 - 0.78 * underBusRoof);
+    }
+    // 5. Diagonal Dappled Zelkova Foliage Gobo cast across Corrugated Annex (x > 2.9, image-18 left!) & West Trees (x < -4.4)!
+    float leafGobo = sin(p.x * 1.55 - p.y * 1.35 + p.z * 0.75) * cos(p.x * 0.95 + p.y * 1.75)
+      + 0.48 * sin(p.x * 3.8 + p.y * 3.1 - p.z * 1.6);
+    float eastTreeZone = smoothstep(2.9, 6.2, p.x) * smoothstep(-2.9, 2.4, p.y);
+    float westTreeZone = smoothstep(-4.1, -7.8, p.x);
+    float canopyMask = clamp(eastTreeZone * 0.88 + westTreeZone * 0.92, 0.0, 1.0);
+    float gobo = smoothstep(-0.08, 0.44, leafGobo) * canopyMask;
+    sh *= (1.0 - 0.80 * gobo);
+
+    // 6. Crisp diagonal Staircase & Wooden Balustrade shadow cast onto near sidewalk & 1F corner!
+    if (p.y < -2.75 && p.x > -5.55 && p.x < -3.15 && p.z > 1.55 && p.z < 4.75) {
+      float treadStripe = smoothstep(0.15, 0.45, abs(fract((p.z + p.x * 0.18) * 4.4) - 0.5));
+      sh *= mix(0.22, 0.72, treadStripe);
+    }
   }
-  // Architectural eave shade under Uchinoura Maison 2F balcony & 2F Breezeway Gallery!
-  if (p.y < -0.10 && p.z > 2.25 && p.z < 3.15 && p.x > -3.85 && p.x < 2.80) {
-    float underBalcony = smoothstep(-1.45, -0.18, p.y) * (1.0 - smoothstep(2.85, 3.15, p.z));
-    sh *= (1.0 - 0.65 * underBalcony);
+
+  // C. Ground-Plane Shadows on Near Sidewalk, Asphalt Road & Far Sidewalk (building cast + utility pole + crisp overhead wires!)
+  if (p.y < -2.90 && p.z > 2.35 && p.z < 11.4) {
+    float farBuildingCast = smoothstep(8.35, 9.85, p.z + p.x * 0.05);
+    sh *= (1.0 - 0.82 * farBuildingCast);
+
+    // Diagonal utility-pole shadow across near sidewalk & asphalt from pole at (1.08, 5.35)
+    float poleLine = (p.x - 1.08) + (p.z - 5.35) * 0.62;
+    if (p.z < 5.42 && p.z > 2.40) {
+      sh *= (1.0 - 0.76 * exp(-pow(poleLine * 7.5, 2.0)));
+    }
+    // Crisp overhead power-line & service-drop shadows slicing across sunlit concrete & asphalt (image-18!)
+    float wNear = 3.88 - 0.11 * p.x;
+    float wz1   = 6.68 + 0.08 * p.x;
+    float wz2   = 7.14 + 0.08 * p.x;
+    sh *= (1.0 - 0.62 * exp(-pow((p.z - wNear) * 24.0, 2.0)));
+    sh *= (1.0 - 0.58 * exp(-pow((p.z - wz1) * 20.0, 2.0)));
+    sh *= (1.0 - 0.52 * exp(-pow((p.z - wz2) * 22.0, 2.0)));
+
+    // Dappled tree-canopy pools on the near sidewalk & curb (x < -4.2 and x > 3.6, image-18 foreground!)
+    float groundLeaf = sin(p.x * 1.45 + p.z * 1.65) * cos(p.x * 1.05 - p.z * 1.35)
+      + 0.42 * sin(p.x * 3.6 + p.z * 3.2);
+    float roadEdgeTrees = smoothstep(-3.8, -7.2, p.x) + smoothstep(3.4, 6.8, p.x);
+    float roadDapple = smoothstep(0.02, 0.46, groundLeaf) * clamp(roadEdgeTrees, 0.0, 1.0);
+    sh *= (1.0 - 0.78 * roadDapple);
   }
-  if (p.y < -0.14 && p.x < -2.65 && p.x > -5.40 && p.z > -0.25 && p.z < 1.65) {
-    sh *= 0.42;
-  }
-  return sh;
+  return clamp(sh, 0.06, 1.0);
 }
 
 void main() {
@@ -387,12 +455,12 @@ void main() {
   }
 
   // =========================================================================
-  // PHOTOGRAPHIC "SUMMER NOON" HIGH-CONTRAST LIGHTING ENGINE (ZERO CEL BANDING!)
-  // Golden-amber direct sun vs deep grounded architectural shade (12:1 dynamic range!)
+  // PHOTOGRAPHIC "SUMMER NOON" HIGH-CONTRAST LIGHTING ENGINE (image-18 & image-15!)
+  // Coherent single-sun 3D form shading + golden highlights + deep indigo/espresso shadows!
   // =========================================================================
   float dayMix = smoothstep(0.14, 0.70, uWarmth);
   float duskMix = smoothstep(0.01, 0.35, uWarmth) * (1.0 - dayMix);
-  vec3 sunColor = mix(vec3(1.28, 0.44, 0.14), vec3(1.36, 1.08, 0.74), dayMix) * smoothstep(-0.02, 0.10, uSunDir.y);
+  vec3 sunColor = mix(vec3(1.32, 0.44, 0.14), vec3(1.58, 1.22, 0.80), dayMix) * smoothstep(-0.02, 0.10, uSunDir.y);
 
   vec3 directLight = vec3(0.0);
   float ao = 1.0;
@@ -406,23 +474,34 @@ void main() {
     float ndl = max(dot(N, uSunDir), 0.0);
     directLight = sunColor * ndl * extShadow;
   } else {
-    // Summer Noon high-angle diagonal sun raking across roofs, wooden balconies & stucco facades!
-    vec3 streetSunDir = normalize(vec3(uSunDir.x - 0.34, max(uSunDir.y, 0.68), -0.46));
-    float ndlExt = max(max(dot(N, uSunDir), dot(N, streetSunDir) * 0.94), 0.0);
+    // Coherent single directional sun per block — NEVER lighting two opposite faces of the same 3D prop!
+    vec3 nearSun = normalize(vec3(-0.38, max(uSunDir.y, 0.68), max(uSunDir.z, 0.46)));
+    vec3 farSun  = normalize(vec3(-0.38, max(uSunDir.y, 0.68), -0.44));
+    vec3 activeExtSun = normalize(mix(nearSun, farSun, smoothstep(8.2, 9.8, vWorldPos.z)));
+    float ndlExt = max(dot(N, activeExtSun), 0.0);
     extShadow = computeExteriorEaveShadow(vWorldPos);
-    // Ground contact AO where facades meet sidewalks (y ~ -3.05)
-    float streetAO = (vWorldPos.z < 20.0) ? (0.72 + 0.28 * smoothstep(-3.06, -2.55, vWorldPos.y)) : 1.0;
+
+    // Rich ground & corner contact AO on sidewalks, plinths & eaves
+    float streetAO = (abs(vWorldPos.z) < 26.0)
+      ? (0.64 + 0.36 * smoothstep(-3.06, -2.52, vWorldPos.y))
+      : 1.0;
     ao = streetAO;
     directLight = sunColor * ndlExt * extShadow;
+
+    // Sunlit Summer Grass & Leaf Subsurface Golden-Chartreuse Translucency (image-18 foreground grass!)
+    if (mat == 12 && dayMix > 0.1) {
+      float grassRim = pow(clamp(1.0 - abs(dot(N, V)), 0.0, 1.0), 1.4) + 0.45 * max(N.y, 0.0);
+      directLight += vec3(0.68, 0.92, 0.14) * grassRim * extShadow * dayMix * 0.55;
+    }
   }
 
   // Translucent Golden Washi Subsurface Glow on Shoji Screen, Chouchin Lanterns & Frosted Door
   if (mat == 5) {
     float backLit = max(dot(-N, uSunDir), 0.28) * smoothstep(0.0, 0.35, uWarmth);
-    directLight += sunColor * backLit * (indoor ? 0.38 : 0.18);
+    directLight += sunColor * backLit * (indoor ? 0.38 : 0.22);
   }
 
-  // Grounded cinematic shadow ambient (deep cool-slate sky hemisphere + subtle warm wood/tatami bounce!)
+  // Grounded cinematic shadow ambient (deep cobalt-slate sky fill + subtle warm wood/stone bounce — ~13:1 contrast!)
   float windowVis = indoor ? clamp((vWorldPos.z + 2.3) / 4.4, 0.32, 1.0) : 1.0;
   float shojiDim = indoor ? (1.0 - 0.34 * uShojiClosed) : 1.0;
   vec3 skyFill = mix(
@@ -439,8 +518,9 @@ void main() {
 
   vec3 ambient = ((skyFill + warmBounce) * windowVis * shojiDim + washiFill) * ao;
   if (!indoor) {
-    vec3 extSky = mix(vec3(0.012, 0.018, 0.034), vec3(0.072, 0.095, 0.125), dayMix) * (0.45 + 0.55 * max(N.y, 0.0));
-    vec3 extGround = mix(vec3(0.005, 0.005, 0.008), vec3(0.042, 0.035, 0.024), dayMix) * (0.40 + 0.60 * max(-N.y, 0.15));
+    // Deep rich summer shadow ambient: cool cerulean sky bounce from above + subtle warm sunlit-asphalt bounce from below!
+    vec3 extSky = mix(vec3(0.008, 0.013, 0.026), vec3(0.036, 0.058, 0.098), dayMix) * (0.38 + 0.62 * max(N.y, 0.0));
+    vec3 extGround = mix(vec3(0.004, 0.004, 0.007), vec3(0.026, 0.020, 0.012), dayMix) * (0.35 + 0.65 * max(-N.y, 0.12));
     ambient = (extSky + extGround) * ao;
   }
 
@@ -480,11 +560,16 @@ void main() {
   }
 
   // Physical Micro-Facet Specular Glints on Kawara Tiles, Corrugated Steel & Rounded Wood Fillets
-  vec3 specDir = indoor ? uSunDir : normalize(vec3(uSunDir.x - 0.30, max(uSunDir.y, 0.64), -0.42));
+  vec3 extSpecSun = normalize(mix(
+    normalize(vec3(-0.38, max(uSunDir.y, 0.68), max(uSunDir.z, 0.46))),
+    normalize(vec3(-0.38, max(uSunDir.y, 0.68), -0.44)),
+    smoothstep(8.2, 9.8, vWorldPos.z)
+  ));
+  vec3 specDir = indoor ? uSunDir : extSpecSun;
   vec3 H = normalize(specDir + V);
   float specPow = mix(110.0, 14.0, rough);
   float spec = pow(max(dot(N, H), 0.0), specPow) * (1.0 - rough) * extShadow;
-  vec3 specLight = sunColor * spec * 0.20;
+  vec3 specLight = sunColor * spec * 0.24;
 
   vec3 litColor = baseCol * (ambient + directLight + localLights) + specLight;
 
@@ -498,16 +583,22 @@ void main() {
     litColor += vec3(1.0, 0.84, 0.52) * shaft * rayLen * 0.014 * dayMix * (1.0 - 0.82 * uShojiClosed);
   }
 
-  // Subtle summer coastal atmospheric perspective ONLY on far mountains & distant Launch Pad (z > 85 m)
-  if (!indoor && vWorldPos.z > 85.0) {
-    float haze = 1.0 - exp(-(vWorldPos.z - 85.0) * 0.0022);
-    vec3 hazeCol = mix(vec3(0.03, 0.05, 0.10), vec3(0.20, 0.40, 0.52), dayMix);
+  // Summer coastal atmospheric perspective on distant +Z AND -Z forested mountain ridges (|z| > 62 m)
+  if (!indoor && abs(vWorldPos.z) > 62.0) {
+    float haze = 1.0 - exp(-(abs(vWorldPos.z) - 62.0) * 0.0026);
+    vec3 hazeCol = mix(vec3(0.03, 0.05, 0.10), vec3(0.18, 0.39, 0.58), dayMix);
     hazeCol += vec3(1.0, 0.76, 0.42) * uPlumeGlow * 0.12;
-    litColor = mix(litColor, hazeCol, clamp(haze, 0.0, 0.52));
+    litColor = mix(litColor, hazeCol, clamp(haze, 0.0, 0.54));
   }
 
   vec3 x = max(litColor, vec3(0.0));
   vec3 mapped = (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14);
+  if (!indoor) {
+    // Crisp Summer-Noon filmic contrast & sunlit vibrance (image-18 golden highs + deep espresso shadows!)
+    mapped = pow(clamp(mapped, 0.0, 1.0), vec3(1.07));
+    float luma = dot(mapped, vec3(0.2126, 0.7152, 0.0722));
+    mapped = clamp(mix(vec3(luma), mapped, 1.0 + 0.14 * dayMix), 0.0, 1.0);
+  }
   fragColor = vec4(pow(clamp(mapped, 0.0, 1.0), vec3(1.0 / 2.2)), 1.0);
 }
 `;
