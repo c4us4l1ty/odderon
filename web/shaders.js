@@ -415,7 +415,14 @@ float boxOcclusion(vec3 p, vec3 L, vec3 bmin, vec3 bmax) {
   vec3 tf3 = max(t0, t1);
   float tn = max(max(tn3.x, tn3.y), tn3.z);
   float tf = min(min(tf3.x, tf3.y), tf3.z);
-  return (tf > max(tn, 0.0)) ? 1.0 : 0.0;
+  // Grazing rays only clip a sliver of the box, so the edge gets a penumbra
+  // that grows with the distance the ray travels to reach it. This is what
+  // stops long slab shadows from reading as hard-edged decals on a wall.
+  // tf - tn is how much of the ray actually travels inside the box: deep hits
+  // are fully shadowed, grazing hits only partly. Capped so a thin eave slab
+  // still casts a real shadow at street distance.
+  float pen = min(0.04 + 0.030 * max(tn, 0.0), 0.30);
+  return smoothstep(0.0, pen, tf - max(tn, 0.0));
 }
 
 // Coarse street massing, ±Z machiya rows and their eaves (see town.rs §2A/2B).
@@ -610,8 +617,10 @@ void main() {
     float rib = sin(uv.x * 78.0);
     float rust = smoothstep(0.62, 1.02, fbm2(uv * vec2(2.2, 1.1) + 9.0));
     float rustH = 1.0 - smoothstep(-3.05, -1.4, vWorldPos.y);
-    baseCol *= vec3(0.74, 0.84, 1.0);            // galvanised blue-grey
-    baseCol *= 0.74 + 0.30 * rib;
+    // Near-neutral steel: a blue-biased albedo times a blue sky fill goes
+    // navy in shade, which reads as a hole rather than as shadow.
+    baseCol *= vec3(0.73, 0.77, 0.80);           // galvanised grey
+    baseCol *= 0.80 + 0.24 * rib;
     baseCol = mix(baseCol, vec3(0.22, 0.135, 0.085), rust * (0.16 + 0.28 * rustH));
     baseCol *= 0.92 + 0.16 * fbm2(vec2(uv.x * 3.0, uv.y * 0.6));
     dH.x = cos(uv.x * 78.0) * 0.55;
@@ -748,12 +757,15 @@ void main() {
     ao = streetAO * soffit;
 
     float upness = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
-    vec3 skyFill = mix(vec3(0.130, 0.170, 0.310), vec3(0.400, 0.500, 0.780), dayMix);
+    vec3 skyFill = mix(vec3(0.140, 0.168, 0.272), vec3(0.425, 0.495, 0.742), dayMix);
     vec3 groundFill = mix(vec3(0.070, 0.058, 0.048), vec3(0.240, 0.200, 0.150), dayMix);
     ambient = mix(groundFill, skyFill, upness) * ao;
     // Shade is dimmer than sun, but it is still *sky*, so keep most of the fill:
     // the reference's shaded timber is a deep blue-brown, never black.
     ambient *= mix(0.66, 1.0, shadowVis);
+    // Sunlight that lands on the street bounces sideways into shaded
+    // verticals, which is why real shade is dirty-amber, not blue.
+    ambient += groundFill * (1.0 - shadowVis) * dayMix * (1.0 - upness) * 0.15;
     // Down-facing soffits look at the sunlit street, not at the sky: without
     // this fill every eave underside renders as a flat black bar.
     ambient = mix(ambient, ambient * 1.85 + groundFill * 0.55 * dayMix,
