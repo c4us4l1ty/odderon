@@ -571,6 +571,14 @@ impl Degeneracy {
 /// Not "small enough to ignore": `1e-9` is roughly the eccentricity a 3.3 km apoapsis difference makes
 /// at geostationary radius, so anything under it would be reported as an osculating artefact rather
 /// than a designed orbit. Above it the periapsis direction is real and is kept.
+///
+/// **What folding costs.** An orbit with `0 < e < 1e-9` has its `argp` folded away while `e` is still
+/// carried in `p` and returned by [`Elements::e`], so reconstructing it from the folded angles is not
+/// exact. The error is bounded by `e·r`: measured 4.2e-6 km (4 mm) at `e = 9e-10` and `r = 8000` km,
+/// and 4.7e-9 km at `e = 1e-12`. That is below the accuracy of the orbit determination that would
+/// have produced such an eccentricity in the first place, and far below GPS (about 20 mm), so it is
+/// left alone deliberately — with the bound written down so that nobody later mistakes the fold for an
+/// exactness claim in either direction.
 const CIRCULAR_TOLERANCE: f64 = 1e-9;
 
 /// Threshold for treating a node line as absent, **relative to `|h|`**.
