@@ -1024,7 +1024,7 @@ mod tests {
             let a = atan(x);
             let sin_a = fabs(sin(a));
             let cos_a = fabs(cos(a));
-            let floor = 4.0 * 2.220_446_049_250_313_1e-16 / fmin(sin_a, cos_a);
+            let floor = 4.0 * f64::EPSILON / fmin(sin_a, cos_a);
             let e1 = fabs(acos(cos(a)) - fabs(a));
             assert!(
                 e1 <= floor,
