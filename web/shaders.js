@@ -20,8 +20,14 @@ void main() {
 // ---- NEW SKY FRAGMENT (spliced into shaders.js by tools/… no, by hand) ----
 export const SKY_FRAG_GL2 = `#version 300 es
 // highp matters here: pow(sunAmt, 2400.0) in a 10-bit mantissa prints
-// concentric rings around the sun instead of a disc.
+// concentric rings around the sun instead of a disc. Fragment highp is optional
+// in GLSL ES 3.00, so fall back rather than failing to compile on a GPU that
+// only has mediump in the fragment stage.
+#ifdef GL_FRAGMENT_PRECISION_HIGH
 precision highp float;
+#else
+precision mediump float;
+#endif
 in vec2 vNdc;
 out vec4 fragColor;
 
@@ -421,17 +427,18 @@ float boxOcclusion(vec3 p, vec3 L, vec3 bmin, vec3 bmax) {
   vec3 tf3 = max(t0, t1);
   float tn = max(max(tn3.x, tn3.y), tn3.z);
   float tf = min(min(tf3.x, tf3.y), tf3.z);
-  // Grazing rays only clip a sliver of the box, so the edge gets a penumbra
-  // that grows with the distance the ray travels to reach it. This is what
-  // stops long slab shadows from reading as hard-edged decals on a wall.
   // tf - tn is how much of the ray actually travels inside the box: deep hits
-  // are fully shadowed, grazing hits only partly. Capped so a thin eave slab
-  // still casts a real shadow at street distance.
-  float pen = min(0.04 + 0.030 * max(tn, 0.0), 0.30);
+  // are fully shadowed, grazing hits only partly, which is what stops long slab
+  // shadows from reading as hard-edged decals on a wall. The penumbra is capped
+  // twice - by distance (a long shadow keeps a soft edge) and by the box's own
+  // thinnest extent, otherwise a 0.18 m hisashi slab would only be 60 % opaque
+  // from across the street and leak light onto the wall behind it.
+  vec3 ext = bmax - bmin;
+  float thin = min(min(ext.x, ext.y), ext.z);
+  float pen = min(0.04 + 0.030 * max(tn, 0.0), min(0.30, 0.5 * thin + 0.02));
   return smoothstep(0.0, pen, tf - max(tn, 0.0));
 }
 
-// Coarse street massing, ±Z machiya rows and their eaves (see town.rs §2A/2B).
 // Coarse street massing, +-Z machiya rows and their eaves. Boxes come straight
 // from town.rs (near row: facade z = 2.22, bodies extend to -Z; far row:
 // facades z = 11.45 / 11.75, bodies extend to +Z). Anything that is not a
@@ -440,24 +447,27 @@ float boxOcclusion(vec3 p, vec3 L, vec3 bmin, vec3 bmax) {
 float streetSunVis(vec3 p, vec3 L) {
   if (p.y > 3.9 || abs(p.x) > 34.0 || p.z < -12.0 || p.z > 30.0) return 1.0;
   float occ = 0.0;
+  // Every test below is guarded: once a box has swallowed the ray the remaining
+  // thirteen cannot add anything, and most street pixels are decided by the
+  // first two.
   // ---- near row: bodies (facades at z = 2.22) ----
   occ = max(occ, boxOcclusion(p, L, vec3(-3.10, -3.10, -4.30), vec3(3.10, 2.56, 2.24)));   // Uchinoura Maison
-  occ = max(occ, boxOcclusion(p, L, vec3(-13.30, -3.10, -4.20), vec3(-5.70, 2.36, 2.24))); // House #3
-  occ = max(occ, boxOcclusion(p, L, vec3(2.80, -3.10, -2.52), vec3(8.50, 3.00, 2.44)));    // corrugated annex
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(-13.30, -3.10, -4.20), vec3(-5.70, 2.36, 2.24))); // House #3
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(2.80, -3.10, -2.52), vec3(8.50, 3.00, 2.44)));    // corrugated annex
   // ---- near row: eaves / hisashi slabs (thin, they only shade what is below) ----
-  occ = max(occ, boxOcclusion(p, L, vec3(-3.20, 2.30, 2.10), vec3(3.20, 2.58, 3.42)));     // 2F kawara eave
-  occ = max(occ, boxOcclusion(p, L, vec3(-3.20, -0.30, 2.10), vec3(3.20, -0.12, 3.30)));   // 1F hisashi
-  occ = max(occ, boxOcclusion(p, L, vec3(-5.52, 1.32, -0.38), vec3(-2.60, 2.18, 1.82)));   // gallery canopy
-  occ = max(occ, boxOcclusion(p, L, vec3(-13.40, 2.30, 2.10), vec3(-5.60, 2.62, 2.62)));   // House #3 eave
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(-3.20, 2.30, 2.10), vec3(3.20, 2.58, 3.42)));     // 2F kawara eave
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(-3.20, -0.30, 2.10), vec3(3.20, -0.12, 3.30)));   // 1F hisashi
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(-5.52, 1.32, -0.38), vec3(-2.60, 2.18, 1.82)));   // gallery canopy
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(-13.40, 2.30, 2.10), vec3(-5.60, 2.62, 2.62)));   // House #3 eave
   // ---- far row: bodies (facades at z = 11.45 / 11.75) ----
-  occ = max(occ, boxOcclusion(p, L, vec3(-0.30, -3.10, 11.42), vec3(7.80, 2.34, 18.25)));  // House #1
-  occ = max(occ, boxOcclusion(p, L, vec3(-10.95, -3.10, 11.72), vec3(-3.55, 2.34, 18.35))); // House #2
-  occ = max(occ, boxOcclusion(p, L, vec3(8.05, -3.10, 10.85), vec3(13.80, 3.30, 17.20)));  // far annex
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(-0.30, -3.10, 11.42), vec3(7.80, 2.34, 18.25)));  // House #1
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(-10.95, -3.10, 11.72), vec3(-3.55, 2.34, 18.35))); // House #2
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(8.05, -3.10, 10.85), vec3(13.80, 3.30, 17.20)));  // far annex
   // ---- far row: eaves overhanging the street (-Z side) ----
-  occ = max(occ, boxOcclusion(p, L, vec3(-0.40, 2.28, 10.55), vec3(7.90, 2.56, 18.25)));   // House #1 2F eave
-  occ = max(occ, boxOcclusion(p, L, vec3(-0.40, -0.32, 10.50), vec3(7.90, -0.14, 18.25))); // House #1 1F hisashi
-  occ = max(occ, boxOcclusion(p, L, vec3(-11.05, 2.28, 10.85), vec3(-3.45, 2.56, 18.35))); // House #2 2F eave
-  occ = max(occ, boxOcclusion(p, L, vec3(-11.05, -0.32, 10.80), vec3(-3.45, -0.14, 18.35)));// House #2 1F hisashi
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(-0.40, 2.28, 10.55), vec3(7.90, 2.56, 18.25)));   // House #1 2F eave
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(-0.40, -0.32, 10.50), vec3(7.90, -0.14, 18.25))); // House #1 1F hisashi
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(-11.05, 2.28, 10.85), vec3(-3.45, 2.56, 18.35))); // House #2 2F eave
+  if (occ < 0.999) occ = max(occ, boxOcclusion(p, L, vec3(-11.05, -0.32, 10.80), vec3(-3.45, -0.14, 18.35)));// House #2 1F hisashi
   return 1.0 - occ;
 }
 
