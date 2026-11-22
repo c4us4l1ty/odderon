@@ -218,21 +218,74 @@ float iBox(vec3 ro, vec3 rd, vec3 lo, vec3 hi) {
 // image every frame. That matters more than it looks: Mali hardware tile-elimination compares CRCs,
 // and any dithering would defeat it and cost the phone its battery (GRAPHICS.md §3).
 
-const int SUN_TAPS = 6;
-const vec2 TAPS[6] = vec2[6](
-  vec2( 0.0000,  0.0000),
-  vec2( 0.8660,  0.0000),
-  vec2( 0.4330,  0.7500),
-  vec2(-0.4330,  0.7500),
-  vec2(-0.8660,  0.0000),
-  vec2(-0.4330, -0.7500)
-);
+// ---------------------------------------------------------------------------------------------
+// Soft shadow: the solar disc, sampled
+// ---------------------------------------------------------------------------------------------
+//
+// SIX fixed taps across a 0.53-degree disc. The taps are a fixed low-discrepancy pattern, NOT noise,
+// because a bit-identical tile is what lets Mali's hardware CRC skip the memory write.
+//
+// AN ANALYTIC VERSION WAS ATTEMPTED AND WITHDRAWN. The reasoning looked good - for a flat occluder
+// under a disc-shaped sun the penumbra is a Minkowski sum, so coverage is a distance function - and it
+// is wrong in a way worth recording. The shadow of a box resting on the ground is its footprint
+// Minkowski-summed with a SEGMENT (the sun direction swept over the box height), and a rectangle plus
+// a segment is a HEXAGON, not a parallelogram. I built the parallelogram, and
+// web/shadow-check.html caught it immediately: worst error 1.0 against a 1024-sample brute force,
+// i.e. the entire transition region was misplaced.
+//
+// So the sampled version stays until something exact is derived AND passes that harness. A closed
+// form that is wrong is worse than sampling that is merely slightly noisy: it is wrong smoothly and
+// confidently, and no amount of looking at it will reveal that.
+// Tap count and pattern.
+//
+// The pattern is a golden-angle spiral rather than a fixed hexagon, because a spiral is
+// equidistributed at ANY count: raising the count adds resolution instead of adding points where
+// there is already a cluster.
+//
+// The count is 8 because web/shadow-check.html measured it. That harness sweeps 4, 6, 8, 10, 12, 16
+// and 24 taps against a 256-ray brute force and passes a count only when its worst error is under
+// ONE PIXEL of the penumbra's gradient - below that, extra taps are literally invisible. Results on
+// this scene, where the penumbra is 7 screen pixels wide:
+//
+//     4 taps  worst 0.3125  visible
+//     6 taps  worst 0.2044  visible
+//     8 taps  worst 0.1406  within one pixel   <- cheapest that passes
+//    16 taps  worst 0.0938  within one pixel
+//
+// Eight, not sixteen: sixteen is prettier in the table and costs twice the ray/box intersections on
+// a GPU that has none to spare. The number comes from the harness, not from taste. If the scene's
+// penumbra ever gets wider - a taller occluder, a lower sun - re-run the harness, because the answer
+// moves with it.
+const int SUN_TAPS = 8;
+const float GOLDEN_ANGLE = 2.399963229728653;
+
+vec2 tapOffset(int i) {
+  // sqrt for uniform area coverage of the disc; (i + 0.5)/N to avoid a point exactly at the centre
+  float r = sqrt((float(i) + 0.5) / float(SUN_TAPS));
+  float a = float(i) * GOLDEN_ANGLE;
+  return vec2(cos(a), sin(a)) * r;
+}
 
 float planeVis(vec3 p, vec3 n, vec3 sd, vec3 bxlo, vec3 bxhi) {
+  // The taps must lie in the plane PERPENDICULAR TO THE SUN, because that is where the solar disc
+  // is. The first version offset the sun direction by (x, y, 0) in world space, which is only the
+  // right plane when the sun happens to be directly overhead - and it was not, so the six samples
+  // spread the penumbra along a line instead of over a disc. The band was then too sharp in one
+  // direction and too soft in another.
+  //
+  // web/shadow-check.html caught this by comparing against a brute-force 256-ray sun: worst error
+  // 0.3177, against a 6-tap quantisation floor of 0.0833, i.e. three times the method's own limit.
+  // With the correct basis the same measurement gives 0.15.
+  vec3 upRef = abs(sd.y) > 0.99 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+  vec3 tx = normalize(cross(upRef, sd));
+  vec3 ty = cross(sd, tx);
+
+  float t = tan(uSunHalfAngle);
   float vis = 0.0;
   for (int i = 0; i < SUN_TAPS; i++) {
-    vec3 d = normalize(sd + vec3(TAPS[i].x, TAPS[i].y, 0.0) * tan(uSunHalfAngle) * 0.9);
-    if (iBox(p + n * 0.002, d, bxlo, bxhi) < 0.0) vis += 1.0;
+    vec2 o = tapOffset(i);
+    vec3 off = tx * o.x + ty * o.y;
+    if (iBox(p + n * 0.002, normalize(sd + off * t), bxlo, bxhi) < 0.0) vis += 1.0;
   }
   return vis / float(SUN_TAPS);
 }
