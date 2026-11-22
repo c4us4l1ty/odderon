@@ -71,6 +71,18 @@ log. After that the gate is live and a single differing bit fails the build.
 An intentional algorithm change means updating `golden.txt` **and** noting it here, in the same commit.
 An unintentional one is a bug with a number attached.
 
+**Current state: armed.** The committed value is `0xfb98c19011ef498d`, and it has been reproduced on two
+targets — a native Linux x86-64 build and a wasm32 module loaded by Node — in the same CI job. That is
+the first end-to-end evidence for the claim this whole document exists to support: *a mission replayed
+elsewhere produces the same bits.* It is a small, unglamorous number and it is the foundation of Esse,
+Proof-of-Flight and every exported artifact the project will ever claim is auditable.
+
+One false alarm is worth recording, because it is the shape of thing that gets a real gate switched off:
+the first live run reported a mismatch, and the two hashes were identical. A `u64` above 2^63 crosses the
+C ABI as a signed `i64`, so JavaScript received a *negative* BigInt and rendered `-0x4673e6fee10b673`
+instead of `0xfb98c19011ef498d`. The bug was in the reporting; the determinism was fine. `BigInt.asUintN`
+fixes it, and both checkers now use it. The lesson: **before believing a gate, read what it printed.**
+
 ### 1.4b A correction worth keeping visible
 
 The first version of `exp` used **ten** terms of the Taylor series, with a comment claiming "~1e-18
