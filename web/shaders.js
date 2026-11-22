@@ -128,7 +128,7 @@ void main() {
   // projected as rd.xz/rd.y, so distant towers converge at the horizon
   // instead of smearing like the old azimuth-space hack).
   // ---------------------------------------------------------------------
-  vec3 cloudLit = mix(vec3(0.95, 0.48, 0.26), vec3(1.00, 0.98, 0.93), dayMix);
+  vec3 cloudLit = mix(vec3(0.92, 0.46, 0.25), vec3(0.90, 0.88, 0.845), dayMix);
   vec3 cloudShade = mix(vec3(0.10, 0.09, 0.17), vec3(0.155, 0.245, 0.410), dayMix);
   vec3 cb = mix(vec3(0.020, 0.026, 0.048), cloudLit, skyActive);
   vec3 cs = mix(vec3(0.008, 0.010, 0.020), cloudShade, skyActive);
@@ -150,7 +150,11 @@ void main() {
     float field = mass * 0.68 + body * 0.34;
     field -= (1.0 - smoothstep(0.28, 0.78, body)) * 0.14;
     field += (detail - 0.5) * 0.30;
-    float density = smoothstep(0.495, 0.550, field);
+    // Fair-weather cumulus band: quantity of cloud peaks 15-40 deg up, which is
+    // where the reference frame's towers stand over the ridge line, and the
+    // zenith stays comparatively open.
+    field += 0.085 * smoothstep(0.04, 0.22, rd.y) * (1.0 - smoothstep(0.50, 0.92, rd.y));
+    float density = smoothstep(0.452, 0.520, field);
     density *= smoothstep(0.010, 0.075, rd.y);
 
     if (density > 0.004) {
@@ -535,18 +539,19 @@ void main() {
     } else {
       // Aged sand-lime plaster: coarse mottling, long vertical rain streaks,
       // drip stains under the eaves and rising damp at the plinth.
-      float mottle = fbm3s(uv * 1.25 + 4.0);
-      float coarse = fbm2(uv * 0.42 + 21.0);
-      baseCol *= 0.82 + 0.30 * mottle + 0.14 * coarse;
+      // Fine first: big soft octaves read as coffee stains at close range.
+      float mottle = fbm3s(uv * 2.60 + 4.0);
+      float coarse = fbm2(uv * 1.10 + 21.0);
+      baseCol *= 0.84 + 0.26 * mottle + 0.07 * coarse;
       baseCol *= vec3(0.94, 0.92, 0.87);          // warm cream, not white paper
 
       float streakU = (vWorldPos.x + vWorldPos.z) * 6.0;
       float streak = fbm2(vec2(streakU, vWorldPos.y * 0.22 + 5.0));
-      baseCol *= 1.0 - 0.26 * smoothstep(0.46, 0.80, streak);
+      baseCol *= 1.0 - 0.18 * smoothstep(0.46, 0.80, streak);
 
       // Drip staining directly under each storey's eave line.
       float underEave = fract((vWorldPos.y + 3.06) / 3.02);
-      baseCol *= mix(0.62, 1.0, smoothstep(0.0, 0.16, underEave));
+      baseCol *= mix(0.74, 1.0, smoothstep(0.0, 0.16, underEave));
 
       float damp = 1.0 - smoothstep(-3.02, -2.10, vWorldPos.y);
       baseCol *= mix(1.0, 0.60, damp * damp);
@@ -576,8 +581,8 @@ void main() {
     // Grain streaks run along the board: high frequency across, low along.
     float grain = fbm3s(vec2(along * 1.7, across * 34.0) + bi * 7.3);
 
-    baseCol *= vec3(0.90, 0.80, 0.72);          // palette: darker, redder cedar
-    baseCol *= (1.0 + tone * 0.26) * (0.46 + 0.54 * seam);
+    baseCol *= vec3(0.87, 0.81, 0.77);          // palette: weathered, not varnished
+    baseCol *= (1.0 + tone * 0.34) * (0.40 + 0.60 * seam);
     baseCol *= 0.84 + 0.30 * grain;
     // Long silvered weathering streaks: sun-greyed in the middle of a board,
     // dark where water runs at the seams.
@@ -801,7 +806,7 @@ void main() {
 
   // ---- Aerial perspective ------------------------------------------------
   if (!indoor && abs(vWorldPos.z) > 30.0) {
-    float haze = 1.0 - exp(-(abs(vWorldPos.z) - 22.0) * 0.0090);
+    float haze = 1.0 - exp(-(abs(vWorldPos.z) - 18.0) * 0.0160);
     vec3 hazeCol = mix(vec3(0.016, 0.026, 0.060), vec3(0.150, 0.280, 0.430), dayMix);
     hazeCol += vec3(1.0, 0.74, 0.40) * uPlumeGlow * 0.12;
     litColor = mix(litColor, hazeCol, clamp(haze, 0.0, 0.72));

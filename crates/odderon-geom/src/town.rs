@@ -294,7 +294,7 @@ pub fn build_uchinoura_street_static(buf: &mut MeshBuffer) {
 
     // 2A. `-Z` STREETSCAPE NEIGHBORS FLANKING `UCHINOURA MAISON` (`image-18.png` Shoulder-to-Shoulder Architecture!):
     let kominka_timber = [0.135, 0.082, 0.050];
-    let kominka_shutter = [0.185, 0.122, 0.086];
+    let kominka_shutter = [0.150, 0.112, 0.088];
     let kawara_dark = [0.10, 0.11, 0.13];
 
     // Right of `Uchinoura Maison` (`x in [2.82, 8.45], z in [-2.5, 2.38]`): 2-Story Weathered Corrugated Steel Annex
