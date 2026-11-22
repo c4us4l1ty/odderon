@@ -71,6 +71,29 @@ log. After that the gate is live and a single differing bit fails the build.
 An intentional algorithm change means updating `golden.txt` **and** noting it here, in the same commit.
 An unintentional one is a bug with a number attached.
 
+### 1.4b A correction worth keeping visible
+
+The first version of `exp` used **ten** terms of the Taylor series, with a comment claiming "~1e-18
+relative". Both halves of that were wrong:
+
+- truncation error is `|r|^n / n!` at the interval edge `|r| = ln2/2 = 0.3466`, which for `n = 10` is
+  **6.9e−12** — four orders worse than claimed, and the measured error matched theory to three digits;
+- it takes **fourteen** terms to reach the f64 evaluation floor of ~2.2e−16, beyond which more terms buy
+  nothing because Horner's rounding dominates.
+
+It was caught by `tools/verify-math.mjs` — a JavaScript transcription of the algorithm — running in the
+dev sandbox *before* the Rust test could have caught it. Three lessons, all of which are the project's
+stated method working as intended:
+
+1. **The comment was the bug.** A stated tolerance nobody measured is worse than no tolerance, because it
+   is believed. Every coefficient count in this crate now derives from a truncation-error bound that is
+   written next to it.
+2. **Verification does not have to happen in Rust.** IEEE-754 binary64 is IEEE-754 binary64; JS `number`
+   and Rust `f64` agree bit for bit on `+ − × ÷`. An algorithm can therefore be checked, and its
+   tolerance measured, before it is ever compiled.
+3. **The failing test was right and the comment was wrong.** The instinct to widen the tolerance is the
+   instinct that produces a renderer which reports a benchmark it never took.
+
 ### 1.5 What determinism does *not* mean
 
 - **Not "correctly rounded".** `odderon-dmath` targets ~1e-15 relative accuracy, tested against the

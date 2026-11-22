@@ -353,10 +353,31 @@ pub fn sin_cos(x: f64) -> (f64, f64) {
 // exp
 // ---------------------------------------------------------------------------------------------
 
-/// `exp(r)` as a power series, on `|r| ≤ ln2/2 = 0.347`. Ten terms give ~1e-18 relative error.
-const EXP_P: [f64; 10] = [
+/// `exp(r)` as a power series, on `|r| ≤ ln2/2 = 0.3466`.
+///
+/// **Fourteen terms, and the count was measured rather than guessed.** The truncation error is
+/// `|r|^n / n!`, which peaks at the interval edge, so the number of terms is a fact about the
+/// interval, not a matter of taste:
+///
+/// ```text
+///   n = 10   truncation 6.9e−12   (this was the original choice — four orders too few)
+///   n = 11   truncation 2.2e−13
+///   n = 12   truncation 6.3e−15
+///   n = 13   truncation 1.7e−16
+///   n = 14   truncation 4.1e−18   <- below the f64 evaluation floor of ~2.2e−16
+/// ```
+///
+/// Beyond fourteen terms the measured error stops improving, because Horner's rounding in `f64`
+/// dominates. Fourteen is therefore the cheapest count that reaches machine precision, and the test
+/// `accuracy_against_platform` enforces 1e-15 relative so a future "optimisation" cannot quietly
+/// drop back to ten.
+///
+/// (The original comment here claimed ten terms gave 1e-18. That was wrong, it was caught by
+/// `tools/verify-math.mjs` in the dev sandbox before it reached a test, and it is recorded rather
+/// than quietly corrected — see docs/DETERMINISM.md §1.4.)
+const EXP_P: [f64; 14] = [
     1.0,
-    1.0,
+    1.0 / 1.0,
     1.0 / 2.0,
     1.0 / 6.0,
     1.0 / 24.0,
@@ -365,6 +386,10 @@ const EXP_P: [f64; 10] = [
     1.0 / 5_040.0,
     1.0 / 40_320.0,
     1.0 / 362_880.0,
+    1.0 / 3_628_800.0,
+    1.0 / 39_916_800.0,
+    1.0 / 479_001_600.0,
+    1.0 / 6_227_020_800.0,
 ];
 
 /// `e^x`, accurate to ~1e-15 relative across the representable range.
@@ -750,7 +775,9 @@ mod tests {
                 let e = x.ln();
                 assert!(fabs(ln(x) - e) < 1e-14 * fmax(fabs(e), 1.0), "ln at {}", x);
                 let want = (x * 0.01).exp();
-                assert!(fabs(exp(x * 0.01) - want) / want < 1e-14, "exp at {}", x);
+                // 1e-15 relative is achievable and enforced: with EXP_P at 14 terms the measured
+                // error is ~2e-16, i.e. at the f64 floor. A regression to fewer terms fails here.
+                assert!(fabs(exp(x * 0.01) - want) / want < 1e-15, "exp at {}", x);
             }
         }
     }

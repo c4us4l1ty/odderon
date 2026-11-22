@@ -80,66 +80,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # These are the laws that cannot be enforced by types without also being enforceable by grep.
-      # Each one corresponds to a rule in docs/VISION.md §3 and docs/DETERMINISM.md.
-      - name: no host libm transcendentals in kernel crates
-        run: |
-          set +e
-          # Excluded from the rule, deliberately:
-          #  * crates/odderon-dmath/src/lib.rs — it *is* the kernel's transcendentals;
-          #  * the #[cfg(test)] module of that file — it compares against the platform on purpose.
-          hits=$(grep -rnE '\.(sin|cos|tan|asin|acos|atan|atan2|exp|exp2|expm1|ln|log|log2|log10|powf|powi|cbrt|hypot|sinh|cosh|tanh|to_degrees)\(' \
-                   crates --include='*.rs' \
-                 | grep -v 'crates/odderon-dmath/src/lib.rs'
-                 | grep -v '#\[allow(clippy::disallowed_methods)\]' || true)
-          if [ -n "$hits" ]; then
-            echo "::error::Host transcendental used in the kernel. Use odderon_dmath instead."
-            echo "$hits"
-            exit 1
-          fi
-          echo "ok: no host transcendentals outside odderon-dmath"
-      - name: no wall clock in kernel crates
-        run: |
-          set +e
-          hits=$(grep -rnE 'Instant::now|SystemTime::now|std::time|core::time' crates --include='*.rs')
-          if [ -n "$hits" ]; then
-            echo "::error::Wall clock read in the kernel. Time is an argument (t: i64), never a query."
-            echo "$hits"
-            exit 1
-          fi
-          echo "ok: kernel has no clock"
-      - name: no hash-order dependence in kernel crates
-        run: |
-          set +e
-          hits=$(grep -rnE '\b(HashMap|HashSet)\b' crates --include='*.rs')
-          if [ -n "$hits" ]; then
-            echo "::error::HashMap/HashSet iteration order is not deterministic. Use BTreeMap or indexed vectors."
-            echo "$hits"
-            exit 1
-          fi
-          echo "ok: no HashMap in kernel"
-      - name: no binary assets (GRAPHICS.md R1)
-        run: |
-          set +e
-          hits=$(git ls-files | grep -iE '\.(png|jpe?g|webp|gif|bmp|tga|dds|ktx2?|basis|obj|fbx|gltf|glb|dae|3ds|blend)$')
-          if [ -n "$hits" ]; then
-            echo "::error::Binary asset found. Every surface must be a function S(u,v,t)."
-            echo "$hits"
-            exit 1
-          fi
-          echo "ok: zero binary assets"
-      - name: kernel does not depend on presentation
-        run: |
-          set +e
-          # Guard the boundary that makes determinism and Proof-of-Flight possible.
-          hits=$(grep -rnE 'odderon_(present|shell)|web_sys|js_sys|wasm_bindgen' crates --include='*.rs' \
-                   | grep -vE 'crates/(odderon-present|odderon-shell)/')
-          if [ -n "$hits" ]; then
-            echo "::error::Kernel crate touched the presentation layer."
-            echo "$hits"
-            exit 1
-          fi
-          echo "ok: kernel/presenter boundary intact"
+      # The rules live in ci/kernel-policy.sh so they can be read, run locally, and tested by
+      # injecting a violation. Rationale for each rule: docs/DETERMINISM.md §1.3.
+      - name: kernel policy
+        run: bash ci/kernel-policy.sh
 
   # -------------------------------------------------------------------------------------------
   # ADVISORY during bootstrap. Armed after the first green run — see the decision in
