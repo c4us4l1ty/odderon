@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/odderon-dmath", "crates/odderon-dmath-wasm"]
+members = ["crates/odderon-dmath", "crates/odderon-dmath-wasm", "crates/odderon-astro"]
 
 [workspace.package]
 version = "0.1.0"

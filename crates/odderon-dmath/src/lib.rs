@@ -693,6 +693,50 @@ pub fn pow(a: f64, b: f64) -> f64 {
 }
 
 // ---------------------------------------------------------------------------------------------
+// inverse trig
+// ---------------------------------------------------------------------------------------------
+
+/// Clamp to `[-1, 1]`, the domain of [`acos`] and [`asin`].
+///
+/// Exists because rounding in a dot product of unit vectors routinely yields `1.0000000000000002`, and
+/// `acos` of that is NaN. A simulator that produces NaN because two unit vectors were *too* parallel is
+/// a simulator with a bug, so the clamp is part of the API rather than the caller's problem.
+#[inline]
+pub fn clamp_unit(x: f64) -> f64 {
+    if x > 1.0 {
+        1.0
+    } else if x < -1.0 {
+        -1.0
+    } else {
+        x
+    }
+}
+
+/// Arc cosine, in `[0, π]`.
+///
+/// Computed as `atan2(√((1−x)(1+x)), x)`: it reuses [`atan2`] and [`sqrt`], so it is exactly as
+/// deterministic as they are, and writing `1 − x²` as `(1−x)(1+x)` keeps precision for `|x|` near 1.
+/// The argument is clamped to the domain (see [`clamp_unit`]).
+pub fn acos(x: f64) -> f64 {
+    note_op();
+    if x.is_nan() {
+        return f64::NAN;
+    }
+    let x = clamp_unit(x);
+    atan2(sqrt((1.0 - x) * (1.0 + x)), x)
+}
+
+/// Arc sine, in `[−π/2, π/2]`, as `atan2(x, √((1−x)(1+x)))`.
+pub fn asin(x: f64) -> f64 {
+    note_op();
+    if x.is_nan() {
+        return f64::NAN;
+    }
+    let x = clamp_unit(x);
+    atan2(x, sqrt((1.0 - x) * (1.0 + x)))
+}
+
+// ---------------------------------------------------------------------------------------------
 // the determinism probe surface
 // ---------------------------------------------------------------------------------------------
 
@@ -773,6 +817,8 @@ pub fn golden_hash() -> u64 {
         h = mix(h, sqrt(fabs(x)));
         h = mix(h, cosh(x * 0.1));
         h = mix(h, sinh(x * 0.1));
+        h = mix(h, acos(clamp_unit(x * 1e-3)));
+        h = mix(h, asin(clamp_unit(x * 1e-3)));
         i += 1;
     }
     h
@@ -923,6 +969,28 @@ mod tests {
             }
             x += 0.37;
         }
+    }
+
+    #[test]
+    fn inverse_trigonometry() {
+        for &x in PROBES.iter() {
+            let a = atan(x);
+            let e1 = fabs(acos(cos(a)) - fabs(a));
+            assert!(e1 < 1e-14, "acos∘cos at {}: {}", x, e1);
+            let e2 = fabs(asin(sin(a)) - a);
+            assert!(e2 < 1e-14, "asin∘sin at {}: {}", x, e2);
+            if (-1.0..=1.0).contains(&x) {
+                assert!(fabs(acos(x) - x.acos()) < 1e-15, "acos at {}", x);
+                assert!(fabs(asin(x) - x.asin()) < 1e-15, "asin at {}", x);
+            }
+        }
+        // Domain clamping: |x| can exceed 1 by an ulp after a dot product of unit vectors.
+        assert!(acos(1.000_000_000_000_000_2).is_finite());
+        assert!(acos(-1.000_000_000_000_000_2).is_finite());
+        assert_eq!(acos(1.0), 0.0);
+        assert!(fabs(acos(-1.0) - PI) < 1e-15);
+        assert!(fabs(asin(1.0) - FRAC_PI_2) < 1e-15);
+        assert!(fabs(asin(-1.0) + FRAC_PI_2) < 1e-15);
     }
 
     #[test]
