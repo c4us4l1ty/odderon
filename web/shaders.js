@@ -738,7 +738,7 @@ void main() {
 
     float ndl = max(dot(N, L), 0.0);
     float wrap = clamp((ndl + 0.03) / 1.03, 0.0, 1.0);
-    directLight = sunColor * 1.30 * wrap * shadowVis;
+    directLight = sunColor * 1.50 * wrap * shadowVis;
 
     // Ground proximity AO on the street + a soft soffit term so eaves and the
     // underside of balconies go genuinely dark.
@@ -753,7 +753,7 @@ void main() {
     ambient = mix(groundFill, skyFill, upness) * ao;
     // Shade is dimmer than sun, but it is still *sky*, so keep most of the fill:
     // the reference's shaded timber is a deep blue-brown, never black.
-    ambient *= mix(0.80, 1.0, shadowVis);
+    ambient *= mix(0.66, 1.0, shadowVis);
     // Down-facing soffits look at the sunlit street, not at the sky: without
     // this fill every eave underside renders as a flat black bar.
     ambient = mix(ambient, ambient * 1.85 + groundFill * 0.55 * dayMix,
@@ -764,11 +764,14 @@ void main() {
     if (mat == 12) {
       float thin = pow(clamp(1.0 - abs(dot(N, V)), 0.0, 1.0), 1.2);
       float scatter = 0.42 + 0.58 * thin;
+      // Only *blades* get the translucency. A flat up-facing MAT_FOLIAGE quad is
+      // the verge strip or the meadow, which must stay ground, not glow.
+      float bladeMask = 1.0 - smoothstep(0.85, 0.96, N.y);
       // Sun *inside* the blade (subsurface), plus a green ambient floor so
       // grass in street shade still reads as grass instead of black wire.
-      directLight += vec3(0.62, 0.95, 0.14) * scatter * dayMix * (0.30 + 0.70 * shadowVis) * 0.72;
-      directLight += vec3(0.98, 0.94, 0.40) * max(N.y, 0.0) * shadowVis * dayMix * 0.22;
-      ambient += vec3(0.052, 0.112, 0.018) * dayMix * ao * (0.55 + 0.45 * shadowVis);
+      directLight += vec3(0.62, 0.95, 0.14) * scatter * dayMix * (0.30 + 0.70 * shadowVis) * 0.72 * bladeMask;
+      directLight += vec3(0.98, 0.94, 0.40) * max(N.y, 0.0) * shadowVis * dayMix * 0.22 * bladeMask;
+      ambient += vec3(0.052, 0.112, 0.018) * dayMix * ao * (0.55 + 0.45 * shadowVis) * bladeMask;
     }
   }
 
@@ -809,8 +812,8 @@ void main() {
   // bank at the end of the street is close in world units but far in screen
   // terms, and z-only haze left it reading as a flat green wall.
   float eyeDist = length(vWorldPos - uCamPos);
-  if (!indoor && eyeDist > 12.0) {
-    float haze = 1.0 - exp(-(eyeDist - 12.0) * 0.0220);
+  if (!indoor && eyeDist > 22.0) {
+    float haze = 1.0 - exp(-(eyeDist - 22.0) * 0.0160);
     vec3 hazeCol = mix(vec3(0.016, 0.026, 0.060), vec3(0.150, 0.280, 0.430), dayMix);
     hazeCol += vec3(1.0, 0.74, 0.40) * uPlumeGlow * 0.12;
     litColor = mix(litColor, hazeCol, clamp(haze, 0.0, 0.72));
@@ -829,7 +832,7 @@ void main() {
   // Vibrance: push saturated mids harder than neutrals, then a little global
   // chroma so foliage and tiles read as pigment rather than grey plastic.
   float sat = max(max(mapped.r, mapped.g), mapped.b) - min(min(mapped.r, mapped.g), mapped.b);
-  mapped = mix(vec3(luma), mapped, 1.08 + 0.62 * (1.0 - sat));
+  mapped = mix(vec3(luma), mapped, 1.05 + 0.34 * (1.0 - sat));
   // Split tone: cool violet shade, warm amber light — the two-temperature
   // grade the reference frame is built on.
   mapped += vec3(-0.004, 0.010, 0.030) * (1.0 - smoothstep(0.0, 0.45, luma));

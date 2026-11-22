@@ -246,7 +246,7 @@ pub fn build_uchinoura_street_static(buf: &mut MeshBuffer) {
     // 1. Deep Sunlit Summer Meadow/Town Ground, Sidewalks, Curbs & Dark Weathered Asphalt Street!
     buf.add_box(Vec3::new(-220.0, ground_y - 0.35, -95.0), Vec3::new(220.0, ground_y, 160.0), [0.072, 0.132, 0.055], MAT_FOLIAGE);
 
-    let sidewalk_stone = [0.40, 0.38, 0.34];
+    let sidewalk_stone = [0.315, 0.300, 0.275];
     let curb_stone = [0.32, 0.31, 0.28];
     buf.add_box(Vec3::new(-42.0, ground_y + 0.005, -2.5), Vec3::new(42.0, ground_y + 0.14, 4.78), sidewalk_stone, MAT_MATTE);
     buf.add_box(Vec3::new(-42.0, ground_y + 0.005, 9.45), Vec3::new(42.0, ground_y + 0.14, 12.6), sidewalk_stone, MAT_MATTE);
@@ -333,7 +333,7 @@ pub fn build_uchinoura_street_static(buf: &mut MeshBuffer) {
         &MachiyaHouseSpec {
             width: 7.40,
             depth: 6.4,
-            plaster_col: [0.50, 0.43, 0.33],
+            plaster_col: [0.420, 0.370, 0.295],
             timber_col: kominka_timber,
             shutter_wood_col: kominka_shutter,
             tile_col: kawara_dark,
@@ -370,7 +370,7 @@ pub fn build_uchinoura_street_static(buf: &mut MeshBuffer) {
         &MachiyaHouseSpec {
             width: 8.10,
             depth: 6.8,
-            plaster_col: [0.56, 0.50, 0.40],
+            plaster_col: [0.460, 0.415, 0.345],
             timber_col: kominka_timber,
             shutter_wood_col: kominka_shutter,
             tile_col: kawara_dark,
@@ -388,7 +388,7 @@ pub fn build_uchinoura_street_static(buf: &mut MeshBuffer) {
         &MachiyaHouseSpec {
             width: 7.40,
             depth: 6.6,
-            plaster_col: [0.52, 0.47, 0.38],
+            plaster_col: [0.430, 0.390, 0.320],
             timber_col: kominka_timber,
             shutter_wood_col: [0.25, 0.14, 0.072],
             tile_col: [0.14, 0.15, 0.17],

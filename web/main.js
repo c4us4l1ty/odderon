@@ -546,7 +546,10 @@ async function boot() {
     }
 
     // Coastal Pad-1 343 m/s Shockwave Propagation Banner
-    const waveVis = plumeAge >= 0 && plumeAge < 12.5;
+    // ?capture=1&hud=0 must stay clean for the screenshot harness (the banner
+    // is re-shown every time the plume state changes, so hiding it at boot is
+    // not enough).
+    const waveVis = !(CAPTURE_MODE && CAPTURE_HIDE_HUD) && plumeAge >= 0 && plumeAge < 12.5;
     if (waveVis !== prevWaveVis) {
       elWaveBanner.style.display = waveVis ? 'block' : 'none';
       prevWaveVis = waveVis;
