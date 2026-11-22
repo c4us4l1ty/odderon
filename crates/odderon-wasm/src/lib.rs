@@ -1,6 +1,6 @@
 //! Zero-allocation C-ABI WebAssembly interface for Odderon.
 //! Exposes pre-allocated vertex/index buffers, revision counters for zero-upload unchanged frames,
-//! lossless audio impulse latching, and a flat 64-float telemetry ring out of WASM linear memory.
+//! lossless audio impulse latching, and a flat 76-float telemetry ring out of WASM linear memory.
 
 use core::fmt::Write;
 use odderon_geom::{
@@ -222,12 +222,17 @@ impl EngineInstance {
 
 static ENGINE: Mutex<Option<EngineInstance>> = Mutex::new(None);
 
+/// Recover the engine mutex even if a previous call panicked inside it.
+///
+/// A plain `lock().unwrap()` poisons the mutex on the first panic, after which
+/// *every* later call panics too and the page is dead for good. A wasm export
+/// that unwinds (or traps mid-frame) should cost one frame, not the session.
 fn with_engine<R>(f: impl FnOnce(&mut EngineInstance) -> R) -> R {
-    let mut guard = ENGINE.lock().unwrap();
+    let mut guard = ENGINE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if guard.is_none() {
         *guard = Some(EngineInstance::new());
     }
-    f(guard.as_mut().unwrap())
+    f(guard.as_mut().expect("engine instance is created above"))
 }
 
 fn target_from_u8(code: u8) -> TargetId {
@@ -259,7 +264,7 @@ fn target_from_u8(code: u8) -> TargetId {
 
 #[no_mangle]
 pub extern "C" fn odderon_init() {
-    let mut guard = ENGINE.lock().unwrap();
+    let mut guard = ENGINE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     *guard = Some(EngineInstance::new());
 }
 
@@ -310,6 +315,20 @@ pub extern "C" fn odderon_step(
         eng.sync_telemetry();
         if eng.sim.is_visually_settled() { 1 } else { 0 }
     })
+}
+
+/// Advance the simulated world without rebuilding meshes or telemetry.
+///
+/// `wakePresenter()` catches the clock up after the presenter has been parked
+/// (the world keeps living while nothing is drawn). That used to call
+/// `odderon_step` per chunk, which rebuilds the whole dynamic mesh every time -
+/// a two-minute absence cost 480 rebuilds in one frame. Catch-up now runs on
+/// this quiet path and the caller rebuilds once at the end.
+#[no_mangle]
+pub extern "C" fn odderon_advance_ms(dt_ms: u32) {
+    with_engine(|eng| {
+        eng.sim.step_ms(dt_ms);
+    });
 }
 
 #[no_mangle]

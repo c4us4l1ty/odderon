@@ -415,8 +415,20 @@ async function boot() {
   const elCausalBody = document.getElementById('eidos-causal-body');
   const elProvBody = document.getElementById('eidos-prov-body');
 
+  // Cached telemetry window. `new Float32Array(mem, ptr, n)` is cheap but it is
+  // still an allocation, and this is called several times per frame from the
+  // presenter and the DOM overlays (PERFORMANCE.md N4: zero allocations in the
+  // frame loop). The view also *detaches* if the wasm heap ever grows, so it is
+  // rebuilt whenever the underlying ArrayBuffer identity changes.
+  let telemetryView = null;
+  let telemetryBuffer = null;
   function getTelemetryView() {
-    return new Float32Array(wasm.memory.buffer, wasm.odderon_telemetry_ptr(), 76);
+    const buffer = wasm.memory.buffer;
+    if (buffer !== telemetryBuffer) {
+      telemetryBuffer = buffer;
+      telemetryView = new Float32Array(buffer, wasm.odderon_telemetry_ptr(), 76);
+    }
+    return telemetryView;
   }
 
   function unprojectClientRay(clientX, clientY) {
@@ -444,11 +456,20 @@ async function boot() {
     if (isParked && parkedAtWallMs > 0) {
       let sleptMs = Math.min(120000, Math.max(0, Math.round(performance.now() - parkedAtWallMs)));
       parkedAtWallMs = 0;
+      // A capture has to be a pure function of its URL. Letting the world gain
+      // time while the presenter is parked made the shuttle bus land anywhere
+      // on its 90 s schedule, so the same view photographed a different street
+      // every run (and half the art comparisons were measuring a bus grille).
+      if (CAPTURE_MODE) sleptMs = 0;
+      // 250 ms is the sim's own per-call clamp; going coarser would silently
+      // drop time. The catch-up loop uses the quiet path, so the dynamic mesh
+      // is rebuilt once below instead of once per chunk.
       while (sleptMs > 0) {
         const chunk = Math.min(250, sleptMs);
-        wasm.odderon_step(chunk, 0, 0, 0, 0);
+        wasm.odderon_advance_ms(chunk);
         sleptMs -= chunk;
       }
+      wasm.odderon_step(0, 0, 0, 0, 0);
       const t = getTelemetryView();
       syncDynamicMeshes(t[30] > 0.5);
       syncAudioAndAck(t);
@@ -718,7 +739,10 @@ async function boot() {
   function presentFrame(nowMs) {
     rafId = 0;
     const frameStart = performance.now();
-    const dtMs = Math.min(100, Math.max(1, Math.round(nowMs - lastFrameTimeMs)));
+    // Capture mode holds the world clock still: otherwise the sun angle and the
+    // shuttle's position depend on how long the page took to load, and two runs
+    // of the same view differ by a few hundred milliseconds of simulation.
+    const dtMs = CAPTURE_MODE ? 0 : Math.min(100, Math.max(1, Math.round(nowMs - lastFrameTimeMs)));
     lastFrameTimeMs = nowMs;
 
     rafCountWindow++;
@@ -800,15 +824,20 @@ async function boot() {
   }
 
   // Discrete scheduled distant Pad-1 morning static fire at T = 9.0s (wakes presenter via event, zero polling!)
-  setTimeout(() => {
-    if (wasm.odderon_auto_fire_done() === 0) {
-      wasm.odderon_toggle_target(11);
-      const t = getTelemetryView();
-      syncDynamicMeshes(t[30] > 0.5);
-      syncAudioAndAck(t);
-      wakePresenter(30);
-    }
-  }, 9000);
+  // Wall-clock scheduled, so a capture taken more than nine seconds after load
+  // would sometimes catch a 300 m plume and sometimes not - the single biggest
+  // source of "the same view looks different every run".
+  if (!CAPTURE_MODE) {
+    setTimeout(() => {
+      if (wasm.odderon_auto_fire_done() === 0) {
+        wasm.odderon_toggle_target(11);
+        const t = getTelemetryView();
+        syncDynamicMeshes(t[30] > 0.5);
+        syncAudioAndAck(t);
+        wakePresenter(30);
+      }
+    }, 9000);
+  }
 
   // Fade open wake-up eyelids immediately (IMMERSION.md N1)
   requestAnimationFrame(() => {
