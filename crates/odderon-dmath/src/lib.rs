@@ -401,7 +401,7 @@ pub fn sin_cos(x: f64) -> (f64, f64) {
 /// than quietly corrected — see docs/DETERMINISM.md §1.4.)
 const EXP_P: [f64; 14] = [
     1.0,
-    1.0 / 1.0,
+    1.0,
     1.0 / 2.0,
     1.0 / 6.0,
     1.0 / 24.0,
