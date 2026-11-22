@@ -66,7 +66,10 @@ function ldexp(x, k) {
 }
 
 const SIN_P = [1, -1 / 6, 1 / 120, -1 / 5040, 1 / 362880, -1 / 39916800, 1 / 6227020800, -1 / 1307674368000];
-const COS_P = [1, -1 / 2, 1 / 24, -1 / 720, 1 / 40320, -1 / 3628800, 1 / 479001600];
+const COS_P = [
+  1, -1 / 2, 1 / 24, -1 / 720, 1 / 40320, -1 / 3628800, 1 / 479001600,
+  -1 / 87178291200, 1 / 20922789888000,
+];
 const EXP_P = [
   1, 1, 1 / 2, 1 / 6, 1 / 24, 1 / 120, 1 / 720, 1 / 5040, 1 / 40320, 1 / 362880,
   1 / 3628800, 1 / 39916800, 1 / 479001600, 1 / 6227020800,
@@ -176,7 +179,21 @@ function report(name, got, want) {
   return ok;
 }
 
-let allOk = true;
+// Pythagorean identity across a dense sweep: this is the test that caught COS_P being too short.
+let pythWorst = 0;
+let pythAt = 0;
+for (let i = -20000; i <= 20000; i++) {
+  const x = i * 0.0003;
+  const [q, rr] = reduceHalfPi(x);
+  const s = [polySin(rr), polyCos(rr)];
+  const [sn, cs] = [mod4(q) === 0 ? s[0] : mod4(q) === 1 ? s[1] : mod4(q) === 2 ? -s[0] : -s[1],
+                    mod4(q) === 0 ? s[1] : mod4(q) === 1 ? -s[0] : mod4(q) === 2 ? -s[1] : s[0]];
+  const err = Math.abs(sn * sn + cs * cs - 1);
+  if (err > pythWorst) { pythWorst = err; pythAt = x; }
+}
+console.log(`${pythWorst < 1e-15 ? "PASS" : "FAIL"}  sin2+cos2 max err ${pythWorst.toExponential(2)}  at x=${pythAt.toFixed(4)}`);
+
+let allOk = pythWorst < 1e-15;
 allOk &= report("sin", sin, Math.sin);
 allOk &= report("cos", cos, Math.cos);
 allOk &= report("atan", atan, Math.atan);
