@@ -300,6 +300,19 @@ async function boot() {
     if (captureWarmth !== null) t[9] = captureWarmth;
   }
 
+  // Dev-only: paint exactly one frame from the URL override and stop. The
+  // presenter parks itself when the sim settles, and a parked page keeps
+  // whatever was last composited, so `freeze()` must draw rather than just flip
+  // a flag - otherwise a capture can grab the default start pose.
+  function presentCaptureFrame() {
+    const t = getTelemetryView();
+    if (CAPTURE_MODE) applyCaptureOverrides(t);
+    syncDynamicMeshes(t[30] > 0.5);
+    updateCanvasResolution();
+    renderWebGL(t);
+    updateDomOverlays(t, true);
+  }
+
   // Dev-only introspection surface for `tools/screenshot.mjs` (frame budget + pose read-out).
   let captureFrozen = false;
   if (CAPTURE_MODE) {
@@ -307,7 +320,7 @@ async function boot() {
       pose: () => Array.from(getTelemetryView()).slice(0, 10),
       frame: () => ({ ms: smoothedFrameCostMs, draws: lastDrawCalls, quality: qualityScale,
                       px: [fbWidth, fbHeight], parked: isParked }),
-      freeze: () => { captureFrozen = true; },
+      freeze: () => { captureFrozen = true; presentCaptureFrame(); },
       thaw: () => { captureFrozen = false; wakePresenter(4); },
     };
   }
