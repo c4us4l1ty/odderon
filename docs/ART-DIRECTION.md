@@ -44,6 +44,12 @@ mirror the real massing in `crates/odderon-geom/src/town.rs`:
 * thin slabs for each 2F kawara eave and 1F hisashi, so the shade under an eave
   is the depth of its overhang divided by the sun's tangent.
 
+`boxOcclusion()` returns a *fraction*, not 0/1: `tf - tn` is how much of the
+ray actually travels inside the box, and a grazing ray is only partly shadowed.
+That penumbra grows with ray length (capped at 0.30 m, so a 0.28 m eave slab
+still casts a real shadow from across the street) and is the reason a slab's
+shadow edge does not read as a hard decal on the neighbouring wall.
+
 If `town.rs` geometry moves, these boxes must move with it. There is no shadow
 map and there never will be at this budget.
 
@@ -59,28 +65,52 @@ the sky, and a soffit receives it from the sunlit street below. Both are
 modelled explicitly:
 
 ```
-skyFill    day = (0.40, 0.50, 0.78)      // hemispherical blue
+skyFill    day = (0.425, 0.495, 0.742)   // hemispherical blue, canyon-desaturated
 groundFill day = (0.24, 0.20, 0.15)      // warm concrete bounce
 ambient *= mix(0.66, 1.0, shadowVis)     // shade is dimmer, never black
+ambient += groundFill * (1-shadowVis) * dayMix * (1-upness) * 0.15
 ambient  = mix(ambient, ambient*1.85 + groundFill*0.55, soffitMask)
 ```
 
 Without these two terms, ACES' quadratic toe crushes sky-lit timber to `0.01`
 and every eave reads as a hole punched in the wall.
 
+Two calibrations learned the hard way:
+
+* the fill is **less blue than the sky**. A street canyon shows a facade maybe
+  40° of open sky, and what reaches it has bounced. A fully saturated fill
+  turns every shaded surface navy; at `(0.40, 0.50, 0.78)` a shaded steel wall
+  measured `(12, 20, 35)` against a lit `(100, 110, 118)` — a hole, not a shade.
+* a big shaded-vertical bounce (0.34 of `groundFill`) flattens the whole scene:
+  view 05 dropped from 29 % dark to 19 % in one step.
+
+Indoors the same structure runs on different numbers: `skyFill` 0.335/0.412/0.610
+and a warm timber `bounceFill` 0.418/0.302/0.183, both multiplied by
+`computeRoomAO()`. At the old values the room was 81 % dark at mean 0.153.
+
 ## 4. Grade to the reference's histogram, not to taste
 
 `tools/art-compare.mjs` prints the distribution of every view next to the
 reference frame. The reference is a low-key image:
 
-| | mean | p25 | p50 | p95 | dark<0.09 | hot>0.95 | sat |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| reference | 0.288 | 0.092 | 0.228 | 0.684 | 39 % | 0 % | 0.444 |
-| 05 street | 0.305 | 0.141 | 0.255 | 0.625 | 29 % | 0 % | 0.437 |
+| | mean | p25 | p50 | p95 | dark<0.09 | hot>0.95 | sat | warm/cool |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| reference | 0.288 | 0.092 | 0.228 | 0.684 | 39 % | 0 % | 0.444 | 55/38 |
+| 01 room window | 0.180 | 0.099 | 0.126 | 0.508 | 66 % | 0 % | 0.460 | 62/31 |
+| 02 window vista | 0.408 | 0.224 | 0.454 | 0.824 | 17 % | 4 % | 0.444 | 66/27 |
+| 03 gallery | 0.375 | 0.127 | 0.325 | 0.787 | 28 % | 0 % | 0.424 | 56/35 |
+| 04 street machiya | 0.333 | 0.191 | 0.308 | 0.735 | 18 % | 0 % | 0.395 | 58/33 |
+| 05 street meadow | 0.320 | 0.158 | 0.301 | 0.623 | 21 % | 0 % | 0.415 | 54/42 |
+| 06 sky cumulus | 0.405 | 0.219 | 0.406 | 0.826 | 16 % | 3 % | 0.474 | 42/47 |
+| 07 interior desk | 0.300 | 0.131 | 0.226 | 0.867 | 31 % | 6 % | 0.282 | 48/24 |
 
 The film chain is: `aces(lit * 0.52)` → sRGB → gamma 1.10 → 22 % S-curve →
-vibrance `1.05 + 0.34·(1-sat)` → split tone (cool violet shade, warm amber
+vibrance `1.05 + 0.46·(1-sat)` → split tone (cool violet shade, warm amber
 light) → lifted black point `x·0.975 + 0.012`.
+
+The street views sit close on mean/p25/p50 and on hue; 01 is still too dark
+(one window, deliberately) and 02/06 still carry the brightest highlights
+because they are the only frames that look at the sky.
 
 Matching the *mean* while carrying 15 % dark pixels is the classic failure: it
 produces pastel product renders. Match the distribution.
@@ -88,8 +118,11 @@ produces pastel product renders. Match the distribution.
 ## 5. Sky
 
 An analytic deck (`rd.xz / max(rd.y, 0.02)`) with three noise scales: tower
-grouping, billow shape, and a fine octave that **erodes** the rim (that erosion
-is what gives a cumulus silhouette instead of fog). The field is biased so
+grouping, billow shape, and a fine octave that **erodes** the rim. Weight it
+toward the grouping scale (0.62 grouping / 0.40 billow / 0.12 erosion) — at
+equal weight the deck reads as out-of-focus smoke. The sky pass is `highp`:
+`pow(sunAmt, 2400.0)` in mediump prints concentric rings around the sun
+instead of a disc. The field is biased so
 coverage peaks 15–40° above the horizon, which is where the reference's towers
 stand over the ridge line. Bases self-shadow toward the sun sample and darken at
 low elevation; crowns keep a silver lining.
@@ -104,6 +137,10 @@ low elevation; crowns keep a silver lining.
   0.055`) and gets the distance haze so it recedes instead of glowing.
 * **Interiors are dark.** A 25 m² room with one window is mostly below 0.09
   luma, and that is the point — the window is the brightest thing in the game.
+  View 01 (mean 0.180, 66 % dark) is the deliberate cost of that rule.
+* **Plaster is nearly neutral.** Lime plaster is grey-cream, not ochre. A
+  yellow-biased albedo multiplied by a warm key turns every facade into a
+  cartoon, which is why the `kominka_*` palettes are all within ~12 % of grey.
 
 ## 7. How to iterate
 

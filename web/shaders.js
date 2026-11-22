@@ -701,7 +701,9 @@ void main() {
     ao = computeRoomAO(vWorldPos, N);
     float ndl = max(dot(N, uSunDir), 0.0);
     float wrap = clamp((ndl + 0.10) / 1.10, 0.0, 1.0);
-    directLight = sunColor * 3.20 * wrap * shadowVis;
+    // Sun patches on tatami clip first: 2.8 keeps the patch reading as a patch
+    // instead of a white hole in the floor.
+    directLight = sunColor * 2.80 * wrap * shadowVis;
 
     // Cool window-driven sky fill + warm timber bounce, both occluded.
     float shojiDim = 1.0 - 0.38 * uShojiClosed;
