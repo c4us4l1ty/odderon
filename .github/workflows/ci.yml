@@ -34,7 +34,7 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - name: cargo test
-        run: cargo test --workspace --all-targets
+        run: bash ci/annotate.sh "cargo test" cargo test --workspace --all-targets
       - name: determinism hash (native)
         run: cargo test -p odderon-dmath --test '*' -- --nocapture
       - name: publish hash for cross-platform comparison
@@ -59,7 +59,7 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - name: cargo build (release, wasm32)
-        run: cargo build --release --target wasm32-unknown-unknown --workspace
+        run: bash ci/annotate.sh "cargo build wasm32" cargo build --release --target wasm32-unknown-unknown --workspace
       # The artifact is the point: it comes back into the dev sandbox via `gh run download`, where
       # the cross-platform determinism check can be run against a *real* wasm binary. Building Rust
       # is what the sandbox cannot do; *running* wasm it can.
@@ -151,7 +151,7 @@ jobs:
         with:
           toolchain: "1.83.0"
           components: rustfmt
-      - run: cargo fmt --all -- --check
+      - run: bash ci/annotate.sh "rustfmt" cargo fmt --all -- --check
 
   clippy:
     name: clippy (advisory)
@@ -165,4 +165,4 @@ jobs:
           targets: wasm32-unknown-unknown
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace --all-targets -- -W clippy::all
+      - run: bash ci/annotate.sh "clippy" cargo clippy --workspace --all-targets -- -W clippy::all
