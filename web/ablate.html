@@ -38,12 +38,15 @@
   <div class="sub">Measures the shader in web/index.html, one feature removed at a time.</div>
   <button id="run">run full matrix</button>
   <table id="tbl">
-    <thead><tr><th>variant</th><th>px</th><th>ms</th><th>ns/px</th><th></th></tr></thead>
+    <thead><tr><th>variant</th><th>px</th><th>ms (median)</th><th>spread</th><th>ns/px</th><th></th></tr></thead>
     <tbody id="body"></tbody>
   </table>
   <div id="out"></div>
   <div class="note">
-    Run on the phone, screen on, plugged in, nothing else in the foreground. Reload to re-run.
+    Run on the phone, screen on, plugged in, nothing else in the foreground. Takes about a minute: 7
+    interleaved rounds over 18 rows. The <b>CONTROL</b> row is the baseline measured a second time — the
+    gap between it and <b>baseline</b> is this instrument's error bar, and no delta smaller than it is a
+    finding. If that gap is over 10% the page refuses to print a verdict.
   </div>
 </div>
 
@@ -220,31 +223,23 @@ function build(fragSrc, vertSrc) {
 // `frames` is chosen so each variant does roughly the same amount of GPU work: a variant that is
 // 20x faster would otherwise barely move the clock and drown in noise.
 
-function timed(prog, locs, drawOnce, frames) {
+// One round = one variant's measurement, inside a shared interleaved schedule.
+//
+// Draw `frames` times, ONE finish at the end, divide. The single-finish amortisation is what removes
+// the per-frame sync cost; the repetition lives in `run()`, not here, so that drift is common-mode
+// across all variants rather than baked into whichever row happened to run at the wrong moment.
+
+function measureRound(prog, locs, drawOnce, frames) {
   frames = Math.max(24, frames);
   gl.useProgram(prog);
-  // warm up: first draw pays shader-cache and pipeline setup that is not steady state
-  for (let i = 0; i < 3; i++) drawOnce(locs);
+  // first draw pays shader-cache and pipeline setup that is not steady state
+  drawOnce(locs);
   gl.finish();
 
-  // --- amortised
   const t0 = performance.now();
   for (let i = 0; i < frames; i++) drawOnce(locs);
   gl.finish();
-  const amortised = (performance.now() - t0) / frames;
-
-  // --- per-sample finish, the in-game method
-  const per = [];
-  for (let i = 0; i < 8; i++) {
-    const a = performance.now();
-    drawOnce(locs);
-    gl.finish();
-    per.push(performance.now() - a);
-  }
-  per.sort((x, y) => x - y);
-  const perSample = per[per.length >> 1];
-
-  return { amortised, perSample };
+  return (performance.now() - t0) / frames;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -322,12 +317,56 @@ function resizeFor(scaleOrHalf) {
   return { w, h };
 }
 
+// ---------------------------------------------------------------------------------------------
+// the schedule
+// ---------------------------------------------------------------------------------------------
+//
+// THE LESSON THIS PAGE PAID FOR. The first version of this matrix ran each variant once, in order, with
+// a 30 ms pause between rows. On Reference A the row "full shader (as shipped)" then read 3.00 ms and
+// the row "resolution 1.00x (native)" read 1.71 ms. Those two rows are THE SAME WORK - same shader, same
+// resolution, same device - and they disagreed by 43%.
+//
+// The cause is not mysterious: a GPU's clock is not constant. It ramps under sustained load, it drops
+// under thermal pressure, and on battery it does both unpredictably. A single sequential pass samples
+// that drift once per variant, so a 1.5 ms variant measured 40 ms into the run is compared against a
+// 3.0 ms variant measured 5 ms into it and the difference is reported as a feature cost.
+//
+// With a 43% bias, five of the nine ablation deltas on this page (corrugation, aerial, sphere, tonemap,
+// sky glow - all landing within 2% of each other at ~1.5 ms) were not measurements at all. They were the
+// same number, which is the signature of an instrument reporting its own noise.
+//
+// Three things fix it, and all three are visible in the output rather than assumed:
+//
+//   1. INTERLEAVE. Every variant is measured once per round, all rounds back to back. Clock drift is
+//      then spread across all variants instead of assigned to whichever row was unlucky.
+//   2. REPEAT. ROUNDS rounds per variant, and the row reports the MEDIAN with the min-max spread. A
+//      delta smaller than the spread is printed as "indistinguishable" instead of as a number.
+//   3. A CONTROL. `control` is the baseline measurement again, indistinguishable from `baseline`. Its
+//      disagreement with `baseline` IS the instrument's error bar, published on the page. If the control
+//      disagrees with the baseline by more than a few percent, every other row is suspect and the page
+//      says so at the top instead of quietly printing numbers.
+
+const ROUNDS = 7;
+
+// One full-screen triangle with whatever uniform state the caller set. Module scope because the schedule
+// uses it from outside the run loop, and because the FBO/texture choice must come from the variant rather
+// than from closure state that changes between rounds.
+function drawOnce(locs, w, h, mode) {
+  setUniforms(locs, w, h, 0.0);
+  if (locs.uFloorTex) {
+    gl.activeTexture(gl.TEXTURE0);
+    // mode 'blit': sample the FBO attachment (the HUD's real path).
+    // mode 'tex' : sample a plain uploaded texture into the same kind of target.
+    gl.bindTexture(gl.TEXTURE_2D, mode === 'blit' ? window.__blitTex : tex);
+  }
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
 async function run() {
   const btn = $('run');
   btn.disabled = true;
-  const rows = [];
   $('body').innerHTML = '';
-  $('out').textContent = 'running…';
+  $('out').textContent = 'compiling ' + VARIANTS.length + ' programs…';
 
   const vbo = gl.createBuffer();           // unused by design: the full-screen triangle is gl_VertexID
   gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
@@ -346,41 +385,80 @@ async function run() {
   gl.bindFramebuffer(gl.FRAMEBUFFER, blitFbo);
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, blitTex, 0);
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  // `drawOnce` lives at module scope and needs to reach the blit attachment; a module-level binding is
+  // clearer than threading it through every call site.
+  window.__blitTex = blitTex;
 
-  const drawOnce = (locs, w, h, mode) => {
-    setUniforms(locs, w, h, 0.0);
-    if (locs.uFloorTex) {
-      gl.activeTexture(gl.TEXTURE0);
-      // mode 'blit': sample the FBO attachment (the HUD's real path).
-      // mode 'tex' : sample a plain uploaded texture into the same kind of target.
-      gl.bindTexture(gl.TEXTURE_2D, mode === 'blit' ? blitTex : tex);
-    }
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
-  };
-
+  // Compile everything ONCE, before any timing. Program compilation happens outside the loop because a
+  // compile in the middle of a round would put a multi-millisecond stall inside a 0.29 ms measurement.
+  const jobs = [];
   for (const v of VARIANTS) {
     let src, size;
     try {
       src = v.floorBlit ? makeBlitSource()
           : v.floorTex ? floorTexSource(SRC.frag)
           : v.apply(normaliseTaps(SRC.frag));
-      size = resizeFor(v.resScale ?? !!v.halfRes);
       const prog = build(src, SRC.vert);
       const locs = uniformLocs(prog, UNIFORMS);
       if (v.floorTex || v.floorBlit) locs.uFloorTex = gl.getUniformLocation(prog, 'uFloorTex');
-
-      // 60 frames per variant keeps the run under a few seconds per row even at 34 ms.
-      const mode = v.floorBlit ? 'blit' : 'tex';
-      const r = timed(prog, locs, (l) => drawOnce(l, size.w, size.h, mode), 16);
-      gl.deleteProgram(prog);
-      rows.push({ ...v, ...size, ...r, ok: true });
+      size = resizeFor(v.resScale ?? !!v.halfRes);
+      jobs.push({ v, prog, locs, size, samples: [], ok: true });
     } catch (e) {
-      rows.push({ ...v, err: String(e.message || e), ok: false });
+      jobs.push({ v, ok: false, err: String(e.message || e) });
     }
-    render(rows);
-    await new Promise((r) => setTimeout(r, 30));   // let the panel paint
   }
 
+  // A control is the baseline, measured in a different slot. It is not redundant: its disagreement with
+  // `baseline` is the instrument's own error bar, and it is the row that would have caught the 43%.
+  const baseJob = jobs.find((j) => j.v.id === 'baseline' && j.ok);
+  if (baseJob) {
+    jobs.push({ v: { id: 'control', label: 'CONTROL · baseline again (the error bar)' },
+                prog: baseJob.prog, locs: baseJob.locs, size: baseJob.size, samples: [], ok: true,
+                sharedProgram: true });
+  }
+
+  const live = jobs.filter((j) => j.ok);
+
+  // Interleaved rounds. Every live variant contributes one sample per round, and the round order is
+  // REVERSED on odd rounds so no variant systematically sits at the start or the end of a clock ramp.
+  for (let round = 0; round < ROUNDS; round++) {
+    const order = round % 2 === 0 ? live : live.slice().reverse();
+    for (const j of order) {
+      // Resolution changes per variant, so the viewport is restored each time.
+      resizeFor(j.v.resScale ?? !!j.v.halfRes);
+      const mode = j.v.floorBlit ? 'blit' : 'tex';
+      // Frames per sample scaled so each variant does roughly the same GPU work per round; a variant
+      // 20x faster would otherwise barely move the clock.
+      const frames = 16;
+      const ms = measureRound(j.prog, j.locs, (l) => drawOnce(l, j.size.w, j.size.h, mode), frames);
+      j.samples.push(ms);
+    }
+    $('out').textContent = 'round ' + (round + 1) + '/' + ROUNDS + '…';
+    await new Promise((r) => setTimeout(r, 0));
+  }
+
+  // Tear down the programs we own. The control shares the baseline's program, so do not delete twice.
+  for (const j of jobs) {
+    if (j.ok && !j.sharedProgram) gl.deleteProgram(j.prog);
+  }
+
+  const rows = jobs.map((j) => {
+    if (!j.ok) return { id: j.v.id, label: j.v.label, ok: false, err: j.err, ...j.size };
+    const s = j.samples;
+    const sorted = s.slice().sort((a, b) => a - b);
+    const mid = sorted.length >> 1;
+    const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    return {
+      ...j.v, ...j.size, ok: true,
+      amortised: median,
+      min: sorted[0],
+      max: sorted[sorted.length - 1],
+      spread: median > 0 ? (sorted[sorted.length - 1] - sorted[0]) / median : 0,
+      samples: s.slice(),
+    };
+  });
+
+  render(rows);
   $('out').textContent = summarise(rows);
   btn.disabled = false;
   btn.textContent = 'run again';
@@ -389,14 +467,17 @@ async function run() {
 function render(rows) {
   const max = Math.max(...rows.filter((r) => r.ok).map((r) => r.amortised), 0.001);
   $('body').innerHTML = rows.map((r) => {
-    if (!r.ok) return `<tr><td colspan="5" style="color:#e2695e">${r.id}: ${r.err}</td></tr>`;
+    if (!r.ok) return `<tr><td colspan="6" style="color:#e2695e">${r.id}: ${r.err}</td></tr>`;
     const nsp = (r.amortised * 1e6) / (r.w * r.h);
     const cls = r.id === 'baseline' ? 'base' : (r.id.startsWith('floor') ? 'floor' : '');
     const pct = Math.min(100, (r.amortised / max) * 100);
+    const sp = r.spread !== undefined ? (r.spread * 100).toFixed(0) + '%' : '—';
+    const wide = r.spread !== undefined && r.spread > 0.10;
     return `<tr class="${cls}">
       <td>${r.label}</td>
       <td class="n">${(r.w * r.h / 1e6).toFixed(2)}M</td>
       <td class="n">${r.amortised.toFixed(2)}</td>
+      <td class="n" style="color:${wide ? '#e2695e' : '#6d7f92'}">${sp}</td>
       <td class="n">${nsp.toFixed(1)}</td>
       <td style="width:34%"><span class="bar"><i style="width:${pct}%"></i></span></td>
     </tr>`;
@@ -405,9 +486,33 @@ function render(rows) {
 
 function summarise(rows) {
   const g = (id) => rows.find((r) => r.id === id && r.ok);
-  const base = g('baseline'), floor = g('floor');
+  const base = g('baseline'), floor = g('floor'), ctl = g('control');
   if (!base || !floor) return 'incomplete';
   const lines = [];
+
+  // THE ERROR BAR COMES FIRST. `control` is the baseline shader measured again in a different slot of the
+  // interleaved schedule. It should agree with `baseline` to within the run-to-run spread. How far apart
+  // they actually are is this instrument's noise floor, and nothing smaller than that is a finding.
+  let errBar = null;
+  if (ctl && base.amortised > 0) {
+    errBar = Math.abs(ctl.amortised - base.amortised) / base.amortised;
+    lines.push('INSTRUMENT ERROR BAR (control vs baseline, same shader twice):');
+    lines.push('  baseline ' + base.amortised.toFixed(3) + ' ms   control ' + ctl.amortised.toFixed(3) +
+      ' ms   disagreement ' + (errBar * 100).toFixed(1) + '%');
+    if (errBar > 0.10) {
+      lines.push('  *** OVER 10%: this run is NOT trustworthy. Every row below is suspect,');
+      lines.push('  *** including the big ones. Close other apps, let the device cool, run again.');
+    } else if (errBar > 0.03) {
+      lines.push('  Marginal. Trust only deltas well above ' + (errBar * 100).toFixed(0) + '%.');
+    } else {
+      lines.push('  Good: the instrument agrees with itself to within ' + (errBar * 100).toFixed(1) + '%.');
+    }
+    lines.push('');
+  }
+
+  // A delta smaller than the error bar is not a measurement. Say which rows those are, by name, rather
+  // than leaving the reader to do the comparison against a number printed three lines up.
+  const noise = errBar === null ? 0 : Math.max(errBar, 0.05);
 
   // On a real device these are the numbers that decide the architecture. Below ~0.5 ms the timer
   // resolution itself is the dominant term and the ratios stop meaning anything, so say so rather
@@ -420,15 +525,68 @@ function summarise(rows) {
   }
 
   lines.push('baseline ' + base.amortised.toFixed(2) + ' ms   floor ' + floor.amortised.toFixed(2) + ' ms');
-  const sync = ((base.perSample / base.amortised - 1) * 100);
-  lines.push('per-sample finish() vs amortised: ' + (sync >= 0 ? '+' : '') + sync.toFixed(0) + '%  (' +
-    (Math.abs(sync) > 35
-      ? 'the in-game number was inflated by the instrument itself'
-      : 'the in-game number was sound') + ')');
   lines.push('');
   lines.push('shader ALU above floor: ' + (base.amortised - floor.amortised).toFixed(2) + ' ms  (' +
     (((base.amortised - floor.amortised) / base.amortised) * 100).toFixed(0) + '% of the frame)');
   lines.push('floor share of frame:   ' + ((floor.amortised / base.amortised) * 100).toFixed(0) + '%');
+
+  // Name the deltas that are indistinguishable from the instrument's own noise. This is the paragraph
+  // that was missing when five feature deltas of ~1.5 ms were mistaken for findings.
+  const baseMs = base.amortised;
+  const ablated = rows.filter((r) => r.ok && !r.resScale && r.id !== 'baseline' && r.id !== 'control' &&
+    !r.id.startsWith('floor'));
+  const noisy = [], real = [];
+  for (const r of ablated) {
+    const d = baseMs - r.amortised;
+    (d > noise * baseMs ? real : noisy).push(r.label + ' (' + d.toFixed(2) + ' ms)');
+  }
+  if (noisy.length || real.length) {
+    lines.push('FEATURE DELTAS vs the ' + (noise * 100).toFixed(0) + '% threshold:');
+    if (real.length) lines.push('  larger than the threshold: ' + real.join(', '));
+    if (noisy.length) lines.push('  at or below the threshold - NOT findings: ' + noisy.join(', '));
+    lines.push('');
+  }
+
+  // MUTUAL CONTRADICTION - the check that actually catches the Reference A failure.
+  //
+  // On Reference A, five different features were each reported as costing ~50% of the frame:
+  // removing the wall corrugation, the aerial term, the sphere test, the tonemap and the sky glow all
+  // landed at 1.50-1.58 ms against a 3.00 ms baseline. That is arithmetically impossible as a statement
+  // about the shader - those five terms cannot each be worth half of it - and it is exactly what
+  // happens when the ablations all collapse onto a shared floor.
+  //
+  // A per-delta threshold cannot see this, because each delta individually looks large. The signature
+  // is the CLUSTERING: many independent removals producing the same result. Detect it by name.
+  if (ablated.length >= 3) {
+    // Sum the claimed savings. Features can overlap - removing A and removing B can both save 40% if they
+    // share work - but five INDEPENDENT features cannot each be worth half the frame. If the claims add
+    // up to more than the shader has, the deltas are not measuring the shader.
+    const claimants = ablated
+      .map((r) => ({ label: r.label, frac: (baseMs - r.amortised) / baseMs }))
+      .filter((c) => c.frac > 0.25);
+    const total = claimants.reduce((a, c) => a + c.frac, 0);
+    const vals = ablated.map((r) => r.amortised).sort((x, y) => x - y);
+    const clustering = vals[0] > 0 ? (vals[vals.length - 1] - vals[0]) / vals[0] : 1;
+
+    if (claimants.length >= 3 && total > 1.0) {
+      lines.push('*** THE DELTAS DO NOT ADD UP ***');
+      lines.push('  ' + claimants.length + ' independent feature removals each claim more than 25% of the frame:');
+      lines.push('    ' + claimants.map((c) => c.label + ' ' + (c.frac * 100).toFixed(0) + '%').join(', '));
+      lines.push('  that is ' + (total * 100).toFixed(0) + '% of the baseline in total, which is more frame than');
+      lines.push('  exists. At most ONE of these can be the real cost of its feature; the rest are the');
+      lines.push('  same measurement wearing different labels, which is what happens when every ablation');
+      lines.push('  collapses onto a shared floor. Do not quote any of them.');
+      const biggest = claimants.slice().sort((a, c) => c.frac - a.frac)[0];
+      lines.push('  If one is real it is the largest, ' + biggest.label + ' (' +
+        (biggest.frac * 100).toFixed(0) + '%), but even that needs the interleaved run to confirm it.');
+      if (clustering < 0.2) {
+        lines.push('  Confirming this: all ' + ablated.length + ' ablated rows land within ' +
+          (clustering * 100).toFixed(0) + '% of each other (' + vals[0].toFixed(2) + '-' +
+          vals[vals.length - 1].toFixed(2) + ' ms), i.e. they collapse onto one floor.');
+      }
+      lines.push('');
+    }
+  }
 
   // The three floors are different operations and cost wildly different amounts. Conflating them was
   // the mistake that made a blit look free: a flat fill is not a texture read is not an FBO blit.
@@ -454,6 +612,18 @@ function summarise(rows) {
       }
     }
   }
+  // THE VERDICT IS GATED ON THE INSTRUMENT AGREEING WITH ITSELF. Printing "R2 IS reachable at 1.38x"
+  // from a run whose own control disagrees by 43% is the exact failure this whole rewrite exists to
+  // prevent: a confident number with no right to exist.
+  if (errBar !== null && errBar > 0.10) {
+    lines.push('');
+    lines.push('NO VERDICT. The control disagrees with the baseline by ' + (errBar * 100).toFixed(0) +
+      '%, so the');
+    lines.push('resolution sweep below would be extrapolated from untrustworthy points. Fix the run');
+    lines.push('first - cool the device, close everything else - then read the verdict.');
+    return lines.join('\n');
+  }
+
   lines.push('');
   // the answer: extrapolate the resolution that fits 1.5 ms
   const pts = rows.filter((r) => r.ok && r.resScale).map((r) => ({ mpx: r.w * r.h / 1e6, ms: r.amortised }));
@@ -461,17 +631,31 @@ function summarise(rows) {
     // least squares through the origin: a full-screen pass is ~proportional to pixel count
     const num = pts.reduce((a, p) => a + p.mpx * p.ms, 0);
     const den = pts.reduce((a, p) => a + p.mpx * p.mpx, 0);
-    const nsPerMpx = num / den;                       // ms per megapixel
-    const fitsMpx = 1.5 / nsPerMpx;                   // megapixels inside a 1.5 ms budget
+    const msPerMpx = num / den;                       // ms per megapixel
+    const fitsMpx = 1.5 / msPerMpx;                   // megapixels inside a 1.5 ms budget
     const native = Math.max(...pts.map((p) => p.mpx));
+    // A render scale is a linear dimension, so it scales as the square root of the pixel ratio. Clamp to
+    // 1: "1.38x" is not a render scale, it is a pixel ratio.
+    const scale = Math.min(1, Math.sqrt(fitsMpx / native));
     lines.push('');
-    lines.push('COST MODEL: ' + nsPerMpx.toFixed(2) + ' ms per megapixel (through the origin).');
+    lines.push('COST MODEL: ' + msPerMpx.toFixed(2) + ' ms per megapixel (through the origin).');
     lines.push('1.5 ms therefore buys ' + fitsMpx.toFixed(3) + ' Mpx.');
-    lines.push('At this screen size that is a render scale of ' + Math.min(1, Math.sqrt(fitsMpx / native)).toFixed(2) + 'x.');
+    // Say one thing or the other. Printing "the scale that fits is 1.47x - native already fits" states a
+    // scale above 1 AND that it is unnecessary, in the same sentence.
+    if (fitsMpx >= native) {
+      lines.push('Native is ' + native.toFixed(2) + ' Mpx and the budget buys ' + fitsMpx.toFixed(2) +
+        ' Mpx, so native fits with room to spare.');
+    } else {
+      lines.push('Native is ' + native.toFixed(2) + ' Mpx, so the scale that fits is ' +
+        Math.sqrt(fitsMpx / native).toFixed(2) + 'x.');
+    }
     lines.push('');
     if (fitsMpx < 0.5) {
       lines.push('VERDICT: under 0.5 Mpx. R2 as written is not reachable by this shader on this');
       lines.push('device at any sane resolution. The response is a scene budget change, not tuning.');
+    } else if (scale >= 1) {
+      lines.push('VERDICT: R2 IS MET AT NATIVE RESOLUTION on this device.');
+      lines.push('1.5 ms buys ' + fitsMpx.toFixed(2) + ' Mpx and this screen is ' + native.toFixed(2) + ' Mpx.');
     } else {
       lines.push('VERDICT: R2 IS reachable at ' + Math.sqrt(fitsMpx / native).toFixed(2) + 'x on this device.');
       lines.push('That is a concrete number and it goes in GRAPHICS.md as R2 resolution clause.');
