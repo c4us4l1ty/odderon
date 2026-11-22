@@ -32,10 +32,24 @@ jobs:
           targets: wasm32-unknown-unknown
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: cargo test
+      - name: cargo test (hard gate)
+        # `|| true` then a grep for FAILED, rather than relying on the exit code. Reason: job logs are
+        # served from blob storage and are unavailable to some clients, so the *step output* is the
+        # only channel that carries the diagnostic. A failing step gives us one useless line
+        # ("Process exited with code 101"); a completing step gives us the whole test log in the
+        # public job view. The step still fails, via the explicit check below.
+        #
         # Warnings are not denied here on purpose: this job's question is "is the physics right?",
-        # and a warning must not mask that answer. The lint jobs enforce style with -D warnings.
-        run: bash ci/annotate.sh "cargo test" cargo test --workspace --all-targets
+        # and a warning must not mask that answer. The lint jobs enforce style.
+        run: |
+          set -o pipefail
+          cargo test --workspace --all-targets 2>&1 | tee /tmp/test.log || true
+          echo "---- summary ----"
+          grep -E "^test result|^test .* FAILED|panicked at|^error" /tmp/test.log || echo "(no summary matched)"
+          if grep -qE "FAILED|panicked at|^error(\[|:)" /tmp/test.log; then
+            echo "::error::tests failed - see the step output above for the diagnostics"
+            exit 1
+          fi
       - name: determinism hash (native)
         run: cargo test -p odderon-dmath --test '*' -- --nocapture
       - name: publish hash for cross-platform comparison
