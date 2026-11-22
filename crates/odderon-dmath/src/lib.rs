@@ -49,13 +49,16 @@
 // changing because a standard library revised a literal. The whole crate exists to not depend on
 // someone else's numeric decisions.
 #![allow(clippy::approx_constant)]
+// `excessive_precision` is enforced, and it found real noise: `PI` was written with one digit more than
+// an f64 can hold. Spelling constants out is the policy; writing digits that do not affect the value is
+// a lie about precision in the diff.
 
 // ---------------------------------------------------------------------------------------------
 // constants
 // ---------------------------------------------------------------------------------------------
 
 /// π to double precision.
-pub const PI: f64 = 3.141_592_653_589_793_1;
+pub const PI: f64 = 3.141_592_653_589_793;
 /// π/2.
 pub const FRAC_PI_2: f64 = 1.570_796_326_794_896_6;
 /// π/4.
@@ -297,7 +300,7 @@ fn poly_cos(x: f64) -> f64 {
 /// `FRAC_PI_2_HI` carries the leading 21 bits; `FRAC_PI_2_LO` carries the remainder. Reducing with
 /// the split value (`x − n·HI − n·LO`) is what makes large-argument reduction accurate — a single
 /// `n·FRAC_PI_2` product rounds, and that rounding is the dominant error for |x| in the hundreds.
-const FRAC_PI_2_HI: f64 = 1.570_796_326_794_896_6e0;
+const FRAC_PI_2_HI: f64 = 1.570_796_326_794_896_6;
 const FRAC_PI_2_LO: f64 = 6.123_233_995_736_766e-17;
 
 /// Reduce `x` modulo π/2: returns `(quadrant, residual)` with `|residual| ≤ π/4`.
