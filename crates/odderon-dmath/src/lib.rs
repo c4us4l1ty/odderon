@@ -69,6 +69,15 @@ pub const TAU: f64 = 6.283_185_307_179_586;
 const TWO_OVER_PI: f64 = 0.636_619_772_367_581_3;
 /// ln 2.
 pub const LN_2: f64 = 0.693_147_180_559_945_3;
+
+/// ln 2 split into two parts that sum to it exactly, for reduction without loss.
+///
+/// These are the classic FDLIBM values: the high part carries the leading bits so that `k*HI` is
+/// exact for moderate `k`, and the low part carries the tail. Reducing with `(x - k·HI) - k·LO`
+/// instead of `x - k·LN_2` is what keeps `exp` accurate at large |x| — measured 8e-14 against
+/// 2.2e-16.
+const LN_2_HI: f64 = 6.931_471_803_691_238_2e-1;
+const LN_2_LO: f64 = 1.908_214_929_270_587_7e-10;
 /// 1/ln 2.
 const LOG2_E: f64 = 1.442_695_040_888_963_4;
 /// √2, the boundary between the two `ln` reduction branches.
@@ -439,7 +448,10 @@ pub fn exp(x: f64) -> f64 {
         return 0.0;
     }
     let k = round_to_int(x * LOG2_E);
-    let r = x - k * LN_2;
+    // Reduce against a *split* ln2. A single `k * LN_2` product rounds, and that rounding is
+    // amplified by k: at x ≈ −689 (k ≈ −994) it costs ~8e-14 relative, which the cosh test caught.
+    // Subtracting the two halves separately keeps the residual exact to ~1 ulp.
+    let r = (x - k * LN_2_HI) - k * LN_2_LO;
     ldexp(horner(&EXP_P, r), k as i32)
 }
 
@@ -588,6 +600,76 @@ pub fn atan2(y: f64, x: f64) -> f64 {
 // pow
 // ---------------------------------------------------------------------------------------------
 
+/// Hyperbolic cosine, `(eˣ + e⁻ˣ)/2`.
+///
+/// Needed by the universal-variable Kepler solver for hyperbolic orbits (`e > 1`), where the Stumpff
+/// functions use `cosh`/`sinh` rather than `cos`/`sin`.
+///
+/// Built from [`exp`] rather than from a host call, so it inherits the determinism guarantee. The
+/// naive form loses precision for small `x` because `eˣ` and `e⁻ˣ` are both near 1 and cancel in the
+/// subtraction; `expm1` does not exist in `core`, so the small-argument branch uses the series
+/// directly — accurate exactly where the cancellation would bite.
+pub fn cosh(x: f64) -> f64 {
+    note_op();
+    if x.is_nan() {
+        return f64::NAN;
+    }
+    let a = fabs(x);
+    if a < 0.5 {
+        // 1 + x²/2! + x⁴/4! + …: at |x| = 0.5 the first neglected term is ~2e-6 of 1, the next
+        // ~1e-10, so six terms reach f64 resolution well inside this branch.
+        let v = x * x;
+        return 1.0
+            + v * horner(
+                &[
+                    1.0 / 2.0,
+                    1.0 / 24.0,
+                    1.0 / 720.0,
+                    1.0 / 40_320.0,
+                    1.0 / 3_628_800.0,
+                    1.0 / 479_001_600.0,
+                ],
+                v,
+            );
+    }
+    let e = exp(a);
+    0.5 * (e + 1.0 / e)
+}
+
+/// Hyperbolic sine, `(eˣ − e⁻ˣ)/2`.
+///
+/// Same reasoning as [`cosh`]: built from [`exp`], with a series branch near zero where the
+/// subtraction of two near-equal values would otherwise destroy the result. `sinh` is odd, which the
+/// tests check bitwise.
+pub fn sinh(x: f64) -> f64 {
+    note_op();
+    if x.is_nan() {
+        return f64::NAN;
+    }
+    let a = fabs(x);
+    let sign = if x < 0.0 { -1.0 } else { 1.0 };
+    if a < 0.5 {
+        // x·(1 + x²/3! + x⁴/5! + …)
+        let v = a * a;
+        let series = a
+            * (1.0
+                + v * horner(
+                    &[
+                        1.0 / 6.0,
+                        1.0 / 120.0,
+                        1.0 / 5_040.0,
+                        1.0 / 362_880.0,
+                        1.0 / 39_916_800.0,
+                        1.0 / 6_227_020_800.0,
+                    ],
+                    v,
+                ));
+        return sign * series;
+    }
+    let e = exp(a);
+    sign * 0.5 * (e - 1.0 / e)
+}
+
 /// `a^b` for `a ≥ 0`, as `exp(b·ln a)`.
 ///
 /// Relative error grows as `|b·ln a|·1e-16`, so very large exponents lose precision. That is stated
@@ -689,6 +771,8 @@ pub fn golden_hash() -> u64 {
         h = mix(h, atan2(x, 1.0 - x));
         h = mix(h, pow(fmax(fabs(x), 1e-6), 0.5 + x * 1e-3));
         h = mix(h, sqrt(fabs(x)));
+        h = mix(h, cosh(x * 0.1));
+        h = mix(h, sinh(x * 0.1));
         i += 1;
     }
     h
@@ -814,11 +898,55 @@ mod tests {
                     want
                 );
                 if got.is_finite() && want.is_finite() && want != 0.0 {
-                    // 1e-15 relative is achievable and enforced: with EXP_P at 14 terms the measured
-                    // error is ~8.5e-16. A regression to ten terms fails here.
+                    // 1e-15 relative is achievable and enforced: with EXP_P at 14 terms and a split
+                    // ln2 the measured error is ~2.2e-16 across the whole range. Both a regression to
+                    // fewer terms and a regression to unsplit reduction fail here.
                     assert!(fabs(got - want) / want < 1e-15, "exp at {}: {}", x, got);
                 }
             }
+        }
+    }
+
+    /// `exp` over its whole representable range, which the sparse probe list does not cover.
+    ///
+    /// This is the test that would have caught the unsplit-ln2 reduction: the error is invisible near
+    /// zero and reaches 8e-14 at x ≈ −689.
+    #[test]
+    fn exp_over_full_range() {
+        let mut x = -708.0;
+        while x <= 709.0 {
+            let want = x.exp();
+            let got = exp(x);
+            if want.is_finite() && want != 0.0 && got.is_finite() {
+                let rel = fabs(got - want) / want;
+                assert!(rel < 1e-15, "exp at {}: rel {} (got {}, want {})", x, rel, got, want);
+            }
+            x += 0.37;
+        }
+    }
+
+    #[test]
+    fn hyperbolic_functions() {
+        for &x in PROBES.iter() {
+            let reference_cosh = x.cosh();
+            let reference_sinh = x.sinh();
+            if reference_cosh.is_finite() {
+                let rel = fabs(cosh(x) - reference_cosh) / fmax(reference_cosh, 1.0);
+                assert!(rel < 1e-15, "cosh at {}: rel {}", x, rel);
+            }
+            if reference_sinh.is_finite() && reference_sinh != 0.0 {
+                let rel = fabs(sinh(x) - reference_sinh) / fabs(reference_sinh);
+                assert!(rel < 1e-14, "sinh at {}: rel {}", x, rel);
+            }
+        }
+        for &x in [0.3, 0.5, 1.0, 2.5, -0.7, 12.0].iter() {
+            assert_eq!(sinh(-x).to_bits(), (-sinh(x)).to_bits(), "sinh odd at {}", x);
+        }
+        assert_eq!(cosh(0.0), 1.0);
+        assert_eq!(sinh(0.0), 0.0);
+        for &x in [0.1, 0.4, 0.6, 1.0, 3.0, 7.0].iter() {
+            let (c, s) = (cosh(x), sinh(x));
+            assert!(fabs(c * c - s * s - 1.0) < 1e-14, "cosh²−sinh² at {}", x);
         }
     }
 

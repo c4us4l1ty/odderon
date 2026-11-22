@@ -27,6 +27,8 @@
 const PI = 3.1415926535897931;
 const FRAC_PI_2 = 1.5707963267948966;
 const LN_2 = 0.6931471805599453;
+const LN_2_HI = 6.9314718036912382e-1;
+const LN_2_LO = 1.9082149292705877e-10;
 const LOG2_E = 1.4426950408889634;
 const SQRT_2 = 1.4142135623730951;
 const TWO_OVER_PI = 0.6366197723675813;
@@ -112,7 +114,9 @@ function exp(x) {
   if (x > 709.79) return Infinity;
   if (x < -745.2) return 0;
   const k = roundToInt(x * LOG2_E);
-  return ldexp(HORNER(EXP_P, x - k * LN_2), k);
+  // Split-ln2 reduction: a single k*LN_2 product rounds, and that error is amplified by k.
+  const r = (x - k * LN_2_HI) - k * LN_2_LO;
+  return ldexp(HORNER(EXP_P, r), k);
 }
 
 function ln(a) {
@@ -223,6 +227,39 @@ let lnMax = 0;
 for (const x of lnProbes) lnMax = Math.max(lnMax, Math.abs(ln(x) - Math.log(x)));
 console.log(`${lnMax < 1e-14 ? "PASS" : "FAIL"}  ln       max abs err ${lnMax.toExponential(2)}`);
 allOk &= lnMax < 1e-14;
+
+// cosh / sinh, built from exp as the Rust does it
+function cosh(x) {
+  const a = Math.abs(x);
+  if (a < 0.5) {
+    const v = x * x;
+    const c = [1 / 2, 1 / 24, 1 / 720, 1 / 40320, 1 / 3628800, 1 / 479001600];
+    return 1 + v * HORNER(c, v);
+  }
+  const e = exp(a);
+  return 0.5 * (e + 1 / e);
+}
+
+function sinh(x) {
+  const a = Math.abs(x);
+  const sign = x < 0 ? -1 : 1;
+  if (a < 0.5) {
+    const v = a * a;
+    const c = [1 / 6, 1 / 120, 1 / 5040, 1 / 362880, 1 / 39916800, 1 / 6227020800];
+    return sign * a * (1 + v * HORNER(c, v));
+  }
+  const e = exp(a);
+  return sign * 0.5 * (e - 1 / e);
+}
+
+let hypMax = 0;
+for (const x of probes) {
+  const r = Math.cosh(x), s = Math.sinh(x);
+  if (Number.isFinite(r) && r !== 0) hypMax = Math.max(hypMax, Math.abs(cosh(x) - r) / Math.max(Math.abs(r), 1));
+  if (Number.isFinite(s) && s !== 0) hypMax = Math.max(hypMax, Math.abs(sinh(x) - s) / Math.abs(s));
+}
+console.log(`${hypMax < 1e-14 ? "PASS" : "FAIL"}  cosh/sinh max rel err ${hypMax.toExponential(2)}`);
+allOk &= hypMax < 1e-14;
 
 // sqrt: the bit trick + Newton
 function sqrtJS(a) {
