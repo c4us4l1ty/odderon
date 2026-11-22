@@ -10,6 +10,7 @@ pub mod hab;
 pub mod modules;
 pub mod primitives;
 pub mod props;
+pub mod rooms;
 pub mod town;
 
 use odderon_dmath::{dcos, dsin, Vec3};
