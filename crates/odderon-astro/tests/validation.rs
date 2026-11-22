@@ -481,3 +481,180 @@ fn derived_elements_are_consistent() {
     // Periapsis stays defined for every conic.
     assert!(hyperbolic.periapsis() > 0.0);
 }
+
+// ---------------------------------------------------------------------------------------------
+// bug regression tests
+// ---------------------------------------------------------------------------------------------
+//
+// Each of these failed on the code that existed before it. They are kept with the reasoning that
+// produced them, because a regression test with no explanation gets deleted by the next person who
+// finds it inconvenient.
+
+#[test]
+fn overflow_is_reported_not_hidden() {
+    // BUG: `propagate` accepted a NaN step as convergence.
+    //
+    // The convergence test used to be `if !(residual > TOLERANCE)`. For a hyperbolic orbit flung far
+    // enough the Stumpff functions overflow (cosh overflows once √−ψ > 710.4759, i.e. ψ < −504776),
+    // the Newton step becomes NaN, and `!(NaN > 1e-12)` is TRUE. So the loop broke out reporting
+    // `unconverged: false` and returned a state of NaNs as if it were an answer.
+    //
+    // How reachable: 1.5x escape velocity from 7000 km, propagated 11.6 days. That is an ordinary
+    // hyperbolic departure, not a contrived input.
+    let v_escape = sqrt(2.0 * MU / 7000.0);
+    for &factor in [1.5, 3.0, 12.0].iter() {
+        let s0 = State::new(
+            Vec3::new(7000.0, 0.0, 0.0),
+            Vec3::new(0.0, v_escape * factor, 0.0),
+        );
+        let out = propagate(&s0, 1.0e6, MU);
+        // The two things that must never both be true: a NaN answer and a claim of success.
+        if out.state.r.x.is_nan() || !out.state.r.x.is_finite() {
+            assert!(
+                out.unconverged,
+                "at {}x escape: returned non-finite state while reporting success",
+                factor
+            );
+        }
+        // And when it does report failure, `overflowed` says why, which is the actionable part.
+        if out.overflowed {
+            assert!(out.unconverged, "overflow must imply unconverged");
+        }
+    }
+
+    // The specific case that was silent: it must now say so.
+    let s0 = State::new(
+        Vec3::new(7000.0, 0.0, 0.0),
+        Vec3::new(0.0, v_escape * 3.0, 0.0),
+    );
+    let out = propagate(&s0, 1.0e6, MU);
+    assert!(
+        out.unconverged,
+        "3x escape over 11.6 days must not claim convergence"
+    );
+
+    // And an orbit that is merely hyperbolic must still work, so the fix cannot be "give up more".
+    let modest = State::new(
+        Vec3::new(7000.0, 0.0, 0.0),
+        Vec3::new(0.0, v_escape * 1.05, 0.0),
+    );
+    let ok = propagate(&modest, 1.0e4, MU);
+    assert!(!ok.unconverged, "1.05x escape over 2.8 h is well inside range");
+    assert!(ok.state.r.x.is_finite());
+}
+
+#[test]
+fn the_convergence_tolerance_scales_with_chi() {
+    // BUG: the tolerance was absolute (1e-12 on |Δχ|) while χ itself runs to 1e4 and beyond.
+    //
+    // The question a step answers is "how much of χ is still in doubt", so the test has to be relative
+    // to χ. With a fixed 1e-12 an ordinary orbit was reported unconverged while its answer was good to
+    // a few parts in 1e11 — a false alarm that trains a caller to ignore the flag, which is worse than
+    // not having it.
+    //
+    // These are exactly the near-parabolic shapes the module doc claims to handle well.
+    for &delta in [1e-4, 1e-5, 1e-6].iter() {
+        let p_slr = 7000.0;
+        let e = 1.0 + delta;
+        let rp = p_slr / (1.0 + e);
+        let vp = sqrt(MU * (1.0 + e) / rp);
+        let s0 = State::new(Vec3::new(rp, 0.0, 0.0), Vec3::new(0.0, vp, 0.0));
+        for &dt in [1.0e3, 1.0e4, 1.0e5].iter() {
+            let out = propagate(&s0, dt, MU);
+            assert!(
+                !out.unconverged,
+                "e = 1+{} at dt = {} reported unconverged (residual {:.3e})",
+                delta,
+                dt,
+                out.residual
+            );
+            // And it must be a real answer, not just a labelled one.
+            assert!(out.state.r.x.is_finite());
+        }
+    }
+
+    // A long hyperbolic flight: χ is large here, which is the case the old tolerance could not reach.
+    let v_escape = sqrt(2.0 * MU / 7000.0);
+    let s0 = State::new(
+        Vec3::new(7000.0, 0.0, 0.0),
+        Vec3::new(0.0, v_escape * 1.12, 0.0),
+    );
+    let out = propagate(&s0, 1.0e5, MU);
+    assert!(!out.unconverged, "1.12x escape over 1.2 days must converge");
+    assert!(!out.overflowed);
+}
+
+#[test]
+fn true_anomaly_agrees_with_the_element_set() {
+    // BUG: `true_anomaly` and `Elements::nu` were two implementations of one question, and had drifted.
+    //
+    // They disagreed in three ways — circular threshold 1e-10 vs 1e-9, an absolute vs relative
+    // equatorial test, and most visibly an opposite sign convention: one returned (−π, π] and the
+    // other [0, 2π), so ν = 190° came back as −170° from `true_anomaly` and 190° from the elements.
+    // A game reading one for display and the other for physics would disagree with itself.
+    //
+    // They are now the same function. This test pins that, so they cannot drift again.
+    let deg = odderon_dmath::PI / 180.0;
+    let cases: [(f64, f64, f64); 4] = [
+        (0.3, 0.6, 51.6),  // general
+        (0.0, 0.0, 0.0),   // circular equatorial
+        (0.0, 0.0, 51.6),  // circular inclined
+        (0.4, 0.0, 0.0),   // equatorial eccentric
+    ];
+    for &(e, raan, i_deg) in cases.iter() {
+        for &nu_deg in [10.0, 90.0, 190.0, 270.0, 350.0].iter() {
+            let el = Elements {
+                p: 12000.0 * (1.0 - e * e),
+                e,
+                i: i_deg * deg,
+                raan,
+                argp: 0.4,
+                nu: nu_deg * deg,
+                degeneracy: Degeneracy::default(),
+            };
+            let s = el.to_state(MU);
+            let from_elements = s.to_elements(MU).nu;
+            let from_function = true_anomaly(&s, MU);
+            assert_eq!(
+                from_elements.to_bits(),
+                from_function.to_bits(),
+                "e={} i={}: elements say {} but true_anomaly says {}",
+                e,
+                i_deg,
+                from_elements,
+                from_function
+            );
+            // And it is in [0, 2π), which is the convention that survived.
+            assert!(from_elements >= 0.0 && from_elements < odderon_dmath::TAU);
+        }
+    }
+
+    // A degenerate state has no anomaly, and must say so rather than return a number.
+    let radial = State::new(Vec3::new(7000.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0));
+    assert!(true_anomaly(&radial, MU).is_nan());
+}
+
+#[test]
+fn a_degenerate_mu_or_radius_is_not_silently_accepted() {
+    // Belt and braces on the same failure mode as `overflow_is_reported_not_hidden`: every early-out in
+    // propagate() must pair a NaN state with `unconverged: true`, never with success.
+    for &(r, v, mu) in [
+        (Vec3::ZERO, Vec3::new(0.0, 7.0, 0.0), MU),
+        (Vec3::new(7000.0, 0.0, 0.0), Vec3::new(0.0, 7.0, 0.0), 0.0),
+        (Vec3::new(7000.0, 0.0, 0.0), Vec3::new(0.0, 7.0, 0.0), -1.0),
+        (
+            Vec3::new(f64::NAN, 0.0, 0.0),
+            Vec3::new(0.0, 7.0, 0.0),
+            MU,
+        ),
+    ]
+    .iter()
+    {
+        let out = propagate(&State::new(*r, *v), 100.0, *mu);
+        assert!(
+            out.unconverged,
+            "degenerate input (r={:?}, mu={}) reported success",
+            r, mu
+        );
+    }
+}

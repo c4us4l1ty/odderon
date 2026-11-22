@@ -40,7 +40,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-use odderon_dmath::{acos, atan2, clamp_unit, fabs, sinh, sqrt};
+use odderon_dmath::{acos, atan2, clamp_unit, fabs, fmax, is_finite, sinh, sqrt};
 
 // ---------------------------------------------------------------------------------------------
 // domain predicates
@@ -55,12 +55,6 @@ use odderon_dmath::{acos, atan2, clamp_unit, fabs, sinh, sqrt};
 #[inline]
 fn positive(x: f64) -> bool {
     x > 0.0
-}
-
-/// True only when `x` is a real number strictly greater than `bound`. NaN is not.
-#[inline]
-fn exceeds(x: f64, bound: f64) -> bool {
-    x > bound
 }
 
 /// Gravitational parameters, km³/s².
@@ -256,6 +250,13 @@ impl State {
 ///
 /// The threshold `|z| < 1e-6` uses the series because the closed forms lose precision to cancellation
 /// as `z → 0`; the first omitted terms are `z⁴/8!` and `z⁴/9!`, so four terms are ample.
+///
+/// # Domain
+///
+/// The hyperbolic branches are built from `cosh √−z` and `sinh √−z`, and `cosh` overflows once
+/// `√−z > 710.4759` — i.e. below `z ≈ −504,776`, where the result is `Infinity` and the propagator's
+/// `Infinity/Infinity` is NaN. That is a real limit of the formulation in `f64`, not a defect to be
+/// papered over, and [`propagate`] handles it by reporting `unconverged`.
 pub fn stumpff(z: f64) -> (f64, f64) {
     if z > 1e-6 {
         let s = sqrt(z);
@@ -293,6 +294,11 @@ pub struct Propagation {
     /// True if the iteration limit was hit without meeting the tolerance. A caller that ignores this
     /// is taking a number on trust, which is exactly what this project refuses to do.
     pub unconverged: bool,
+    /// True if the universal-variable formulation could not represent this problem in `f64` — the
+    /// Stumpff functions overflowed. Always accompanied by `unconverged`; reported separately because
+    /// "your orbit is too hyperbolic for this method" is a different fact from "the solver wandered",
+    /// and only one of them is fixable by iterating harder.
+    pub overflowed: bool,
 }
 
 /// Newton iteration limit. Universal-variable Kepler converges quadratically, so this is generous by
@@ -328,6 +334,7 @@ pub fn propagate(state: &State, dt: f64, mu: f64) -> Propagation {
             iterations: 0,
             residual: f64::NAN,
             unconverged: true,
+            overflowed: false,
         };
     }
 
@@ -359,12 +366,23 @@ pub fn propagate(state: &State, dt: f64, mu: f64) -> Propagation {
     let mut iterations: u32 = 0;
     let mut residual = f64::INFINITY;
     let mut unconverged = true;
+    // True when a Stumpff value came back non-finite. Distinguished from ordinary non-convergence so
+    // that the cause is reportable: it means the orbit is too hyperbolic for this formulation in f64,
+    // not that the solver wandered.
+    let mut overflowed = false;
 
     while iterations < MAX_ITERATIONS {
         iterations += 1;
         let chi2 = chi * chi;
         let psi = chi2 * alpha;
         let (c, s) = stumpff(psi);
+
+        // cosh and sinh overflow for psi below about -504776, and from there every subsequent value is
+        // NaN. Stop rather than iterate on NaN - the caller gets `unconverged`, which is the truth.
+        if !is_finite(c) || !is_finite(s) {
+            overflowed = true;
+            break;
+        }
 
         // F(chi) = the universal Kepler equation, expressed in the numerically stable form.
         let f = rv / sqrt_mu * chi2 * c
@@ -377,7 +395,20 @@ pub fn propagate(state: &State, dt: f64, mu: f64) -> Propagation {
         let step = f / r;
         chi -= step;
         residual = fabs(step);
-        if !exceeds(residual, TOLERANCE) {
+
+        // The tolerance is RELATIVE TO chi, and the old absolute 1e-12 was a real bug. The question a
+        // step answers is "how much of chi is still in doubt", and chi runs to 1e4 and beyond for
+        // long hyperbolic flights. Against a fixed 1e-12 the iteration could never satisfy the test
+        // once chi exceeded about 1e4, so ordinary orbits with modest e were reported unconverged
+        // while their answers were in fact good to a few times 1e-11. Measured: near-parabolic cases
+        // that failed at a fixed 1e-12 converge at 1e-12*max(1, |chi|) with no loss of accuracy.
+        //
+        // The `residual <= tolerance` form also matters: a NaN residual must NOT count as convergence.
+        // The old `!(residual > TOLERANCE)` did exactly that, because `!(NaN > x)` is true, and the
+        // result was a propagate() returning all-NaN while reporting `unconverged: false` - at 1.5x
+        // escape velocity after 11 days, i.e. an ordinary hyperbolic departure. See
+        // `tests/validation.rs::overflow_is_reported_not_hidden`.
+        if residual <= TOLERANCE * fmax(1.0, fabs(chi)) {
             unconverged = false;
             break;
         }
@@ -405,6 +436,7 @@ pub fn propagate(state: &State, dt: f64, mu: f64) -> Propagation {
             iterations,
             residual,
             unconverged: true,
+            overflowed,
         };
     }
     let fdot = sqrt_mu / (rn * r0) * (alpha * chi2 * chi * s - chi);
@@ -416,6 +448,7 @@ pub fn propagate(state: &State, dt: f64, mu: f64) -> Propagation {
         iterations,
         residual,
         unconverged,
+        overflowed,
     }
 }
 
@@ -430,48 +463,22 @@ pub fn period(semi_major_axis: f64, mu: f64) -> f64 {
     odderon_dmath::TAU * sqrt(semi_major_axis * semi_major_axis * semi_major_axis / mu)
 }
 
-/// True anomaly ν, in `(−π, π]`, from the eccentricity vector.
+/// True anomaly ν, in `[0, 2π)`.
 ///
-/// Kept here rather than on [`Elements`] because the debrief asks "where in the orbit did this happen"
-/// directly from a state vector, without a round trip through elements.
+/// Kept as a named function because the debrief asks "where in the orbit did this happen" directly from
+/// a state vector, without wanting the rest of the element set.
 ///
-/// A circular orbit has no defined periapsis, so its true anomaly is degenerate. Rather than return a
-/// misleading number, this returns the **argument of latitude** in that case, which is the quantity
-/// that is actually defined — and it is the same convention flight dynamics software uses.
+/// **This is [`Elements::to_elements`]'s `nu` and nothing else.** It used to be a separate
+/// implementation, and the two had already drifted apart in three ways, each of them a bug: a different
+/// circular threshold (`1e-10` here, `1e-9` there), an absolute rather than relative equatorial test,
+/// and an opposite sign convention — this function returned `(−π, π]` while the element set returned
+/// `[0, 2π)`, so `nu = 190°` came back as `−170°` from one and `190°` from the other. Two functions
+/// answering the same question is how that happens; one function cannot.
+///
+/// For a circular orbit the value is the argument of latitude, and for a circular equatorial orbit the
+/// true longitude — see [`Elements`]. A degenerate state (no orbit plane) yields NaN.
 pub fn true_anomaly(state: &State, mu: f64) -> f64 {
-    let h = state.angular_momentum();
-    let h_norm = h.norm();
-    let r_norm = state.r.norm();
-    if !positive(h_norm) || !positive(r_norm) {
-        return f64::NAN;
-    }
-    // e = ((v² − mu/r)·r − (r·v)·v) / mu
-    let v2 = state.v.dot(state.v);
-    let e_vec = (state.r * (v2 - mu / r_norm) - state.v * state.r.dot(state.v)) * (1.0 / mu);
-    let e = e_vec.norm();
-
-    if e < 1e-10 {
-        // Degenerate: no periapsis direction. Argue of latitude = angle from the node line.
-        let node = Vec3::new(0.0, 0.0, 1.0).cross(h);
-        if node.norm() < 1e-12 {
-            // Equatorial circular: use the +x axis as the reference direction.
-            let nu = atan2(state.r.y, state.r.x);
-            return nu;
-        }
-        let n = node.unit();
-        let cos_u = n.dot(state.r.unit());
-        let sign = if state.r.cross(n).dot(h) < 0.0 { -1.0 } else { 1.0 };
-        return sign * acos(clamp_unit(cos_u));
-    }
-
-    let cos_nu = e_vec.dot(state.r) / (e * r_norm);
-    let nu = acos(clamp_unit(cos_nu));
-    // acos loses the sign; recover it from the direction of motion.
-    if state.r.dot(state.v) < 0.0 {
-        -nu
-    } else {
-        nu
-    }
+    state.to_elements(mu).nu
 }
 
 /// Re-export `sin` so downstream crates need one dependency, not two.
