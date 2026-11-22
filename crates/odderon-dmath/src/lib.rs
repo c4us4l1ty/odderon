@@ -76,7 +76,7 @@ pub const LN_2: f64 = 0.693_147_180_559_945_3;
 /// exact for moderate `k`, and the low part carries the tail. Reducing with `(x - k·HI) - k·LO`
 /// instead of `x - k·LN_2` is what keeps `exp` accurate at large |x| — measured 8e-14 against
 /// 2.2e-16.
-const LN_2_HI: f64 = 6.931_471_803_691_238_2e-1;
+const LN_2_HI: f64 = 6.931_471_803_691_238e-1;
 const LN_2_LO: f64 = 1.908_214_929_270_587_7e-10;
 /// 1/ln 2.
 const LOG2_E: f64 = 1.442_695_040_888_963_4;
@@ -703,13 +703,10 @@ pub fn pow(a: f64, b: f64) -> f64 {
 /// a simulator with a bug, so the clamp is part of the API rather than the caller's problem.
 #[inline]
 pub fn clamp_unit(x: f64) -> f64 {
-    if x > 1.0 {
-        1.0
-    } else if x < -1.0 {
-        -1.0
-    } else {
-        x
-    }
+    // `f64::clamp` lives in `core` and is implemented with comparisons alone, so it is available
+    // without libm and is bit-exact on every target. It also propagates NaN, which is what we want:
+    // a NaN input is a bug upstream and must not be silently turned into 1.0.
+    x.clamp(-1.0, 1.0)
 }
 
 /// Arc cosine, in `[0, π]`.
@@ -959,13 +956,20 @@ mod tests {
     /// zero and reaches 8e-14 at x ≈ −689.
     #[test]
     fn exp_over_full_range() {
-        let mut x = -708.0;
+        let mut x: f64 = -708.0;
         while x <= 709.0 {
             let want = x.exp();
             let got = exp(x);
             if want.is_finite() && want != 0.0 && got.is_finite() {
                 let rel = fabs(got - want) / want;
-                assert!(rel < 1e-15, "exp at {}: rel {} (got {}, want {})", x, rel, got, want);
+                assert!(
+                    rel < 1e-15,
+                    "exp at {}: rel {} (got {}, want {})",
+                    x,
+                    rel,
+                    got,
+                    want
+                );
             }
             x += 0.37;
         }
@@ -1008,7 +1012,12 @@ mod tests {
             }
         }
         for &x in [0.3, 0.5, 1.0, 2.5, -0.7, 12.0].iter() {
-            assert_eq!(sinh(-x).to_bits(), (-sinh(x)).to_bits(), "sinh odd at {}", x);
+            assert_eq!(
+                sinh(-x).to_bits(),
+                (-sinh(x)).to_bits(),
+                "sinh odd at {}",
+                x
+            );
         }
         assert_eq!(cosh(0.0), 1.0);
         assert_eq!(sinh(0.0), 0.0);

@@ -26,20 +26,34 @@ report() {
 # Excluded deliberately: the dmath crate itself (it *is* the implementation) and the test module
 # inside it (which compares against the platform on purpose).
 # ---------------------------------------------------------------------------------------------
+# How a violating line is excused:
+#
+#   * inside the dmath crate, anything below its `#[cfg(test)]` marker — those tests compare against
+#     the platform on purpose, that being the point of them;
+#   * in any crate, a line inside an integration-test file or a `tests/` directory — test code is not
+#     the kernel, and this includes files like `crates/odderon-astro/tests/validation.rs`.
+#
+# Earlier this rule had no notion of integration tests, so adding a test file to a non-dmath crate
+# failed the gate. The exclusion is narrow: test code, nothing else.
 rule1_hits=""
 while IFS= read -r line; do
   [ -z "$line" ] && continue
   file="${line%%:*}"
+  lineno="${line#*:}"; lineno="${lineno%%:*}"
+
+  # Integration tests: `.../tests/...` or a `*_test.rs`-style suffix convention.
+  case "$file" in
+    */tests/*|tests/*|*/tests.rs) continue ;;
+  esac
+
   if [ "$file" = "crates/odderon-dmath/src/lib.rs" ]; then
-    # Allowed only below the `#[cfg(test)]` marker.
-    lineno="${line#*:}"; lineno="${lineno%%:*}"
     test_start=$(grep -n '^#\[cfg(test)\]' "$file" | head -1 | cut -d: -f1)
     if [ -n "$test_start" ] && [ "$lineno" -ge "$test_start" ]; then
       continue
     fi
   fi
   rule1_hits="${rule1_hits}${line}"$'\n'
-done < <(grep -rnE '\.(sin|cos|tan|asin|acos|atan|atan2|exp|exp2|expm1|ln|log|log2|log10|powf|powi|cbrt|hypot|sinh|cosh|tanh|to_degrees|sqrt|abs|fract|recip)\(' \
+done < <(grep -rnE '\.(sin|cos|tan|asin|acos|atan|atan2|exp|exp2|expm1|ln|log|log2|log10|powf|powi|cbrt|hypot|sinh|cosh|tanh|to_degrees|sqrt|abs|fract|recip)\(|\.[[:space:]]*(min|max)\(' \
            crates --include='*.rs' \
          | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|/\*|\*)' || true)
 

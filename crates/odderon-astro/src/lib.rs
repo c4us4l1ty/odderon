@@ -40,7 +40,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-use odderon_dmath::{acos, atan2, fabs, fmax, sinh, sqrt};
+use odderon_dmath::{acos, atan2, clamp_unit, fabs, fmax, sinh, sqrt};
 
 /// Gravitational parameters, km³/s².
 ///
@@ -275,6 +275,10 @@ const TOLERANCE: f64 = 1e-12;
 /// simulator must survive being handed nonsense by a player mid-design.
 pub fn propagate(state: &State, dt: f64, mu: f64) -> Propagation {
     let r0 = state.r.norm();
+    // Note the negated comparisons: `!(r0 > 0.0)` rather than `r0 <= 0.0`, and the same throughout
+    // this crate. With a NaN radius the direct form is false and the NaN would flow onward as if it
+    // were a valid state; negated, NaN takes the degenerate path and is *reported*. Clippy permits
+    // this form for exactly this reason.
     if !(r0 > 0.0) || !(mu > 0.0) {
         return Propagation {
             state: State::new(
@@ -427,11 +431,11 @@ pub fn true_anomaly(state: &State, mu: f64) -> f64 {
         let n = node.unit();
         let cos_u = n.dot(state.r.unit());
         let sign = if state.r.cross(n).dot(h) < 0.0 { -1.0 } else { 1.0 };
-        return sign * acos(fmax(-1.0, cos_u.min(1.0)));
+        return sign * acos(clamp_unit(cos_u));
     }
 
     let cos_nu = e_vec.dot(state.r) / (e * r_norm);
-    let nu = acos(fmax(-1.0, cos_nu.min(1.0)));
+    let nu = acos(clamp_unit(cos_nu));
     // acos loses the sign; recover it from the direction of motion.
     if state.r.dot(state.v) < 0.0 {
         -nu

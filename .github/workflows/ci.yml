@@ -65,14 +65,38 @@ jobs:
           fi
           grep -E "^test result" /tmp/test.log
 
-      - name: determinism hash (bucket printed)
-        run: cargo test -p odderon-dmath determinism_golden -- --nocapture
-      - name: publish hash for cross-platform comparison
+      - name: determinism hash (always readable)
+        # The bootstrap value must be readable from CI with no log access at all, because the only
+        # channel that reliably works here is a check-run annotation. So: run the hash example on its
+        # own, and echo the result as an annotation whether or not golden.txt exists. This step must
+        # never fail — the determinism *gate* is the next step's job.
         run: |
-          cargo test -p odderon-dmath determinism_golden -- --nocapture 2>&1 \
-            | grep -oE '0x[0-9a-f]{16}' | head -1 > native-hash.txt || true
-          echo "native hash: $(cat native-hash.txt 2>/dev/null || echo 'unknown')"
+          set +e
+          HASH=$(cargo run -q -p odderon-dmath --example hash 2>/dev/null)
+          echo "computed determinism hash: ${HASH:-UNAVAILABLE}"
+          echo "::notice title=determinism hash::${HASH:-UNAVAILABLE}"
+      - name: determinism gate (golden.txt)
+        # Separate from the test run so that its failure says the useful thing as an annotation:
+        # which hash was expected, which was computed. A bare "test failed" is unactionable when the
+        # log is out of reach.
+        run: |
+          set +e
+          OUT=$(cargo test -q -p odderon-dmath determinism_golden -- --nocapture 2>&1)
+          STATUS=$?
+          if [ $STATUS -eq 0 ]; then
+            echo "golden hash matches committed value"
+            echo "$OUT" | grep -oE '0x[0-9a-f]{16}' | head -1 > native-hash.txt
+            exit 0
+          fi
+          GOT=$(cargo run -q -p odderon-dmath --example hash 2>/dev/null)
+          WANT=$(cat crates/odderon-dmath/tests/golden.txt 2>/dev/null || echo "(absent)")
+          echo "::error title=determinism golden mismatch::computed ${GOT:-?}, committed ${WANT}"
+          echo "computed: ${GOT:-?}"
+          echo "committed: ${WANT}"
+          echo "${GOT:-unknown}" > native-hash.txt
+          exit 1
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: native-hash
           path: native-hash.txt
