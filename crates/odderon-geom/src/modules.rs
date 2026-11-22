@@ -103,7 +103,7 @@ impl Pal {
         steel: [0.250, 0.290, 0.330],
         trim: [0.560, 0.545, 0.505],
         stone: [0.360, 0.350, 0.320],
-        tile: [0.100, 0.110, 0.130],
+        tile: [0.150, 0.160, 0.186],
         glass: [0.075, 0.090, 0.105],
         accent: [0.520, 0.170, 0.130],
     };
@@ -118,7 +118,7 @@ impl Pal {
         steel: [0.230, 0.240, 0.250],
         trim: [0.470, 0.455, 0.425],
         stone: [0.330, 0.320, 0.300],
-        tile: [0.090, 0.098, 0.112],
+        tile: [0.138, 0.146, 0.166],
         glass: [0.070, 0.082, 0.095],
         accent: [0.240, 0.290, 0.360],
     };
@@ -133,7 +133,7 @@ impl Pal {
         steel: [0.240, 0.265, 0.285],
         trim: [0.330, 0.345, 0.360],
         stone: [0.340, 0.330, 0.310],
-        tile: [0.120, 0.130, 0.145],
+        tile: [0.156, 0.168, 0.188],
         glass: [0.085, 0.100, 0.115],
         accent: [0.145, 0.310, 0.520],
     };
@@ -148,7 +148,7 @@ impl Pal {
         steel: [0.260, 0.285, 0.300],
         trim: [0.545, 0.520, 0.470],
         stone: [0.355, 0.345, 0.320],
-        tile: [0.105, 0.112, 0.128],
+        tile: [0.152, 0.160, 0.180],
         glass: [0.085, 0.100, 0.108],
         accent: [0.230, 0.240, 0.520],
     };
@@ -786,7 +786,9 @@ pub fn eave(b: &mut MeshBuffer, w: f32, y: f32, depth: f32, pal: &Pal, rng: &mut
         Vec3::new(hw, y + pitch, -0.02),
         Vec3::new(hw, y, depth),
         Vec3::new(-hw, y, depth),
-        pal.tile,
+        // Sun-bleached tile: a raw dark tile colour turns every intermediate
+        // eave into a black gash across the facade.
+        lerp3(pal.tile, [0.235, 0.240, 0.255], 0.40),
         MAT_KAWARA,
     );
     // Underside, visible from the street and always in shade. It is timber, but
@@ -901,20 +903,22 @@ pub fn roof_kawara(b: &mut MeshBuffer, w: f32, y_eave: f32, depth: f32, rise: f3
         scale3(pal.tile, 1.18),
         MAT_KAWARA,
     );
-    // Gable barge boards, proud of the roof plane so they read as timber.
+    // Gable barge boards. They sit *under* the tile plane and just inside the
+    // eave line: stood proud of it they read as antennae sticking into the sky
+    // from every low camera in the street.
     for sx in [-1.0_f32, 1.0] {
-        let x = sx * (hw + 0.01);
+        let x = sx * (hw - 0.035);
         b.add_beam(
-            Vec3::new(x, y_eave, z_eave + 0.02),
-            Vec3::new(x, y_eave + rise, z_ridge),
-            0.05,
+            Vec3::new(x, y_eave - 0.16, z_eave - 0.10),
+            Vec3::new(x, y_eave + rise - 0.16, z_ridge),
+            0.030,
             pal.timber,
             MAT_WOOD,
         );
         b.add_beam(
-            Vec3::new(x, y_eave + rise, z_ridge),
-            Vec3::new(x, y_eave, z_back),
-            0.05,
+            Vec3::new(x, y_eave + rise - 0.16, z_ridge),
+            Vec3::new(x, y_eave - 0.16, z_back + 0.10),
+            0.030,
             pal.timber,
             MAT_WOOD,
         );

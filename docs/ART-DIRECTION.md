@@ -96,13 +96,13 @@ reference frame. The reference is a low-key image:
 | | mean | p25 | p50 | p95 | dark<0.15 | hot>0.85 | sat | warm/cool |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | reference | 0.288 | 0.092 | 0.228 | 0.684 | 39 % | 0 % | 0.444 | 55/38 |
-| 01 room window | 0.178 | 0.099 | 0.126 | 0.496 | 67 % | 0 % | 0.466 | 62/31 |
-| 02 window vista | 0.389 | 0.216 | 0.440 | 0.782 | 18 % | 2 % | 0.481 | 67/26 |
-| 03 gallery | 0.367 | 0.118 | 0.316 | 0.776 | 29 % | 0 % | 0.456 | 58/36 |
-| 04 street machiya | 0.325 | 0.186 | 0.296 | 0.725 | 18 % | 0 % | 0.402 | 59/16 |
-| 05 street meadow | 0.318 | 0.145 | 0.306 | 0.618 | 27 % | 0 % | 0.491 | 54/41 |
-| 06 sky cumulus | 0.398 | 0.214 | 0.399 | 0.826 | 18 % | 3 % | 0.488 | 43/46 |
-| 07 interior desk | 0.297 | 0.129 | 0.226 | 0.858 | 31 % | 6 % | 0.297 | 49/23 |
+| 01 room window | 0.178 | 0.099 | 0.126 | 0.495 | 67 % | 0 % | 0.469 | 62/31 |
+| 02 window vista | 0.394 | 0.187 | 0.449 | 0.787 | 18 % | 2 % | 0.474 | 59/33 |
+| 03 gallery | 0.360 | 0.137 | 0.246 | 0.780 | 27 % | 0 % | 0.419 | 44/46 |
+| 04 street machiya | 0.339 | 0.178 | 0.295 | 0.757 | 18 % | 0 % | 0.462 | 80/13 |
+| 05 street meadow | 0.328 | 0.149 | 0.326 | 0.617 | 25 % | 0 % | 0.489 | 48/49 |
+| 06 sky cumulus | 0.393 | 0.178 | 0.391 | 0.829 | 13 % | 3 % | 0.441 | 30/54 |
+| 07 interior desk | 0.278 | 0.114 | 0.226 | 0.754 | 41 % | 1 % | 0.319 | 47/27 |
 
 Captures are byte-identical between runs (`tools/README.md` §3b), so a change
 in this table is a change in the renderer, not in the weather.
@@ -111,9 +111,13 @@ The film chain is: `aces(lit * 0.52)` → sRGB → gamma 1.10 → 22 % S-curve �
 vibrance `1.05 + 0.46·(1-sat)` → split tone (cool violet shade, warm amber
 light) → lifted black point `x·0.975 + 0.012`.
 
-The street views sit close on mean/p25/p50 and on hue; 01 is still too dark
-(one window, deliberately) and 02/06 still carry the brightest highlights
-because they are the only frames that look at the sky.
+The street views sit close on mean/p25/p50. 01 is still too dark (one window,
+deliberately) and 02/06 carry the brightest highlights because they are the only
+frames that look at the sky. 03/05 have drifted *cool* since the street was
+rebuilt from the kit: the kawara roofs and the galvanised annexes now carry real
+slate and steel area, which pulls them toward 44/46. Warm them back with the
+sun/ambient split, not by re-tinting the roofs. 07's saturation (0.319) is the
+next interior target: the room is lit entirely by one window and reads grey.
 
 Matching the *mean* while carrying 15 % dark pixels is the classic failure: it
 produces pastel product renders. Match the distribution.
