@@ -253,9 +253,9 @@ pub fn build_uchinoura_street_static(buf: &mut MeshBuffer) {
     buf.add_box(Vec3::new(-42.0, ground_y + 0.006, 9.24), Vec3::new(42.0, ground_y + 0.16, 9.44), curb_stone, MAT_MATTE);
     buf.add_box(Vec3::new(-42.0, ground_y + 0.006, 4.80), Vec3::new(42.0, ground_y + 0.16, 5.00), curb_stone, MAT_MATTE);
     // Lush summer grass verge beds along the roadside curb seams (leaving bus-stop boarding zone clear!)
-    buf.add_box(Vec3::new(-18.0, ground_y + 0.141, 4.56), Vec3::new(-8.10, ground_y + 0.168, 4.79), [0.075, 0.155, 0.045], MAT_FOLIAGE);
-    buf.add_box(Vec3::new(-3.60, ground_y + 0.141, 4.58), Vec3::new(16.0, ground_y + 0.168, 4.79), [0.075, 0.155, 0.045], MAT_FOLIAGE);
-    buf.add_box(Vec3::new(-18.0, ground_y + 0.044, 8.94), Vec3::new(18.0, ground_y + 0.072, 9.23), [0.070, 0.145, 0.042], MAT_FOLIAGE);
+    buf.add_box(Vec3::new(-18.0, ground_y + 0.141, 4.56), Vec3::new(-8.10, ground_y + 0.168, 4.79), [0.050, 0.104, 0.031], MAT_FOLIAGE);
+    buf.add_box(Vec3::new(-3.60, ground_y + 0.141, 4.58), Vec3::new(16.0, ground_y + 0.168, 4.79), [0.050, 0.104, 0.031], MAT_FOLIAGE);
+    buf.add_box(Vec3::new(-18.0, ground_y + 0.044, 8.94), Vec3::new(18.0, ground_y + 0.072, 9.23), [0.047, 0.098, 0.030], MAT_FOLIAGE);
 
     // CHECKPOINT 1B NEAR-SIDEWALK PROPS: Weathered Vending Machine + Kominka `バス停` Range Shuttle Stop!
     props::japanese_vending_machine(buf, Pose::at(-1.10, ground_y + 0.142, 2.72));

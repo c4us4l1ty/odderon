@@ -88,9 +88,11 @@ void main() {
   // saturation high well up the sky, which is what makes an anime noon read
   // as "deep" instead of "washed".
   // ---------------------------------------------------------------------
-  vec3 zenN  = vec3(0.008, 0.048, 0.235);
-  vec3 midN  = vec3(0.030, 0.165, 0.500);
-  vec3 horN  = vec3(0.145, 0.340, 0.545);
+  // Sampled off the reference: its noon sky is a humid cyan-blue, not a
+  // mid-latitude cobalt - green sits at ~0.75 of blue where cobalt puts it at 0.6.
+  vec3 zenN  = vec3(0.005, 0.050, 0.170);
+  vec3 midN  = vec3(0.018, 0.168, 0.360);
+  vec3 horN  = vec3(0.100, 0.330, 0.420);
   vec3 zenD  = vec3(0.030, 0.048, 0.150);
   vec3 midD  = vec3(0.180, 0.105, 0.235);
   vec3 horD  = vec3(0.880, 0.330, 0.110);

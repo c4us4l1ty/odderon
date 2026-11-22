@@ -489,7 +489,9 @@ pub fn summer_grass_strip(buf: &mut MeshBuffer, pose: Pose, length_x: f32, clust
                 // Lean outward from the tuft centre, with a breeze bias along +X.
                 let lean_x = fan * (sx * 0.24) + 0.06 + (h1 - 0.5) * 0.10;
                 let lean_z = fan * (sz * 0.24) + (h3 - 0.5) * 0.16;
-                let blade_h = (0.30 + h2 * 0.30 + (0.5 - fan.abs()) * 0.16 + kf * 0.012) * 0.88;
+                // Verge grass in the reference is waist-high and blocks the bottom of
+                // the frame; the thin blades keep it from reading as leeks.
+                let blade_h = 0.38 + h2 * 0.42 + (0.5 - fan.abs()) * 0.20 + kf * 0.014;
                 // Real blades are ~5 mm across; at 20 mm they read as leeks
                 // in a close-up, so the width is kept well under the height.
                 let w = 0.010 + h1 * 0.007;
