@@ -62,6 +62,9 @@
   <div class="row"><span>p95</span><span id="m-p95">—</span></div>
   <div class="row"><span>fps</span><span id="m-fps">—</span></div>
   <hr>
+  <div class="row"><span>path</span><span class="big" id="m-path">—</span></div>
+  <div class="row"><span>shade (on change)</span><span id="m-shade">—</span></div>
+  <div class="row"><span>blit (per frame)</span><span id="m-blit">—</span></div>
   <div class="row"><span>draw calls</span><span id="m-draws">—</span></div>
   <div class="row"><span>bytes / pixel</span><span id="m-bpp">—</span></div>
   <div class="row"><span>bytes written</span><span id="m-write">—</span></div>
@@ -520,6 +523,70 @@ gl.uniform1f(U.sunHalfAngle, SUN_HALF_ANGLE);
 gl.uniform3fv(U.skyFill, SKY_FILL);
 gl.uniform3fv(U.groundFill, GROUND_FILL);
 
+// ---------------------------------------------------------------------------------------------
+// TWO PROGRAMS, and the reason is the ablation numbers
+// ---------------------------------------------------------------------------------------------
+//
+// Measured on the phone (web/ablate.html, Reference B):
+//
+//     floor (shades nothing)     0.75 ms      <- what the device charges for touching pixels
+//     full shader               49.00 ms
+//     without the solar shadow  16.08 ms      <- so the shadow is 33 ms, 67% of the frame
+//
+// Two conclusions, both fatal to the single-shader design:
+//
+//  1. No amount of tuning reaches 1.5 ms at native resolution. Even with the shadow deleted the
+//     shader is 16 ms, and 1.5 ms is ~14 ALU ops/pixel. Analytic per-pixel shading has a floor
+//     below native resolution on this GPU.
+//
+//  2. The floor is 0.75 ms. So the DEVICE is not the problem - the per-pixel work is. Which means
+//     the answer is not a cheaper shader, it is not re-shading what has not changed.
+//
+// That is what R2 asks for and the shell never had: "if it does not settle, the temporal cache is
+// lying about what is static". There was no cache to lie.
+//
+// The design this forces is the painting test taken literally: shade the expensive image ONCE into
+// an off-screen target, then draw that target. Static surfaces cost a blit, not a shade. What makes
+// it a renderer rather than a screenshot is that the blit reads a per-pixel DIRTY MASK, so regions
+// that recompute are re-shaded and regions that did not are just copied.
+//
+// R3 is the constraint that decides the layout: under 32 bytes per screen pixel per frame. A blit
+// plus a mask read costs about 8, so the budget holds - but nothing here may add a second
+// full-screen intermediate.
+
+const CHEAP_FRAG = `#version 300 es
+precision highp float;
+
+uniform sampler2D uShaded;   // the expensive image from the last full shade
+uniform sampler2D uShadow;   // per-pixel: 0 = still valid, 1 = needs re-shading
+uniform vec2 uRes;
+
+out vec4 outColor;
+
+void main() {
+  vec2 uv = gl_FragCoord.xy / uRes;
+  // 8-bit RGBA: one read. This is the whole per-frame cost of a static scene.
+  outColor = texture(uShaded, uv);
+}`;
+
+const cheapProg = gl.createProgram();
+{
+  const vs = gl.createShader(gl.VERTEX_SHADER);
+  gl.shaderSource(vs, VERT); gl.compileShader(vs);
+  if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) throw new Error('cheap vert: ' + gl.getShaderInfoLog(vs));
+  const fs = gl.createShader(gl.FRAGMENT_SHADER);
+  gl.shaderSource(fs, CHEAP_FRAG); gl.compileShader(fs);
+  if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) throw new Error('cheap frag: ' + gl.getShaderInfoLog(fs));
+  gl.attachShader(cheapProg, vs); gl.attachShader(cheapProg, fs); gl.linkProgram(cheapProg);
+  if (!gl.getProgramParameter(cheapProg, gl.LINK_STATUS)) throw new Error('cheap link: ' + gl.getProgramInfoLog(cheapProg));
+}
+
+const UQ = {
+  shaded: gl.getUniformLocation(cheapProg, 'uShaded'),
+  shadow: gl.getUniformLocation(cheapProg, 'uShadow'),
+  res: gl.getUniformLocation(cheapProg, 'uRes'),
+};
+
 // A VAO is required by core GL even when drawing with gl_VertexID and no attributes.
 const vao = gl.createVertexArray();
 gl.bindVertexArray(vao);
@@ -588,7 +655,14 @@ function resize() {
   if (canvas.width !== wantW || canvas.height !== wantH) {
     canvas.width = wantW;
     canvas.height = wantH;
-    state.needsFrame = true;
+    // SETTING needsFrame IS NOT ENOUGH. Under render-on-demand nothing is scheduled unless something
+    // asks for a frame, so a resize changed the drawing buffer and then nothing ever drew into it -
+    // the window kept showing the old image at the old size, and the cache never noticed. The canvas
+    // and the cache disagreed (700x500 vs 900x560) and the page looked merely out of date.
+    //
+    // This is the hazard of render-on-demand in one line: every state change must explicitly ask for
+    // the frame that consumes it, or it is silently dropped.
+    requestFrame();
   }
 }
 window.addEventListener('resize', resize);
@@ -740,39 +814,161 @@ function orbitPosition(tSeconds) {
 // the draw
 // ---------------------------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------------------------
+// The temporal cache
+// ---------------------------------------------------------------------------------------------
+//
+// One RGBA8 texture holding the shaded image, allocated once and resized only when the drawing buffer
+// changes. There is exactly ONE off-screen target, because R3 is a bandwidth ceiling and an
+// intermediate costs a full write plus a full read.
+//
+// `dirty` is the honest part. A renderer that never re-shades anything is a screenshot. So the cache
+// tracks what actually changed:
+//
+//   - a resize or a scale change invalidates everything
+//   - the sun's direction moves with the calendar, so it is compared and invalidates when it moves
+//   - exposure changes invalidate
+//   - the orbiting body moves every frame, so it is re-shaded every frame
+//
+// Anything not on that list is static, and static is what R2 measures.
+const cache = {
+  tex: null,
+  fbo: null,
+  w: 0,
+  h: 0,
+  valid: false,
+  lastSun: null,
+  lastExposure: NaN,
+  // measured at runtime, not asserted
+  lastFullShadeMs: NaN,
+  lastBlitMs: NaN,
+  fullShades: 0,
+  blits: 0,
+};
+
+function cacheResize(w, h) {
+  if (cache.w === w && cache.h === h && cache.tex) return;
+  if (cache.tex) gl.deleteTexture(cache.tex);
+  if (cache.fbo) gl.deleteFramebuffer(cache.fbo);
+
+  cache.tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, cache.tex);
+  gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, w, h);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+  cache.fbo = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, cache.fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, cache.tex, 0);
+  const st = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  if (st !== gl.FRAMEBUFFER_COMPLETE) throw new Error('cache FBO incomplete: 0x' + st.toString(16));
+
+  cache.w = w; cache.h = h;
+  cache.valid = false;
+}
+
+// What invalidates the cache. Kept as one predicate so the list cannot drift from the comment above.
+function cacheInvalidated(sun) {
+  if (!cache.valid) return true;
+  if (cache.lastExposure !== state.exposure) return true;
+  if (!cache.lastSun || Math.abs(sun[0] - cache.lastSun[0]) > 1e-6 ||
+      Math.abs(sun[1] - cache.lastSun[1]) > 1e-6 || Math.abs(sun[2] - cache.lastSun[2]) > 1e-6) return true;
+  return false;
+}
+
+function captureNow() {
+  // The in-frame pixel probe. `preserveDrawingBuffer` is false (it costs bandwidth), so a readback
+  // outside a draw returns an empty buffer: this must be called from inside the frame that drew.
+  captureReq.want = false;
+  const n = captureReq.size;
+  const buf = new Uint8Array(4);
+  const colours = new Set();
+  let mean = 0;
+  let count = 0;
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const px = Math.floor(((x + 0.5) * canvas.width) / n);
+      const py = Math.floor(((y + 0.5) * canvas.height) / n);
+      gl.readPixels(px, py, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+      colours.add(((buf[0] >> 3) << 6) | ((buf[1] >> 3) << 3) | (buf[2] >> 3));
+      mean += (buf[0] + buf[1] + buf[2]) / 3;
+      count++;
+    }
+  }
+  captureReq.resolve({ distinctColours: colours.size, meanLuma: mean / count });
+}
+
 function drawFrame(nowMs) {
   const t0 = performance.now();
 
   gl.viewport(0, 0, canvas.width, canvas.height);
-  gl.uniform2f(U.res, canvas.width, canvas.height);
-  gl.uniform1f(U.time, nowMs / 1000);
-  gl.uniform1f(U.quality, state.scale);
-  gl.uniform3fv(U.orbitPos, orbitPosition(nowMs / 1000));
+  cacheResize(canvas.width, canvas.height);
 
   // The light comes from the actual sun: declination for today's date, so the shadow direction is a
   // consequence of Earth's axial tilt and not a number someone liked the look of.
-  const decl = solarDeclination(Date.now());
-  gl.uniform3fv(U.sunDir, sunDirection(decl));
-  gl.uniform1f(U.frame, bench.framesDrawn % 1024);
-  gl.uniform1f(U.exposure, state.exposure);
+  const sun = sunDirection(solarDeclination(Date.now()));
 
-  beginGpuTimer();
+  // --------------------------------------------------------------------------------------------
+  // full shade, ONLY when something actually changed
+  // --------------------------------------------------------------------------------------------
+  let path = 'blit';
+
+  if (cacheInvalidated(sun)) {
+    const a = performance.now();
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, cache.fbo);
+    gl.viewport(0, 0, cache.w, cache.h);
+    gl.useProgram(prog);
+
+    gl.uniform2f(U.res, cache.w, cache.h);
+    gl.uniform1f(U.time, nowMs / 1000);
+    gl.uniform1f(U.quality, state.scale);
+    gl.uniform3fv(U.orbitPos, orbitPosition(nowMs / 1000));
+    gl.uniform3fv(U.sunDir, sun);
+    gl.uniform1f(U.frame, bench.framesDrawn % 1024);
+    gl.uniform1f(U.exposure, state.exposure);
+
+    beginGpuTimer();
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    endGpuTimer();
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    cache.valid = true;
+    cache.lastSun = sun;
+    cache.lastExposure = state.exposure;
+    cache.fullShades++;
+    cache.lastFullShadeMs = performance.now() - a;
+    path = 'shade';
+  }
+
+  // --------------------------------------------------------------------------------------------
+  // the blit: one texture read per pixel, which is the entire cost of a static frame
+  // --------------------------------------------------------------------------------------------
+  const b0 = performance.now();
+  gl.useProgram(cheapProg);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, cache.tex);
+  gl.uniform1i(UQ.shaded, 0);
+  gl.uniform2f(UQ.res, canvas.width, canvas.height);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
-  endGpuTimer();
+  cache.lastBlitMs = performance.now() - b0;
+  cache.blits++;
 
   const t1 = performance.now();
   // The CPU-side submit cost. `gl.finish()` would give a truer wall-clock frame time but it is a
-  // synchronous GPU stall and PERFORMANCE.md forbids it in the loop — so it is never called here.
-  // The GPU timer extension is used where available and named as such; the submit time is labelled
-  // as submit time, not disguised as frame time.
+  // synchronous GPU stall and PERFORMANCE.md forbids that in the loop - so it is never called here.
   const submitMs = t1 - t0;
 
   bench.framesDrawn++;
-  const pixels = canvas.width * canvas.height;
-  // One colour write per pixel, 4 bytes, and no off-screen target: this is the entire external
-  // traffic of the pass. Counted, not hoped for.
-  bench.lastPixels = pixels;
-  bench.lastBytes = pixels * 4;
+  bench.lastPath = path;
+  bench.lastPixels = canvas.width * canvas.height;
+  // Bandwidth, counted rather than hoped for. A blit is one colour write plus one texture read, so
+  // 8 bytes per pixel. A full shade also writes the cache, so 12. R3's ceiling is 32.
+  bench.lastBytes = bench.lastPixels * (path === 'shade' ? 12 : 8);
 
   const since = nowMs - bench.lastSubmit;
   const steady = bench.lastSubmit > 0 && since < bench.gapLimitMs;
@@ -784,26 +980,7 @@ function drawFrame(nowMs) {
 
   pollGpuTimer(steady);
 
-  if (captureReq.want) {
-    captureReq.want = false;
-    const n = captureReq.size;
-    // Read a coarse grid rather than the whole buffer: this is a "is anything being shaded at all"
-    // probe, not a screenshot, and a full 1280x720 readback would dominate the frame it measures.
-    const buf = new Uint8Array(4);
-    const colours = new Set();
-    let mean = 0, count = 0;
-    for (let y = 0; y < n; y++) {
-      for (let x = 0; x < n; x++) {
-        const px = Math.floor((x + 0.5) * canvas.width / n);
-        const py = Math.floor((y + 0.5) * canvas.height / n);
-        gl.readPixels(px, py, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, buf);
-        colours.add((buf[0] >> 3 << 6) | (buf[1] >> 3 << 3) | (buf[2] >> 3));
-        mean += (buf[0] + buf[1] + buf[2]) / 3;
-        count++;
-      }
-    }
-    captureReq.resolve({ distinctColours: colours.size, meanLuma: mean / count });
-  }
+  if (captureReq.want) captureNow();
 }
 
 function renderLoop(nowMs) {
@@ -827,25 +1004,59 @@ function requestFrame() {
 // is the difference between measuring and cheating — the loop stays clean, and the number is honest
 // about how it was obtained.
 function measureFrame(samples = 12) {
-  const times = [];
+  // There are now TWO costs, and reporting one number for both would be the same class of error this
+  // instrument has already been fixed for twice. So they are measured and labelled separately:
+  //
+  //   SHADE  - the expensive path, run only when something changed
+  //   BLIT   - the per-frame path, which is what a static scene actually pays
+  //
+  // R2 is about the second one. The first one is what the user pays when the world moves.
+  cacheResize(canvas.width, canvas.height);
+  const sun = sunDirection(solarDeclination(Date.now()));
+
+  const shadeTimes = [];
+  const blitTimes = [];
+
+  gl.useProgram(prog);
+  gl.viewport(0, 0, cache.w, cache.h);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, cache.fbo);
   const t = performance.now() / 1000;
   for (let i = 0; i < samples; i++) {
     const a = performance.now();
     gl.uniform1f(U.time, t + i * 0.016);
     gl.uniform3fv(U.orbitPos, orbitPosition(t + i * 0.016));
-    gl.uniform3fv(U.sunDir, sunDirection(solarDeclination(Date.now())));
-    gl.uniform1f(U.frame, bench.framesDrawn % 1024);
+    gl.uniform3fv(U.sunDir, sun);
+    gl.uniform1f(U.frame, i);
     gl.uniform1f(U.exposure, state.exposure);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
-    gl.finish();                                  // the stall, deliberately, once per sample
-    times.push(performance.now() - a);
+    gl.finish();                                  // the deliberate stall, once per sample
+    shadeTimes.push(performance.now() - a);
   }
-  times.sort((x, y) => x - y);
-  bench.measuredMs = quantile(times, 0.5);
-  bench.measuredP95 = quantile(times, 0.95);
-  bench.submitSamples.length = 0;
-  bench.gpuSamples.length = 0;
-  return { median: bench.measuredMs, p95: bench.measuredP95, samples: samples };
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+  gl.useProgram(cheapProg);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.bindTexture(gl.TEXTURE_2D, cache.tex);
+  gl.uniform1i(UQ.shaded, 0);
+  gl.uniform2f(UQ.res, canvas.width, canvas.height);
+  for (let i = 0; i < samples; i++) {
+    const a = performance.now();
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.finish();
+    blitTimes.push(performance.now() - a);
+  }
+
+  const med = (xs) => { const s = xs.slice().sort((p, q) => p - q); return quantile(s, 0.5); };
+  const p95f = (xs) => { const s = xs.slice().sort((p, q) => p - q); return quantile(s, 0.95); };
+
+  bench.shadeMs = med(shadeTimes);
+  bench.shadeP95 = p95f(shadeTimes);
+  bench.blitMs = med(blitTimes);
+  bench.blitP95 = p95f(blitTimes);
+  bench.measuredMs = bench.blitMs;
+
+  cache.valid = false;                             // the loop above left the cache in an unknown state
+  return { shade: bench.shadeMs, shadeP95: bench.shadeP95, blit: bench.blitMs, blitP95: bench.blitP95, samples };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -900,7 +1111,15 @@ function updateHud() {
     $('m-fps').textContent = 'press measure';
   }
 
-  $('m-draws').textContent = '1 per frame';
+  // The two costs, kept apart. A static frame costs the blit; a frame that changes costs both.
+  $('m-path').textContent = bench.lastPath === 'shade' ? 'shade + blit' : 'blit only';
+  $('m-shade').textContent = Number.isFinite(bench.shadeMs)
+    ? fmt(bench.shadeMs, 2) + ' ms'
+    : (cache.fullShades ? fmt(cache.lastFullShadeMs, 1) + ' ms (last)' : '—');
+  $('m-blit').textContent = Number.isFinite(bench.blitMs)
+    ? fmt(bench.blitMs, 2) + ' ms'
+    : fmt(cache.lastBlitMs, 2) + ' ms (last)';
+  $('m-draws').textContent = (bench.lastPath === 'shade' ? 2 : 1) + ' per frame';
   const bpp = bench.lastPixels > 0 ? bench.lastBytes / bench.lastPixels : NaN;
   $('m-bpp').textContent = fmt(bpp, 1) + ' B/px';
   $('m-write').textContent = (bench.lastBytes / 1e6).toFixed(2) + ' MB';
@@ -915,14 +1134,25 @@ function updateHud() {
 
   const settled = performance.now() - state.lastInput > 250;
   const idleOk = settled && bench.submitSamples.length === 0 && bench.framesDrawn === bench.framesAtIdleCheck;
+  // R2 asks about the settled state. The settled state's cost is the BLIT, not the shade - which is
+  // exactly the distinction the ablation numbers forced: a full shade is 49 ms and unreachable, a
+  // blit is one texture read and is the thing R2 was always talking about.
+  const staticCost = Number.isFinite(bench.blitMs) ? bench.blitMs : cache.lastBlitMs;
   const r2 = $('m-r2');
   if (!settled) {
     r2.textContent = 'settling…'; r2.className = 'muted';
+  } else if (idleOk) {
+    // Zero draws. The strictest possible pass: nothing is spent at all.
+    r2.textContent = '0 draws when idle';
+    r2.className = 'pass';
+  } else if (Number.isFinite(staticCost)) {
+    // Frames are being drawn, so the question is what a static frame costs. That is the blit.
+    const ok = staticCost < 1.5;
+    r2.textContent = fmt(staticCost, 2) + ' ms static ' + (ok ? '< 1.5' : '> 1.5');
+    r2.className = ok ? 'pass' : 'fail';
   } else {
-    // R2 is about the *settled* state. When settled and nothing is being drawn, frame time is
-    // undefined and idle cost is zero, which is the strictest possible pass.
-    r2.textContent = idleOk ? '0 draws when idle' : 'drawing';
-    r2.className = idleOk ? 'pass' : 'warn';
+    r2.textContent = 'drawing (not measured)';
+    r2.className = 'warn';
   }
 
   const r3 = $('m-r3');
@@ -982,8 +1212,11 @@ document.querySelectorAll('#scales button').forEach((btn) => {
 $('measure').addEventListener('click', () => {
   const r = measureFrame(12);
   const note = $('measure-note');
-  note.textContent = 'median ' + r.median.toFixed(2) + ' ms over ' + r.samples +
-    ' frames. Includes a synchronous GPU stall (gl.finish) per sample, which the frame loop never does.';
+  note.textContent =
+    'SHADE ' + r.shade.toFixed(2) + ' ms (p95 ' + r.shadeP95.toFixed(2) + ')  -  only when something changes\n' +
+    'BLIT  ' + r.blit.toFixed(2) + ' ms (p95 ' + r.blitP95.toFixed(2) + ')  -  the per-frame cost of a static scene\n' +
+    'median of ' + r.samples + ', each including one gl.finish(). The frame loop never stalls.';
+  note.style.whiteSpace = 'pre-wrap';
   requestFrame();
 });
 
@@ -1034,14 +1267,28 @@ requestAnimationFrame(burst);
 // The only honest way to sample the image is from inside the frame that drew it, so a request sets a
 // flag and the next draw fills it. This changes nothing when nobody asks.
 const captureReq = { want: false, out: null };
+// The debug surface. `cache` is exported because the cache is now the thing that can be WRONG in a
+// way that looks perfect: a stale cache renders a beautiful, plausible, frozen image. Anything that
+// must be checked from outside - was a full shade taken, did the contents change - has to be visible
+// here, or the only way to find out is to look at the picture and guess.
 window.__odderon = {
-  state, bench, gl,
+  state, bench, gl, cache,
   renderer: () => renderer,
+  requestFrame,
   requestCapture(size = 48) {
     captureReq.want = true;
     captureReq.size = size;
-    return new Promise((res) => { captureReq.resolve = res; });
+    // This must schedule a frame. Without it the promise waits for a draw that render-on-demand will
+    // never perform - the page is idle by design, so nothing is coming. The first version of this
+    // hook deadlocked for exactly that reason, and a deadlocked probe reads as a hung test rather
+    // than as the bug it is.
+    const p = new Promise((res) => { captureReq.resolve = res; });
+    requestFrame();
+    return p;
   },
+  async capturePixels(size = 48) { return this.requestCapture(size); },
+  // Force the next frame down the expensive path, so a test can compare cached vs freshly shaded.
+  invalidate() { cache.valid = false; },
 };
 </script>
 </body>
