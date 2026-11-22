@@ -152,4 +152,7 @@ jobs:
           targets: wasm32-unknown-unknown
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: bash ci/annotate.sh "clippy" cargo clippy --workspace --all-targets -- -D warnings
+      # The wasm shell is excluded for the same reason as in the test job: it is a no_std cdylib with
+      # a wasm-only panic handler, so it cannot be checked for the host. Its lints are covered as part
+      # of the wasm32 build.
+      - run: bash ci/annotate.sh "clippy" cargo clippy --workspace --exclude odderon-dmath-wasm --all-targets -- -D warnings
