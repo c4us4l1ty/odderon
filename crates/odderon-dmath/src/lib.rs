@@ -636,22 +636,6 @@ pub fn probe_count() -> u32 {
 }
 
 // ---------------------------------------------------------------------------------------------
-// C ABI exports — the only reason this crate can be driven from Node or a browser
-// ---------------------------------------------------------------------------------------------
-
-/// C-ABI wrapper for [`golden_hash`], so a wasm host can read the crate's identity.
-#[no_mangle]
-pub extern "C" fn odderon_dmath_golden() -> u64 {
-    golden_hash()
-}
-
-/// C-ABI wrapper for [`probe_count`].
-#[no_mangle]
-pub extern "C" fn odderon_dmath_probe_count() -> u32 {
-    probe_count()
-}
-
-// ---------------------------------------------------------------------------------------------
 // tests
 // ---------------------------------------------------------------------------------------------
 
@@ -659,6 +643,10 @@ pub extern "C" fn odderon_dmath_probe_count() -> u32 {
 mod tests {
     // The crate is `no_std`; the test harness is not. This is the standard pattern for testing a
     // no_std crate with `cargo test`, and it keeps the shipped artifact free of std.
+    //
+    // This module deliberately calls the platform's own transcendentals (`x.sin()`, `x.ln()`, …) to
+    // check our implementations against them. That is the one legitimate place in the kernel where a
+    // host libm call appears, it is compiled only for tests, and CI's kernel-policy lint excludes it.
     extern crate std;
 
     use super::*;
