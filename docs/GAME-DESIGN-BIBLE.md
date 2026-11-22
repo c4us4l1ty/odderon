@@ -1,11 +1,15 @@
 # Odderon — Game Design Bible
 
-**Block 0 deliverable, for review.** This is not final. It is the document I will build Block 1 from,
-so the most useful thing you can do is disagree with it in specific places.
+**Living specification for the rebuild.** This is not final. It is the document Block 1 is built
+from, so the most useful thing you can do is disagree with it in specific places.
 
-Companion: `docs/VISION.md` (thesis, architecture, tensions) and `docs/CREDIBILITY.md` (how the
-claims get earned). Hardware target set by you: **2015-era laptop, Intel UHD, 4 GB RAM, and Android
-8+**. Every number below is written against that, not against a gaming PC.
+Companion: [`VISION.md`](VISION.md) (thesis, architecture, tensions), [`CREDIBILITY.md`](CREDIBILITY.md)
+(how the claims get earned) and [`GRAPHICS.md`](GRAPHICS.md) (**authoritative for rendering and frame
+cost** — where this file and that one disagree about pixels, that one wins).
+
+Hardware target, fixed: **Reference A** — 2015-era laptop, Intel HD 520 / UHD 620, 2 cores, 4 GB RAM,
+1366×768. **Reference B** — Android 8+, HiSilicon **Kirin 710** (Mali-G51 MP4), 2–3 GB RAM, Chrome.
+Every number below is written against those two machines, not against a gaming PC.
 
 ---
 
@@ -86,7 +90,7 @@ had to write.
 | **E** | **The epistemic peak** — the game finds *your* moment of maximum δ-resolution and turns it into the ending | Difficulty tuning, session-length heuristics, and the "when should we let them stop" problem | §9.5 |
 
 All five are derived, not invented: A and B are the same sensitivity machinery Eidos already needs
-(PERFORMANCE.md, VISION.md §6); C is the `Provenance` type already required by Pillar 1; D is a
+(`GRAPHICS.md`; VISION.md §6); C is the `Provenance` type already required by Pillar 1; D is a
 constraint on how the solver is written on day one; E is a detector over data we already record.
 
 ---
@@ -452,9 +456,9 @@ memory index (mechanism 12 in the table):
 | **The fill** | quarter-turn of a ball valve, then hold | any propellant transfer | Day 1, pad |
 | **The bleed** | pull a T-handle out, wait, push back | any vent/purge | Day 1, pad |
 | **The tap** | two-finger tap on a gauge face | read the instrument closely | Day 1, workshop |
-| **The crank** | circular turn with resistance and ratchet | anything with stored energy | M2, test stand |
-| **The bolt** | hold + rotate, 6 discrete detents | any structural fastener | M2, after a failure |
-| **The visor** | swipe up/down at the brow | Eidos on/off | M1, apartment |
+| **The crank** | circular turn with resistance and ratchet | anything with stored energy | Block 2, test stand |
+| **The bolt** | hold + rotate, 6 discrete detents | any structural fastener | Block 2, after a failure |
+| **The visor** | swipe up/down at the brow | Eidos on/off | Block 1, apartment |
 
 Six gestures. Never add a seventh without deleting one.
 
@@ -579,7 +583,6 @@ Three rules that keep this honest:
    vacuum, −22 kN liftoff thrust at sea level"*). It exists for the report and for professional users,
    and it is what the Akashi export prints. The player is never *required* to read it.
 
-### 6.3 The Ghost Run
 ### 6.3 The Ghost Run
 
 One counterfactual, played back side by side with the real flight: only the input you changed. This
@@ -912,19 +915,22 @@ Never a popup. Never "hint".
 ### 13.4 Performance budget (your hardware, not mine)
 
 Reference A: **2015 laptop**, Intel HD 520 / UHD 620 class, 2 cores, 4 GB RAM, 1366×768.
-Reference B: **Android 8**, 2017 mid-range SoC (Snapdragon 625 class), 2–3 GB RAM, Chrome.
+Reference B: **Android 8+**, HiSilicon **Kirin 710** (Mali-G51 MP4), 2–3 GB RAM, Chrome.
 
-**Full derivation, the millisecond ledger, and the nine techniques that get us there:
-[`PERFORMANCE.md`](PERFORMANCE.md).** Summary of the contract:
+**The renderer is specified in [`GRAPHICS.md`](GRAPHICS.md) — it is the authoritative document for
+how pixels are produced and what they cost.** `PERFORMANCE.md` is kept for the platform-level
+doctrine that still holds (no game loop, events instead of ticks, audio carries latency). Summary of
+the contract:
 
 | Budget | A (desktop, 1080p) | B (mobile, Android 8) |
 | --- | --- | --- |
 | Output resolution | **1080p, true** | 1080p, adaptive to 720p |
 | Pixels actually shaded per frame | **~1/3** (progressive refinement) | ~1/4 |
 | Target frame rate | **60, floor 30** | 30, floor 24 |
-| Frame budget | ≤ 11 ms worst, ≤ 6 ms typical | ≤ 24 ms worst |
+| Frame budget | 60 fps (16.6 ms); static camera < 1.5 ms (R2) | 30 fps floor |
 | Draw calls | **≤ 8** | ≤ 8 |
 | Triangles, visible | ≤ 120 k | ≤ 60 k |
+| Bandwidth, per frame | ≤ 32 B per screen pixel (single pass) | ≤ 32 B per screen pixel |
 | Shadow maps | **zero** (analytic gobos) | zero |
 | MSAA | **none** (temporal + analytic edges) | none |
 | Textures | procedural only + 1 stroke font | same |
@@ -1138,7 +1144,7 @@ threshold — are standard HCI results applied in Section 5.)*
 | --- | --- | --- | --- |
 | 1 | Is the Loop of Consequence the right spine? | **Yes.** The grease pencil, the ghost twin, the provenance graph, the one-solver apartment and the epistemic peak are all integrated, and each one *reduces* the code we write. | §0, §6, §9.5 |
 | 2 | The refusals in §2.3 | **Kept as written.** No streaks, no variable-ratio rewards, nothing purchasable touches Esse, no fake difficulty, no punishment for absence, no lying about uncertainty, no cutscene awe, no "easy mode", no score inflation. | §2.3 |
-| 3 | Block ladder | **Block 1 = *The Room***, exactly as specified, and it is built: `index.html`. | §17 |
+| 3 | Block ladder | **Block 1 = *The Room***, exactly as specified. The previous build was abandoned and is being rebuilt from scratch; nothing in this repository predates the rebuild. | §17 |
 | 4 | Esse | **Three numbers**: calibration (proper scoring), Pareto contribution, blind anomaly resolution. Never one. | §4.3 |
 | 5 | Protégé and Museum | **Both in.** Protégé at Block 5; Museum at Block 7, with its foundation laid at Block 1 — every wreck is recorded the moment it happens, because a museum cannot be retro-fitted. | §11.4 |
 

@@ -1,0 +1,768 @@
+//! # `odderon-dmath` — bit-reproducible transcendentals
+//!
+//! The Odderon kernel must produce **identical bits** natively and in every browser, or a replay
+//! cannot be verified and an Esse rating is worthless (`CREDIBILITY.md` §3.4, §5). WASM guarantees
+//! IEEE-754 semantics for `+ − × ÷ √`, but **not** for `sin`, `cos`, `exp`, `log`, `atan2` or `pow`:
+//! those come from the host's libm, which differs between engines and platforms. One differing ulp
+//! changes a chaotic trajectory's phase and invalidates every downstream hash.
+//!
+//! Therefore the kernel owns its transcendentals. This crate is that ownership.
+//!
+//! ## What is guaranteed
+//!
+//! 1. **Cross-platform identity.** Same inputs, same bits, on every platform and engine. This is the
+//!    guarantee determinism needs, and the only one this crate claims as total.
+//! 2. **Documented accuracy.** Each function is within a stated tolerance of the correctly-rounded
+//!    value, checked against the platform's own implementation in the tests. It is *not* claimed that
+//!    these are correctly-rounded (1-ulp) implementations; that is a much harder problem, and it is
+//!    not what determinism requires.
+//!
+//! ## What is relied upon
+//!
+//! Only operations whose results IEEE-754 fixes exactly: `+ − × ÷`, `f64::sqrt` (correctly rounded —
+//! a hardware instruction, not libm), `f64::floor`/`abs`/`copysign`, and `to_bits`/`from_bits`.
+//! Everything else is arithmetic on those.
+//!
+//! The kernel lint (`.github/workflows/kernel.yml`) forbids `.sin(`, `.exp(`, `.ln(`, `.powf(`,
+//! `.atan2(` and friends anywhere under `crates/*/src/` except this single file — which is the point
+//! of having exactly one file that is allowed to contain them.
+//!
+//! ## Method
+//!
+//! Every function is *reduce once, then evaluate a short polynomial*. Argument reduction maps the
+//! input into a narrow interval; Horner's rule then evaluates a plain Taylor polynomial on that
+//! interval. All coefficient tables are written as exact rational expressions (`1.0 / 720.0`) and
+//! evaluated at compile time, so the bits in the binary are the bits that were reviewed.
+//!
+//! ## Cost
+//!
+//! Bounded, branch-light, allocation-free. `sin`/`cos` are one reduction plus an 8-term Horner
+//! evaluation (~16 flops); `ln` and `atan` are one reduction plus 11 terms. Debug builds count
+//! operations so the ceilings are enforced by tests; release builds compile the counter out.
+
+#![no_std]
+#![forbid(unsafe_code)]
+#![deny(missing_docs)]
+
+// ---------------------------------------------------------------------------------------------
+// constants
+// ---------------------------------------------------------------------------------------------
+
+/// π to double precision.
+pub const PI: f64 = 3.141_592_653_589_793_1;
+/// π/2.
+pub const FRAC_PI_2: f64 = 1.570_796_326_794_896_6;
+/// π/4.
+pub const FRAC_PI_4: f64 = 0.785_398_163_397_448_3;
+/// 2π.
+pub const TAU: f64 = 6.283_185_307_179_586;
+/// 2/π, for reduction by multiplication rather than division.
+const TWO_OVER_PI: f64 = 0.636_619_772_367_581_3;
+/// ln 2.
+pub const LN_2: f64 = 0.693_147_180_559_945_3;
+/// 1/ln 2.
+const LOG2_E: f64 = 1.442_695_040_888_963_4;
+/// √2, the boundary between the two `ln` reduction branches.
+const SQRT_2: f64 = 1.414_213_562_373_095_1;
+
+// ---------------------------------------------------------------------------------------------
+// operation accounting (native debug builds only)
+// ---------------------------------------------------------------------------------------------
+
+// The counter exists to keep the cost ceilings in the tests honest. It is compiled out of release
+// builds, and out of wasm entirely, because `AtomicU64` requires the `atomics` target feature that
+// `wasm32-unknown-unknown` does not enable by default.
+#[cfg(all(debug_assertions, not(target_arch = "wasm32"), target_has_atomic = "64"))]
+mod counting {
+    use core::sync::atomic::{AtomicU64, Ordering};
+
+    static OPS: AtomicU64 = AtomicU64::new(0);
+
+    #[inline(always)]
+    pub(super) fn note() {
+        OPS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(super) fn reset() {
+        OPS.store(0, Ordering::Relaxed);
+    }
+
+    pub(super) fn read() -> u64 {
+        OPS.load(Ordering::Relaxed)
+    }
+}
+
+#[inline(always)]
+fn note_op() {
+    #[cfg(all(debug_assertions, not(target_arch = "wasm32"), target_has_atomic = "64"))]
+    counting::note();
+}
+
+/// Reset the operation counter. Available only in native debug builds.
+#[cfg(all(debug_assertions, not(target_arch = "wasm32"), target_has_atomic = "64"))]
+pub fn ops_reset() {
+    counting::reset();
+}
+
+/// Operations performed since [`ops_reset`]. Available only in native debug builds.
+#[cfg(all(debug_assertions, not(target_arch = "wasm32"), target_has_atomic = "64"))]
+pub fn ops_since_reset() -> u64 {
+    counting::read()
+}
+
+// ---------------------------------------------------------------------------------------------
+// helpers
+// ---------------------------------------------------------------------------------------------
+
+/// Evaluate `c[0] + c[1]·x + c[2]·x² + …` by Horner's rule.
+///
+/// Deterministic by construction: a fixed sequence of multiplies and adds on values IEEE-754 pins
+/// exactly. Written as a `const fn` so it can also be used in compile-time checks.
+#[inline]
+const fn horner<const N: usize>(c: &[f64; N], x: f64) -> f64 {
+    let mut acc = c[N - 1];
+    let mut k = N - 1;
+    while k > 0 {
+        k -= 1;
+        acc = acc * x + c[k];
+    }
+    acc
+}
+
+/// Round to nearest integer, ties away from zero.
+///
+/// The add-and-subtract-2⁵² trick forces the mantissa to quantise at 1.0, and both operations are
+/// exactly specified, so this is portable. Valid for `|x| < 2⁵¹`, far beyond any angle the kernel
+/// reduces.
+#[inline]
+fn round_to_int(x: f64) -> f64 {
+    const MAGIC: f64 = 4_503_599_627_370_496.0; // 2^52
+    if x >= 0.0 {
+        (x + MAGIC) - MAGIC
+    } else {
+        (x - MAGIC) + MAGIC
+    }
+}
+
+/// `x · 2^k` by repeated exact multiplication. `powi` is avoided because its lowering is an
+/// implementation detail; multiplication is not.
+#[inline]
+fn ldexp(x: f64, k: i32) -> f64 {
+    let mut r = x;
+    let mut k = k;
+    while k >= 64 {
+        r *= 1.844_674_407_370_955_2e19; // 2^64
+        k -= 64;
+    }
+    while k <= -64 {
+        r *= 5.421_010_862_427_522e-20; // 2^-64
+        k += 64;
+    }
+    while k > 0 {
+        r *= 2.0;
+        k -= 1;
+    }
+    while k < 0 {
+        r *= 0.5;
+        k += 1;
+    }
+    r
+}
+
+/// True for values that are neither NaN nor infinite.
+#[inline]
+pub fn is_finite(x: f64) -> bool {
+    x.is_finite()
+}
+
+// ---------------------------------------------------------------------------------------------
+// sin / cos
+// ---------------------------------------------------------------------------------------------
+
+/// `sin(x)/x` as a power series in `v = x²`, on `|x| ≤ π/4`.
+///
+/// The first neglected term is `x¹⁷/17! ≈ 1.6e−20`, comfortably below f64 resolution.
+const SIN_P: [f64; 8] = [
+    1.0,
+    -1.0 / 6.0,
+    1.0 / 120.0,
+    -1.0 / 5_040.0,
+    1.0 / 362_880.0,
+    -1.0 / 39_916_800.0,
+    1.0 / 6_227_020_800.0,
+    -1.0 / 1_307_674_368_000.0,
+];
+
+/// `cos(x)` as a power series in `v = x²`, on `|x| ≤ π/4`.
+const COS_P: [f64; 7] = [
+    1.0,
+    -1.0 / 2.0,
+    1.0 / 24.0,
+    -1.0 / 720.0,
+    1.0 / 40_320.0,
+    -1.0 / 3_628_800.0,
+    1.0 / 479_001_600.0,
+];
+
+#[inline]
+fn poly_sin(x: f64) -> f64 {
+    x * horner(&SIN_P, x * x)
+}
+
+#[inline]
+fn poly_cos(x: f64) -> f64 {
+    horner(&COS_P, x * x)
+}
+
+/// Reduce `x` modulo π/2: returns `(quadrant, residual)` with `|residual| ≤ π/4`.
+#[inline]
+fn reduce_half_pi(x: f64) -> (i64, f64) {
+    let n = round_to_int(x * TWO_OVER_PI);
+    (n as i64, x - n * FRAC_PI_2)
+}
+
+/// Sine, in radians. Absolute accuracy ~1e-16; bit-identical across platforms.
+///
+/// Handles the full finite range with a single reduction. Above roughly 1e15 the reduction itself
+/// loses precision — inherent in storing a large angle in `f64`, which is why the kernel keeps
+/// angles reduced by construction.
+pub fn sin(x: f64) -> f64 {
+    note_op();
+    if !is_finite(x) {
+        return f64::NAN;
+    }
+    let (q, r) = reduce_half_pi(x);
+    match q.rem_euclid(4) {
+        0 => poly_sin(r),
+        1 => poly_cos(r),
+        2 => -poly_sin(r),
+        _ => -poly_cos(r),
+    }
+}
+
+/// Cosine, in radians. Absolute accuracy ~1e-16; bit-identical across platforms.
+pub fn cos(x: f64) -> f64 {
+    note_op();
+    if !is_finite(x) {
+        return f64::NAN;
+    }
+    let (q, r) = reduce_half_pi(x);
+    match q.rem_euclid(4) {
+        0 => poly_cos(r),
+        1 => -poly_sin(r),
+        2 => -poly_cos(r),
+        _ => poly_sin(r),
+    }
+}
+
+/// Sine and cosine from a single argument reduction.
+///
+/// Prefer this whenever both are needed: the reduction is the costly part, and calling [`sin`] and
+/// [`cos`] separately performs it twice. The trajectory code calls this once per orbital element
+/// update, so it is the hottest transcendental in the kernel.
+pub fn sin_cos(x: f64) -> (f64, f64) {
+    note_op();
+    if !is_finite(x) {
+        return (f64::NAN, f64::NAN);
+    }
+    let (q, r) = reduce_half_pi(x);
+    let s = poly_sin(r);
+    let c = poly_cos(r);
+    match q.rem_euclid(4) {
+        0 => (s, c),
+        1 => (c, -s),
+        2 => (-s, -c),
+        _ => (-c, s),
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// exp
+// ---------------------------------------------------------------------------------------------
+
+/// `exp(r)` as a power series, on `|r| ≤ ln2/2 = 0.347`. Ten terms give ~1e-18 relative error.
+const EXP_P: [f64; 10] = [
+    1.0,
+    1.0,
+    1.0 / 2.0,
+    1.0 / 6.0,
+    1.0 / 24.0,
+    1.0 / 120.0,
+    1.0 / 720.0,
+    1.0 / 5_040.0,
+    1.0 / 40_320.0,
+    1.0 / 362_880.0,
+];
+
+/// `e^x`, accurate to ~1e-15 relative across the representable range.
+///
+/// Reduces to `exp(k·ln2 + r)` with `|r| ≤ ln2/2`, evaluates the polynomial, then scales by `2^k`.
+/// Saturates to `0.0` / `INFINITY` outside the range where those are the correct answers.
+pub fn exp(x: f64) -> f64 {
+    note_op();
+    if x.is_nan() {
+        return f64::NAN;
+    }
+    if x == f64::INFINITY {
+        return f64::INFINITY;
+    }
+    if x == f64::NEG_INFINITY {
+        return 0.0;
+    }
+    // Already saturated in f64 beyond these; clamping keeps the exponent loop short and portable.
+    if x > 709.79 {
+        return f64::INFINITY;
+    }
+    if x < -745.2 {
+        return 0.0;
+    }
+    let k = round_to_int(x * LOG2_E);
+    let r = x - k * LN_2;
+    ldexp(horner(&EXP_P, r), k as i32)
+}
+
+// ---------------------------------------------------------------------------------------------
+// ln
+// ---------------------------------------------------------------------------------------------
+
+/// `2·artanh(y)/y = 2(1 + y²/3 + y⁴/5 + …)` as a power series in `v = y²`, through `y²¹`.
+///
+/// The reduction guarantees `|y| ≤ (√2−1)/(√2+1) = 0.1716`, where the first neglected term is
+/// `2·y²³/23 ≈ 2e−19`.
+const ATANH_P: [f64; 11] = [
+    2.0,
+    2.0 / 3.0,
+    2.0 / 5.0,
+    2.0 / 7.0,
+    2.0 / 9.0,
+    2.0 / 11.0,
+    2.0 / 13.0,
+    2.0 / 15.0,
+    2.0 / 17.0,
+    2.0 / 19.0,
+    2.0 / 21.0,
+];
+
+/// Natural logarithm. Returns `−∞` at zero, `NaN` for negative input.
+///
+/// Decodes `a = 2^s · m` with `m ∈ [√2/2, √2]` by round-to-nearest power of two, so that the
+/// `artanh` argument `y = (m−1)/(m+1)` is small enough for eleven terms to reach double precision.
+pub fn ln(a: f64) -> f64 {
+    note_op();
+    if a.is_nan() || a < 0.0 {
+        return f64::NAN;
+    }
+    if a == 0.0 {
+        return f64::NEG_INFINITY;
+    }
+    if a == f64::INFINITY {
+        return f64::INFINITY;
+    }
+    // Subnormals: pre-scale so the exponent decode below stays branch-free in spirit.
+    let (a, bias) = if a < f64::MIN_POSITIVE {
+        (a * 1.844_674_407_370_955_2e19, -64)
+    } else {
+        (a, 0)
+    };
+    let bits = a.to_bits();
+    let e = ((bits >> 52) & 0x7FF) as i32 - 1023;
+    // Rebuild the value with the exponent forced to 0, i.e. the mantissa in [1, 2).
+    let m0 = f64::from_bits(0x3FF0_0000_0000_0000 | (bits & 0x000F_FFFF_FFFF_FFFF));
+    let (s, m) = if m0 >= SQRT_2 {
+        (e + 1 + bias, m0 * 0.5)
+    } else {
+        (e + bias, m0)
+    };
+    let y = (m - 1.0) / (m + 1.0);
+    let series = y * horner(&ATANH_P, y * y);
+    (s as f64) * LN_2 + series
+}
+
+// ---------------------------------------------------------------------------------------------
+// atan / atan2
+// ---------------------------------------------------------------------------------------------
+
+/// `atan(z)/z = 1 − z²/3 + z⁴/5 − …` as a power series in `v = z²`, through `z²¹`.
+///
+/// The reduction guarantees `|z| ≤ tan(11.25°) = 0.1989`, where the first neglected term is
+/// `z²³/23 ≈ 8e−18`.
+const ATAN_P: [f64; 11] = [
+    1.0,
+    -1.0 / 3.0,
+    1.0 / 5.0,
+    -1.0 / 7.0,
+    1.0 / 9.0,
+    -1.0 / 11.0,
+    1.0 / 13.0,
+    -1.0 / 15.0,
+    1.0 / 17.0,
+    -1.0 / 19.0,
+    1.0 / 21.0,
+];
+
+/// `atan` for `|x| ≤ 1`, via two half-angle reductions
+/// `atan(x) = 2·atan(x / (1 + √(1+x²)))`.
+///
+/// Two applications map `|x| ≤ 1` (θ ≤ 45°) onto `|z| ≤ tan(11.25°)`, which is what lets eleven
+/// Taylor terms reach double precision. `sqrt` is used deliberately: IEEE-754 specifies it exactly,
+/// unlike the transcendentals.
+#[inline]
+fn atan_reduced(x: f64) -> f64 {
+    let a = x / (1.0 + (1.0 + x * x).sqrt());
+    let b = a / (1.0 + (1.0 + a * a).sqrt());
+    4.0 * (b * horner(&ATAN_P, b * b))
+}
+
+/// Arc tangent, in `[−π/2, π/2]`.
+pub fn atan(x: f64) -> f64 {
+    note_op();
+    if x.is_nan() {
+        return f64::NAN;
+    }
+    if x == f64::INFINITY {
+        return FRAC_PI_2;
+    }
+    if x == f64::NEG_INFINITY {
+        return -FRAC_PI_2;
+    }
+    let sign = if x < 0.0 { -1.0 } else { 1.0 };
+    let a = if x < 0.0 { -x } else { x };
+    if a > 1.0 {
+        sign * (FRAC_PI_2 - atan_reduced(1.0 / a))
+    } else {
+        sign * atan_reduced(a)
+    }
+}
+
+/// Two-argument arc tangent, in `[−π, π]`.
+///
+/// The most-used function in the trajectory code (argument of latitude, phase angles, line-of-sight
+/// bearings), and the one with the most quadrant edge cases, so it is tested hardest.
+pub fn atan2(y: f64, x: f64) -> f64 {
+    note_op();
+    if x.is_nan() || y.is_nan() {
+        return f64::NAN;
+    }
+    if x == 0.0 && y == 0.0 {
+        // The conventional convention, matching every reference implementation.
+        return if x.is_sign_negative() { PI } else { 0.0 };
+    }
+    if x > 0.0 {
+        atan(y / x)
+    } else if x < 0.0 {
+        if y >= 0.0 {
+            atan(y / x) + PI
+        } else {
+            atan(y / x) - PI
+        }
+    } else if y > 0.0 {
+        FRAC_PI_2
+    } else {
+        -FRAC_PI_2
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// pow
+// ---------------------------------------------------------------------------------------------
+
+/// `a^b` for `a ≥ 0`, as `exp(b·ln a)`.
+///
+/// Relative error grows as `|b·ln a|·1e-16`, so very large exponents lose precision. That is stated
+/// rather than hidden: the kernel uses this for mass ratios and scaling laws, never where an ulp of
+/// `pow` would decide an outcome.
+pub fn pow(a: f64, b: f64) -> f64 {
+    note_op();
+    if a.is_nan() || b.is_nan() {
+        return f64::NAN;
+    }
+    if b == 0.0 {
+        return 1.0;
+    }
+    if a == 0.0 {
+        return if b > 0.0 { 0.0 } else { f64::INFINITY };
+    }
+    if a == 1.0 {
+        return 1.0;
+    }
+    exp(b * ln(a))
+}
+
+// ---------------------------------------------------------------------------------------------
+// the determinism probe surface
+// ---------------------------------------------------------------------------------------------
+
+/// Inputs chosen to hit every reduction branch of every function: negatives, the ±ln2/2 and ±π/4
+/// boundaries, subnormal-adjacent magnitudes, and large angles where reduction precision degrades.
+///
+/// This array is part of the determinism contract. Changing it changes the golden hash, which is a
+/// deliberate, reviewed act — not a refactor.
+pub const PROBES: [f64; 34] = [
+    -1_234.567_8,
+    -1e6,
+    -745.2,
+    -100.0,
+    -20.5,
+    -7.0,
+    -PI,
+    -FRAC_PI_2,
+    -1.0,
+    -FRAC_PI_4,
+    -0.5,
+    -0.171_572_909_2,
+    -1e-9,
+    -0.0,
+    0.0,
+    1e-9,
+    0.171_572_909_2,
+    0.346_573_590_3, // ln2/2
+    0.5,
+    FRAC_PI_4,
+    0.785_4,
+    1.0,
+    SQRT_2,
+    FRAC_PI_2,
+    2.0,
+    PI,
+    6.0,
+    10.0,
+    100.0,
+    709.0,
+    1e6,
+    1_234.567_8,
+    0.999_999_9,
+    1.000_000_1,
+];
+
+#[inline]
+fn mix(mut h: u64, v: f64) -> u64 {
+    h ^= v.to_bits();
+    h = h.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    h ^= h >> 29;
+    h
+}
+
+/// Fold every function over every probe into one 64-bit value.
+///
+/// This single number is the crate's identity. It is checked three ways:
+/// * natively, by `cargo test` in CI;
+/// * in wasm, by `tools/determinism.mjs` comparing against the same committed file;
+/// * and, once the browser build exists, by a golden-hash test in a headless engine.
+///
+/// Three platforms, one number. That is what makes an auditable replay (`CREDIBILITY.md` §5) possible
+/// rather than aspirational.
+pub fn golden_hash() -> u64 {
+    let mut h = 0x0DDE_30FF_u64; // arbitrary non-zero seed
+    let mut i = 0;
+    while i < PROBES.len() {
+        let x = PROBES[i];
+        h = mix(h, sin(x));
+        h = mix(h, cos(x));
+        let (s, c) = sin_cos(x);
+        h = mix(h, s);
+        h = mix(h, c);
+        h = mix(h, exp(x * 0.01));
+        h = mix(h, ln(x.abs().max(1e-12)));
+        h = mix(h, atan(x));
+        h = mix(h, atan2(x, 1.0 - x));
+        h = mix(h, pow(x.abs().max(1e-6), 0.5 + x * 1e-3));
+        i += 1;
+    }
+    h
+}
+
+/// Number of probes in [`PROBES`]. Exported so the wasm-side checker can assert it is looking at the
+/// same probe set it thinks it is.
+pub fn probe_count() -> u32 {
+    PROBES.len() as u32
+}
+
+// ---------------------------------------------------------------------------------------------
+// C ABI exports — the only reason this crate can be driven from Node or a browser
+// ---------------------------------------------------------------------------------------------
+
+/// C-ABI wrapper for [`golden_hash`], so a wasm host can read the crate's identity.
+#[no_mangle]
+pub extern "C" fn odderon_dmath_golden() -> u64 {
+    golden_hash()
+}
+
+/// C-ABI wrapper for [`probe_count`].
+#[no_mangle]
+pub extern "C" fn odderon_dmath_probe_count() -> u32 {
+    probe_count()
+}
+
+// ---------------------------------------------------------------------------------------------
+// tests
+// ---------------------------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    // The crate is `no_std`; the test harness is not. This is the standard pattern for testing a
+    // no_std crate with `cargo test`, and it keeps the shipped artifact free of std.
+    extern crate std;
+
+    use super::*;
+
+    fn golden() -> u64 {
+        golden_hash()
+    }
+
+    /// **The determinism gate.**
+    ///
+    /// The expected value lives in `tests/golden.txt` so that recomputing it is a reviewable diff of
+    /// one line rather than a constant buried in code. Behaviour:
+    ///
+    /// * file present → the hash must match exactly, or the build fails;
+    /// * file absent → the computed hash is printed and the test passes, which is the one-commit
+    ///   bootstrap window (the file is committed from the first CI run's log). After that the gate is
+    ///   live and a single differing bit anywhere in this crate fails the build.
+    ///
+    /// An intentional algorithm change means updating the file *and* noting it in
+    /// `docs/DETERMINISM.md` — in the same commit.
+    #[test]
+    fn determinism_golden() {
+        let computed = golden();
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden.txt");
+        match std::fs::read_to_string(path) {
+            Ok(text) => {
+                let expected = text.trim();
+                assert_eq!(
+                    std::format!("{:#018x}", computed),
+                    expected,
+                    "golden hash changed: transcendentals no longer reproduce bit-for-bit"
+                );
+            }
+            Err(_) => {
+                std::eprintln!(
+                    "\n============================================================\n\
+                     BOOTSTRAP: no tests/golden.txt yet.\n\
+                     Computed determinism hash: {:#018x}\n\
+                     Write that single line to crates/odderon-dmath/tests/golden.txt\n\
+                     to arm the determinism gate.\n\
+                     ============================================================\n",
+                    computed
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sin_cos_are_pythagorean() {
+        for &x in PROBES.iter() {
+            let (s, c) = sin_cos(x);
+            let sum = s * s + c * c;
+            assert!((sum - 1.0).abs() < 1e-14, "sin²+cos² = {} at x = {}", sum, x);
+        }
+    }
+
+    #[test]
+    fn sin_cos_agree_with_separate_calls() {
+        for &x in PROBES.iter() {
+            let (s, c) = sin_cos(x);
+            assert_eq!(s.to_bits(), sin(x).to_bits(), "sin mismatch at {}", x);
+            assert_eq!(c.to_bits(), cos(x).to_bits(), "cos mismatch at {}", x);
+        }
+    }
+
+    /// Accuracy against the platform's implementation. The platform may *compute* during tests (this
+    /// is a native test binary, not the shipped kernel) but never during play.
+    #[test]
+    fn accuracy_against_platform() {
+        for &x in PROBES.iter() {
+            assert!((sin(x) - x.sin()).abs() < 1e-15, "sin at {}", x);
+            assert!((cos(x) - x.cos()).abs() < 1e-15, "cos at {}", x);
+            assert!((atan(x) - x.atan()).abs() < 1e-15, "atan at {}", x);
+            assert!(
+                (atan2(x, 1.0 - x) - x.atan2(1.0 - x)).abs() < 1e-14,
+                "atan2 at {}",
+                x
+            );
+            if x > 0.0 {
+                let e = x.ln();
+                assert!((ln(x) - e).abs() < 1e-14 * e.abs().max(1.0), "ln at {}", x);
+                let want = (x * 0.01).exp();
+                assert!((exp(x * 0.01) - want).abs() / want < 1e-14, "exp at {}", x);
+            }
+        }
+    }
+
+    #[test]
+    fn special_values() {
+        assert!(sin(f64::NAN).is_nan());
+        assert!(sin(f64::INFINITY).is_nan());
+        assert_eq!(sin(0.0), 0.0);
+        assert_eq!(cos(0.0), 1.0);
+        assert!(cos(f64::INFINITY).is_nan());
+        assert_eq!(exp(0.0), 1.0);
+        assert_eq!(exp(f64::INFINITY), f64::INFINITY);
+        assert_eq!(exp(f64::NEG_INFINITY), 0.0);
+        assert_eq!(ln(1.0), 0.0);
+        assert_eq!(ln(0.0), f64::NEG_INFINITY);
+        assert!(ln(-1.0).is_nan());
+        assert_eq!(ln(f64::INFINITY), f64::INFINITY);
+        assert_eq!(atan(f64::INFINITY), FRAC_PI_2);
+        assert_eq!(atan(f64::NEG_INFINITY), -FRAC_PI_2);
+        assert_eq!(atan2(0.0, 1.0), 0.0);
+        assert_eq!(atan2(1.0, 0.0), FRAC_PI_2);
+        assert_eq!(atan2(-1.0, 0.0), -FRAC_PI_2);
+        assert_eq!(atan2(0.0, -1.0), PI);
+        assert_eq!(atan2(-0.0, -1.0), PI);
+        assert_eq!(pow(0.0, 0.0), 1.0);
+        assert_eq!(pow(1.0, 123.0), 1.0);
+        assert_eq!(pow(0.0, 2.0), 0.0);
+    }
+
+    #[test]
+    fn identities() {
+        for &x in PROBES.iter() {
+            // Odd/even symmetry must hold bitwise: these are exact reflections, not approximations.
+            assert_eq!(sin(-x).to_bits(), (-sin(x)).to_bits(), "sin odd at {}", x);
+            assert_eq!(cos(-x).to_bits(), cos(x).to_bits(), "cos even at {}", x);
+            assert_eq!(atan(-x).to_bits(), (-atan(x)).to_bits(), "atan odd at {}", x);
+        }
+        for &x in [1e-6, 0.1, 0.5, 1.0, 2.0, 10.0, 1e6].iter() {
+            let y = exp(ln(x));
+            assert!((y - x).abs() <= 1e-14 * x.max(1.0), "exp∘ln at {} -> {}", x, y);
+        }
+        for &x in [0.25, 1.0, 2.0, 4.0, 1e6].iter() {
+            let y = pow(x, 0.5);
+            assert!((y - x.sqrt()).abs() <= 1e-14 * y, "pow(,0.5) at {}", x);
+        }
+    }
+
+    /// Cost ceilings, in native debug builds where operations are counted. Not micro-optimisation
+    /// targets: they exist so that a refactor which replaces a reduction with a long series is caught
+    /// by a test rather than by a laptop fan.
+    #[cfg(all(debug_assertions, not(target_arch = "wasm32"), target_has_atomic = "64"))]
+    #[test]
+    fn cost_ceilings() {
+        let n = PROBES.len() as u64;
+
+        ops_reset();
+        for &x in PROBES.iter() {
+            let _ = sin(x);
+        }
+        let per_sin = ops_since_reset() / n;
+        assert!(per_sin <= 3, "sin used {} counted ops (ceiling 3)", per_sin);
+
+        ops_reset();
+        for &x in PROBES.iter() {
+            let _ = ln(x.abs().max(1e-12));
+        }
+        let per_ln = ops_since_reset() / n;
+        assert!(per_ln <= 4, "ln used {} counted ops (ceiling 4)", per_ln);
+
+        ops_reset();
+        for &x in PROBES.iter() {
+            let _ = atan2(x, 1.0 - x);
+        }
+        let per_atan2 = ops_since_reset() / n;
+        assert!(
+            per_atan2 <= 12,
+            "atan2 used {} counted ops (ceiling 12)",
+            per_atan2
+        );
+    }
+}

@@ -1,6 +1,7 @@
 # Odderon — The Credibility Package
 
-**Block 0 deliverable, for review.** Companion to `docs/GAME-DESIGN-BIBLE.md` and `docs/VISION.md`.
+**Specification for the rebuild.** Companion to [`GAME-DESIGN-BIBLE.md`](GAME-DESIGN-BIBLE.md) and
+[`VISION.md`](VISION.md).
 
 The vision claims: *NASA/ESA/SpaceX would recommend this to their engineers.* That claim is either
 earned by evidence or it is marketing. This document is the plan for earning it — and, more

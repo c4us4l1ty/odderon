@@ -1,0 +1,14 @@
+[package]
+name = "odderon-dmath-wasm"
+description = "C-ABI shell so a wasm host (Node, or the browser) can read odderon-dmath's determinism hash."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+odderon-dmath = { path = "../odderon-dmath" }

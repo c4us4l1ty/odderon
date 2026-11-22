@@ -1,0 +1,168 @@
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  # -------------------------------------------------------------------------------------------
+  # HARD GATES. These fail the build. Everything else in this file is advisory until the
+  # bootstrap is green once (see docs/BUILD-PLAN.md §3 — style gates are armed after the first
+  # successful run, because the first run is compile-unverified by construction).
+  # -------------------------------------------------------------------------------------------
+
+  test-native:
+    name: test (native)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.83.0"
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test
+        run: cargo test --workspace --all-targets
+      - name: determinism hash (native)
+        run: cargo test -p odderon-dmath --test '*' -- --nocapture
+      - name: publish hash for cross-platform comparison
+        run: |
+          cargo test -p odderon-dmath determinism_golden -- --nocapture 2>&1 \
+            | grep -oE '0x[0-9a-f]{16}' | head -1 > native-hash.txt || true
+          echo "native hash: $(cat native-hash.txt 2>/dev/null || echo 'unknown')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-hash
+          path: native-hash.txt
+          if-no-files-found: ignore
+
+  build-wasm:
+    name: build (wasm32)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.83.0"
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo build (release, wasm32)
+        run: cargo build --release --target wasm32-unknown-unknown --workspace
+      # The artifact is the point: it comes back into the dev sandbox via `gh run download`, where
+      # the cross-platform determinism check can be run against a *real* wasm binary. Building Rust
+      # is what the sandbox cannot do; *running* wasm it can.
+      - name: stage wasm artifacts
+        run: |
+          mkdir -p dist
+          find target/wasm32-unknown-unknown/release -maxdepth 1 -name '*.wasm' -exec cp {} dist/ \;
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  kernel-policy:
+    name: kernel policy lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # These are the laws that cannot be enforced by types without also being enforceable by grep.
+      # Each one corresponds to a rule in docs/VISION.md §3 and docs/DETERMINISM.md.
+      - name: no host libm transcendentals in kernel crates
+        run: |
+          set +e
+          hits=$(grep -rnE '\.(sin|cos|tan|asin|acos|atan|atan2|exp|exp2|expm1|ln|log|log2|log10|powf|powi|cbrt|hypot|sinh|cosh|tanh|to_degrees)\(' \
+                   crates --include='*.rs' | grep -v 'crates/odderon-dmath/src/lib.rs')
+          if [ -n "$hits" ]; then
+            echo "::error::Host transcendental used in the kernel. Use odderon_dmath instead."
+            echo "$hits"
+            exit 1
+          fi
+          echo "ok: no host transcendentals outside odderon-dmath"
+      - name: no wall clock in kernel crates
+        run: |
+          set +e
+          hits=$(grep -rnE 'Instant::now|SystemTime::now|std::time|core::time' crates --include='*.rs')
+          if [ -n "$hits" ]; then
+            echo "::error::Wall clock read in the kernel. Time is an argument (t: i64), never a query."
+            echo "$hits"
+            exit 1
+          fi
+          echo "ok: kernel has no clock"
+      - name: no hash-order dependence in kernel crates
+        run: |
+          set +e
+          hits=$(grep -rnE '\b(HashMap|HashSet)\b' crates --include='*.rs')
+          if [ -n "$hits" ]; then
+            echo "::error::HashMap/HashSet iteration order is not deterministic. Use BTreeMap or indexed vectors."
+            echo "$hits"
+            exit 1
+          fi
+          echo "ok: no HashMap in kernel"
+      - name: no binary assets (GRAPHICS.md R1)
+        run: |
+          set +e
+          hits=$(git ls-files | grep -iE '\.(png|jpe?g|webp|gif|bmp|tga|dds|ktx2?|basis|obj|fbx|gltf|glb|dae|3ds|blend)$')
+          if [ -n "$hits" ]; then
+            echo "::error::Binary asset found. Every surface must be a function S(u,v,t)."
+            echo "$hits"
+            exit 1
+          fi
+          echo "ok: zero binary assets"
+      - name: kernel does not depend on presentation
+        run: |
+          set +e
+          # Guard the boundary that makes determinism and Proof-of-Flight possible.
+          hits=$(grep -rnE 'odderon_(present|shell)|web_sys|js_sys|wasm_bindgen' crates --include='*.rs' \
+                   | grep -vE 'crates/(odderon-present|odderon-shell)/')
+          if [ -n "$hits" ]; then
+            echo "::error::Kernel crate touched the presentation layer."
+            echo "$hits"
+            exit 1
+          fi
+          echo "ok: kernel/presenter boundary intact"
+
+  # -------------------------------------------------------------------------------------------
+  # ADVISORY during bootstrap. Armed after the first green run — see the decision in
+  # docs/BUILD-PLAN.md §3. They are kept in the same file so arming them is a one-word diff.
+  # -------------------------------------------------------------------------------------------
+
+  fmt:
+    name: rustfmt (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.83.0"
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.83.0"
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets -- -W clippy::all
