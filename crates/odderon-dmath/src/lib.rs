@@ -43,6 +43,12 @@
 #![no_std]
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
+// Clippy offers `core::f64::consts::PI` and friends here. They are the same values, but this crate
+// spells its constants out for a determinism reason: the bits of every mathematical constant that
+// enters the kernel should be visible in *this repository*, reviewable in a diff, and incapable of
+// changing because a standard library revised a literal. The whole crate exists to not depend on
+// someone else's numeric decisions.
+#![allow(clippy::approx_constant)]
 
 // ---------------------------------------------------------------------------------------------
 // constants
