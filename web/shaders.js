@@ -651,9 +651,25 @@ void main() {
   } else if (mat == 12) {
     // Foliage: two-tone leaf clusters; the tip colour shift is done in lighting
     // (subsurface) so grass and canopy share one model.
-    float leafVar = fbm3s(vec2(uv.x * 7.0, uv.y * 9.0));
+    // Blades are patterned in their own UV (each blade gets its own tone); the
+    // flat cover quads - verge strips and the meadow - are patterned in world
+    // space, because a 0..1 box UV stretched over 60 m of hillside prints the
+    // noise grid as a visible checkerboard.
+    float coverQuad = smoothstep(0.85, 0.96, N0.y);
+    float leafVar = mix(fbm3s(vec2(uv.x * 7.0, uv.y * 9.0)),
+                        fbm3s(vWorldPos.xz * 0.55 + vWorldPos.y * 0.13),
+                        coverQuad);
+    // Aerial perspective: the meadow is the backdrop, so it has to lose
+    // saturation with distance instead of glowing as the greenest thing on
+    // screen. Blades are close by definition and are left alone.
+    float leafDist = distance(vWorldPos, uCamPos);
+    leafVar = mix(leafVar, 0.58, smoothstep(30.0, 120.0, leafDist));
     baseCol *= 0.72 + 0.55 * leafVar;
     baseCol = mix(baseCol, baseCol * vec3(1.20, 1.10, 0.72), smoothstep(0.55, 1.0, leafVar) * 0.55);
+    // NOTE: the hillside's checkerboard is baked per-plot vertex colour (rice
+    // paddies), not noise. Washing the albedo toward a haze colour here only
+    // turns the hill into a grey-blue wall - the haze pass tints it again - so
+    // the plots are left alone and only the noise octave fades.
     rough = 0.66;
   } else if (mat == 13) {
     // Kawara: rounded sangawara ridges down the slope, stepped courses across.

@@ -134,7 +134,14 @@ low elevation; crowns keep a silver lining.
   blade and the reason the static budget is 64 k instead of 30 k
   (`crates/odderon-geom/src/lib.rs`).
 * **The meadow is one box.** It is a backdrop; it is muted (`0.072, 0.132,
-  0.055`) and gets the distance haze so it recedes instead of glowing.
+  0.055`) and gets the distance haze so it recedes instead of glowing. Its
+  rice-paddy checkerboard is *baked vertex colour*, not a shader pattern:
+  washing the albedo toward a haze colour at distance does not remove it and
+  just turns the hillside into a grey-blue wall, because the haze pass tints it
+  a second time. Leave the plots and fade only the noise octave.
+* **Cover quads pattern in world space.** Blades use their own UV; the verge
+  strips and the meadow use `x z · 0.55`, because a 0..1 box UV stretched over
+  60 m of hillside prints the noise grid as a visible checkerboard.
 * **Interiors are dark.** A 25 m² room with one window is mostly below 0.09
   luma, and that is the point — the window is the brightest thing in the game.
   View 01 (mean 0.180, 66 % dark) is the deliberate cost of that rule.
