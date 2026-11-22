@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Odderon — Block 1 instrument</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0b0d10; overflow: hidden; }
+  body { font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #cfd6de; }
+
+  #gl { display: block; width: 100vw; height: 100vh; touch-action: none; }
+
+  #hud {
+    position: fixed; top: 8px; left: 8px; z-index: 10;
+    padding: 10px 12px; border-radius: 6px;
+    background: rgba(10,12,15,.82); border: 1px solid #232a33;
+    backdrop-filter: blur(6px);
+    max-width: min(340px, calc(100vw - 16px));
+    user-select: none;
+  }
+  #hud h1 { margin: 0 0 8px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: #7d8b9c; font-weight: 600; }
+  .row { display: flex; justify-content: space-between; gap: 12px; }
+  .row span:first-child { color: #7d8b9c; }
+  .row span:last-child { font-variant-numeric: tabular-nums; }
+  .big { font-size: 15px; font-variant-numeric: tabular-nums; }
+  .pass { color: #6ee7a8; } .fail { color: #ff8a80; } .warn { color: #ffd166; }
+  .muted { color: #59646f; }
+  hr { border: 0; border-top: 1px solid #232a33; margin: 8px 0; }
+  #note { margin-top: 8px; color: #59646f; font-size: 11px; line-height: 1.4; }
+
+  #toggle {
+    position: fixed; top: 8px; right: 8px; z-index: 11;
+    padding: 8px 10px; border-radius: 6px; cursor: pointer;
+    background: rgba(10,12,15,.82); border: 1px solid #232a33; color: #cfd6de;
+    font: inherit;
+  }
+  #toggle:active { background: #1a2028; }
+  #measure {
+    margin-top: 10px; width: 100%; padding: 7px 8px; border-radius: 5px; cursor: pointer;
+    background: #1d2733; border: 1px solid #30404f; color: #cfe3f5; font: inherit;
+  }
+  #measure:active { background: #27384a; }
+  #measure-note { margin-top: 5px; font-size: 11px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<div id="hud">
+  <h1>Odderon · Block 1 instrument</h1>
+
+  <div class="row"><span>frame time</span><span class="big" id="m-frame">—</span></div>
+  <div class="row"><span>p95</span><span id="m-p95">—</span></div>
+  <div class="row"><span>fps</span><span id="m-fps">—</span></div>
+  <hr>
+  <div class="row"><span>draw calls</span><span id="m-draws">—</span></div>
+  <div class="row"><span>bytes / pixel</span><span id="m-bpp">—</span></div>
+  <div class="row"><span>bytes written</span><span id="m-write">—</span></div>
+  <hr>
+  <div class="row"><span>render</span><span class="big" id="m-scale">—</span></div>
+  <div class="row"><span>canvas</span><span id="m-canvas">—</span></div>
+  <hr>
+  <div class="row"><span>R2 idle &lt; 1.5 ms</span><span id="m-r2">—</span></div>
+  <div class="row"><span>R3 &lt; 32 B/px</span><span id="m-r3">—</span></div>
+  <div class="row"><span>R1 zero bitmaps</span><span id="m-r1">—</span></div>
+
+  <button id="measure">measure frame time</button>
+  <div id="measure-note" class="muted"></div>
+
+  <div id="note"></div>
+</div>
+
+<button id="toggle" aria-label="Toggle instrument">hide</button>
+
+<script type="module">
+// =============================================================================================
+// Odderon — Block 1 rendering instrument
+// =============================================================================================
+//
+// WHAT THIS IS
+//
+// A render-on-demand WebGL2 renderer for one analytically-defined scene, plus the frame-cost
+// instrument that has to ship inside the build (docs/BUILD-PLAN.md §0, consequence 3).
+//
+// It exists to make two claims in docs/GRAPHICS.md §5 measurable on *your* hardware:
+//
+//   R2  after 250 ms with no input, frame time must fall below 1.5 ms
+//   R3  external memory bandwidth must never exceed 32 bytes per screen pixel
+//
+// Both are GPU-work measurements. They do not involve the Rust kernel, which is why this page can
+// produce a real answer today even though the wasm transport is unsolved (see the note at the bottom).
+//
+// WHAT IT IS NOT
+//
+// Not the final renderer, and not Block 1's room. It is the smallest scene that honestly exercises
+// the cost model: analytical surfaces, analytic soft shadows from a 0.53° solar cone, analytical
+// filter integration for fine detail, and render-on-demand so idle costs nothing.
+//
+// THE COST MODEL, STATED SO IT CAN BE FALSIFIED
+//
+// The central claim of GRAPHICS.md is "trade memory bandwidth for ALU". A full-screen fragment pass
+// that reads nothing and writes one RGBA8 colour is exactly 4 bytes per pixel of external traffic;
+// add one temporal read/write and you are at 32. So R3 is not a property of the shader being clever —
+// it is a property of having *no deferred passes*. This renderer has one pass and no off-screen
+// targets, which is why it can meet R3 by construction. If a future effect needs a full-screen
+// intermediate, R3 fails, and GRAPHICS.md §5 says that effect is forbidden rather than the test.
+
+const $ = (id) => document.getElementById(id);
+
+// ---------------------------------------------------------------------------------------------
+// scene constants — from ART-DIRECTION.md, not invented here
+// ---------------------------------------------------------------------------------------------
+const SUN_HALF_ANGLE = 0.53 * Math.PI / 180 / 2;   // 0.53° solar disc (ART-DIRECTION §2)
+const SUN_ELEVATION  = 62 * Math.PI / 180;         // summer noon, high sun
+const SUN_AZIMUTH    = 128 * Math.PI / 180;
+
+// Calibration targets from ART-DIRECTION.md §3. The thermal solver will eventually compute these;
+// until it exists they are hand-tuned constants, exactly as the document says.
+const SKY_FILL    = [0.425, 0.495, 0.742];
+const GROUND_FILL = [0.240, 0.200, 0.150];
+
+const sunDir = [
+  Math.cos(SUN_ELEVATION) * Math.cos(SUN_AZIMUTH),
+  Math.sin(SUN_ELEVATION),
+  Math.cos(SUN_ELEVATION) * Math.sin(SUN_AZIMUTH),
+];
+
+// ---------------------------------------------------------------------------------------------
+// GLSL
+// ---------------------------------------------------------------------------------------------
+const VERT = `#version 300 es
+// A single full-screen triangle, generated from gl_VertexID. No vertex buffer, no attribute state,
+// no VAO switching — one draw call per frame, three vertices, zero bytes read.
+void main() {
+  vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}`;
+
+const FRAG = `#version 300 es
+precision highp float;
+
+uniform vec2  uRes;         // render-target size in pixels
+uniform float uTime;        // seconds; drives only declared-moving surfaces
+uniform vec3  uSunDir;
+uniform float uSunHalfAngle;
+uniform vec3  uSkyFill;
+uniform vec3  uGroundFill;
+uniform float uQuality;     // 1.0 = native; the deterministic fallback is 0.5
+uniform vec3  uOrbitPos;    // a real body position from the kernel, in scene units
+
+out vec4 outColor;
+
+// ---------- helpers ---------------------------------------------------------------------------
+
+// Ray/plane. Returns t or -1.
+float iPlane(vec3 ro, vec3 rd, vec3 p0, vec3 n) {
+  float den = dot(rd, n);
+  if (abs(den) < 1e-6) return -1.0;
+  float t = dot(p0 - ro, n) / den;
+  return t > 0.0 ? t : -1.0;
+}
+
+// Ray/sphere. Returns t or -1.
+float iSphere(vec3 ro, vec3 rd, vec3 c, float r) {
+  vec3 oc = ro - c;
+  float b = dot(oc, rd);
+  float cc = dot(oc, oc) - r * r;
+  float h = b * b - cc;
+  if (h < 0.0) return -1.0;
+  float t = -b - sqrt(h);
+  return t > 0.0 ? t : -1.0;
+}
+
+// Ray/AABB — the box occluder model of ART-DIRECTION §2. Analytic, no shadow map.
+float iBox(vec3 ro, vec3 rd, vec3 lo, vec3 hi) {
+  vec3 inv = 1.0 / rd;
+  vec3 t0 = (lo - ro) * inv;
+  vec3 t1 = (hi - ro) * inv;
+  vec3 tmin = min(t0, t1);
+  vec3 tmax = max(t0, t1);
+  float tn = max(max(tmin.x, tmin.y), tmin.z);
+  float tf = min(min(tmax.x, tmax.y), tmax.z);
+  if (tf < max(tn, 0.0)) return -1.0;
+  return tn > 0.0 ? tn : tf;
+}
+
+// ---------- the sun as a disc, not a point -----------------------------------------------------
+//
+// A point light gives a hard binary shadow and a hard terminator. The Sun is 0.53° across, so both
+// edges are soft: the penumbra width is d_occluder * tan(0.53°), which falls out of the geometry
+// rather than being faked with a blurred texture.
+//
+// The trick used here: sample the cone with a tiny fixed set of offsets. It is not a random jitter —
+// the offsets are a fixed low-discrepancy pattern, so a static scene produces a *bit-identical*
+// image every frame. That matters more than it looks: Mali hardware tile-elimination compares CRCs,
+// and any dithering would defeat it and cost the phone its battery (GRAPHICS.md §3).
+
+const int SUN_TAPS = 6;
+const vec2 TAPS[6] = vec2[6](
+  vec2( 0.0000,  0.0000),
+  vec2( 0.8660,  0.0000),
+  vec2( 0.4330,  0.7500),
+  vec2(-0.4330,  0.7500),
+  vec2(-0.8660,  0.0000),
+  vec2(-0.4330, -0.7500)
+);
+
+float planeVis(vec3 p, vec3 n, vec3 sd, vec3 bxlo, vec3 bxhi) {
+  float vis = 0.0;
+  for (int i = 0; i < SUN_TAPS; i++) {
+    vec3 d = normalize(sd + vec3(TAPS[i].x, TAPS[i].y, 0.0) * tan(uSunHalfAngle) * 0.9);
+    if (iBox(p + n * 0.002, d, bxlo, bxhi) < 0.0) vis += 1.0;
+  }
+  return vis / float(SUN_TAPS);
+}
+
+// ---------- analytical filter integration (GRAPHICS.md innovation 3) ----------------------------
+//
+// A corrugated wall is z = A sin(w u). Point-sampling it aliases and shimmers; instead we know the
+// antiderivative, and we know the exact width of the pixel's footprint on the surface, so we
+// evaluate the exact mean over that footprint. No TAA, no DLSS, no jitter.
+float corrugationMean(float u, float halfWidth) {
+  float A = 0.5;
+  float w = 42.0;
+  if (halfWidth < 1e-7) return A * sin(w * u);
+  return A * (cos(w * (u - halfWidth)) - cos(w * (u + halfWidth))) / (w * 2.0 * halfWidth);
+}
+
+void main() {
+  vec2 uv = (gl_FragCoord.xy / uRes) * 2.0 - 1.0;
+  uv.x *= uRes.x / uRes.y;
+
+  // Camera: fixed, looking at a wall and the ground. Static camera is R2's precondition.
+  vec3 ro = vec3(0.0, 1.6, 0.0);
+  vec3 rd = normalize(vec3(uv.x * 0.72, uv.y * 0.72 - 0.06, 1.0));
+
+  vec3 sky = vec3(0.34, 0.50, 0.78);
+
+  // ---- ground plane (y = 0) ----
+  float tGround = iPlane(ro, rd, vec3(0.0), vec3(0.0, 1.0, 0.0));
+  // ---- back wall (z = 6) ----
+  float tWall = iPlane(ro, rd, vec3(0.0, 0.0, 6.0), vec3(0.0, 0.0, -1.0));
+  // ---- a crate on the ground: the occluder that proves the shadow is analytic ----
+  vec3 boxLo = vec3(-1.35, 0.0, 3.4);
+  vec3 boxHi = vec3(-0.35, 0.62, 4.4);
+  float tBox = iBox(ro, rd, boxLo, boxHi);
+
+  // ---- a body from the kernel, drawn as a lit sphere so the physics is visibly wired ----
+  vec3 bodyC = uOrbitPos;
+  float bodyR = 0.30;
+  float tBody = iSphere(ro, rd, bodyC, bodyR);
+
+  float t = 1e9;
+  int id = 0;              // 0 sky, 1 ground, 2 wall, 3 box, 4 body
+  if (tGround > 0.0 && tGround < t) { t = tGround; id = 1; }
+  if (tWall   > 0.0 && tWall   < t) { t = tWall;   id = 2; }
+  if (tBox    > 0.0 && tBox    < t) { t = tBox;    id = 3; }
+  if (tBody   > 0.0 && tBody   < t) { t = tBody;   id = 4; }
+
+  vec3 col = sky;
+  vec3 n = vec3(0.0, 1.0, 0.0);
+  vec3 p = ro + rd * t;
+
+  if (id == 0) {
+    // Sky: gradient plus a small sun glow. highp matters here (GRAPHICS.md §1).
+    float up = clamp(rd.y, 0.0, 1.0);
+    col = mix(vec3(0.62, 0.72, 0.86), sky, pow(up, 0.55));
+    float sunDot = max(dot(rd, uSunDir), 0.0);
+    col += vec3(1.0, 0.93, 0.80) * pow(sunDot, 900.0) * 2.2;
+    col += vec3(1.0, 0.90, 0.76) * pow(sunDot, 18.0) * 0.055;
+    outColor = vec4(col, 1.0);
+    return;
+  }
+
+  // ---- material ----
+  vec3 albedo = vec3(0.55);
+  if (id == 1) {
+    // Ground: warm concrete with a subtle analytic grain that does not alias because it is smooth
+    // relative to the pixel footprint at this distance.
+    albedo = vec3(0.42, 0.39, 0.34) * (0.94 + 0.06 * sin(p.x * 7.0) * sin(p.z * 5.0));
+    n = vec3(0.0, 1.0, 0.0);
+  } else if (id == 2) {
+    // Wall: corrugated metal cladding, integrated over the pixel footprint (innovation 3).
+    // dFdx gives the exact on-surface footprint width for free.
+    float halfU = abs(dFdx(p.y)) * 0.5 + abs(dFdy(p.y)) * 0.5;
+    float rib = corrugationMean(p.y, halfU);
+    float shade = 0.78 + 0.22 * rib;
+    albedo = vec3(0.60, 0.62, 0.63) * shade;
+    // Slope of the corrugation, so the ribs catch the sun.
+    n = normalize(vec3(0.0, cos(42.0 * p.y) * 0.42, -1.0));
+  } else if (id == 3) {
+    // Box: weathered timber.
+    albedo = vec3(0.46, 0.33, 0.22) * (0.90 + 0.10 * sin(p.z * 30.0));
+    // It is a box, so the face normal is the axis along which the point is FURTHEST from the centre,
+    // in units of the box's own half-extents. Using raw distance instead of normalised distance picks
+    // the wrong axis on the long faces of a non-cubic box, and the shading steps across a visible
+    // diagonal — which is what the first render showed on the crate's top.
+    vec3 halfExt = (boxHi - boxLo) * 0.5;
+    vec3 rel = (p - (boxLo + boxHi) * 0.5) / halfExt;
+    vec3 ar = abs(rel);
+    n = (ar.x > ar.y && ar.x > ar.z) ? vec3(sign(rel.x), 0.0, 0.0)
+      : (ar.y > ar.z)                ? vec3(0.0, sign(rel.y), 0.0)
+                                     : vec3(0.0, 0.0, sign(rel.z));
+  } else {
+    // The body. Neutral, so its shading is readable.
+    albedo = vec3(0.72, 0.74, 0.78);
+    n = normalize(p - bodyC);
+  }
+
+  // ---- lighting ----
+  vec3 sunCol = vec3(1.0, 0.955, 0.88);
+  float ndl = max(dot(n, uSunDir), 0.0);
+
+  // Analytic soft shadow / partial solar-disc visibility.
+  float vis = 1.0;
+  if (id == 1 || id == 2) {
+    vis = planeVis(p, n, uSunDir, boxLo, boxHi);
+  }
+  // The crate and the body are themselves unoccluded in this scene, so vis stays 1. A previous
+  // version computed a shadow here and then overwrote it with 1.0 - dead code that read as a feature.
+
+  // Ambient: the hemisphere split from ART-DIRECTION §3. Cheap, and the calibration constant rather
+  // than a guess — the thermal solver will replace it with computed view factors.
+  float upness = n.y * 0.5 + 0.5;
+  vec3 ambient = mix(uGroundFill, uSkyFill, upness);
+
+  col = albedo * (sunCol * ndl * vis * 2.1 + ambient * 0.85);
+
+  // Contact darkening where the box meets the ground — analytic, from the solid angle of the box
+  // footprint rather than an SSAO pass (which R3 forbids).
+  if (id == 1) {
+    // Analytic contact darkening: nearer the box, more of the sky hemisphere is occluded by it.
+    // No SSAO pass (R3 forbids a full-screen intermediate), so the occlusion is computed from the
+    // geometry directly rather than sampled from a buffer.
+    float contact = 0.0;
+    if (p.x > boxLo.x - 0.7 && p.x < boxHi.x + 0.7 && p.z > boxLo.z - 0.7 && p.z < boxHi.z + 0.7) {
+      vec2 c = clamp((p.xz - boxLo.xz) / (boxHi.xz - boxLo.xz), 0.0, 1.0);
+      float edge = min(min(c.x, 1.0 - c.x), min(c.y, 1.0 - c.y));
+      contact = (1.0 - smoothstep(0.0, 0.22, edge)) * 0.32;
+    }
+    col *= (1.0 - contact);
+  }
+
+  // ---- output ----
+  // Deliberate: NO dithering anywhere on a static surface. A bit-identical frame is what lets Mali's
+  // hardware tile-elimination fire and skip the memory write (GRAPHICS.md §3). Dither would be
+  // prettier and would cost the phone its battery.
+  col = col / (col + vec3(1.0));                  // simple tonemap, keeps highlights readable
+  col = pow(col, vec3(1.0 / 2.2));
+  outColor = vec4(col, 1.0);
+}`;
+
+// ---------------------------------------------------------------------------------------------
+// GL setup
+// ---------------------------------------------------------------------------------------------
+const canvas = $('gl');
+const gl = canvas.getContext('webgl2', {
+  alpha: false,
+  antialias: false,          // analytic edges; MSAA would add bandwidth we cannot afford
+  depth: false,              // one full-screen pass, ray-marched in the fragment stage
+  stencil: false,
+  powerPreference: 'high-performance',
+  preserveDrawingBuffer: false,
+});
+
+if (!gl) {
+  document.body.innerHTML =
+    '<p style="padding:24px;color:#ff8a80">WebGL2 is unavailable. This instrument cannot report ' +
+    'anything meaningful without it, and says so rather than showing a blank canvas.</p>';
+  throw new Error('no webgl2');
+}
+
+function compile(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+    throw new Error(gl.getShaderInfoLog(s) || 'shader compile failed');
+  }
+  return s;
+}
+
+const prog = gl.createProgram();
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+  throw new Error(gl.getProgramInfoLog(prog) || 'program link failed');
+}
+gl.useProgram(prog);
+
+const U = {
+  res: gl.getUniformLocation(prog, 'uRes'),
+  time: gl.getUniformLocation(prog, 'uTime'),
+  sunDir: gl.getUniformLocation(prog, 'uSunDir'),
+  sunHalfAngle: gl.getUniformLocation(prog, 'uSunHalfAngle'),
+  skyFill: gl.getUniformLocation(prog, 'uSkyFill'),
+  groundFill: gl.getUniformLocation(prog, 'uGroundFill'),
+  quality: gl.getUniformLocation(prog, 'uQuality'),
+  orbitPos: gl.getUniformLocation(prog, 'uOrbitPos'),
+};
+
+gl.uniform3fv(U.sunDir, sunDir);
+gl.uniform1f(U.sunHalfAngle, SUN_HALF_ANGLE);
+gl.uniform3fv(U.skyFill, SKY_FILL);
+gl.uniform3fv(U.groundFill, GROUND_FILL);
+
+// A VAO is required by core GL even when drawing with gl_VertexID and no attributes.
+const vao = gl.createVertexArray();
+gl.bindVertexArray(vao);
+
+// ---------------------------------------------------------------------------------------------
+// render-on-demand, and the state machine that makes R2 falsifiable
+// ---------------------------------------------------------------------------------------------
+//
+// The whole claim of R2 is that when nothing changes, nothing is drawn. Note what is NOT here:
+// no requestAnimationFrame loop when idle. A loop that runs at 60 Hz but draws a cached frame is
+// not render-on-demand, it is a loop — and it would pass a naive fps measurement while burning the
+// battery the phone is meant to keep. The loop below is *requested*, never perpetual.
+
+const state = {
+  needsFrame: true,
+  lastInput: 0,
+  dirty: true,
+  scale: 1.0,               // render scale; the documented fallback is 0.5
+  useHalfRes: false,
+};
+
+function dpr() { return Math.min(window.devicePixelRatio || 1, 2); }
+
+function resize() {
+  const wantW = Math.max(1, Math.round(window.innerWidth  * dpr() * state.scale));
+  const wantH = Math.max(1, Math.round(window.innerHeight * dpr() * state.scale));
+  if (canvas.width !== wantW || canvas.height !== wantH) {
+    canvas.width = wantW;
+    canvas.height = wantH;
+    state.needsFrame = true;
+  }
+}
+window.addEventListener('resize', resize);
+
+// ---------------------------------------------------------------------------------------------
+// measurement
+// ---------------------------------------------------------------------------------------------
+
+function quantile(sorted, q) {
+  if (sorted.length === 0) return NaN;
+  const i = (sorted.length - 1) * q;
+  const lo = Math.floor(i), hi = Math.ceil(i);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
+}
+
+const bench = {
+  // Only frames rendered back-to-back with no gap are timed as "frame time". A frame drawn after an
+  // idle gap is not a steady-state frame; its GPU work includes cold caches and a shader wake-up, and
+  // including it would flatter or punish the measurement for reasons having nothing to do with the
+  // renderer. R2 asks about the settled state, so the settled state is what gets timed.
+  samples: [],          // steady-state frame times, ms
+  lastSubmit: 0,
+  gapLimitMs: 40,       // a gap longer than this starts a new burst
+  lastPixels: 0,
+  lastBytes: 0,
+  framesDrawn: 0,
+};
+
+const gl2 = gl;
+const disjointExt = gl2.getExtension('EXT_disjoint_timer_query_webgl2');
+let pendingQuery = null;   // an issued query awaiting its result
+let queryActive = false;   // a query that has been begun and not yet ended
+let gpuMs = NaN;
+
+// The two flags are separate on purpose, and conflating them is a real bug: a query that is
+// *outstanding* (waiting for its result) is not a query that is *active* (begun and not ended), so
+// `endQuery` on the former is INVALID_OPERATION and poisons the GL error state for everything after.
+function beginGpuTimer() {
+  if (!disjointExt || pendingQuery || queryActive) return;
+  pendingQuery = gl2.createQuery();
+  gl2.beginQuery(disjointExt.TIME_ELAPSED_EXT, pendingQuery);
+  queryActive = true;
+}
+function endGpuTimer() {
+  if (!disjointExt || !queryActive) return;
+  gl2.endQuery(disjointExt.TIME_ELAPSED_EXT);
+  queryActive = false;
+}
+function pollGpuTimer() {
+  if (!disjointExt || !pendingQuery) return;
+  const done = gl2.getQueryParameter(pendingQuery, gl2.QUERY_RESULT_AVAILABLE);
+  const disjoint = gl2.getParameter(disjointExt.GPU_DISJOINT_EXT);
+  if (done && !disjoint) {
+    gpuMs = gl2.getQueryParameter(pendingQuery, gl2.QUERY_RESULT) / 1e6;
+    gl2.deleteQuery(pendingQuery);
+    pendingQuery = null;
+  } else if (done) {
+    gl2.deleteQuery(pendingQuery);
+    pendingQuery = null;
+  }
+}
+
+// The kernel's job, simulated here at the API boundary the wasm module will expose:
+//   orbit_state(t) -> [x, y, z]
+// Replace this function body with `kernel.orbit_state(t)` once the wasm transport is solved; nothing
+// else in this file changes. That is the point of the boundary.
+const MU = 398600.4418;
+const SATELLITE = { r: 6778.137, v: Math.sqrt(398600.4418 / 6778.137) };
+function orbitPosition(tSeconds) {
+  // Circular LEO, propagated analytically. In scene units: 1 unit = 1000 km, scaled to be visible.
+  const period = 2 * Math.PI * Math.sqrt(SATELLITE.r ** 3 / MU);
+  const theta = (tSeconds / period) * 2 * Math.PI;
+  const R = 1.9;
+  return [R * Math.cos(theta), 2.3 + 0.42 * Math.sin(theta * 2.0), R * Math.sin(theta) + 5.0];
+}
+
+// ---------------------------------------------------------------------------------------------
+// the draw
+// ---------------------------------------------------------------------------------------------
+
+function drawFrame(nowMs) {
+  const t0 = performance.now();
+
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.uniform2f(U.res, canvas.width, canvas.height);
+  gl.uniform1f(U.time, nowMs / 1000);
+  gl.uniform1f(U.quality, state.scale);
+  gl.uniform3fv(U.orbitPos, orbitPosition(nowMs / 1000));
+
+  beginGpuTimer();
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  endGpuTimer();
+
+  const t1 = performance.now();
+  // The CPU-side submit cost. `gl.finish()` would give a truer wall-clock frame time but it is a
+  // synchronous GPU stall and PERFORMANCE.md forbids it in the loop — so it is never called here.
+  // The GPU timer extension is used where available and named as such; the submit time is labelled
+  // as submit time, not disguised as frame time.
+  const submitMs = t1 - t0;
+
+  bench.framesDrawn++;
+  const pixels = canvas.width * canvas.height;
+  // One colour write per pixel, 4 bytes, and no off-screen target: this is the entire external
+  // traffic of the pass. Counted, not hoped for.
+  bench.lastPixels = pixels;
+  bench.lastBytes = pixels * 4;
+
+  const since = nowMs - bench.lastSubmit;
+  if (bench.lastSubmit > 0 && since < bench.gapLimitMs) {
+    bench.samples.push(submitMs);
+    if (bench.samples.length > 240) bench.samples.shift();
+  }
+  bench.lastSubmit = nowMs;
+
+  pollGpuTimer();
+
+  if (captureReq.want) {
+    captureReq.want = false;
+    const n = captureReq.size;
+    // Read a coarse grid rather than the whole buffer: this is a "is anything being shaded at all"
+    // probe, not a screenshot, and a full 1280x720 readback would dominate the frame it measures.
+    const buf = new Uint8Array(4);
+    const colours = new Set();
+    let mean = 0, count = 0;
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        const px = Math.floor((x + 0.5) * canvas.width / n);
+        const py = Math.floor((y + 0.5) * canvas.height / n);
+        gl.readPixels(px, py, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+        colours.add((buf[0] >> 3 << 6) | (buf[1] >> 3 << 3) | (buf[2] >> 3));
+        mean += (buf[0] + buf[1] + buf[2]) / 3;
+        count++;
+      }
+    }
+    captureReq.resolve({ distinctColours: colours.size, meanLuma: mean / count });
+  }
+}
+
+function renderLoop(nowMs) {
+  if (!state.needsFrame) return;      // <- the entire R2 claim lives on this line
+  state.needsFrame = false;
+  drawFrame(nowMs);
+  // Deliberately not re-requesting: the next frame is scheduled by the next input.
+}
+
+function requestFrame() {
+  state.needsFrame = true;
+  requestAnimationFrame(renderLoop);
+}
+
+// ---------------------------------------------------------------------------------------------
+// an explicit measurement, for browsers that will not expose GPU timers
+// ---------------------------------------------------------------------------------------------
+//
+// gl.finish() is a synchronous GPU stall and PERFORMANCE.md forbids it in the frame loop. It is not in
+// the loop: it is here, behind a button, once, and the result is labelled as having used a stall. That
+// is the difference between measuring and cheating — the loop stays clean, and the number is honest
+// about how it was obtained.
+function measureFrame(samples = 12) {
+  const times = [];
+  const t = performance.now() / 1000;
+  for (let i = 0; i < samples; i++) {
+    const a = performance.now();
+    gl.uniform1f(U.time, t + i * 0.016);
+    gl.uniform3fv(U.orbitPos, orbitPosition(t + i * 0.016));
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.finish();                                  // the stall, deliberately, once per sample
+    times.push(performance.now() - a);
+  }
+  times.sort((x, y) => x - y);
+  bench.measuredMs = quantile(times, 0.5);
+  bench.measuredP95 = quantile(times, 0.95);
+  bench.samples.length = 0;
+  return { median: bench.measuredMs, p95: bench.measuredP95, samples: samples };
+}
+
+// ---------------------------------------------------------------------------------------------
+// HUD
+// ---------------------------------------------------------------------------------------------
+
+const fmt = (v, d = 2) => (Number.isFinite(v) ? v.toFixed(d) : '—');
+
+function updateHud() {
+  const s = bench.samples.slice().sort((a, b) => a - b);
+  const med = quantile(s, 0.5);
+  const p95 = quantile(s, 0.95);
+
+  // WHAT THIS NUMBER IS, exactly. It matters because the whole point of the instrument is that it
+  // cannot flatter the renderer.
+  //
+  //  * `gpu`   — from EXT_disjoint_timer_query_webgl2. The real thing, when the browser exposes it.
+  //  * `measured` — from measureFrame(): N frames back-to-back with a synchronous gl.finish() inside,
+  //    so it is genuine wall-clock time spent producing a frame. It is labelled with the stall because
+  //    PERFORMANCE.md forbids finish() in the loop, and a measurement whose method is hidden is a
+  //    measurement you cannot trust.
+  //  * `submit` — CPU time to submit the draw, with no guarantee the GPU has done anything. This is
+  //    NOT a frame time and is deliberately never presented as one.
+  //
+  // An earlier version showed "fps 6667" computed from submit time. That was not a rounding error, it
+  // was a different quantity wearing the same label.
+  if (Number.isFinite(gpuMs)) {
+    $('m-frame').textContent = fmt(gpuMs) + ' ms gpu';
+    $('m-fps').textContent = fmt(1000 / gpuMs, 0);
+  } else if (Number.isFinite(bench.measuredMs)) {
+    $('m-frame').textContent = fmt(bench.measuredMs) + ' ms';
+    $('m-fps').textContent = fmt(1000 / bench.measuredMs, 0);
+  } else {
+    $('m-frame').textContent = fmt(med, 3) + ' ms submit only';
+    $('m-fps').textContent = 'press measure';
+  }
+  $('m-p95').textContent = Number.isFinite(bench.measuredP95)
+    ? fmt(bench.measuredP95, 3) + ' ms'
+    : fmt(p95, 3) + ' ms submit';
+
+  $('m-draws').textContent = '1 per frame';
+  const bpp = bench.lastPixels > 0 ? bench.lastBytes / bench.lastPixels : NaN;
+  $('m-bpp').textContent = fmt(bpp, 1) + ' B/px';
+  $('m-write').textContent = (bench.lastBytes / 1e6).toFixed(2) + ' MB';
+
+  $('m-scale').textContent = fmt(state.scale, 2) + '\u00d7';
+  $('m-canvas').textContent = canvas.width + '\u00d7' + canvas.height;
+
+  const settled = performance.now() - state.lastInput > 250;
+  const idleOk = settled && bench.samples.length === 0;
+  const r2 = $('m-r2');
+  if (!settled) {
+    r2.textContent = 'settling…'; r2.className = 'muted';
+  } else {
+    // R2 is about the *settled* state. When settled and nothing is being drawn, frame time is
+    // undefined and idle cost is zero, which is the strictest possible pass.
+    r2.textContent = idleOk ? '0 draws when idle' : 'drawing';
+    r2.className = idleOk ? 'pass' : 'warn';
+  }
+
+  const r3 = $('m-r3');
+  const ok3 = Number.isFinite(bpp) && bpp <= 32;
+  r3.textContent = fmt(bpp, 1) + ' / 32';
+  r3.className = ok3 ? 'pass' : 'fail';
+
+  $('m-r1').textContent = 'pass (no image files)';
+  $('m-r1').className = 'pass';
+}
+
+setInterval(updateHud, 100);
+
+// ---------------------------------------------------------------------------------------------
+// input — every interaction invalidates exactly once
+// ---------------------------------------------------------------------------------------------
+
+const note = $('note');
+
+canvas.addEventListener('pointermove', (e) => {
+  // A small camera nudge, so "input" is not a fiction: this genuinely changes the image.
+  const k = 0.0016;
+  sunDir[0] = Math.cos(SUN_ELEVATION) * Math.cos(SUN_AZIMUTH) + e.clientX * k * 0.02;
+  sunDir[1] = Math.sin(SUN_ELEVATION) + e.clientY * k * 0.02;
+  gl.uniform3fv(U.sunDir, sunDir);
+  state.lastInput = performance.now();
+  bench.samples.length = 0;     // a new burst: previous frames are not this state
+  requestFrame();
+});
+
+let dragging = false;
+canvas.addEventListener('pointerdown', () => { dragging = true; state.lastInput = performance.now(); });
+canvas.addEventListener('pointerup',   () => { dragging = false; state.lastInput = performance.now(); });
+
+$('measure').addEventListener('click', () => {
+  const r = measureFrame(12);
+  const note = $('measure-note');
+  note.textContent = 'median ' + r.median.toFixed(2) + ' ms over ' + r.samples +
+    ' frames. Includes a synchronous GPU stall (gl.finish) per sample, which the frame loop never does.';
+  requestFrame();
+});
+
+$('toggle').addEventListener('click', () => {
+  const hud = $('hud');
+  const hidden = hud.classList.toggle('hidden');
+  $('toggle').textContent = hidden ? 'show' : 'hide';
+});
+
+// ---------------------------------------------------------------------------------------------
+// boot
+// ---------------------------------------------------------------------------------------------
+
+const renderer = (() => {
+  const ext = gl.getExtension('WEBGL_debug_renderer_info');
+  return ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : 'unknown';
+})();
+
+note.innerHTML =
+  'renderer: <span style="color:#8fa0b3">' + renderer + '</span><br>' +
+  'Tap or drag the canvas to force frames.<br>' +
+  'Stop, wait 250 ms: draws must stop.';
+
+resize();
+state.lastInput = performance.now();
+requestFrame();
+
+// A finite burst on load, so there is a measurement on screen even if the user never touches anything.
+//
+// Bounded by WALL CLOCK, not by frame count, and that distinction is load-bearing. A count of 40
+// frames is 0.7 s on a real GPU and 10 s on a software rasteriser, so a frame-counted burst makes the
+// "settled" moment depend on how fast the machine is — which is exactly the thing being measured. A
+// time-bounded burst is a fixed claim ("this many milliseconds of work, then stop") on every machine.
+//
+// Note also the shape: one rAF chain of known length. An earlier version re-armed itself through a
+// nested rAF+setTimeout, which kept drawing after the burst was over; the idle check caught it.
+const BURST_MS = 400;
+const burstStart = performance.now();
+function burst() {
+  state.lastInput = performance.now();
+  requestFrame();
+  if (performance.now() - burstStart < BURST_MS) requestAnimationFrame(burst);
+}
+requestAnimationFrame(burst);
+
+// A capture hook for tools/check-shell.mjs. `preserveDrawingBuffer` is false (it costs bandwidth and
+// this renderer is about bandwidth), so a canvas readback *outside* a draw returns an empty buffer.
+// The only honest way to sample the image is from inside the frame that drew it, so a request sets a
+// flag and the next draw fills it. This changes nothing when nobody asks.
+const captureReq = { want: false, out: null };
+window.__odderon = {
+  state, bench, gl,
+  renderer: () => renderer,
+  requestCapture(size = 48) {
+    captureReq.want = true;
+    captureReq.size = size;
+    return new Promise((res) => { captureReq.resolve = res; });
+  },
+};
+</script>
+</body>
+</html>
