@@ -7,7 +7,7 @@
 // compared pixel for pixel by any agent or human without a GPU.
 //
 //   node tools/screenshot.mjs                        # all views -> .artifacts/screenshots
-//   node tools/screenshot.mjs --only street,roof     # subset
+//   node tools/screenshot.mjs --only street,sky      # substring subset
 //   node tools/screenshot.mjs --out /tmp/shots --width 1600 --height 900
 //
 // Views live in tools/views.json. A view is a camera pose plus optional overrides:
@@ -68,9 +68,26 @@ function viewUrl(v) {
 }
 
 const { chromium } = await import('playwright-core');
+const allViews = JSON.parse(fs.readFileSync(VIEWS_FILE, 'utf8')).views;
+// `--only` takes substrings, as documented. A token that matches nothing is an
+// error, not a no-op: silently rendering zero views used to overwrite a good
+// report.json with an empty one and still exit 0.
 const views = ONLY.length
-  ? JSON.parse(fs.readFileSync(VIEWS_FILE, 'utf8')).views.filter((v) => ONLY.includes(v.name))
-  : JSON.parse(fs.readFileSync(VIEWS_FILE, 'utf8')).views;
+  ? allViews.filter((v) => ONLY.some((o) => v.name.includes(o)))
+  : allViews;
+if (ONLY.length) {
+  const matched = new Set(views.map((v) => v.name));
+  const missing = ONLY.filter((o) => !views.some((v) => v.name.includes(o)));
+  if (missing.length) {
+    console.error(`--only matched no view for: ${missing.join(', ')}`);
+    console.error(`available: ${allViews.map((v) => v.name).join(', ')}`);
+    process.exit(1);
+  }
+}
+if (!views.length) {
+  console.error(`No views in ${VIEWS_FILE}`);
+  process.exit(1);
+}
 
 fs.mkdirSync(OUT, { recursive: true });
 const server = await ensureServer();
@@ -105,10 +122,19 @@ try {
     console.log(`  ${v.name.padEnd(22)} ${String(frame.px[0]).padStart(4)}x${String(frame.px[1])}px ` +
       `${frame.draws} draws  ${frame.ms.toFixed(2)} ms/frame  -> ${path.relative(ROOT, file)}`);
   }
-  if (errors.length) console.log('\npage errors:\n  ' + [...new Set(errors)].slice(0, 6).join('\n  '));
+  if (errors.length) {
+    console.log('\npage errors:\n  ' + [...new Set(errors)].slice(0, 6).join('\n  '));
+    // A shader that fails to compile still produces a PNG - a black one - so a
+    // silent exit 0 here would let a broken build look like a finished capture.
+    process.exitCode = 1;
+  }
 } finally {
   await browser.close();
   if (server) server.kill();
 }
 
+if (!report.length) {
+  console.error('nothing captured; leaving the previous report.json alone');
+  process.exit(1);
+}
 fs.writeFileSync(path.join(OUT, 'report.json'), JSON.stringify(report, null, 2));
