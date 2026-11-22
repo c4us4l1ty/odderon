@@ -19,6 +19,15 @@
 // deliberately, and only for this reason — the kernel crates keep it.
 
 
+// A `no_std` cdylib must provide its own panic handler. In wasm a panic is unrecoverable anyway, and
+// this one is deliberately tiny: it aborts, which wasm lowers to `unreachable` and the host traps on.
+// Size matters more than message formatting here — the whole engine is a 2.5 MB download target.
+#[cfg(target_arch = "wasm32")]
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    core::arch::wasm32::unreachable()
+}
+
 /// The determinism hash computed inside wasm.
 ///
 /// `u64` crosses the C ABI as a single wasm `i64`, which JS sees as a `BigInt`. That is the one
