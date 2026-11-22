@@ -13,7 +13,8 @@
     "check": "npm run determinism",
     "install:chromium": "node -e \"require('@sparticuz/chromium').executablePath().then(p=>console.log('chromium:',p))\"",
     "serve": "node tools/serve.mjs",
-    "check:shell": "node tools/check-shell.mjs"
+    "check:shell": "node tools/check-shell.mjs",
+    "start": "node tools/serve.mjs"
   },
   "devDependencies": {
     "@sparticuz/chromium": "131.0.0",

@@ -43,6 +43,12 @@
   }
   #measure:active { background: #27384a; }
   #measure-note { margin-top: 5px; font-size: 11px; }
+  .scales { display: flex; gap: 4px; margin-top: 6px; }
+  .scales button {
+    flex: 1; padding: 6px 4px; border-radius: 5px; cursor: pointer;
+    background: #151b22; border: 1px solid #2a3642; color: #9fb0c0; font: inherit; font-size: 11px;
+  }
+  .scales button.on { background: #1d2733; border-color: #3d5570; color: #d6e8f8; }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -61,6 +67,11 @@
   <div class="row"><span>bytes written</span><span id="m-write">—</span></div>
   <hr>
   <div class="row"><span>render</span><span class="big" id="m-scale">—</span></div>
+  <div class="scales" id="scales">
+    <button data-scale="1" class="on">1.0×</button>
+    <button data-scale="0.75">0.75×</button>
+    <button data-scale="0.5">0.5×  <span class="muted">docs fallback</span></button>
+  </div>
   <div class="row"><span>canvas</span><span id="m-canvas">—</span></div>
   <hr>
   <div class="row"><span>R2 idle &lt; 1.5 ms</span><span id="m-r2">—</span></div>
@@ -681,6 +692,10 @@ function updateHud() {
   $('m-r1').className = 'pass';
 }
 
+// 10 Hz, not 60: on a phone the DOM work in updateHud() is itself measurable, and an instrument that
+// costs more than the thing it measures is not an instrument. The panel note says so rather than
+// hiding it, because on a Kirin 710 the difference between "GPU idles" and "nothing runs at all" is
+// exactly the sort of thing a HUD can fake.
 setInterval(updateHud, 100);
 
 // ---------------------------------------------------------------------------------------------
@@ -703,6 +718,15 @@ canvas.addEventListener('pointermove', (e) => {
 let dragging = false;
 canvas.addEventListener('pointerdown', () => { dragging = true; state.lastInput = performance.now(); });
 canvas.addEventListener('pointerup',   () => { dragging = false; state.lastInput = performance.now(); });
+
+document.querySelectorAll('#scales button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    state.scale = Number(btn.dataset.scale);
+    document.querySelectorAll('#scales button').forEach((b) => b.classList.toggle('on', b === btn));
+    resize();                       // sets needsFrame when the buffer size actually changes
+    requestFrame();                 // and always redraw once, so the change is visible immediately
+  });
+});
 
 $('measure').addEventListener('click', () => {
   const r = measureFrame(12);
