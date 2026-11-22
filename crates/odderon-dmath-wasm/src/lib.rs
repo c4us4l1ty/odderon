@@ -53,3 +53,9 @@ pub extern "C" fn ln(x: f64) -> f64 {
 pub extern "C" fn atan2(y: f64, x: f64) -> f64 {
     odderon_dmath::atan2(y, x)
 }
+
+/// `sqrt` re-exported. Owned rather than imported: see the note on [`odderon_dmath::sqrt`].
+#[no_mangle]
+pub extern "C" fn sqrt(x: f64) -> f64 {
+    odderon_dmath::sqrt(x)
+}

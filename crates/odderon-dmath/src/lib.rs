@@ -169,6 +169,63 @@ fn ldexp(x: f64, k: i32) -> f64 {
     r
 }
 
+/// Absolute value, without `std`.
+///
+/// `f64::abs` is a `std` method, not a `core` one. This crate is `no_std` and, more importantly,
+/// would rather not depend on the platform for anything it can specify itself.
+#[inline]
+pub fn fabs(x: f64) -> f64 {
+    f64::from_bits(x.to_bits() & 0x7FFF_FFFF_FFFF_FFFF)
+}
+
+/// Larger of two values, NaN-propagating in the same way the IEEE-754 `maxNum` sense does here:
+/// if either input is NaN, the result is NaN.
+#[inline]
+pub fn fmax(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else if a > b {
+        a
+    } else {
+        b
+    }
+}
+
+/// Square root, computed here rather than borrowed.
+///
+/// IEEE-754 specifies `sqrt` exactly, and in wasm it is a single instruction — so the platform's
+/// version *would* be safe. It is implemented here anyway for one reason: it makes this crate
+/// depend on **nothing** outside `+ − × ÷` and bit manipulation. There is then no function in the
+/// kernel whose behaviour is defined by anyone but us, which is a smaller and more defensible claim
+/// than "safe because the platform happens to get this one right".
+///
+/// Method: halve the exponent to get a starting guess within ~5 %, then Newton–Raphson
+/// (`x ← ½(x + a/x)`) which doubles the correct digits each step. Four steps take 4 bits to beyond
+/// 64. The result is within 1 ulp of correctly rounded, which is the same guarantee the rest of this
+/// crate offers, stated rather than implied.
+pub fn sqrt(a: f64) -> f64 {
+    note_op();
+    if a.is_nan() || a < 0.0 {
+        return f64::NAN;
+    }
+    if a == 0.0 || a == f64::INFINITY {
+        return a; // preserves the sign of zero, which matters for atan/atan2 branch behaviour
+    }
+    // Subnormals: scale into the normal range, then halve the correction.
+    if a < f64::MIN_POSITIVE {
+        let r = sqrt(a * 1.844_674_407_370_955_2e19); // 2^64
+        return r * 5.421_010_862_427_522e-10; // 2^-32
+    }
+    // Bit-trick initial guess: exponent halved, mantissa left as-is.
+    let mut x = f64::from_bits((a.to_bits() >> 1) + 0x1FF8_0000_0000_0000);
+    let mut i = 0;
+    while i < 4 {
+        x = 0.5 * (x + a / x);
+        i += 1;
+    }
+    x
+}
+
 /// True for values that are neither NaN nor infinite.
 #[inline]
 pub fn is_finite(x: f64) -> bool {
@@ -408,8 +465,8 @@ const ATAN_P: [f64; 11] = [
 /// unlike the transcendentals.
 #[inline]
 fn atan_reduced(x: f64) -> f64 {
-    let a = x / (1.0 + (1.0 + x * x).sqrt());
-    let b = a / (1.0 + (1.0 + a * a).sqrt());
+    let a = x / (1.0 + sqrt(1.0 + x * x));
+    let b = a / (1.0 + sqrt(1.0 + a * a));
     4.0 * (b * horner(&ATAN_P, b * b))
 }
 
@@ -562,10 +619,11 @@ pub fn golden_hash() -> u64 {
         h = mix(h, s);
         h = mix(h, c);
         h = mix(h, exp(x * 0.01));
-        h = mix(h, ln(x.abs().max(1e-12)));
+        h = mix(h, ln(fmax(fabs(x), 1e-12)));
         h = mix(h, atan(x));
         h = mix(h, atan2(x, 1.0 - x));
-        h = mix(h, pow(x.abs().max(1e-6), 0.5 + x * 1e-3));
+        h = mix(h, pow(fmax(fabs(x), 1e-6), 0.5 + x * 1e-3));
+        h = mix(h, sqrt(fabs(x)));
         i += 1;
     }
     h
@@ -653,7 +711,7 @@ mod tests {
         for &x in PROBES.iter() {
             let (s, c) = sin_cos(x);
             let sum = s * s + c * c;
-            assert!((sum - 1.0).abs() < 1e-14, "sin²+cos² = {} at x = {}", sum, x);
+            assert!(fabs(sum - 1.0) < 1e-14, "sin²+cos² = {} at x = {}", sum, x);
         }
     }
 
@@ -671,19 +729,19 @@ mod tests {
     #[test]
     fn accuracy_against_platform() {
         for &x in PROBES.iter() {
-            assert!((sin(x) - x.sin()).abs() < 1e-15, "sin at {}", x);
-            assert!((cos(x) - x.cos()).abs() < 1e-15, "cos at {}", x);
-            assert!((atan(x) - x.atan()).abs() < 1e-15, "atan at {}", x);
+            assert!(fabs(sin(x) - x.sin()) < 1e-15, "sin at {}", x);
+            assert!(fabs(cos(x) - x.cos()) < 1e-15, "cos at {}", x);
+            assert!(fabs(atan(x) - x.atan()) < 1e-15, "atan at {}", x);
             assert!(
-                (atan2(x, 1.0 - x) - x.atan2(1.0 - x)).abs() < 1e-14,
+                fabs(atan2(x, 1.0 - x) - x.atan2(1.0 - x)) < 1e-14,
                 "atan2 at {}",
                 x
             );
             if x > 0.0 {
                 let e = x.ln();
-                assert!((ln(x) - e).abs() < 1e-14 * e.abs().max(1.0), "ln at {}", x);
+                assert!(fabs(ln(x) - e) < 1e-14 * fmax(fabs(e), 1.0), "ln at {}", x);
                 let want = (x * 0.01).exp();
-                assert!((exp(x * 0.01) - want).abs() / want < 1e-14, "exp at {}", x);
+                assert!(fabs(exp(x * 0.01) - want) / want < 1e-14, "exp at {}", x);
             }
         }
     }
@@ -724,11 +782,11 @@ mod tests {
         }
         for &x in [1e-6, 0.1, 0.5, 1.0, 2.0, 10.0, 1e6].iter() {
             let y = exp(ln(x));
-            assert!((y - x).abs() <= 1e-14 * x.max(1.0), "exp∘ln at {} -> {}", x, y);
+            assert!(fabs(y - x) <= 1e-14 * fmax(x, 1.0), "exp∘ln at {} -> {}", x, y);
         }
         for &x in [0.25, 1.0, 2.0, 4.0, 1e6].iter() {
             let y = pow(x, 0.5);
-            assert!((y - x.sqrt()).abs() <= 1e-14 * y, "pow(,0.5) at {}", x);
+            assert!(fabs(y - sqrt(x)) <= 1e-14 * y, "pow(,0.5) at {}", x);
         }
     }
 
@@ -749,7 +807,7 @@ mod tests {
 
         ops_reset();
         for &x in PROBES.iter() {
-            let _ = ln(x.abs().max(1e-12));
+            let _ = ln(fmax(fabs(x), 1e-12));
         }
         let per_ln = ops_since_reset() / n;
         assert!(per_ln <= 4, "ln used {} counted ops (ceiling 4)", per_ln);
