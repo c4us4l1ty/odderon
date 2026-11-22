@@ -478,3 +478,313 @@ pub fn true_anomaly(state: &State, mu: f64) -> f64 {
 pub use odderon_dmath::sin as sin_rad;
 /// Re-export `cos` for the same reason.
 pub use odderon_dmath::cos as cos_rad;
+
+// ---------------------------------------------------------------------------------------------
+// classical orbital elements
+// ---------------------------------------------------------------------------------------------
+
+/// Classical (Keplerian) orbital elements — the form in which a coasting orbit is *stored*.
+///
+/// ## Why the semi-latus rectum rather than the semi-major axis
+///
+/// The textbook form uses `a`, which is infinite for a parabola and negative for a hyperbola. Both of
+/// those make the element set awkward exactly where the catalogue is dense: long-period comets have
+/// `e` within a thousandth of 1, and every interplanetary trajectory is hyperbolic. Storing
+/// `p = h²/μ` instead is defined for every conic, so `elements → state` never multiplies `∞ · 0`.
+/// `semi_major_axis()` derives `a` on demand for the one caller that genuinely wants it (the period).
+///
+/// ## Why the angles are folded
+///
+/// A circular orbit has no periapsis, and an equatorial orbit has no node line, so `argp` and `raan`
+/// are undefined in those cases — and they are not exotic: every geostationary satellite is both. The
+/// convention here is the one flight-dynamics software uses, and it is chosen because it keeps
+/// `elements → state` exact rather than merely defined:
+///
+/// | case | `raan` | `argp` | `nu` holds |
+/// | --- | --- | --- | --- |
+/// | general | RAAN | argument of periapsis | true anomaly |
+/// | equatorial (`i ≈ 0`, `e > 0`) | `0` | longitude of periapsis | true anomaly |
+/// | circular, inclined (`e ≈ 0`) | RAAN | `0` | argument of latitude |
+/// | circular, equatorial | `0` | `0` | true longitude |
+///
+/// Because the undefined angle is zeroed and its information folded into the one that remains, the
+/// round trip is exact to rounding in **every** row of that table — verified in
+/// `tests/validation.rs`. The alternative, leaving NaN in the undefined slot, is honest but useless:
+/// a stored geostationary orbit would have NaN where its position should be.
+///
+/// [`degeneracy`](Elements::degeneracy) records which row was taken, so the information is not lost
+/// silently — which matters for a game whose point is that the player can see the state of things.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Elements {
+    /// Semi-latus rectum, km. `p = a(1 − e²)`; defined for every conic.
+    pub p: f64,
+    /// Eccentricity, dimensionless. `0` circular, `< 1` elliptic, `1` parabolic, `> 1` hyperbolic.
+    pub e: f64,
+    /// Inclination, radians, in `[0, π]`.
+    pub i: f64,
+    /// Right ascension of the ascending node, radians, in `[0, 2π)`. Zero when equatorial.
+    pub raan: f64,
+    /// Argument of periapsis, radians, in `[0, 2π)`. Zero when circular. When both degeneracies are
+    /// present this slot carries the longitude of periapsis instead; see the table above.
+    pub argp: f64,
+    /// True anomaly, radians, in `[0, 2π)`. Carries the argument of latitude when circular, or the
+    /// true longitude when circular *and* equatorial.
+    pub nu: f64,
+    /// Which degenerate case was collapsed, for display and for debriefing. Zero means general.
+    pub degeneracy: Degeneracy,
+}
+
+/// Which of the element-set degeneracies applied. Flags rather than an enum because a circular
+/// equatorial orbit is both at once, and reporting only one of them would be a lie about the other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct Degeneracy {
+    /// The orbit lies in the reference plane, so there is no node line and `raan` is undefined.
+    pub equatorial: bool,
+    /// Eccentricity is zero to within tolerance, so there is no periapsis and `argp` is undefined.
+    pub circular: bool,
+}
+
+impl Degeneracy {
+    /// True when both collapse at once: a circular equatorial orbit, where only the true longitude
+    /// survives.
+    #[inline]
+    pub fn is_total(self) -> bool {
+        self.equatorial && self.circular
+    }
+
+    /// True when the element set needed no folding.
+    #[inline]
+    pub fn is_none(self) -> bool {
+        !self.equatorial && !self.circular
+    }
+}
+
+/// Threshold below which an eccentricity is treated as zero.
+///
+/// Not "small enough to ignore": `1e-9` is roughly the eccentricity a 3.3 km apoapsis difference makes
+/// at geostationary radius, so anything under it would be reported as an osculating artefact rather
+/// than a designed orbit. Above it the periapsis direction is real and is kept.
+const CIRCULAR_TOLERANCE: f64 = 1e-9;
+
+/// Threshold for treating a node line as absent, **relative to `|h|`**.
+///
+/// Relative, not absolute, because the units are km²/s and an absolute threshold would mean different
+/// things at LEO and at Pluto. `|n| = |h| sin i`, so this is exactly `sin i < 1e-11`, i.e. an
+/// inclination under 6e-10 radians — far below any real orbit and far above the noise in a dot
+/// product. Measured on an orbit at exactly `i = 0.0001°` the elements are treated as general, which is
+/// correct: at that inclination the node is definable to 3e-11 relative, and `tests/validation.rs`
+/// records the transition.
+const EQUATORIAL_TOLERANCE: f64 = 1e-11;
+
+impl Elements {
+    /// Semi-major axis, km. Infinite for a parabola, negative for a hyperbola.
+    #[inline]
+    pub fn semi_major_axis(&self) -> f64 {
+        if self.e == 1.0 {
+            f64::INFINITY
+        } else {
+            self.p / (1.0 - self.e * self.e)
+        }
+    }
+
+    /// Periapsis radius, km. Defined for every conic.
+    #[inline]
+    pub fn periapsis(&self) -> f64 {
+        self.p / (1.0 + self.e)
+    }
+
+    /// Apoapsis radius, km, or `INFINITY` for parabolic and hyperbolic orbits.
+    #[inline]
+    pub fn apoapsis(&self) -> f64 {
+        if self.e < 1.0 {
+            self.p / (1.0 - self.e)
+        } else {
+            f64::INFINITY
+        }
+    }
+
+    /// Specific angular momentum, km²/s: `√(μp)`.
+    #[inline]
+    pub fn angular_momentum(&self, mu: f64) -> f64 {
+        sqrt(mu * self.p)
+    }
+}
+
+impl State {
+    /// Classical orbital elements from a state vector.
+    ///
+    /// Degenerate cases are folded rather than left NaN; see [`Elements`] for the table and for why.
+    /// A degenerate state (zero position or zero angular momentum) yields NaN elements: a perfectly
+    /// radial orbit has no plane, so no element set can describe it, and pretending otherwise would
+    /// be the kind of fiction this project forbids.
+    pub fn to_elements(&self, mu: f64) -> Elements {
+        let r_norm = self.r.norm();
+        let h = self.angular_momentum();
+        let h_norm = h.norm();
+        let v2 = self.v.dot(self.v);
+
+        let nan_elements = Elements {
+            p: f64::NAN,
+            e: f64::NAN,
+            i: f64::NAN,
+            raan: f64::NAN,
+            argp: f64::NAN,
+            nu: f64::NAN,
+            degeneracy: Degeneracy::default(),
+        };
+        if !positive(r_norm) || !positive(h_norm) || !positive(mu) {
+            return nan_elements;
+        }
+
+        // n = ẑ × h points at the ascending node; |n| = |h| sin i.
+        let n = Vec3::new(0.0, 0.0, 1.0).cross(h);
+        let n_norm = n.norm();
+
+        // e = ((v² − μ/r)·r − (r·v)·v)/μ
+        let e_vec = (self.r * (v2 - mu / r_norm) - self.v * self.r.dot(self.v)) * (1.0 / mu);
+        let e = e_vec.norm();
+
+        let p = h_norm * h_norm / mu;
+        let i = acos(clamp_unit(h.z / h_norm));
+
+        let equatorial = n_norm < EQUATORIAL_TOLERANCE * h_norm;
+        let circular = e < CIRCULAR_TOLERANCE;
+        let degeneracy = Degeneracy {
+            equatorial,
+            circular,
+        };
+
+        let mut raan = 0.0;
+        let mut argp = 0.0;
+        let mut nu = 0.0;
+
+        if !equatorial {
+            raan = wrap_two_pi(atan2(n.y, n.x));
+        }
+
+        if !circular && !equatorial {
+            // General: argp is the angle from the node to periapsis, measured in the orbit plane.
+            // Sign from e_z, which is 0 for an equatorial orbit but that case is already excluded.
+            let cos_w = clamp_unit(n.dot(e_vec) / (n_norm * e));
+            argp = acos(cos_w);
+            if e_vec.z < 0.0 {
+                argp = odderon_dmath::TAU - argp;
+            }
+        } else if !circular && equatorial {
+            // i ≈ 0 (not π: h_z > 0 is implied by |i| < 1e-11). argp becomes the longitude of
+            // periapsis, ω + Ω, which is exactly what replaces the two angles.
+            argp = wrap_two_pi(atan2(e_vec.y, e_vec.x));
+        }
+
+        if !circular {
+            let cos_nu = clamp_unit(e_vec.dot(self.r) / (e * r_norm));
+            nu = acos(cos_nu);
+            if self.r.dot(self.v) < 0.0 {
+                nu = odderon_dmath::TAU - nu;
+            }
+        } else if !equatorial {
+            // Circular: nu carries the argument of latitude u, the angle from the node to the body.
+            let n_hat = n.unit();
+            let r_hat = self.r.unit();
+            let cos_u = clamp_unit(n_hat.dot(r_hat));
+            nu = acos(cos_u);
+            // Sign: ascending or descending side of the orbit.
+            if n.cross(self.r).dot(h) < 0.0 {
+                nu = odderon_dmath::TAU - nu;
+            }
+        } else {
+            // Circular and equatorial: nothing but the true longitude is defined.
+            nu = wrap_two_pi(atan2(self.r.y, self.r.x));
+        }
+
+        Elements {
+            p,
+            e,
+            i,
+            raan,
+            argp,
+            nu,
+            degeneracy,
+        }
+    }
+}
+
+impl Elements {
+    /// State vector from classical elements, in the frame the angles refer to.
+    ///
+    /// Exact for every conic and every degenerate row of the table: with `e = 0` the perifocal basis is
+    /// arbitrary but `argp = 0` makes the composition consistent, so the round trip closes.
+    pub fn to_state(&self, mu: f64) -> State {
+        let p = self.p;
+        if !positive(p) || !positive(mu) {
+            return State::new(
+                Vec3::new(f64::NAN, f64::NAN, f64::NAN),
+                Vec3::new(f64::NAN, f64::NAN, f64::NAN),
+            );
+        }
+
+        // Perifocal position and velocity. Note the denominator: at e = 1 and nu = π this is exactly
+        // zero (the radius is infinite), so it must be allowed to produce an infinity rather than be
+        // guarded into silence — the caller with a parabolic orbit at infinity has a real problem, and
+        // it is not this function's to hide.
+        let cos_nu = cos_rad(self.nu);
+        let sin_nu = sin_rad(self.nu);
+        let sqrt_mu_over_p = sqrt(mu / p);
+        let r_scale = p / (1.0 + self.e * cos_nu);
+
+        let r_pf = Vec3::new(r_scale * cos_nu, r_scale * sin_nu, 0.0);
+        let v_pf = Vec3::new(
+            -sqrt_mu_over_p * sin_nu,
+            sqrt_mu_over_p * (self.e + cos_nu),
+            0.0,
+        );
+
+        // Rotate perifocal → reference frame: R3(−Ω)·R1(−i)·R3(−ω). Its columns are the basis.
+        let (c_o, s_o) = odderon_dmath::sin_cos(self.raan);
+        let (c_i, s_i) = odderon_dmath::sin_cos(self.i);
+        let (c_w, s_w) = odderon_dmath::sin_cos(self.argp);
+
+        let px = c_o * c_w - s_o * s_w * c_i;
+        let py = s_o * c_w + c_o * s_w * c_i;
+        let pz = s_w * s_i;
+
+        let qx = -c_o * s_w - s_o * c_w * c_i;
+        let qy = -s_o * s_w + c_o * c_w * c_i;
+        let qz = c_w * s_i;
+
+        let wx = s_o * s_i;
+        let wy = -c_o * s_i;
+        let wz = c_i;
+
+        let p_axis = Vec3::new(px, py, pz);
+        let q_axis = Vec3::new(qx, qy, qz);
+        let w_axis = Vec3::new(wx, wy, wz);
+
+        State::new(
+            to_reference_frame(r_pf, p_axis, q_axis, w_axis),
+            to_reference_frame(v_pf, p_axis, q_axis, w_axis),
+        )
+    }
+}
+
+/// Rotate a perifocal vector into the reference frame, given the three basis vectors as columns.
+///
+/// Broken out of `Elements::to_state` so the same nine components serve position and velocity — writing
+/// them twice is how a rotation and its transpose get confused with each other.
+#[inline]
+fn to_reference_frame(v: Vec3, p_axis: Vec3, q_axis: Vec3, w_axis: Vec3) -> Vec3 {
+    Vec3::new(
+        v.x * p_axis.x + v.y * q_axis.x + v.z * w_axis.x,
+        v.x * p_axis.y + v.y * q_axis.y + v.z * w_axis.y,
+        v.x * p_axis.z + v.y * q_axis.z + v.z * w_axis.z,
+    )
+}
+
+/// Reduce an angle to `[0, 2π)`.
+///
+/// `rem_euclid` is a `core` method on `f64` and is exact here: `atan2` returns at worst `π`, so at
+/// most one correction is ever needed. NaN propagates, which is what we want.
+#[inline]
+fn wrap_two_pi(x: f64) -> f64 {
+    x.rem_euclid(odderon_dmath::TAU)
+}

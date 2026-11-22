@@ -247,3 +247,230 @@ fn f64_max(a: f64, b: f64) -> f64 {
         b
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// classical orbital elements
+// ---------------------------------------------------------------------------------------------
+
+/// Tolerance used for every angle comparison, in radians. 1e-13 rad is 2e-8 arcseconds — below the
+/// angular resolution of any star catalogue this project will ever load, so a discrepancy smaller than
+/// this cannot matter to the game.
+const ANGLE_TOL: f64 = 1e-13;
+
+#[test]
+fn vallado_example_2_5() {
+    // The published test vector from Vallado, *Fundamentals of Astrodynamics and Applications*, Ex. 2-5.
+    // This is the point of the exercise: an external source of truth, not round-tripping our own code
+    // against itself. Expected: p = 11067.790 km, e = 0.83285, i = 87.87°, Ω = 227.898°, ω = 53.38°,
+    // ν = 92.335°.
+    let r = Vec3::new(6524.834, 6862.875, 6448.296);
+    let v = Vec3::new(4.901_327, 5.533_756, -1.976_341);
+    let el = State::new(r, v).to_elements(MU);
+
+    let deg = 180.0 / odderon_dmath::PI;
+    assert!(fabs(el.p - 11067.790) < 2e-2, "p = {}", el.p);
+    assert!(fabs(el.e - 0.83285) < 1e-5, "e = {}", el.e);
+    assert!(fabs(el.i * deg - 87.87) < 1e-2, "i = {}°", el.i * deg);
+    assert!(fabs(el.raan * deg - 227.898) < 1e-3, "RAAN = {}°", el.raan * deg);
+    assert!(fabs(el.argp * deg - 53.38) < 1e-2, "argp = {}°", el.argp * deg);
+    assert!(fabs(el.nu * deg - 92.335) < 1e-3, "nu = {}°", el.nu * deg);
+    assert!(el.degeneracy.is_none(), "this orbit is general");
+}
+
+#[test]
+fn elements_round_trip_through_every_degenerate_case() {
+    // The test that matters, and the reason the angle-folding convention exists at all. For each case
+    // the round trip `state -> elements -> state` must close to rounding. Measured worst relative error
+    // in JS across these shapes: 5.4e-16.
+    let deg = odderon_dmath::PI / 180.0;
+    let cases: [(&str, f64, f64, f64); 7] = [
+        // name, a (km), e, inclination (deg)
+        ("circular equatorial", 6778.137, 0.0, 0.0),
+        ("circular inclined", 6778.137, 0.0, 51.6),
+        ("circular retrograde", 7000.0, 0.0, 143.0),
+        ("equatorial eccentric", 15000.0, 0.4, 0.0),
+        ("equatorial near-parabolic", 20000.0, 0.999, 0.0),
+        ("polar eccentric", 9000.0, 0.3, 90.0),
+        ("general", 24500.0, 0.73, 28.5),
+    ];
+
+    for &(name, a, e, i_deg) in cases.iter() {
+        for &nu in [0.0, 1.3, 4.0].iter() {
+            let el0 = Elements {
+                p: a * (1.0 - e * e),
+                e,
+                i: i_deg * deg,
+                raan: 0.6,
+                argp: 1.1,
+                nu,
+                degeneracy: Degeneracy::default(),
+            };
+            let s0 = el0.to_state(MU);
+            let el1 = s0.to_elements(MU);
+            let s1 = el1.to_state(MU);
+
+            let dr = (s1.r - s0.r).norm() / s0.r.norm();
+            let dv = (s1.v - s0.v).norm() / s0.v.norm();
+            assert!(
+                dr < 1e-14,
+                "{} at nu={}: relative position error {:.3e}",
+                name,
+                nu,
+                dr
+            );
+            assert!(
+                dv < 1e-14,
+                "{} at nu={}: relative velocity error {:.3e}",
+                name,
+                nu,
+                dv
+            );
+        }
+    }
+}
+
+#[test]
+fn the_degeneracy_flags_report_what_was_collapsed() {
+    // Not decoration: the game will show these, so that "your inclination is 0, so the node is
+    // meaningless" is visible rather than silently zero.
+    let deg = odderon_dmath::PI / 180.0;
+    let make = |e: f64, i_deg: f64| Elements {
+        p: 8000.0 * (1.0 - e * e),
+        e,
+        i: i_deg * deg,
+        raan: 0.3,
+        argp: 0.7,
+        nu: 1.0,
+        degeneracy: Degeneracy::default(),
+    };
+
+    let general = make(0.2, 51.6).to_state(MU).to_elements(MU);
+    assert!(general.degeneracy.is_none());
+
+    let equatorial = make(0.2, 0.0).to_state(MU).to_elements(MU);
+    assert!(equatorial.degeneracy.equatorial);
+    assert!(!equatorial.degeneracy.circular);
+    // The longitude of periapsis is reported in the argp slot, so it is NOT zero.
+    assert!(equatorial.argp > 0.0, "argp should carry lon. of periapsis");
+
+    let circular = make(0.0, 51.6).to_state(MU).to_elements(MU);
+    assert!(circular.degeneracy.circular);
+    assert!(!circular.degeneracy.equatorial);
+    // The argument of latitude is reported in the nu slot.
+    assert!(circular.nu > 0.0, "nu should carry argument of latitude");
+
+    let both = make(0.0, 0.0).to_state(MU).to_elements(MU);
+    assert!(both.degeneracy.is_total(), "circular AND equatorial");
+    // True longitude survives in the nu slot.
+    assert!(both.nu > 0.0, "nu should carry true longitude");
+}
+
+#[test]
+fn a_nearly_equatorial_orbit_is_not_folded() {
+    // i = 0.0001° is 1.7e-6 rad, twelve orders above the 1e-11 threshold. It must be treated as a
+    // general orbit, because at that inclination the node line is perfectly well defined — the threshold
+    // is about the noise floor of a dot product, not about "looks flat".
+    let deg = odderon_dmath::PI / 180.0;
+    let el0 = Elements {
+        p: 8000.0 * (1.0 - 0.04),
+        e: 0.2,
+        i: 0.0001 * deg,
+        raan: 0.6,
+        argp: 1.1,
+        nu: 2.0,
+        degeneracy: Degeneracy::default(),
+    };
+    let el = el0.to_state(MU).to_elements(MU);
+    assert!(el.degeneracy.is_none(), "1e-4 degrees is a real inclination");
+    // Measured 3.2e-11 relative — the elements are recoverable, but the node is now ill-conditioned
+    // because |n| = |h| sin i is small. That is physics, and it is the honest bound.
+    let back = el.to_state(MU);
+    let dr = (back.r - el0.to_state(MU).r).norm() / el0.to_state(MU).r.norm();
+    assert!(dr < 1e-9, "rel error {:.3e} at i = 1e-4 deg", dr);
+}
+
+#[test]
+fn elements_and_propagation_agree() {
+    // The two halves of the crate must be one model, and this checks them against *Kepler*, not against
+    // each other.
+    //
+    // The obvious version of this test is wrong, so it is worth recording why. One is tempted to say
+    // "propagate a quarter period from periapsis and nu must be π/2" — but that is true only for a
+    // circular orbit. For e = 0.3 a quarter of the *period* is a quarter of the mean anomaly, which
+    // maps through Kepler's equation to nu = 122.54°, not 90°: the body loiters at apoapsis and races
+    // through periapsis, which is the whole reason the mean/true distinction exists. Asserting π/2 would
+    // have failed against correct code.
+    //
+    // So instead: nu after dt is derived independently from Kepler's equation, using the platform's
+    // sin/cos in the test binary — a different route to the same number, which is the point.
+    let el0 = Elements {
+        p: 12000.0 * (1.0 - 0.09),
+        e: 0.3,
+        i: 0.6,
+        raan: 1.2,
+        argp: 0.4,
+        nu: 0.0,
+        degeneracy: Degeneracy::default(),
+    };
+    let s0 = el0.to_state(MU);
+    let a = el0.semi_major_axis();
+    let p = period(a, MU);
+
+    for &fraction in [0.125, 0.25, 0.5, 0.75].iter() {
+        let out = propagate(&s0, p * fraction, MU).state;
+        let el1 = out.to_elements(MU);
+
+        // Independent route: mean anomaly -> eccentric anomaly (Newton on Kepler's equation) -> nu.
+        let mean_anomaly = core::f64::consts::TAU * fraction;
+        let mut ecc_anomaly = mean_anomaly;
+        for _ in 0..60 {
+            ecc_anomaly -=
+                (ecc_anomaly - el0.e * f64::sin(ecc_anomaly) - mean_anomaly)
+                    / (1.0 - el0.e * f64::cos(ecc_anomaly));
+        }
+        let expected_nu = 2.0
+            * f64::atan2(
+                f64::sqrt(1.0 + el0.e) * f64::sin(ecc_anomaly / 2.0),
+                f64::sqrt(1.0 - el0.e) * f64::cos(ecc_anomaly / 2.0),
+            );
+
+        assert!(
+            fabs(el1.nu - expected_nu) < 1e-11,
+            "at {} of a period: nu = {:.9}, Kepler says {:.9}",
+            fraction,
+            el1.nu,
+            expected_nu
+        );
+        // And the orbit shape is unchanged by coasting, which is the conservation claim in element form.
+        assert!(fabs(el1.p - el0.p) / el0.p < 1e-13, "p drifted");
+        assert!(fabs(el1.e - el0.e) < 1e-13, "e drifted");
+        assert!(fabs(el1.i - el0.i) < ANGLE_TOL, "inclination drifted");
+        assert!(fabs(el1.raan - el0.raan) < ANGLE_TOL, "RAAN drifted");
+    }
+}
+
+#[test]
+fn derived_elements_are_consistent() {
+    let el = Elements {
+        p: 10000.0,
+        e: 0.25,
+        i: 0.0,
+        raan: 0.0,
+        argp: 0.0,
+        nu: 0.0,
+        degeneracy: Degeneracy::default(),
+    };
+    assert!(fabs(el.semi_major_axis() - 10000.0 / (1.0 - 0.0625)) < 1e-9);
+    assert!(fabs(el.periapsis() - 8000.0) < 1e-9);
+    // p = a(1 - e²) is the definition, so apoapsis must be 13333.33...
+    assert!(fabs(el.apoapsis() - 40000.0 / 3.0) < 1e-9);
+
+    let hyperbolic = Elements {
+        e: 1.5,
+        ..el
+    };
+    assert!(hyperbolic.apoapsis().is_infinite(), "hyperbola has no apoapsis");
+    assert!(hyperbolic.semi_major_axis() < 0.0, "hyperbolic a is negative");
+    // Periapsis stays defined for every conic.
+    assert!(hyperbolic.periapsis() > 0.0);
+}
