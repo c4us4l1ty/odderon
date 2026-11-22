@@ -317,7 +317,7 @@ be a fabrication:
 | instrument | answers | how it stays honest |
 | --- | --- | --- |
 | `web/index.html` + HUD | what a frame costs on real silicon | labels every number `gpu` / `stalled` / `submit only`; never presents submit time as frame time |
-| `web/ablate.html` | which feature costs what, and at what resolution R2 fits | removes one feature at a time from the *real* shader, extracting it at runtime so a copy cannot drift; times amortised and per-sample and reports the disagreement |
+| `web/ablate.html` | which feature costs what, and at what resolution R2 fits | removes one feature at a time from the *real* shader, extracting it at runtime so a copy cannot drift. **Interleaves the variants over 7 rounds, reports a median and a spread, and re-measures the baseline as a control row whose disagreement with the baseline is the error bar.** Refuses to print a resolution verdict when that error bar exceeds 10%. |
 | `web/shadow-check.html` | whether the soft shadow agrees with physics | brute-force 256-ray sun as the reference; measures the penumbra rather than deriving it; chooses the tap count from a sweep |
 
 Three findings from those instruments are recorded here because they are the kind of thing this
@@ -334,6 +334,16 @@ document got wrong by assertion:
    parallelogram (worst error 1.0000 — the shadow of a resting box is its footprint Minkowski-summed
    with a segment, i.e. a hexagon) and a correct hexagon (0.3038 — the Minkowski identity assumes
    parallel light, and the receiver here is metres away, not at infinity). Neither shipped.
+4. **The matrix disagreed with itself by 43%, which made five of its own rows meaningless.** The
+   "full shader (as shipped)" row read **3.00 ms** on Reference A and the "resolution 1.00× (native)"
+   row read **1.71 ms** — the same shader, same resolution, same device. Rows ran once each in
+   sequence, so a row measured late was compared against one measured early and the clock drift between
+   them was printed as a feature cost. Five ablations then landed within 2% of each other at ~1.5 ms,
+   which is not five features costing the same: it is the instrument reporting its own drift. The rows
+   are now **interleaved over 7 rounds with a control row**, and the page prints **no verdict at all**
+   when the control disagrees with the baseline by more than 10%. Every delta in the table above under
+   ~40% is **unmeasured**, and the large ones (shadow, taps, resolution) survive only because they are
+   bigger than the bias.
 
 ---
 
