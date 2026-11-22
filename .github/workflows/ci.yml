@@ -64,6 +64,44 @@ jobs:
       # The artifact is the point: it comes back into the dev sandbox via `gh run download`, where
       # the cross-platform determinism check can be run against a *real* wasm binary. Building Rust
       # is what the sandbox cannot do; *running* wasm it can.
+      # The cross-platform determinism check, run where both halves exist. Artifact downloads are
+      # blocked for some clients, so the comparison is closed here rather than exported: compile a
+      # tiny host that prints the wasm-side hash, and compare it with the native-side hash computed in
+      # the same job. Same crate, two targets, one number.
+      - name: determinism — native vs wasm32 in one job
+        run: |
+          set -euo pipefail
+          cat > /tmp/dmath_hash.rs <<'RS'
+          fn main() {
+              println!("{:#018x}", odderon_dmath::golden_hash());
+          }
+          RS
+          mkdir -p crates/odderon-dmath/examples
+          cp /tmp/dmath_hash.rs crates/odderon-dmath/examples/dmath_hash.rs
+          NATIVE=$(cargo run -q -p odderon-dmath --example dmath_hash)
+          echo "native : $NATIVE"
+
+          # Build the wasm cdylib and read its hash with Node's native wasm support — no browser, no
+          # bindings generator, because the module is deliberately import-free.
+          cargo build -q --release --target wasm32-unknown-unknown -p odderon-dmath-wasm
+          WASM_PATH=$(find target/wasm32-unknown-unknown/release -maxdepth 1 -name 'odderon_dmath_wasm.wasm' | head -1)
+          WASM=$(node -e "
+            const fs=require('fs');
+            const m=new WebAssembly.Module(fs.readFileSync('$WASM_PATH'));
+            const i=new WebAssembly.Instance(m,{});
+            const h=i.exports.golden();
+            console.log('0x'+h.toString(16).padStart(16,'0'));
+          ")
+          echo "wasm   : $WASM"
+
+          node -e "require('fs').writeFileSync('/tmp/det.txt', 'native=$NATIVE wasm=$WASM\\n')"
+          cat /tmp/det.txt
+          if [ "$NATIVE" != "$WASM" ]; then
+            echo "::error::DETERMINISM FAILURE: native $NATIVE != wasm $WASM"
+            exit 1
+          fi
+          echo "PASS: native and wasm32 agree bit-for-bit"
+
       - name: stage wasm artifacts
         run: |
           mkdir -p dist
