@@ -35,8 +35,11 @@ WASM=$(node -e '
     console.error("exports:", Object.keys(inst.exports).join(", "));
     process.exit(1);
   }
-  const h = inst.exports.golden();
-  // wasm i64 arrives as BigInt; pad to a fixed width so the two strings are comparable.
+  // A `u64` above 2^63 crosses the C ABI as a signed `i64`, so JS sees a *negative* BigInt and
+  // `toString(16)` renders it with a minus sign — which is not the unsigned value at all. This bit us
+  // on the first run: the two hashes were identical and the comparison failed. `asUintN` is the only
+  // correct conversion.
+  const h = BigInt.asUintN(64, inst.exports.golden());
   console.log("0x" + h.toString(16).padStart(16, "0"));
 ' "$WASM_PATH")
 echo "wasm   : $WASM"

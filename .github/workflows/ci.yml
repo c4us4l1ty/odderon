@@ -33,23 +33,29 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - name: cargo test (hard gate)
-        # `|| true` then a grep for FAILED, rather than relying on the exit code. Reason: job logs are
-        # served from blob storage and are unavailable to some clients, so the *step output* is the
-        # only channel that carries the diagnostic. A failing step gives us one useless line
-        # ("Process exited with code 101"); a completing step gives us the whole test log in the
-        # public job view. The step still fails, via the explicit check below.
+        # `|| true` then an explicit check, not because the gate is soft but because of where
+        # diagnostics can be read: a failing step reports one line ("Process exited with code 101") and
+        # its log is served from blob storage, which some clients cannot reach. A step that completes
+        # publishes its whole output in the run view. So the step always completes, prints a summary,
+        # and then fails for real.
         #
-        # Warnings are not denied here on purpose: this job's question is "is the physics right?",
-        # and a warning must not mask that answer. The lint jobs enforce style.
+        # Warnings are not denied here on purpose: this job's question is "is the physics right?", and
+        # a warning must not mask that answer. The lint jobs enforce style.
         run: |
           set -o pipefail
           cargo test --workspace --all-targets 2>&1 | tee /tmp/test.log || true
-          echo "---- summary ----"
-          grep -E "^test result|^test .* FAILED|panicked at|^error" /tmp/test.log || echo "(no summary matched)"
-          if grep -qE "FAILED|panicked at|^error(\[|:)" /tmp/test.log; then
-            echo "::error::tests failed - see the step output above for the diagnostics"
+          echo "======================= SUMMARY ======================="
+          grep -E "^test result|^test .* \.\.\. FAILED|^---- .* stdout|panicked at|^error(\[|:)" /tmp/test.log || echo "(nothing matched)"
+          echo "======================================================="
+          if ! grep -qE "^test result: ok" /tmp/test.log; then
+            echo "::error::no test binary reported success"
             exit 1
           fi
+          if grep -qE "\.\.\. FAILED|panicked at|^error(\[|:)" /tmp/test.log; then
+            echo "::error::tests failed - diagnostics are in the step output above"
+            exit 1
+          fi
+
       - name: determinism hash (native)
         run: cargo test -p odderon-dmath --test '*' -- --nocapture
       - name: publish hash for cross-platform comparison

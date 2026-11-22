@@ -43,7 +43,9 @@ if (missing.length) {
   process.exit(1);
 }
 
-const fmt = (h) => "0x" + h.toString(16).padStart(16, "0");
+// `u64` above 2^63 crosses the C ABI as a signed `i64`, so JS hands back a negative BigInt. Reading
+// it as signed would render a minus sign and compare unequal for identical values.
+const fmt = (h) => "0x" + BigInt.asUintN(64, h).toString(16).padStart(16, "0");
 const wasmHash = fmt(wasm.golden());
 
 console.log(`wasm      : ${wasmPath}`);
