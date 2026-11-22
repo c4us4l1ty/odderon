@@ -1,82 +1,82 @@
 {
-  "_comment": "Canonical art-direction viewpoints. Coordinates are metres in the odderon-sim world (y=0 is the 2F Hab #204 floor; the sidewalk is y=-3.06). yaw is degrees, 0 = +Z, 90 = +X; pitch is degrees, + = up.",
-  "views": [
-    {
-      "name": "01-room-window",
-      "cam": [
-        0.1,
-        1.32,
-        -1.1,
-        0,
-        -3
-      ],
-      "settle": 1600
-    },
-    {
-      "name": "02-window-vista",
-      "cam": [
-        0.0,
-        1.4,
-        0.9,
-        0,
-        -2
-      ],
-      "settle": 1600
-    },
-    {
-      "name": "03-gallery",
-      "cam": [
-        -4.1,
-        1.15,
-        1.0,
-        26,
-        -6
-      ],
-      "settle": 1600
-    },
-    {
-      "name": "04-street-machiya",
-      "cam": [
-        1.6,
-        -1.45,
-        8.6,
-        186,
-        6
-      ],
-      "settle": 1600
-    },
-    {
-      "name": "05-street-meadow",
-      "cam": [
-        3.3,
-        -1.35,
-        4.2,
-        -16,
-        6
-      ],
-      "settle": 1600
-    },
-    {
-      "name": "06-sky-cumulus",
-      "cam": [
-        -2.6,
-        -1.45,
-        4.6,
-        4,
-        27
-      ],
-      "settle": 1600
-    },
-    {
-      "name": "07-interior-desk",
-      "cam": [
-        -1.35,
-        1.3,
-        -0.3,
-        62,
-        -14
-      ],
-      "settle": 1600
-    }
-  ]
+ "_comment": "Canonical art-direction viewpoints. Coordinates are metres in the odderon-sim world (y=0 is the 2F Hab #204 floor; the sidewalk is y=-3.06). yaw is degrees, 0 = +Z, 90 = +X; pitch is degrees, + = up.",
+ "views": [
+  {
+   "name": "01-room-window",
+   "cam": [
+    0.1,
+    1.32,
+    -1.1,
+    0,
+    -3
+   ],
+   "settle": 1600
+  },
+  {
+   "name": "02-window-vista",
+   "cam": [
+    0.0,
+    1.4,
+    0.9,
+    0,
+    -2
+   ],
+   "settle": 1600
+  },
+  {
+   "name": "03-gallery",
+   "cam": [
+    -4.1,
+    1.15,
+    1.0,
+    26,
+    -6
+   ],
+   "settle": 1600
+  },
+  {
+   "name": "04-street-machiya",
+   "cam": [
+    1.6,
+    -1.45,
+    8.6,
+    186,
+    6
+   ],
+   "settle": 1600
+  },
+  {
+   "name": "05-street-meadow",
+   "cam": [
+    3.3,
+    -1.35,
+    3.4,
+    -16,
+    9
+   ],
+   "settle": 1600
+  },
+  {
+   "name": "06-sky-cumulus",
+   "cam": [
+    -2.6,
+    -1.45,
+    4.6,
+    4,
+    27
+   ],
+   "settle": 1600
+  },
+  {
+   "name": "07-interior-desk",
+   "cam": [
+    -1.35,
+    1.3,
+    -0.3,
+    62,
+    -14
+   ],
+   "settle": 1600
+  }
+ ]
 }
