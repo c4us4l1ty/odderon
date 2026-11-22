@@ -192,7 +192,8 @@ Kept current, because a plan that says "P0" forever is not a plan.
 | `odderon-dmath` | **done for now** | Own `sin, cos, atan, atan2, exp, ln, sqrt, cosh, sinh, acos, asin, pow, fabs, fmin, fmax`, `no_std`, no host libm symbol. Error measured, not asserted: 1e-16 to 1e-17 typical. Golden hash armed. |
 | `odderon-astro` | **two-body complete, validated** | Universal-variable Kepler propagator. One period returns to 0.17 µm after ten periods; a single jump over 1000 periods conserves specific energy *bit-exactly*; chained steps drift as √N·eps (1.8e-14 over 10000). Hyperbolic, parabolic and circular orbits need no special cases. |
 | `odderon-astro` elements | **done** | State ↔ elements both ways, storing `p` rather than `a` so parabolas and hyperbolas are ordinary cases. The degenerate rows (`i = 0`, `e = 0`, both) are folded rather than left NaN, and round-trip to 1.5e-15 across seven orbit shapes including circular-equatorial and `e = 0.999`. Reproduces Vallado Ex 2-5 against the published vector. |
-| `odderon-astro` remaining | next | **J2 perturbation** on top of the two-body solution — the first thing that makes orbits decay and precess, which is what makes "where will it be next week" a question with a real answer. Then the body catalogue, because every other part of the game needs to say where something is. |
+| `odderon-astro` J2 | **secular done, validated** | First-order J2 drift (`j2::secular_rates`, `j2::propagate_j2_secular`). Pinned by structure, not by arithmetic: the node rate is zero at `i = 90°`, the periapsis rate is zero at the critical inclination `63.4349°`, the rates scale linearly in `J2`, `J2 = 0` reproduces two-body, and the sun-synchronous solution lands at **98.19°** (retrograde) rather than the 81.8° a sign error produces. **Reproduces the ISS-class nodal regression of −5.0°/day** and periapsis advance of +3.74°/day. Short-period wobble is *not* modelled and is a separate `CREDIBILITY.md` row. |
+| `odderon-astro` remaining | next | **The body catalogue** — every other part of the game needs to say where something is, and J2 is useless without bodies to apply it to. Then the J2+J3+J4 integrator for the rendezvous case. |
 | The shell (WASM + WebGL2) | **renders, measured on real silicon** | Two passes: an expensive shade into a one-target cache, and a blit. Measured on Reference B (Mali-G51, 1.04 Mpx): flat fill 0.67 ms, cached frame **1.25 ms**, full shade 48.71 ms. **R2 passes at 1.25 ms with 17% margin**; R3 is met by construction at 8 B/px. `tools/check-shell.mjs` and `tools/check-cache.mjs` are the standing tests. |
 | The Room (thermal) | not started | The five claims in §4. |
 | Kernel in the page | **blocked, deliberately** | `gh run download` fails with a blob-storage EOF and `release-assets.githubusercontent.com` is unreachable from the build sandbox, so a CI-built `.wasm` cannot reach the page. Isolated behind `orbitPosition(t)`. **Not urgent, and here is why:** the shell draws it every frame, so if the kernel is ever slow it is invisible next to a 48.7 ms shade. The transport gets fixed when the shell's wiring is finished and a real mission wants to be drawn — not before, because building it now would optimise a 0.001% term. |
@@ -202,6 +203,16 @@ Two things this table is deliberately not allowed to hide:
 - **Nothing here is "in progress" without a measurement.** The astro numbers above came from
   `tests/validation.rs` on a real compile, in CI, not from the prototype that preceded it. The prototype
   agreed, and the prototype is not evidence.
+- **The ablation matrix disagrees with itself by 43% and is therefore not yet a measuring
+  instrument.** On Reference A, the row "full shader (as shipped)" reads **3.00 ms** and the row
+  "resolution 1.00× (native)" reads **1.71 ms** — the same shader at the same resolution on the same
+  device. Rows run once each, in sequence, so every row carries whatever clock state the row before it
+  left behind. Consequence: the five small feature ablations (corrugation 1.58, aerial 1.50, sphere
+  1.50, tonemap 1.50, sky glow 1.54 ms) are **all within 2% of each other and all smaller than the
+  ordering bias**, so they are not findings and must not be quoted as such. What survives is only what
+  is larger than 43%: shadow (3.00 → 0.83), tap count (8 → 4 saves 1.67 ms), resolution (linear), and the
+  floor share (6% on A versus 45%-equivalent on B). Fixing this means interleaving the variants and
+  reporting a spread, not running each once.
 - **The `rustfmt` gate is red and stays red (advisory).** No local toolchain can run a mechanical pass,
   and hand-formatting against CI diffs is a losing game that has already cost two commits. It becomes a
   hard gate the day a local `cargo fmt` is possible, and not before. `docs/BUILD-PLAN.md` §2.4 states
