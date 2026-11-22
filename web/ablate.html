@@ -156,11 +156,19 @@ const VARIANTS = [
     id: 'no_sky_glow', label: '− sky sun glow (2 × pow)',
     apply: (s) => sub(s, 'col += vec3(1.0, 0.93, 0.80) * pow(sunDot, 900.0) * 2.2;', '', 'glow'),
   },
-  {
-    id: 'half_res', label: 'baseline at half resolution (0.5×)',
-    apply: (s) => s,            // same shader; only the target size changes. Proves whether the
-    halfRes: true,              // cost is per-pixel work or per-frame structural overhead.
-  },
+  // ---------------------------------------------------------------------------------------------
+  // The resolution sweep. This is the decisive part of the page.
+  //
+  // Frame cost is very nearly linear in pixel count, so five points give the whole curve, and the
+  // curve answers the only question that matters: at what resolution does this shader fit inside
+  // 1.5 ms on THIS device? That number is not a design preference, it is arithmetic on a
+  // measurement, and it is what stops the resolution clause in R2 from being a guess.
+  // ---------------------------------------------------------------------------------------------
+  { id: 'r100', label: 'resolution 1.00× (native)', apply: (s) => s, resScale: 1.00 },
+  { id: 'r071', label: 'resolution 0.71×', apply: (s) => s, resScale: 0.71 },
+  { id: 'r050', label: 'resolution 0.50×  ← docs fallback', apply: (s) => s, resScale: 0.50 },
+  { id: 'r035', label: 'resolution 0.35×', apply: (s) => s, resScale: 0.35 },
+  { id: 'r025', label: 'resolution 0.25×', apply: (s) => s, resScale: 0.25 },
 ];
 
 // ---------------------------------------------------------------------------------------------
@@ -274,9 +282,9 @@ void main() {
 }`;
 }
 
-function resizeFor(half) {
+function resizeFor(scaleOrHalf) {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const s = half ? 0.5 : 1;
+  const s = typeof scaleOrHalf === 'number' ? scaleOrHalf : (scaleOrHalf ? 0.5 : 1);
   const w = Math.max(1, Math.round(window.innerWidth * dpr * s));
   const h = Math.max(1, Math.round(window.innerHeight * dpr * s));
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
@@ -306,7 +314,7 @@ async function run() {
     let src, size;
     try {
       src = v.floorTex ? floorTexSource(SRC.frag) : v.apply(normaliseTaps(SRC.frag));
-      size = resizeFor(!!v.halfRes);
+      size = resizeFor(v.resScale ?? !!v.halfRes);
       const prog = build(src, SRC.vert);
       const locs = uniformLocs(prog, UNIFORMS);
       if (v.floorTex) locs.uFloorTex = gl.getUniformLocation(prog, 'uFloorTex');
@@ -370,6 +378,29 @@ function summarise(rows) {
   lines.push('shader ALU above floor: ' + (base.amortised - floor.amortised).toFixed(2) + ' ms  (' +
     (((base.amortised - floor.amortised) / base.amortised) * 100).toFixed(0) + '% of the frame)');
   lines.push('floor share of frame:   ' + ((floor.amortised / base.amortised) * 100).toFixed(0) + '%');
+  lines.push('');
+  // the answer: extrapolate the resolution that fits 1.5 ms
+  const pts = rows.filter((r) => r.ok && r.resScale).map((r) => ({ mpx: r.w * r.h / 1e6, ms: r.amortised }));
+  if (pts.length >= 3) {
+    // least squares through the origin: a full-screen pass is ~proportional to pixel count
+    const num = pts.reduce((a, p) => a + p.mpx * p.ms, 0);
+    const den = pts.reduce((a, p) => a + p.mpx * p.mpx, 0);
+    const nsPerMpx = num / den;                       // ms per megapixel
+    const fitsMpx = 1.5 / nsPerMpx;                   // megapixels inside a 1.5 ms budget
+    const native = Math.max(...pts.map((p) => p.mpx));
+    lines.push('');
+    lines.push('COST MODEL: ' + nsPerMpx.toFixed(2) + ' ms per megapixel (through the origin).');
+    lines.push('1.5 ms therefore buys ' + fitsMpx.toFixed(3) + ' Mpx.');
+    lines.push('At this screen size that is a render scale of ' + Math.min(1, Math.sqrt(fitsMpx / native)).toFixed(2) + 'x.');
+    lines.push('');
+    if (fitsMpx < 0.5) {
+      lines.push('VERDICT: under 0.5 Mpx. R2 as written is not reachable by this shader on this');
+      lines.push('device at any sane resolution. The response is a scene budget change, not tuning.');
+    } else {
+      lines.push('VERDICT: R2 IS reachable at ' + Math.sqrt(fitsMpx / native).toFixed(2) + 'x on this device.');
+      lines.push('That is a concrete number and it goes in GRAPHICS.md as R2 resolution clause.');
+    }
+  }
   lines.push('');
   lines.push('Copy this whole page back. Nothing here is interpreted for you.');
   return lines.join('\n');
