@@ -9,8 +9,8 @@
 //!   2-story Machiya townhouse on the right edge of the window!
 
 use crate::{
-    props, DynamicSceneParams, MeshBuffer, Pose, EXTERIOR_PAD_POS, MAT_ALLOY, MAT_CERAMIC,
-    MAT_CORRUGATED, MAT_EMISSIVE_WARM, MAT_FOLIAGE, MAT_KAWARA, MAT_MATTE, MAT_PLUME, MAT_SHOJI,
+    modules, props, DynamicSceneParams, MeshBuffer, Pose, EXTERIOR_PAD_POS, MAT_ALLOY, MAT_CERAMIC,
+    MAT_EMISSIVE_WARM, MAT_FOLIAGE, MAT_KAWARA, MAT_MATTE, MAT_PLUME, MAT_SHOJI,
     MAT_WOOD,
 };
 use odderon_dmath::Vec3;
@@ -240,6 +240,12 @@ pub fn build_japanese_utility_pole(buf: &mut MeshBuffer, pose: Pose, has_transfo
 }
 
 /// Assembles the "Summer Noon" Japanese Machiya street + Right-Side Sneak View of Far-Away Launch Pad-1!
+/// Place a kit building at a pose. Thin wrapper so the street reads as a table
+/// of specs instead of nested closures.
+fn place(b: &mut MeshBuffer, pose: Pose, spec: modules::BuildingSpec) {
+    b.with_pose(pose, |b| modules::building(b, &spec));
+}
+
 pub fn build_uchinoura_street_static(buf: &mut MeshBuffer) {
     let ground_y = -3.20_f32;
 
@@ -293,54 +299,72 @@ pub fn build_uchinoura_street_static(buf: &mut MeshBuffer) {
     buf.add_box(Vec3::new(-42.0, ground_y + 0.048, 8.68), Vec3::new(42.0, ground_y + 0.056, 8.77), [0.64, 0.63, 0.59], MAT_MATTE);
 
     // 2A. `-Z` STREETSCAPE NEIGHBORS FLANKING `UCHINOURA MAISON` (`image-18.png` Shoulder-to-Shoulder Architecture!):
-    let kominka_timber = [0.135, 0.082, 0.050];
-    let kominka_shutter = [0.150, 0.112, 0.088];
     let kawara_dark = [0.10, 0.11, 0.13];
 
-    // Right of `Uchinoura Maison` (`x in [2.82, 8.45], z in [-2.5, 2.38]`): 2-Story Weathered Corrugated Steel Annex
-    // (`image-18.png` left reference: ribbed blue-grey steel, Oya-stone plinth, cobalt casement window, rooftop wooden rail!)
-    buf.add_box(Vec3::new(2.80, ground_y + 0.142, -2.52), Vec3::new(8.48, ground_y + 0.68, 2.42), [0.34, 0.33, 0.30], MAT_MATTE);
-    buf.add_box(Vec3::new(2.84, ground_y + 0.68, -2.48), Vec3::new(8.44, 2.86, 2.38), [0.24, 0.30, 0.36], MAT_CORRUGATED);
-    // Cobalt-blue painted industrial window frame (`image-18.png` middle-left!) + dark recessed glass
-    buf.add_u_frame_xy(4.35, 5.75, -0.05, 1.05, 2.36, 2.44, 0.075, [0.14, 0.31, 0.52], MAT_ALLOY);
-    buf.add_box(Vec3::new(4.35, -0.12, 2.36), Vec3::new(5.75, -0.05, 2.45), [0.14, 0.31, 0.52], MAT_ALLOY);
-    buf.add_box(Vec3::new(4.36, -0.04, 2.381), Vec3::new(5.74, 1.04, 2.405), [0.08, 0.11, 0.14], MAT_ALLOY);
-    // Rooftop wooden cantilevered drying-deck railing (`image-18.png` top-left!)
-    buf.add_box(Vec3::new(2.80, 2.86, -2.52), Vec3::new(8.48, 2.96, 2.46), kominka_timber, MAT_WOOD);
-    buf.add_box(Vec3::new(2.86, 3.58, 2.38), Vec3::new(8.42, 3.65, 2.45), kominka_shutter, MAT_WOOD);
-    for p in 0..=6 {
-        let px = 2.92 + (p as f32) * 0.90;
-        buf.add_box(Vec3::new(px - 0.03, 2.96, 2.39), Vec3::new(px + 0.03, 3.64, 2.44), kominka_timber, MAT_WOOD);
-    }
-
-    // Far-Right `-Z` Neighbor (`x in [8.60, 15.60]`): Traditional 2-Story Plaster & Timber `Kura` Storehouse!
-    buf.add_box(Vec3::new(8.60, ground_y + 0.142, -2.60), Vec3::new(15.60, 2.62, 2.32), [0.54, 0.49, 0.40], MAT_MATTE);
-    buf.add_box(Vec3::new(8.58, ground_y + 0.142, 2.321), Vec3::new(15.62, -0.35, 2.355), kominka_shutter, MAT_WOOD);
-    buf.push_quad(
-        Vec3::new(8.42, 2.54, 2.86),
-        Vec3::new(15.78, 2.54, 2.86),
-        Vec3::new(15.78, 3.52, -0.10),
-        Vec3::new(8.42, 3.52, -0.10),
-        kawara_dark,
-        MAT_KAWARA,
+    // Right of `Uchinoura Maison`: a 2-storey galvanised workshop annex, built
+    // from the module kit (corrugated skin, roller shutter, meter boxes, a
+    // cobalt casement up top). Footprint matches the massing box in
+    // `streetSunVis()`.
+    place(
+        buf,
+        Pose::at(5.65, ground_y + 0.142, 2.42),
+        modules::BuildingSpec {
+        width: 5.68,
+        depth: 4.6,
+        floors: 2,
+        floor_h: 2.72,
+        seed: 0x5EED_0101,
+        pal: modules::Pal::INDUSTRIAL,
+        skin: modules::Skin::Corrugated,
+        upper_skin: Some(modules::Skin::Corrugated),
+        ground: modules::GroundFloor::Workshop,
+        roof: modules::RoofKind::Parapet,
+        balcony: false,
+        wear: 0.8,
+        detail: 1,
+        },
     );
 
-    // Left of `Uchinoura Maison` & Behind the `バス停` Bus Stop (`x in [-13.20, -5.80], z = 2.22`, rotated PI to face `+Z`!):
-    // Sister 2-Story Kominka Machiya (`House #3`, eliminating the left `-Z` green void!)
-    build_machiya_house(
+    // Far-right `-Z` neighbour: a whitewashed storehouse over an Oya-stone base.
+    place(
+        buf,
+        Pose::at(12.10, ground_y + 0.142, 2.32),
+        modules::BuildingSpec {
+        width: 6.98,
+        depth: 4.9,
+        floors: 2,
+        floor_h: 2.62,
+        seed: 0x5EED_0202,
+        pal: modules::Pal::KURA,
+        skin: modules::Skin::Stone,
+        upper_skin: Some(modules::Skin::BoardOverPlaster),
+        ground: modules::GroundFloor::House,
+        roof: modules::RoofKind::Kawara,
+        balcony: false,
+        wear: 0.35,
+        detail: 1,
+        },
+    );
+
+    // Left of `Uchinoura Maison`, behind the bus stop: a boarded machiya with a
+    // lattice front and a wide balcony (rotated to face `+Z`).
+    place(
         buf,
         Pose::at_yaw(-9.50, ground_y + 0.142, 2.22, core::f32::consts::PI),
-        &MachiyaHouseSpec {
-            width: 7.40,
-            depth: 6.4,
-            plaster_col: [0.404, 0.378, 0.336],
-            timber_col: kominka_timber,
-            shutter_wood_col: kominka_shutter,
-            tile_col: kawara_dark,
-            has_wide_balcony: true,
-            has_eave_ac: true,
-            has_izakaya_lanterns: false,
-            has_rooftop_aerial: true,
+        modules::BuildingSpec {
+        width: 7.40,
+        depth: 6.4,
+        floors: 2,
+        floor_h: 2.78,
+        seed: 0x5EED_0303,
+        pal: modules::Pal::MACHIYA,
+        skin: modules::Skin::BoardOverPlaster,
+        upper_skin: None,
+        ground: modules::GroundFloor::House,
+        roof: modules::RoofKind::Kawara,
+        balcony: true,
+        wear: 0.55,
+        detail: 1,
         },
     );
 
@@ -358,44 +382,71 @@ pub fn build_uchinoura_street_static(buf: &mut MeshBuffer) {
 
     // 2B. `+Z` WINDOW COMPOSITION (`image-15.png` aesthetic + Right-Side Launch Pad Sneak View!):
 
-    // Corrugated galvanized steel neighbor annex on the far left (`image-15.png` left edge!)
-    buf.add_box(Vec3::new(8.05, ground_y + 0.142, 10.85), Vec3::new(13.8, ground_y + 6.35, 17.2), [0.26, 0.30, 0.35], MAT_CORRUGATED);
-    buf.add_u_frame_xy(9.10, 10.35, ground_y + 3.65, ground_y + 4.45, 10.78, 10.86, 0.05, [0.18, 0.20, 0.22], MAT_ALLOY);
-    buf.add_box(Vec3::new(9.11, ground_y + 3.66, 10.81), Vec3::new(10.34, ground_y + 4.44, 10.84), [0.10, 0.14, 0.18], MAT_ALLOY);
-
-    // House #1: Main 2-Story Kominka Machiya (`x in [-0.30, +7.80]`, left & center of window!)
-    build_machiya_house(
+    // Far-side galvanised annex (right of the window): a taller shed with a
+    // parapet, catwalk railing and a high casement. Faces `-Z` (rotated PI).
+    place(
         buf,
-        Pose::at(3.75, ground_y + 0.142, 11.45),
-        &MachiyaHouseSpec {
-            width: 8.10,
-            depth: 6.8,
-            plaster_col: [0.442, 0.418, 0.382],
-            timber_col: kominka_timber,
-            shutter_wood_col: kominka_shutter,
-            tile_col: kawara_dark,
-            has_wide_balcony: true,
-            has_eave_ac: true,
-            has_izakaya_lanterns: true,
-            has_rooftop_aerial: true,
+        Pose::at_yaw(10.90, ground_y + 0.142, 10.88, core::f32::consts::PI),
+        modules::BuildingSpec {
+        width: 5.72,
+        depth: 6.2,
+        floors: 2,
+        floor_h: 3.05,
+        seed: 0x5EED_0404,
+        pal: modules::Pal::INDUSTRIAL,
+        skin: modules::Skin::Corrugated,
+        upper_skin: Some(modules::Skin::Corrugated),
+        ground: modules::GroundFloor::OpenBay,
+        roof: modules::RoofKind::Parapet,
+        balcony: false,
+        wear: 0.7,
+        detail: 0,
         },
     );
 
-    // House #2: Second 2-Story Machiya Townhouse framing the right edge of the window (`x in [-10.95, -3.55]`)!
-    build_machiya_house(
+    // House #1: the machiya across the street (centrepiece of the window view),
+    // now a kit composition: boarded ground floor, lattice window, wide
+    // balcony, lanterns under the first eave.
+    place(
         buf,
-        Pose::at(-7.25, ground_y + 0.142, 11.75),
-        &MachiyaHouseSpec {
-            width: 7.40,
-            depth: 6.6,
-            plaster_col: [0.414, 0.390, 0.352],
-            timber_col: kominka_timber,
-            shutter_wood_col: [0.25, 0.14, 0.072],
-            tile_col: [0.14, 0.15, 0.17],
-            has_wide_balcony: false,
-            has_eave_ac: false,
-            has_izakaya_lanterns: false,
-            has_rooftop_aerial: false,
+        Pose::at_yaw(3.75, ground_y + 0.142, 11.45, core::f32::consts::PI),
+        modules::BuildingSpec {
+        width: 8.06,
+        depth: 6.8,
+        floors: 2,
+        floor_h: 2.80,
+        seed: 0x5EED_0505,
+        pal: modules::Pal::MACHIYA,
+        skin: modules::Skin::BoardOverPlaster,
+        upper_skin: None,
+        ground: modules::GroundFloor::House,
+        roof: modules::RoofKind::Kawara,
+        balcony: true,
+        wear: 0.62,
+        detail: 1,
+        },
+    );
+
+    // House #2: the neighbour framing the right edge of the window - same kit,
+    // different seed, palette and storey height, so it reads as a different
+    // building rather than a copy.
+    place(
+        buf,
+        Pose::at_yaw(-7.25, ground_y + 0.142, 11.72, core::f32::consts::PI),
+        modules::BuildingSpec {
+        width: 7.36,
+        depth: 6.6,
+        floors: 2,
+        floor_h: 2.62,
+        seed: 0x5EED_0606,
+        pal: modules::Pal::KURA,
+        skin: modules::Skin::Plaster,
+        upper_skin: Some(modules::Skin::BoardOverPlaster),
+        ground: modules::GroundFloor::House,
+        roof: modules::RoofKind::Kawara,
+        balcony: false,
+        wear: 0.45,
+        detail: 0,
         },
     );
 

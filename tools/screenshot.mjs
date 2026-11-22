@@ -64,6 +64,7 @@ function viewUrl(v) {
   if (v.cam) q.set('cam', v.cam.join(','));
   if (v.sun) q.set('sun', v.sun.join(','));
   if (v.warmth !== undefined) q.set('warmth', String(v.warmth));
+  if (v.debug !== undefined) q.set('debug', String(v.debug));
   return `http://127.0.0.1:${PORT}/?${q.toString()}`;
 }
 
@@ -72,9 +73,24 @@ const allViews = JSON.parse(fs.readFileSync(VIEWS_FILE, 'utf8')).views;
 // `--only` takes substrings, as documented. A token that matches nothing is an
 // error, not a no-op: silently rendering zero views used to overwrite a good
 // report.json with an empty one and still exit 0.
-const views = ONLY.length
+let views = ONLY.length
   ? allViews.filter((v) => ONLY.some((o) => v.name.includes(o)))
   : allViews;
+// Ad-hoc inspection shot: `--cam x,y,z,yaw,pitch [--name label]` renders a pose
+// that is not in views.json (close-ups of one building while authoring the kit).
+const CAM = arg('cam', '');
+if (CAM) {
+  const nums = CAM.split(',').map(Number);
+  if (nums.length !== 5 || nums.some((n) => !Number.isFinite(n))) {
+    console.error('--cam wants x,y,z,yaw,pitch (five numbers)');
+    process.exit(1);
+  }
+  const name = arg('name', 'adhoc');
+  const base = allViews[0] ?? {};
+  views = [{ ...base, name, cam: nums }];
+  const dbg = arg('debug', '');
+  if (dbg) views[0].debug = Number(dbg);
+}
 if (ONLY.length) {
   const matched = new Set(views.map((v) => v.name));
   const missing = ONLY.filter((o) => !views.some((v) => v.name.includes(o)));

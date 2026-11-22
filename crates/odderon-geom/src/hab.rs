@@ -9,8 +9,9 @@
 //!   steel-and-cedar staircase, and full 2-story `Uchinoura Maison` building exterior (0 loading screens!).
 
 use crate::{
+    rooms,
     props, DynamicSceneParams, MeshBuffer, Pose, GAUGE_CENTERS, MAT_ALLOY, MAT_CERAMIC,
-    MAT_CORRUGATED, MAT_EMISSIVE_WARM, MAT_KAWARA, MAT_MATTE, MAT_SHOJI, MAT_TATAMI, MAT_WOOD,
+    MAT_CORRUGATED, MAT_EMISSIVE_WARM, MAT_KAWARA, MAT_MATTE, MAT_SHOJI, MAT_WOOD,
     PANEL_SWITCH_XS,
 };
 use odderon_dmath::{dcos, dsin, Vec3, PI, TAU};
@@ -33,8 +34,22 @@ pub fn build_hab_204_static(buf: &mut MeshBuffer) {
     // 1. ROOM SHELL & REFINED COFFERED JAPANESE CEDAR CEILING (`Saobuchi-tenjou`)
     // =========================================================================
     buf.add_box(Vec3::new(-2.70, -0.16, -2.22), Vec3::new(2.72, 0.0, 2.20), floor_slate, MAT_ALLOY);
-    // Warm natural Hinoki timber ceiling deck (`bottom = 2.68`, replaces dark featureless slab!)
-    buf.add_box(Vec3::new(-2.70, 2.68, -2.22), Vec3::new(2.72, 2.86, 2.20), ceiling_hinoki, MAT_WOOD);
+    // Warm natural Hinoki ceiling: a solid deck with the kit's board skin hung
+    // under it, so the ceiling reads as boards with shadow gaps between them
+    // instead of one flat slab. (`rooms::plank_deck` varies tone per board.)
+    buf.add_box(Vec3::new(-2.70, 2.700, -2.22), Vec3::new(2.72, 2.86, 2.20), ceiling_hinoki, MAT_WOOD);
+    rooms::plank_deck(
+        buf,
+        -2.70,
+        2.72,
+        -2.22,
+        2.20,
+        2.668,
+        0.032,
+        true,
+        &rooms::IntPal::HAB,
+        204,
+    );
 
     // Outer Back (`-Z`) & Left (`+X`) Walls (`y = -0.03 .. 2.71`)
     buf.add_box(Vec3::new(-2.68, -0.03, -2.16), Vec3::new(2.66, 2.71, -2.04), shikkui_warm, MAT_MATTE);
@@ -82,27 +97,27 @@ pub fn build_hab_204_static(buf: &mut MeshBuffer) {
     buf.add_box(Vec3::new(-2.66, 2.295, 2.02), Vec3::new(2.66, 2.71, 2.12), shikkui_warm, MAT_MATTE);
     buf.add_box(Vec3::new(1.285, 0.735, 2.02), Vec3::new(2.66, 2.295, 2.12), shikkui_warm, MAT_MATTE);
     buf.add_box(Vec3::new(-2.66, 0.735, 2.02), Vec3::new(-1.285, 2.295, 2.12), shikkui_warm, MAT_MATTE);
+    // Curtains: modelled folds, so the window has a soft edge from inside and a
+    // layered silhouette from the street.
+    rooms::curtain_pair(
+        buf,
+        4.58,
+        2.585,
+        0.075,
+        1.985,
+        0.86,
+        &rooms::IntPal::HAB,
+        [0.300, 0.268, 0.216],
+    );
     buf.add_rounded_box(Vec3::new(-1.335, 0.708, 1.91), Vec3::new(1.335, 0.765, 2.15), 0.012, cedar_dark, MAT_WOOD);
     buf.add_u_frame_xy(-1.25, 1.25, 0.765, 2.265, 1.935, 2.145, 0.072, cedar_dark, MAT_WOOD);
     buf.add_box(Vec3::new(-0.024, 0.766, 2.012), Vec3::new(0.024, 2.264, 2.085), cedar_dark, MAT_WOOD);
 
     // Woven Japanese Tatami Living Floor
-    let tatami_a = [0.56, 0.52, 0.31];
-    let tatami_b = [0.52, 0.48, 0.29];
-    let tatami_heri = [0.11, 0.14, 0.17];
-    buf.add_box(Vec3::new(-1.56, 0.003, -0.42), Vec3::new(1.80, 0.022, 1.96), cedar_dark, MAT_WOOD);
-    let mats = [
-        (-1.52_f32, -0.38_f32, -0.44_f32, 0.76_f32, tatami_a),
-        (-0.41, -0.38, 0.68, 0.76, tatami_b),
-        (0.71, -0.38, 1.76, 0.76, tatami_a),
-        (-1.52, 0.79, -0.44, 1.92, tatami_b),
-        (-0.41, 0.79, 0.68, 1.92, tatami_a),
-        (0.71, 0.79, 1.76, 1.92, tatami_b),
-    ];
-    for &(mx0, mz0, mx1, mz1, col) in &mats {
-        buf.add_box(Vec3::new(mx0, 0.022, mz0), Vec3::new(mx1, 0.030, mz1), tatami_heri, MAT_MATTE);
-        buf.add_box(Vec3::new(mx0 + 0.032, 0.030, mz0 + 0.032), Vec3::new(mx1 - 0.032, 0.036, mz1 - 0.032), col, MAT_TATAMI);
-    }
+    // Tatami from the interior kit: fitted mats with their own cloth borders,
+    // a shadow gap between mats and a timber margin at the wall.
+    buf.add_box(Vec3::new(-1.56, 0.003, -0.42), Vec3::new(1.80, 0.018, 1.96), cedar_dark, MAT_WOOD);
+    rooms::tatami_floor(buf, -1.52, 1.76, -0.38, 1.92, &rooms::IntPal::HAB, 204);
 
     // =========================================================================
     // 2. RIGHT-WALL WALKTHROUGH ENTRY DOORWAY & GENKAN DETAILS (`x = -2.54`)

@@ -7,8 +7,12 @@
 //! - `town`: Parameterized 2-story Japanese houses, utility poles, streetscape & distant launch complex.
 
 pub mod hab;
+pub mod modules;
 pub mod primitives;
+#[cfg(test)]
+mod profiling;
 pub mod props;
+pub mod rooms;
 pub mod town;
 
 use odderon_dmath::{dcos, dsin, Vec3};
