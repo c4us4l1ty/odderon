@@ -1,16 +1,21 @@
 # Art direction — how the summer-noon street is actually built
 
-The target is the reference frame in `.artifacts/reference-summer-noon.png`
-("Shadows of a Summer Noon"): a sunlit Japanese machiya street, raking warm sun,
+> **Status: doctrine, not measurement.** This file records the *model* for the look — light ratios,
+> value structure, palette, geometry. Any number quoted below as a measurement came from a **previous
+> build that has been abandoned**: it is kept because it encodes hard-won judgement cheaply, but it is
+> not evidence about the current renderer. The pixel pipeline is specified in [`GRAPHICS.md`](GRAPHICS.md).
+
+The target is the two "Shadows of a Summer Noon" frames linked in
+[`IMPORTANT-2.md`](../IMPORTANT-2.md) (Hachimi): a sunlit Japanese machiya street, raking warm sun,
 deep cyan sky with towering cumulus, muted timber and stucco, saturated grass,
 dappled shade, depth haze.
 
-The doctrine (`docs/VISION.md` §3, `docs/PERFORMANCE.md`, `IMPORTANT-2.md`) rules
+The doctrine ([`VISION.md`](VISION.md) §3 and §5.4, [`GRAPHICS.md`](GRAPHICS.md),
+[`IMPORTANT-2.md`](../IMPORTANT-2.md)) rules
 out the usual tools: no textures, no models, no shadow maps, no extra draw
-calls, no per-frame allocation, and everything must hold 60 fps on an integrated
-GPU. So the look has to come from **light ratios, value structure, palette and
-geometry** — in that order. This file records the model that is now implemented
-so nobody re-derives it from scratch.
+calls, no per-frame allocation, and everything must hold the frame budget
+[`GRAPHICS.md`](GRAPHICS.md) sets on integrated silicon. So the look has to come from **light ratios, value structure, palette and
+geometry** — in that order. This file records the model so nobody re-derives it from scratch.
 
 ## 1. One "art sun", two Z leans
 
@@ -36,24 +41,24 @@ The interior keeps the true ephemeris vector; it drives the window sunbeam mask.
 
 ## 2. Shadows are geometry, not paint
 
-`streetSunVis()` ray-tests the camera-ray position against a dozen boxes that
-mirror the real massing in `crates/odderon-geom/src/town.rs`:
+The street sun-visibility function ray-tests the camera-ray position against a dozen boxes that
+mirror the real massing of the town geometry (planned: the town module in the geometry crate):
 
 * near row: facade `z = 2.22`, bodies extend to `-Z`;
 * far row: facades `z = 11.45` / `11.75`, bodies extend to `+Z`;
 * thin slabs for each 2F kawara eave and 1F hisashi, so the shade under an eave
   is the depth of its overhang divided by the sun's tangent.
 
-`boxOcclusion()` returns a *fraction*, not 0/1: `tf - tn` is how much of the
-ray actually travels inside the box, and a grazing ray is only partly shadowed.
-That penumbra grows with ray length (capped at 0.30 m, so a 0.28 m eave slab
-still casts a real shadow from across the street) and is the reason a slab's
-shadow edge does not read as a hard decal on the neighbouring wall.
+The occlusion test returns a *fraction*, not 0/1: the fraction of the ray that
+actually travels inside the box. A grazing ray is only partly shadowed, and that
+penumbra grows with ray length (capped at 0.30 m, so a 0.28 m eave slab still casts a
+real shadow from across the street) — which is the reason a slab's shadow edge does not
+read as a hard decal on the neighbouring wall.
 
 If `town.rs` geometry moves, these boxes must move with it. There is no shadow
 map and there never will be at this budget.
 
-`computeExteriorEaveShadow()` keeps only the *fine* gobos: dappled zelkova
+The exterior eave-shadow pass keeps only the *fine* gobos: dappled zelkova
 canopy inside the tree footprints, plus the utility-pole and overhead-wire
 stripes on the ground plane. The old per-storey y-band "eave shadow" ramps are
 gone — they ignored the sun direction and read as dirt.
@@ -90,8 +95,9 @@ and a warm timber `bounceFill` 0.418/0.302/0.183, both multiplied by
 
 ## 4. Grade to the reference's histogram, not to taste
 
-`tools/art-compare.mjs` prints the distribution of every view next to the
-reference frame. The reference is a low-key image:
+The comparison tool prints the distribution of every rendered view next to the reference frame. **The
+tool does not exist yet** — it is a Block 1 deliverable, listed here so the measurement is defined
+before the renderer is written. The reference is a low-key image:
 
 | | mean | p25 | p50 | p95 | dark<0.15 | hot>0.85 | sat | warm/cool |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -104,8 +110,8 @@ reference frame. The reference is a low-key image:
 | 06 sky cumulus | 0.393 | 0.178 | 0.391 | 0.829 | 13 % | 3 % | 0.441 | 30/54 |
 | 07 interior desk | 0.278 | 0.114 | 0.226 | 0.754 | 41 % | 1 % | 0.319 | 47/27 |
 
-Captures are byte-identical between runs (`tools/README.md` §3b), so a change
-in this table is a change in the renderer, not in the weather.
+Captures must be reproducible byte-for-byte from a fixed scene state, so that a change in this table is
+a change in the renderer and not in the weather.
 
 The film chain is: `aces(lit * 0.52)` → sRGB → gamma 1.10 → 22 % S-curve →
 vibrance `1.05 + 0.46·(1-sat)` → split tone (cool violet shade, warm amber
@@ -138,8 +144,7 @@ low elevation; crowns keep a silver lining.
 
 * **Grass is geometry.** Five tapered, two-segment blades per tuft on a
   golden-angle fan, dark root to lit tip, double-sided. That is 8 triangles a
-  blade and the reason the static budget is 64 k instead of 30 k
-  (`crates/odderon-geom/src/lib.rs`).
+  blade, and grass is the largest single triangle line item in the scene.
 * **The meadow is one box.** It is a backdrop; it is muted (`0.072, 0.132,
   0.055`) and gets the distance haze so it recedes instead of glowing. Its
   rice-paddy checkerboard is *baked vertex colour*, not a shader pattern:
@@ -158,19 +163,20 @@ low elevation; crowns keep a silver lining.
 
 ## 7. How to iterate
 
-`tools/README.md`. Short version: build the wasm, run `server.mjs`, then
-`node tools/screenshot.mjs` and `node tools/art-compare.mjs`. Use
-`?debug=4` (sun share) to find out why a surface is black — it separates "no
-sun" from "no light at all".
+The loop is: build the wasm, serve it, capture the reference views headlessly, and diff the histogram
+against §4. Use a lighting-share debug view (sun contribution vs. total) to find out why a surface is
+black — it separates "no sun" from "no light at all". The three scripts this used to name
+(`server.mjs`, `tools/screenshot.mjs`, `tools/art-compare.mjs`) belonged to the abandoned build and are
+part of the Block 1 work, not prerequisites for reading this document.
 
 ## 8. What the kit costs
 
-The modular kit (`crates/odderon-geom/src/modules.rs`, `rooms.rs`) was sold as
+The modular kit (planned: the `modules` and `rooms` files in the geometry crate) was sold as
 "author a part once, compose every building". The obvious question is whether
-composing them is cheaper than hand-modelling. Measured against `560c828`, the
+composing them is cheaper than hand-modelling. Measured on the previous build, against the
 version with three hand-authored machiya and three flat neighbour boxes:
 
-| | `560c828` | kit |
+| | hand-authored | kit |
 |---|---|---|
 | static triangles | 41,724 | 44,138 |
 | static vertices | 65,474 | 70,234 |
@@ -208,9 +214,8 @@ The street uses `1` for the three buildings on the player's side and for House
 
 ### Where the kit was wasting triangles
 
-Every one of these was found by profiling parts individually (`profiling.rs`)
-rather than by guessing, and none of them changed a pixel in the seven reference
-views:
+Every one of these was found by profiling parts individually rather than by guessing, and none of them
+changed a pixel in the seven reference views:
 
 * **Boxes for faces.** A board, a slat, a baluster, a rafter tail, a sill, a
   door plank, a shoji frame member, a tatami weave band: all were `add_box` at 12

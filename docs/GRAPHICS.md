@@ -1,102 +1,181 @@
-**What machine are we optimizing for?**
+# Odderon — The Renderer: Analytical Perceptual Reconstruction (APR)
 
-Intel graphics model: Intel HD 520+ and Android 8+ (Hisilicon Kirin 710+)
-Memory configuration: 4 GB total system RAM (Both laptop and mobile)
-Primary optimization objective: Maximum visual quality at stable 60 FPS, Lowest possible CPU and GPU consumption
-My position is straightforward: **Do not build a weaker DLSS. Build a different rendering paradigm.**
+**Status: authoritative for pixels.** This is the newest rendering document and it supersedes the
+pixel-pipeline content of `PERFORMANCE.md`. If any other document disagrees with this one about frame
+cost, resolution, draw calls, shadows, textures, bandwidth or GPU strategy, **this one is right and the
+other one is stale.**
 
+It is also, deliberately, a **hypothesis with tests attached**. Nothing below has been measured on the
+current codebase, because the current codebase does not exist yet. Every claim here is falsifiable by
+one of the three tests in §5, and a claim that fails its test is a bug with a number on it — not a
+design concession.
 
-To achieve "DLSS 5-level" visual fidelity—the breathtaking, sun-drenched, path-traced look of your "Shadows of a Summer Noon" reference—at a locked 60 FPS on an Intel HD 520 and an ARM Mali-G51 (Kirin 710) inside a 4 GB system RAM envelope, we have to challenge the foundational assumption of the modern graphics industry.
-Why "DLSS" Exists—And Why Odderon Can Beat It Without a GPU
+Companion docs: [`VISION.md`](VISION.md) (thesis), [`ART-DIRECTION.md`](ART-DIRECTION.md) (the look and
+its calibration), [`PERFORMANCE.md`](PERFORMANCE.md) (platform doctrine: no game loop, audio latency),
+[`IMMERSION.md`](IMMERSION.md) (no loading screens).
 
-Why does NVIDIA need massive AI Tensor Cores for DLSS 3.5 / 4 / 5 (Ray Reconstruction & Super Resolution)?
-Because traditional game engines are mathematically blind. A traditional engine throws millions of disconnected triangles and compressed bitmap textures at the screen, traces 1 noisy ray per pixel, and then uses a giant neural network to guess where the edges, shadows, and bounce light were supposed to be.
+---
 
-Odderon has an unfair advantage that no AAA game in history has ever had:
-Your engine is not blind. Because you have zero pre-made 3D meshes and zero bitmap textures, your Rust kernel possesses the exact, continuous mathematical equation of every surface, curve, material, and light source in the scene.
+## 0. The position
 
-You do not need a neural network to guess where a sub-pixel edge or shadow penumbra is when you have its exact analytical derivative (∇f∇f) in closed form.
+**Do not build a weaker DLSS. Build a different rendering paradigm.**
 
-Here is the blueprint for Analytical Perceptual Reconstruction (APR)—a rendering architecture designed specifically for the silicon realities of the Intel HD 520 and Mali-G51.
-1. Know Your Silicon: The Dual-Architecture Reality
+DLSS exists because a conventional engine is *mathematically blind*. It throws millions of
+disconnected triangles and compressed bitmap textures at the screen, traces one noisy ray per pixel,
+and then uses a neural network to guess where the edges, shadows and bounce light were supposed to be.
+It is an expensive apology for having discarded the maths.
 
-To hit 60 FPS (16.6 ms16.6 ms frame budget) with near-zero power draw, we must respect the fact that your two target chips work in fundamentally opposite ways:
-Hardware Metric	Intel HD 520 (Skylake GT2)	ARM Mali-G51 MP4 (Kirin 710)	The Architectural Consequence
-Rendering Architecture	Immediate-Mode Renderer (IMR)	Tile-Based Deferred Renderer (TBDR)	HD 520 writes every draw call straight to system RAM. Mali-G51 renders 16×1616×16 pixel tiles in tiny on-chip SRAM before writing to RAM once.
-Compute Budget	~192 GFLOPS (24 EUs, scalar/SIMD8-16)	~120 GFLOPS (Bifrost 4-wide warp Clauses)	Both have plenty of math (ALU) for analytical equations, if you don't stall them waiting on memory!
-Memory Bandwidth	~15–25 GB/s (Shared DDR3L/DDR4)	~10–14 GB/s (Shared LPDDR3/LPDDR4)	Bandwidth is the #1 killer. Traditional Deferred Shading or multi-pass post-processing (SSAO, Bloom, TAA) will drop both chips to 12 FPS instantly.
-Usable RAM for Game	< 350 MB (out of 4 GB total OS RAM)	< 250 MB (out of 4 GB total Android RAM)	Zero 4K textures allowed. A single uncompressed 4K PBR texture set takes 85 MB—one-third of your entire memory budget!
+Odderon never discards it. With zero pre-made meshes and zero bitmap textures, the Rust kernel holds
+the exact, continuous equation of every surface, curve, material and light in the scene. You do not
+need a network to guess where a sub-pixel edge or a shadow penumbra is when you have its analytical
+derivative in closed form.
 
-The Golden Rule of Odderon’s Renderer:
-Trade Memory Bandwidth for ALU Math. Reading a texture from RAM costs 100x more energy and time on a Mali-G51 and HD 520 than computing a trigonometric or polynomial equation inside a register.
-2. Five Rendering Innovations That Deliver "Summer Noon" Fidelity on Integrated Silicon
-Innovation 1: Thermal-Visual Unification (Zero-Cost Global Illumination)
+**That is the whole thesis of this document: an engine that knows its own geometry can replace
+reconstruction with evaluation.**
 
-Look at your "Shadows of a Summer Noon" reference image. Why does it look so rich and alive, unlike flat video games? Because of Indirect Bounce Light (Global Illumination):
+---
 
-    Sunlight hits the green grass at the bottom and bounces warm green light onto the underside of the wooden porch.
-    Sunlight hits the wooden eaves and bounces warm amber light into the shadows.
-    The deep blue sky fills the upward-facing shadowed surfaces with cool cyan light.
+## 1. Know the silicon
 
-In Unreal Engine 5 (Lumen), calculating that bounce light requires a 300-watt GPU.
-How Odderon gets it for 0.0 milliseconds of GPU time:
-Remember Pillar 4 (Small Room, Big Sky): your Rust physics kernel already models rooms, buildings, rockets, and habitats as thermal networks exchanging radiative heat via View Factors (Fi→jFi→j​):
-Bi=ρi(Ei+∑jFi→jBj)Bi​=ρi​(Ei​+∑j​Fi→j​Bj​)
-That exact equation (the Radiosity Equation) is identical for thermal infrared radiation and visible light!
+Two chips, two architectures that fail in opposite ways. The target is set by the project, not by
+convenience: **Intel HD 520+ (and UHD 620) on a 2015-class laptop, and Android 8+ on a HiSilicon
+Kirin 710 (Mali-G51 MP4)**. Both sit in a **4 GB total system RAM** envelope.
 
-    Because your world is built from clean parametric surfaces (walls, roofs, ground planes, cylinders), the Rust CPU kernel computes the low-order Spherical Harmonics (L1/L2L1​/L2​) Radiosity Transfer between surfaces only when geometry or the sun angle changes (once every few seconds, taking < 0.1 ms on the CPU).
-    Every parametric surface simply receives two 12-byte Spherical Harmonic vectors from the CPU. In the shader, evaluating that exact multi-bounce global illumination takes 4 multiply-add instructions and zero rays.
+| Metric | Intel HD 520 (Skylake GT2) | ARM Mali-G51 MP4 (Kirin 710) | The architectural consequence |
+| --- | --- | --- | --- |
+| Rendering architecture | Immediate-mode (IMR) | Tile-based deferred (TBDR) | HD 520 writes every draw straight toward system memory; Mali renders 16×16 tiles in on-chip SRAM before writing once. |
+| Compute | ~190 GFLOPS (24 EUs) | ~120 GFLOPS (Bifrost, 4-wide clauses) | Both have ample ALU for analytical equations **if you do not stall them waiting on memory.** |
+| Memory bandwidth | ~15–25 GB/s (shared DDR3L/DDR4) | ~10–14 GB/s (shared LPDDR3/LPDDR4) | **Bandwidth is the #1 killer.** Deferred shading, SSAO, bloom and TAA will drop both chips to a slideshow. |
+| Usable RAM for the app | < 350 MB of 4 GB | < 250 MB of 4 GB | No 4K textures. One uncompressed 4K PBR set (85 MB) is a third of the entire budget. |
 
-Innovation 2: Analytical Contact-Hardening Shadows (Zero Shadow-Map RAM)
+> **The golden rule: trade memory bandwidth for ALU.**
+> On both chips, reading a texel from system memory costs roughly two orders of magnitude more energy
+> and time than evaluating a polynomial or trigonometric expression inside a register. Every decision
+> below is that trade, made explicitly.
 
-In your reference image, look at the shadows of the power lines and tree leaves cast across the corrugated metal siding:
+**Precision note (Mali):** FP16 (`mediump`) runs at roughly twice the rate and half the register
+pressure of FP32 on Bifrost. Camera-local coordinates are small enough that all lighting and colour
+math can run in native `mediump`. The exceptions are known and must be `highp`: the sun disc test
+(§ART-DIRECTION 5), sky gradient near the horizon, and any accumulated temporal buffer.
 
-    Where the AC unit touches the wall, the shadow is razor-sharp.
-    Where the power line or tree branch is 5 meters away from the wall, the shadow edge is softly blurred (penumbra) because the Sun is a disk with an angular diameter of 0.53∘0.53∘, not a point light!
+---
 
-Traditional games use huge 4096×40964096×4096 Shadow Map textures (eating 64 MB of RAM and destroying bandwidth) and still suffer from ugly pixelated "shadowstaircasing."
+## 2. Five rendering innovations
 
-    The Odderon Solution: Because every building eave, rocket truss, power line (catenary curve), and AC box is a mathematical primitive, we don't rasterize shadow maps for local geometry!
-    Each surface cluster stores a tiny Analytical Occluder List (packed into a few kilobytes of uniform buffer).
-    In the shader, we compute the exact Signed Solid-Angle Intersection between the 0.53∘0.53∘ solar cone and the analytical primitive (a box, cylinder, or catenary wire).
-    The distance from the occluder (doccluderdoccluder​) automatically scales the penumbra width (w=doccluder⋅tan⁡(0.53∘)w=doccluder​⋅tan(0.53∘)). You get infinite-resolution, noise-free, contact-hardening shadows that never alias, even if you walk 1 millimeter away from the wall—using 0 MB of texture memory.
+### Innovation 1 — Thermal-visual unification (zero-cost global illumination)
 
-Innovation 3: Analytical Filter Integration (Sharpness Beyond Native 4K)
+Why does the reference look alive rather than flat? Indirect bounce: sunlight hits green grass and
+bounces onto the underside of the porch; it hits warm timber eaves and bounces into the shade; the
+blue sky fills every upward-facing shadowed surface.
 
-Why do games need DLSS or Temporal Anti-Aliasing (TAA)? Because when a thin power line, a distant rocket truss, or corrugated metal siding (sine wave z=Asin⁡(ωx)z=Asin(ωx)) gets smaller than a single pixel, standard GPU rasterization point-samples it, causing horrible flickering and jagged edges.
+Lumen-class engines spend a 300 W GPU on this. Odderon gets it for near-zero GPU time, because the
+kernel already models rooms, buildings, spacecraft and habitats as **thermal networks exchanging
+radiative heat via view factors**:
 
-    The Odderon Solution (Closed-Form Box Filtering): Since we know the mathematical formula of every surface pattern f(u)f(u) and its exact analytical integral F(u)=∫f(u) duF(u)=∫f(u)du, we never point-sample!
-    Using the GPU’s built-in screen-space derivatives (dFdx(u) and dFdy(u), which are free in WebGL2 hardware), the shader knows the exact width ΔuΔu of the current pixel on the wall.
-    Instead of evaluating f(u)f(u), the shader evaluates the exact analytical average across the pixel footprint:
-    f‾(u)=F(u+12Δu)−F(u−12Δu)Δuf​(u)=ΔuF(u+21​Δu)−F(u−21​Δu)​
-    What this means visually: Corrugated metal walls, wooden slats, cockpit dial markings, and distant power lines never shimmer, never jagged-alias, and never blur, even at 720p/1080p with 1 sample per pixel! It is mathematically cleaner than DLSS because it isn't a guess—it is the exact integral of the light hitting that pixel.
+```
+B_i = ρ_i ( E_i + Σ_j F_{i→j} B_j )
+```
 
-Innovation 4: Procedural Micro-Surface Synthesis (The 64-Byte Material)
+That is the radiosity equation, and it is identical for thermal infrared and for visible light. The
+consequence is unusual and worth stating plainly: **the gameplay pillar "the apartment is a
+spacecraft" and the rendering pillar "free global illumination" are the same code.**
 
-How do you make weathered wood, painted metal, concrete, and lush grass look tactile like your reference image without a single image texture?
+The mechanism:
 
-    Every material in Odderon is a 64-byte Parametric Shader Recipe driven by Multi-Scale Analytical Noise & Cellular Functions evaluated only at the visible surface:
-        Weathered Cedar Wood (Shopfront): Cylindrical domain-warped sine rings + high-frequency anisotropic fiber specular (Kajiya-Kay analytical highlight) + ambient occlusion darkened in the plank joints.
-        Corrugated Galvanized Steel (Left Building): Analytical integral of sin⁡(ωx)sin(ωx) normals + Voronoi crystal spangle pattern + vertical rain-streak oxidation gradient calculated from the roof overhang distance! (Notice how in real life, rust and dirt streaks only happen where rain drips off an overhang—your CAD geometry already knows where the overhang is!)
-        Summer Grass (Foreground): Instanced quadratic Bézier blades animated by a continuous 2D travelling wind-wave equation in the vertex shader, shaded with an analytical translucent subsurface term when backlit by the sun.
+1. The world is clean parametric surfaces (walls, roofs, ground planes, cylinders), so view factors are
+   computable.
+2. The Rust kernel computes low-order spherical-harmonic (L1/L2) radiosity transfer **only when
+   geometry or sun angle changes** — a few times a second at most, sub-millisecond on CPU.
+3. Each surface receives two small SH vectors. Evaluating multi-bounce bounce light in the shader is
+   then a handful of multiply-adds and **zero rays**.
 
-Innovation 5: The "Living Still" Temporal Cache (Near-0% Idle GPU)
+This replaces the hand-tuned `skyFill` / `groundFill` constants in `ART-DIRECTION.md` §3 with a
+computed version of the same idea — but the hand-tuned values stay as the **calibration target**: if
+the solver disagrees with them by a lot, one of the two is wrong, and that is a useful signal.
 
-In Odderon, whether you are sitting at your wooden desk in your apartment, watching a rocket on the pad, or monitoring telemetry in Mission Control, most of the screen is temporally coherent.
+### Innovation 2 — Analytical contact-hardening shadows (zero shadow-map memory)
 
-    Standard games redraw 100% of the screen 60 times a second, burning laptop batteries and heating up phones even when you are just staring at a gauge.
-    Odderon’s Spatio-Temporal Tile Scheduler:
-        The screen is logically divided into 32×3232×32 pixel tiles.
-        When the camera is stationary, the Rust kernel knows which exact tiles intersect a moving object (e.g., the swaying grass in the bottom 20% of the screen, the spinning fan inside the AC unit, the drifting summer cloud, or a moving needle on a cockpit dial).
-        Static tiles are locked in the framebuffer and skipped via hardware Scissor / Stencil masking!
-        Even better: for the static tiles, over the first 8 frames after you stop moving your head, the engine accumulates jittered sub-pixel samples—meaning the moment you stop moving your camera for 0.13 seconds, the image sharpens to 8x Supersampled Cinema Quality, and then GPU usage drops to < 3%, updating only the swaying grass and clouds at 60 FPS!
+Look at the power-line and leaf shadows in the reference. Where the AC unit meets the wall the shadow
+is razor-sharp; where a wire is five metres from the wall the edge is soft — because the Sun is a
+0.53° disc, not a point.
 
-3. Platform-Specific Execution: One Scene, Two Hardware Paths
+Conventional engines spend 64 MB on a 4096² shadow map and still show pixelated staircasing. Odderon
+rasterises **nothing**: every eave, truss, power line (a catenary) and AC box is a primitive, so each
+surface cluster carries a tiny **analytical occluder list** (a few KB of uniform buffer) and the shader
+computes the exact signed solid-angle intersection between the **0.53° solar cone** and the primitive.
 
-You rightly pointed out that Intel HD 520 and Mali-G51 must share the scene representation and rendering mathematics, but execute differently to respect their silicon. Here is how the Rust WebGL2 backend branches at initialization:
+The penumbra width falls out of the geometry — `w = d_occluder · tan(0.53°)` — so you get
+infinite-resolution, noise-free, contact-hardening shadows that never alias, even a millimetre from the
+wall, using **0 MB of texture memory**. `ART-DIRECTION.md` §2 documents the box-occluder model this
+generalises; the two must agree.
 
-text
+### Innovation 3 — Analytical filter integration (sharpness beyond native 4K)
 
+Why do games need TAA or DLSS? Because when a thin wire or a corrugated sine profile
+(`z = A sin(ωx)`) becomes smaller than a pixel, rasterisation point-samples it and you get flicker and
+jaggies.
+
+Odderon integrates instead. Because the pattern is a known function `f(u)` with a known integral
+`F(u)`, and because WebGL2 gives screen-space derivatives free (`dFdx`/`dFdy`), the shader knows the
+exact width `Δu` of the current pixel on the surface and evaluates the exact average across the
+footprint:
+
+```
+f̄(u) = [ F(u + ½Δu) − F(u − ½Δu) ] / Δu
+```
+
+Corrugated walls, wooden slats, dial markings and distant wires then never shimmer, never alias and
+never blur — at one sample per pixel. This is mathematically cleaner than DLSS because it is not a
+guess; it is the integral of the light hitting that pixel.
+
+**The cost of this innovation is that every procedural pattern must ship with its antiderivative.** A
+material that cannot be integrated is a material that will shimmer, so it is not allowed in the
+catalogue. That constraint belongs in the material definition, not in a later fix.
+
+### Innovation 4 — Procedural micro-surface synthesis (the 64-byte material)
+
+Weathered wood, painted metal, concrete and grass have to feel tactile with no image texture. So a
+material is a **64-byte parametric recipe** — multi-scale analytical noise and cellular functions
+evaluated only where visible:
+
+- **Weathered cedar (shopfront):** cylindrical domain-warped sine rings, anisotropic fibre specular via
+  a Kajiya-Kay analytical highlight, AO darkened into the plank joints.
+- **Corrugated galvanised steel (the left building):** analytical integral of `sin(ωx)` normals (§3
+  above), Voronoi crystal spangle, and vertical rain-streak oxidation *gradient derived from the roof
+  overhang distance* — because in reality rust only streaks where rain drips off an overhang, and the
+  CAD geometry already knows where that overhang is.
+- **Summer grass (foreground):** instanced quadratic Bézier blades animated by a travelling
+  wind-wave equation in the vertex shader, shaded with an analytical translucent subsurface term when
+  backlit.
+
+**Corollary for the material system:** a material is defined by wavelengths, amplitudes, phases and
+physical state, never by pixels. A material that needs a bitmap is rejected by test R1.
+
+### Innovation 5 — The "living still" temporal cache (near-zero idle GPU)
+
+In Odderon the screen is usually temporally coherent: a desk, a pad, a console. Conventional engines
+redraw 100 % of the screen 60 times a second and heat the laptop while you stare at a gauge.
+
+The **spatio-temporal tile scheduler**:
+
+1. The screen is logically divided into 32×32 tiles.
+2. The kernel knows exactly which tiles intersect a moving thing (swaying grass in the bottom fifth,
+   the AC fan, drifting cloud, a needle moving through two degrees).
+3. Static tiles are retained and skipped via hardware scissor/stencil masking.
+4. Better: for static tiles, the first ~8 frames after motion stops accumulate jittered sub-pixel
+   samples — so the moment you stop moving, the image sharpens to roughly 8× supersampled quality,
+   and GPU usage then drops to a few percent, updating only grass and cloud.
+
+This is the renderer's half of `PERFORMANCE.md` I1/I3: the sim already never runs a loop, and this is
+how the presenter also stops.
+
+---
+
+## 3. One scene, two hardware paths
+
+Both chips share the scene representation and the mathematics, and branch at initialisation.
+
+```
                   ┌──────────────────────────────────────────┐
                   │   RUST ANALYTICAL SCENE & THERMAL GRAPH  │
                   │  (Parametric Surfaces + SH Bounce Light) │
@@ -105,57 +184,103 @@ text
               ┌────────────────────────┴────────────────────────┐
               ▼                                                 ▼
 ┌───────────────────────────────────┐             ┌───────────────────────────────────┐
-│   PATH A: INTEL HD 520 (Laptop)   │             │    PATH B: MALI-G51 (Android)     │
-│    Immediate-Mode Architecture    │             │     Tile-Based (TBDR) Silicon     │
+│   PATH A: INTEL HD 520 (laptop)   │             │    PATH B: MALI-G51 (Android)     │
+│    Immediate-mode architecture    │             │     Tile-based (TBDR) silicon     │
 ├───────────────────────────────────┤             ├───────────────────────────────────┤
-│ 1. Zero-Overdraw Pre-Pass:        │             │ 1. Strict Single-Pass Forward:    │
-│    Renders a compact 32-bit       │             │    NEVER flush off-screen buffers │
-│    Visibility/Depth buffer first  │             │    to system RAM. Keep 100% of    │
-│    so heavy procedural shaders    │             │    shading inside on-chip 16x16   │
-│    NEVER run on occluded pixels.  │             │    tile SRAM.                     │
-│                                   │             │                                   │
-│ 2. Perceptual Adaptive Shading:   │             │ 2. FP16 (`mediump`) Fast-Math:    │
-│    Shades high-contrast edges at  │             │    Mali-G51 runs FP16 at 2x the   │
-│    1:1 native pixels, and smooth  │             │    speed and half the register    │
-│    sky/shadow interiors at 1:4    │             │    pressure of FP32. Because      │
-│    with bilateral edge-aware      │             │    coordinates are camera-local,  │
-│    interpolation.                 │             │    all lighting & color math      │
-│                                   │             │    runs in native `mediump` FP16! │
-│                                   │             │                                   │
-│ 3. Dirty-Rect Scissor Updates:    │             │ 3. Tile Transaction Elimination:  │
-│    When camera is still, only     │             │    Identical analytical sky/wall  │
-│    redraws bounding boxes of      │             │    tiles trigger Mali hardware    │
-│    moving analytical primitives.  │             │    CRC Transaction Elimination,   │
-│                                   │             │    writing 0 bytes to LPDDR4!     │
+│ 1. Zero-overdraw pre-pass:        │             │ 1. Strict single-pass forward:    │
+│    a compact visibility/depth     │             │    NEVER flush off-screen buffers │
+│    buffer first, so heavy         │             │    to system RAM. Keep shading    │
+│    procedural shaders never run   │             │    inside on-chip 16×16 SRAM.     │
+│    on occluded pixels.            │             │                                   │
+│ 2. Perceptual adaptive shading:   │             │ 2. FP16 (`mediump`) fast-math:    │
+│    high-contrast edges at native  │             │    coordinates are camera-local,  │
+│    pixels; smooth interiors at    │             │    so lighting and colour run in  │
+│    1:4 with bilateral, edge-aware │             │    native FP16 at 2× rate and     │
+│    interpolation.                 │             │    half the register pressure.    │
+│ 3. Dirty-rect scissor updates:    │             │ 3. Tile transaction elimination:  │
+│    when the camera is still, only │             │    identical analytical sky/wall  │
+│    redraw the bounding boxes of   │             │    tiles hit Mali hardware CRC    │
+│    moving primitives.             │             │    elimination — 0 bytes written  │
+│                                   │             │    to LPDDR4.                     │
 └───────────────────────────────────┘             └───────────────────────────────────┘
+```
 
-Why Path B is Magic on Mali-G51:
+**Why Path B is the interesting one.** Mali compares a hardware CRC of each finished 16×16 tile
+against the previous frame and skips the write on a match. This normally almost never fires, because
+real renderers dither, jitter and temporally accumulate — every tile differs by a few LSBs. Odderon's
+static surfaces are *noise-free analytical evaluation*, so a tile where nothing moved is **100 %
+bit-identical** and the hardware eliminates it for free, cutting memory-bus power to near zero.
 
-ARM Mali GPUs have a hardware feature called Transaction Elimination (TE): at the end of rendering a 16×1616×16 pixel tile in on-chip SRAM, the GPU compares a hardware CRC signature of that tile against the previous frame's tile. If the signature matches, the GPU completely skips writing that tile to system RAM!
-Because Odderon uses noise-free analytical shading (no temporal grain or dither noise on static surfaces), any tile where nothing moved produces a 100% bit-identical output, triggering Mali's hardware Transaction Elimination automatically and cutting memory bus power consumption to near zero!
-4. The 4 GB RAM Survival Budget (Total Footprint: < 180 MB)
+That is a real dependency, and it is the reason dithering is forbidden on static surfaces: **dithering
+would cost us the phone's battery.** Any temporal noise must be confined to surfaces already declared
+moving.
 
-On a 4 GB Windows laptop or Android 8 phone, if your browser tab crosses ~400 MB of allocation, the OS starts swapping to disk or the Android Low Memory Killer (LMK) terminates the tab.
+---
 
-Here is Odderon's strict, hard-capped memory allocation budget:
-Subsystem	Memory Allocation	How It Stays So Small
-WASM Code Binary	~3.5 MB	Pure Rust (no_std-style discipline, zero bloated JS frameworks).
-Gaia DR3 + Ephemeris Octree	~24.0 MB	Active 4,000 LY spatial octree chunk + Chebyshev solar system polynomials.
-Physics & Provenance<T> Heap	~32.0 MB	1D fluid/thermal graphs, analytical orbital tables, and CAD state.
-Parametric Mesh Vertex Cache	~18.0 MB	Generated on-the-fly from CAD/architecture equations; evicted via LRU when out of view.
-Texture Memory (VRAM)	0.5 MB	Zero 3D asset textures. Only a tiny 512x512 signed-distance font atlas for crisp cockpit & blueprint typography!
-Framebuffers (1080p / 720p)	~24.0 MB	Front/Back color + Depth + 1 Temporal Accumulation buffer.
-WebAudio Synthesis Buffers	~4.0 MB	Real-time procedural fluid/mechanical sound wave ring-buffers.
-TOTAL ENGINE FOOTPRINT	~106.0 MB	Leaves > 3.8 GB of breathing room for the OS and browser!
-5. Falsifiable Rendering Tests (For the Design Bible)
+## 4. The memory budget
 
-Just like your five gameplay pillars, the rendering engine gets three ruthless, falsifiable tests enforced in code review:
+On a 4 GB machine, crossing roughly ~400 MB gets the tab swapped or killed by the Android low-memory
+killer. The envelope:
 
-    R1 — The Zero-Bitmap Law:
-    Test: Search the repository and network tab for .png, .jpg, .dds, .ktx, .obj, .fbx, or .gltf. If any file exists outside the single typography SDF glyph sheet, the build fails. Every visual surface must be a function S(u,v,t)S(u,v,t) derived from physical state.
-    R2 — The Static-Camera Power Test (The Painting Test):
-    Test: Load the "Summer Noon" street scene on an Intel HD 520 laptop at 1080p. Take your hands off the mouse and keyboard. Within 250 milliseconds, frame-time must drop below 1.5 ms (< 10% GPU load), and visual edge quality must be indistinguishable from an 8x supersampled offline render.
-    R3 — The Single-Pass Bandwidth Ceiling (Mali-G51 Test):
-    Test: Profile a frame on Android Mali-G51. Total external memory bandwidth per frame must never exceed 32 bytes per screen pixel (1 color write + 1 temporal read/write). Any effect that requires flushing a full-screen intermediate texture to RAM and reading it back is forbidden.
+| Subsystem | Allocation | How it stays small |
+| --- | --- | --- |
+| WASM binary | ~3.5 MB | Pure Rust, no framework bloat |
+| Catalog octree + ephemeris | ~24 MB | Active spatial chunk + Chebyshev polynomials for the solar system |
+| Physics & provenance heap | ~32 MB | 1-D fluid/thermal graphs, analytical orbital tables, CAD state |
+| Parametric mesh cache | ~18 MB | Generated from CAD equations; LRU-evicted out of view |
+| Texture memory | ~0.5 MB | Zero asset textures; one SDF glyph sheet for instrument typography |
+| Framebuffers | ~24 MB | Colour + depth + one temporal accumulation buffer |
+| WebAudio buffers | ~4 MB | Procedural sound ring buffers |
+| **Total engine footprint** | **~106 MB** | Leaves > 3.8 GB to the OS and browser |
 
-By combining Thermal-Visual Radiosity Unification, Analytical Box-Filtered Materials, Exact Solar-Cone Shadows, and Dual IMR/TBDR Silicon Paths, Odderon will look like a living Makoto Shinkai / Hachimi film running at 60 FPS on a $150 laptop from 2015—and the entire game will load in 2 seconds over a 3G phone connection.
+Ceiling: **≤ 180 MB desktop / ≤ 120 MB mobile resident**, gated (`GAME-DESIGN-BIBLE.md` §13.4).
+
+---
+
+## 5. Falsifiable rendering tests
+
+Three tests, enforced in code review and in CI. These are the whole of "is the renderer honest".
+
+**R1 — The zero-bitmap law.**
+Search the repository and the network tab for `.png .jpg .jpeg .webp .dds .ktx .obj .fbx .gltf
+.glb`. If any exists outside the single SDF glyph sheet, **the build fails.** Every visual surface must
+be a function `S(u, v, t)` derived from physical state.
+
+**R2 — The static-camera power test (the painting test).**
+Load the summer-noon street on Reference A at output resolution. Take your hands off the input. Within
+250 ms of the last change, frame time must fall **below 1.5 ms** (< 10 % GPU load), and edge quality
+must be indistinguishable from a supersampled offline render of the same scene. *If it does not settle,
+the temporal cache is lying about what is static.*
+
+**R3 — The single-pass bandwidth ceiling (the Mali test).**
+Profile a frame on Reference B. External memory bandwidth must never exceed **32 bytes per screen
+pixel** (one colour write + one temporal read/write). Any effect that requires flushing a full-screen
+intermediate to RAM and reading it back is forbidden — which is what rules out SSAO, bloom, and a
+conventional TAA chain before anyone proposes them.
+
+A fourth, project-level gate lives in `PERFORMANCE.md` and `IMMERSION.md` N9: **no shader compiles
+after boot, no synchronous GPU stalls in the loop, no allocation in the frame path.**
+
+---
+
+## 6. What this buys, and what it costs
+
+**Buys:** a world that looks like a Makoto Shinkai film on a $150 2015 laptop and a mid-range 2017
+phone; a 2-second load on a poor connection; zero-bitmap download; near-zero idle GPU; and a renderer
+whose correctness is a property of the maths rather than of a neural network's approximation.
+
+**Costs, stated honestly:**
+
+| Cost | Consequence | Mitigation |
+| --- | --- | --- |
+| Every procedural pattern must ship an antiderivative | Material authoring is harder than texture painting | Bake the antiderivative into the material definition; reject non-integrable materials at the catalogue boundary |
+| Every occluder must be an analytical primitive | No shadow from arbitrary geometry | Geometry is parametric by law; if it cannot be described as a primitive, it cannot occlude |
+| Static surfaces must be noise-free | No dithering on statics | Confine noise to declared-moving surfaces (§3) |
+| FP16 lighting | Precision artefacts at high dynamic range | `highp` for sun disc, sky gradient, temporal accumulation |
+| Two GPU paths | Two shader sets to maintain | The analytical scene is shared; only the execution strategy branches (§3) |
+| **The whole document is unmeasured** | It may not hold on real silicon | §5's tests, run on Reference A and B before any further rendering work |
+
+That last row is the one to take seriously. The previous build was abandoned partly because its
+performance claims were never measured against the quantities the hardware actually charges for.
+**No number in this document is a result until it appears in a benchmark run on Reference A and
+Reference B, with the misses included.**

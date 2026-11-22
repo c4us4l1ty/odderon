@@ -1,8 +1,24 @@
 # Odderon — Vision Synthesis & First-Principles Architecture
 
-Status: **proposal for review**, not a commitment. Written from `IMPORTANT-1.md` and `IMPORTANT-2.md`.
+Status: **the architecture of record for the rebuild.** Written from `IMPORTANT-1.md` and
+`IMPORTANT-2.md`.
 Purpose: state back what Odderon is, convert the philosophy into mechanisms that can be enforced by a
 compiler, a test suite, or a CI check, and name the places where the promises fight each other.
+Rendering and frame cost are specified in [`GRAPHICS.md`](GRAPHICS.md), which supersedes the
+pixel-pipeline sections of every earlier document.
+
+The universe is accumulated from public catalogue data by an offline preprocessor, never invented at
+runtime. Data rights are a **shipping gate, not a footnote**, and they are now specified in
+[`DATA-LICENSING.md`](DATA-LICENSING.md): which sources may ship in a commercial build, which may not,
+the manifest that records it per file, and the two CI checks that make the distinction mechanical.
+
+Two findings from that document change this one. First, the hazard is **not "Gaia"** — ESA distributes
+Hipparcos and Tycho under the same **CC BY-NC 3.0 IGO** terms, so "use the pre-Gaia catalogues instead"
+is a trap; licence follows the *distributor*, and the same Tycho-2 tables are separately published as a
+US government work through the NASA ADC mirror. Second, the catalogue is a swappable `Survey` backend
+that carries per-field uncertainty, which means a star's distance error is a *game* quantity rather than
+hidden metadata — so the licence constraint and Pillar 1's demand that knowledge be earned point the
+same way.
 
 ---
 
@@ -87,7 +103,7 @@ A design principle that isn't enforced is a wish. Each law gets a mechanism, mos
 | 3 | **Transferable skill is priority #1.** | Artifacts export to formats real tools read: GMAT script, NASA CEA `.inp`, SPICE SPK/PCK, CCSDS packets, STEP. Predictions are committed (hashed) *before* flight, never after — so calibration can't be back-filled. |
 | 4 | **Zero UI.** No "add 100 kg propellant" buttons; hands-on, physical controls and real instruments only. | The player→world API surface is a **control-panel schema**, not a command API: `Actuator::{ValveOpen, Throttle, Gimbal, Switch, Hand}`. There is no verb in the kernel for "set fuel mass" or "execute burn node". A CI lint rejects any new public kernel entry point that isn't an actuator. |
 | 5 | **Zero 3D assets.** Every nozzle, tank, truss, cabin pipe, and cockpit instrument generated from math. | CI budget: repo contains no binary asset files above a small threshold; a test asserts every renderable has a parametric constructor. Geometry is `f(parameters)`, so a design change is a uniform update, not a mesh download. |
-| 6 | **Near-zero CPU, integrated GPU, browser, scales to 100k ly.** | Event-driven kernel: the universe is a **queryable function of time**, never a per-frame loop. Presentation freezes entirely when nothing changes. Measured acceptance criteria, not adjectives (see §8). Hierarchical frames: `i128` sectors + `f64` local frames. |
+| 6 | **Near-zero CPU, integrated GPU, browser, scales to 100k ly.** | Event-driven kernel: the universe is a **queryable function of time**, never a per-frame loop. Presentation freezes entirely when nothing changes. Measured acceptance criteria, not adjectives (see §8 for the gate table). Hierarchical frames: `i128` sectors + `f64` local frames. |
 | 7 | **Open-ended.** Pad tech, CEO, backyard inventor, freelancer, pirate, terraformer, megastructure captain — none required. | No quest gates. Contracts, clients, and customers are **data generated from real catalogs and real economics**; the career ladder is an emergent consequence of reputation and balance sheet, not a state machine. Systems first, content second. |
 | 8 | **Learning must be addictive; no jargon barrier, no googling "retrograde".** | Language lives in the world, not in a wiki: the Eidos visor shows cause and effect before it shows a term. Terms are introduced *after* the player has already succeeded at the thing. A scripted "first 30 minutes" acceptance test run in CI as a design requirement, with telemetry on where players quit. |
 
@@ -99,7 +115,7 @@ Being honest about the collisions is more valuable than pretending they don't ex
 
 | Tension | Why it bites | Resolution |
 | --- | --- | --- |
-| **Zero CPU vs. first-person rendering** | A walking human is a continuous 60 Hz workload. "0.0% CPU" cannot be literally true while moving. | **Resolved by architecture, not concession** (`PERFORMANCE.md` I1/I3/I8). There is no game loop: an event queue drives a presenter, and the renderer *samples* a state ring at whatever rate it likes — including zero. Kernel and presentation are decoupled, so idle is literally "nothing scheduled". While moving, the honest claim is not 0% but *bounded*: ≤ 11 ms worst case, measured and gated in CI, and input→audio latency held at ≤ 8 ms independent of frame rate. |
+| **Zero CPU vs. first-person rendering** | A walking human is a continuous 60 Hz workload. "0.0% CPU" cannot be literally true while moving. | **Resolved by architecture, not concession** (`PERFORMANCE.md` I1/I3/I8). There is no game loop: an event queue drives a presenter, and the renderer *samples* a state ring at whatever rate it likes — including zero. Kernel and presentation are decoupled, so idle is literally "nothing scheduled". While moving, the honest claim is not 0% but *bounded*: a 60 fps frame with the measured budget in [`GRAPHICS.md`](GRAPHICS.md), a static camera settling below 1.5 ms within 250 ms (test R2), and input→audio latency held at ≤ 8 ms independent of frame rate. |
 | **Zero assets vs. text, sound, and human faces** | Fonts are assets. Voice is assets. Parametric human faces are the hardest problem in this document. | Whitelist, stated openly: a procedural **stroke font** (~4 KB of coordinates) for instrument faces and labels; the OS font stack for dialogue; **all** sound synthesized in WebAudio from kernel numbers; humans stylized, cel-shaded, and rarely close-up (Shinkai's own compositions favor backs, distance, and silhouette). No pre-rendered anything. |
 | **Real universe vs. 4000 ly of data** | Gaia is magnitude-limited and dust-extincted; completeness collapses beyond ~1–3 kpc. The catalog *has holes*. | That is the scientifically correct outcome, so we lean into it: model 3D dust extinction explicitly. The galactic interior is dim and hidden — as it truly is. Unexplored space is dark, and funding a survey is a real activity. Nothing is invented to fill the gap. |
 | **Determinism vs. live NASA sync** | Verifiable replays require a frozen universe; live updates change it. | **Universe epochs.** A catalog version is part of the epoch ID. Replays, leaderboards, and Esse are pinned to their epoch. A NASA delta-sync creates a new epoch; comparisons across epochs are marked as such, never silently averaged. |
@@ -165,7 +181,7 @@ tests/validation   comparisons vs NASA CEA, Horizons, and analytic limits
 ```
 
 No game engine. No Three.js. No Unity. `wasm-bindgen` + `wasm-pack`/Vite (worker support matters
-more than convenience); decided at M1, not now.
+more than convenience); decided during Block 1, not now.
 
 ### 5.4 Rendering: how the summer noon is actually cheap
 
@@ -212,7 +228,7 @@ shared, reviewed, sold on an in-game market, or pasted into a real PLC discussio
   u32 deltas, proper motion, colour index), JPL SPICE → Chebyshev subsets, NASA Exoplanet Archive →
   mass/radius/orbit priors with real error bars, 3D dust extinction map, CEA thermo coefficients.
 - Runtime streams only the tiles being observed, via HTTP range requests, with a hard resident-memory
-  cap. Expected download for M1 is a few MB; the full 4000 ly catalog is a streaming resource we
+  cap. Expected download for Block 1 is a small core module; the full 4000 ly catalog is a streaming resource we
   meter and validate — not a claim we make before measuring.
 - Daily delta-sync against the Exoplanet Archive TAP API; each sync mints a new **epoch**.
 
@@ -268,34 +284,39 @@ Each one is chosen because it serves law #3 (transfer) or law #6 (cost), not bec
 
 ---
 
-## 8. Milestone ladder — a vertical slice must contain all five promises at 1% scale
+## 8. Build ladder — the block ladder is canonical
 
 The failure mode for a vision this large is building one subsystem perfectly for two years. The
 antidote is a slice that is *small in scope but complete in promise*.
 
-**M1 — "The Room."** WebGL2+WASM canvas; one parametric apartment (corrugated wall, wooden desk,
-window AC, power lines, swaying grass); analytic gobos; sky + cumulus shader; real solar ephemeris
-for the chosen town and date; a distant pad plume with shockwave arrival at 343 m/s; walking and
-object interaction; render-on-demand.
-*Acceptance:* 0 scheduled frames/s and 0 timers when idle; **60 fps at 1080p output** on an Intel
-UHD 620-class iGPU at ≤ 11 ms worst-case frame time and ≤ 8 draw calls (see `PERFORMANCE.md`); < 3 MB
-download; zero binary assets. The frame budget is a CI gate, not an aspiration — a build that
-exceeds it fails.
+**There is exactly one ladder, and it lives in
+[`GAME-DESIGN-BIBLE.md` §17](GAME-DESIGN-BIBLE.md) — Block 1 *The Room* through Block 7 *The Museum*.**
+An earlier draft of this file proposed a parallel M1–M4 sequence; it was a second source of truth for
+the same plan, so it is deleted rather than reconciled. Two ladders is how a project ends up with a
+Block 4 that contradicts an M3.
 
-**M2 — "The Pad."** 1-D cryo/fluid network (chilldown, boil-off, ullage, cavitation), a static
-fire with a real failure mode, visor diagnosis, a grease-pencil mark and ghost-twin debrief, Akashi
-HTML export.
-*Acceptance:* the failure is reproducible from the input log; the report explains it from
-sensitivities, not from a script.
+What matters here is only the *shape* every block must have:
 
-**M3 — "The Sounding Rocket."** Parametric CAD build (tank + hybrid motor + nozzle), manual
-launch, apogee telemetry, Ghost Run debrief, first Esse event, Proof-of-Flight bundle.
-*Acceptance:* an exported bundle re-simulates bit-identically in a second browser.
+- it is playable, on `main`, and judged by playing it — not by reading a spec;
+- it proves a promise at ~1 % of final scope rather than proving one subsystem at 100 %;
+- it ships a public web build with its benchmark numbers attached, including the misses.
 
-**M4 — "The Orbit."** Keplerian coast + J2, rendezvous, light-time comms, first orbital contract,
-the first module of the light-cone ledger.
+The acceptance criteria that gate a block are **performance** (measured on the Reference A/B hardware
+in [`GRAPHICS.md`](GRAPHICS.md) and §13.4 of the bible, summarised in the table below) and
+**determinism** (an input log re-simulates to the same state hash). Both are CI gates; a build that
+exceeds a budget fails.
 
-Each milestone ships a public web build. Nothing is held back for a "big reveal".
+| Gate | Requirement | Source of truth |
+| --- | --- | --- |
+| Draw calls | ≤ 8 | `GRAPHICS.md` |
+| Shadow maps | zero (analytical solar-cone occlusion) | `GRAPHICS.md` |
+| Bitmap textures | zero, except one SDF glyph sheet | `GRAPHICS.md` R1 |
+| Bandwidth per frame | ≤ 32 B per screen pixel | `GRAPHICS.md` R3 |
+| Static camera | frame time < 1.5 ms after 250 ms, image settling to supersampled quality | `GRAPHICS.md` R2 |
+| Idle | 0 scheduled frames/s, 0 timers, no GPU work | `PERFORMANCE.md` I3 |
+| Input → audio | ≤ 8 ms, independent of frame rate | `PERFORMANCE.md` I8 |
+| Resident memory | ≤ 180 MB desktop / ≤ 120 MB mobile | bible §13.4 |
+| Determinism | identical state hash, native and in-browser | `CREDIBILITY.md` §3.4 |
 
 ---
 
@@ -312,16 +333,16 @@ Each milestone ships a public web build. Nothing is held back for a "big reveal"
 | Credibility ("why would NASA care?") | High (it's the whole thesis) | Publish the validation suite (CEA/Horizons agreement), the export bridge, HIL via WebSerial, and open the physics kernel. Adoption by university teams is the realistic first proof. |
 | Real companies/brands, real people | Low–medium | Fictional analogs for corporations; no likenesses; public-domain literature only for performance data; keep an eye on export-control-adjacent material. |
 | Economy/politics of "Esse as a resume" | Low | Start as self-published signed bundles; any hosted ranking is opt-in and clearly separate from the game. |
-| Solo-dev burnout on an infinite vision | **Fatal if unmanaged** | Same as scope: ship M1 as a thing people can use. Small rooms, real sunlight, finished. |
+| Solo-dev burnout on an infinite vision | **Fatal if unmanaged** | Same as scope: ship a block as a thing people can use. Small rooms, real sunlight, finished. |
 
 ---
 
 ## 10. Open questions for you
 
-1. **What should I produce next?** (a) start M1 "The Room" as working code; (b) a deeper
+1. **What should I produce next?** (a) start Block 1 *The Room* as working code; (b) a deeper
    architecture spec for one subsystem (determinism / time-as-query / data pipeline); (c) a game
-   design bible (loops, progression, economy, UI flows); (d) the credibility package (validation
-   suite + Esse/Akashi + export bridge).
+   design bible (loops, progression, economy, UI flows — **delivered**); (d) the credibility package
+   (validation suite + Esse/Akashi + export bridge — **delivered**).
 2. **Who writes the code?** You and me together, or me with you reviewing, or spec-first because
    you plan to bring in people?
 3. **Which wedge gets built first** — ground ops (pad technician), cockpit flight, the CAD

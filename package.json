@@ -1,0 +1,18 @@
+{
+  "name": "odderon-tools",
+  "private": true,
+  "type": "module",
+  "description": "Development tooling. The game itself is Rust -> wasm; this is only the harness that runs what CI compiles (see tools/README.md).",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "fetch:wasm": "gh run download --name wasm -D dist --clobber || node -e \"console.error('no wasm artifact yet: push the branch and let ci build it'); process.exit(1)\"",
+    "determinism": "node tools/determinism.mjs",
+    "gl:info": "node tools/gl-info.mjs",
+    "check": "npm run determinism",
+    "install:chromium": "node -e \"require('@sparticuz/chromium').executablePath().then(p=>console.log('chromium:',p))\""
+  },
+  "devDependencies": {
+    "@sparticuz/chromium": "131.0.0",
+    "puppeteer-core": "23.11.1"
+  }
+}

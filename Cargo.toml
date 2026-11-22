@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = ["crates/odderon-dmath", "crates/odderon-dmath-wasm", "crates/odderon-astro"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.83"
+license = "MIT OR Apache-2.0"
+
+# Determinism is a build property, not a runtime hope.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+overflow-checks = false
+debug-assertions = false

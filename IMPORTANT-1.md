@@ -5,7 +5,6 @@ Odderon; a simulator so authentic that NASA Flight Directors, JPL mission planne
 Traditional video games waste 95% of their compute budget on decorative polygons, particle shaders, and frame-by-frame brute-force physics loops. You are building an interactive, gamified aerospace workstation and first-person cockpit simulator powered by analytical mathematics.
 A scientifically grounded space civilization simulator, aerospace engineering sandbox, interstellar exploration game, and space company management simulator combined into one. Learning astronautics, astrodynamics, economics of owning a space company etc has a huge problem. People shouldn't simply learn astronautics by reading information. They should learn it because understanding physics gives them an advantage in the game. Every successful mission should teach them something about the real universe.
 A poorly designed rocket fails to reach orbit. The player learns about delta-v, gravity losses, staging, and TWR.
-A poorly designed rocket fails to reach orbit. The player learns about delta-v, gravity losses, staging, and TWR.
 A spacecraft misses its destination by millions of kilometres. The player learns orbital mechanics and trajectory correction.
 A rotating habitat makes its occupants sick. The player learns angular velocity, artificial gravity, and Coriolis effects.
 A fusion-powered spacecraft becomes too heavy to accelerate effectively. The player discovers the relationship between specific impulse, thrust, power density, and mass.

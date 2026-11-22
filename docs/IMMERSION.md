@@ -1,7 +1,8 @@
 # Odderon — The No-Loading-Screen Doctrine
 
-**Block 0 addition.** Companion to `VISION.md`, `GAME-DESIGN-BIBLE.md`, `PERFORMANCE.md`,
-`CREDIBILITY.md`.
+**Specification for the rebuild.** Companion to [`VISION.md`](VISION.md),
+[`GAME-DESIGN-BIBLE.md`](GAME-DESIGN-BIBLE.md), [`GRAPHICS.md`](GRAPHICS.md),
+[`PERFORMANCE.md`](PERFORMANCE.md), [`CREDIBILITY.md`](CREDIBILITY.md).
 
 > There are no loading screens. Not because we hid them well — because the architecture never
 > produces anything to wait for.
@@ -57,7 +58,7 @@ Three mechanisms make it continuous:
 1. **Hierarchical local frames** (`VISION.md` §5.1). The camera never sees an absolute coordinate.
    Depth precision is a property of a *local window*, not of the planet, so 24-bit depth is never the
    limiter — the "floating-point kraken" cannot produce z-fighting because it never gets the chance.
-2. **Matte descent** (bible §13.3). Distant terrain is an analytic parallax layer that resolves into
+2. **Matte descent** (`VISION.md` §5.4). Distant terrain is an analytic parallax layer that resolves into
    parametric geometry as the eye approaches. The *same* mechanism that makes a 2015 laptop render a
    coastline is what makes the descent seamless: there is no moment of exchange, only a continuous
    increase in the resolution of an answer that was always being computed.

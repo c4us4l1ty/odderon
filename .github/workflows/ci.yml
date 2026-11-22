@@ -1,0 +1,197 @@
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # -------------------------------------------------------------------------------------------
+  # HARD GATES. These fail the build. Everything else in this file is advisory until the
+  # bootstrap is green once (see docs/BUILD-PLAN.md §3 — style gates are armed after the first
+  # successful run, because the first run is compile-unverified by construction).
+  # -------------------------------------------------------------------------------------------
+
+  test-native:
+    name: test (native)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.83.0"
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test (hard gate)
+        # Two deliberate oddities, both about where diagnostics can be read rather than about how
+        # strict the gate is:
+        #
+        # * `--exclude odderon-dmath-wasm` — that crate is a `no_std` cdylib with a wasm-only panic
+        #   handler, so building it for the host cannot work by construction. Its correctness is
+        #   covered by the determinism step, which loads it *as wasm*.
+        # * `|| true` followed by an explicit check — a failing step reports one line and keeps its log
+        #   in blob storage, which some clients cannot reach; a completing step publishes its output.
+        #   So the step completes, prints a summary, and then fails for real.
+        #
+        # Warnings are not denied here on purpose: this job's question is "is the physics right?", and
+        # a warning must not mask that answer. The lint jobs enforce style.
+        run: |
+          set -o pipefail
+          cargo test --workspace --exclude odderon-dmath-wasm --all-targets 2>&1 \
+            | tee /tmp/test.log || true
+          # Everything below must reach the *annotation*, not just the job log, because the job log
+          # is not always readable. Two files, one purpose each: SUMMARY is printed for humans, and
+          # the same lines are %0A-encoded for the annotation, which is what a restricted client sees.
+          SUMMARY=/tmp/summary.txt
+          : > "$SUMMARY"
+          fail_with() {
+            echo "======================= SUMMARY ======================="
+            cat "$SUMMARY"
+            echo "======================================================="
+            ENCODED=$(sed -e 's/%/%25/g' -e 's/\r$//' "$SUMMARY" | awk '{ printf "%s%%0A", $0 }')
+            printf '::error title=%s::%s\n' "$1" "$ENCODED"
+            exit 1
+          }
+
+          if ! grep -qE "^test result: ok" /tmp/test.log; then
+            grep -E "^test result|FAILED|panicked at|^error(\[|:)|^[[:space:]]+-->" /tmp/test.log \
+              || tail -40 /tmp/test.log
+          else
+            true
+          fi > "$SUMMARY" || true
+
+          if [ ! -s "$SUMMARY" ] && grep -qE "\.\.\. FAILED|panicked at|^error(\[|:)" /tmp/test.log; then
+            grep -A1 -E "^test .* FAILED|panicked at|^error(\[|:)|^[[:space:]]+-->" /tmp/test.log > "$SUMMARY" || true
+            [ -s "$SUMMARY" ] || true
+          fi
+
+          if [ -s "$SUMMARY" ]; then
+            fail_with "cargo test"
+          fi
+          grep -E "^test result" /tmp/test.log
+
+      - name: determinism hash (always readable)
+        # The bootstrap value must be readable from CI with no log access at all, because the only
+        # channel that reliably works here is a check-run annotation. So: run the hash example on its
+        # own, and echo the result as an annotation whether or not golden.txt exists. This step must
+        # never fail — the determinism *gate* is the next step's job.
+        run: |
+          set +e
+          HASH=$(cargo run -q -p odderon-dmath --example hash 2>/dev/null)
+          echo "computed determinism hash: ${HASH:-UNAVAILABLE}"
+          echo "::notice title=determinism hash::${HASH:-UNAVAILABLE}"
+      - name: determinism gate (golden.txt)
+        # Separate from the test run so that its failure says the useful thing as an annotation:
+        # which hash was expected, which was computed. A bare "test failed" is unactionable when the
+        # log is out of reach.
+        run: |
+          set +e
+          OUT=$(cargo test -q -p odderon-dmath determinism_golden -- --nocapture 2>&1)
+          STATUS=$?
+          if [ $STATUS -eq 0 ]; then
+            echo "golden hash matches committed value"
+            echo "$OUT" | grep -oE '0x[0-9a-f]{16}' | head -1 > native-hash.txt
+            exit 0
+          fi
+          GOT=$(cargo run -q -p odderon-dmath --example hash 2>/dev/null)
+          WANT=$(cat crates/odderon-dmath/tests/golden.txt 2>/dev/null || echo "(absent)")
+          echo "::error title=determinism golden mismatch::computed ${GOT:-?}, committed ${WANT}"
+          echo "computed: ${GOT:-?}"
+          echo "committed: ${WANT}"
+          echo "${GOT:-unknown}" > native-hash.txt
+          exit 1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-hash
+          path: native-hash.txt
+          if-no-files-found: ignore
+
+  build-wasm:
+    name: build (wasm32)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.83.0"
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo build (release, wasm32)
+        run: bash ci/annotate.sh "cargo build wasm32" cargo build --release --target wasm32-unknown-unknown --workspace
+      # The artifact is the point: it comes back into the dev sandbox via `gh run download`, where
+      # the cross-platform determinism check can be run against a *real* wasm binary. Building Rust
+      # is what the sandbox cannot do; *running* wasm it can.
+      # The cross-platform determinism check, run where both halves exist.
+      #
+      # This is the first client-side verification of the claim that makes everything else possible:
+      # the kernel produces identical bits natively and in wasm, so a mission replay is auditable.
+      # It has to run inside CI because artifact downloads are blocked for some clients.
+      - name: determinism — native vs wasm32, same job
+        run: bash ci/determinism.sh
+
+      - name: stage wasm artifacts
+        run: |
+          mkdir -p dist
+          find target/wasm32-unknown-unknown/release -maxdepth 1 -name '*.wasm' -exec cp {} dist/ \;
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  kernel-policy:
+    name: kernel policy lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The rules live in ci/kernel-policy.sh so they can be read, run locally, and tested by
+      # injecting a violation. Rationale for each rule: docs/DETERMINISM.md §1.3.
+      - name: kernel policy
+        run: bash ci/kernel-policy.sh
+
+  # -------------------------------------------------------------------------------------------
+  # ADVISORY during bootstrap. Armed after the first green run — see the decision in
+  # docs/BUILD-PLAN.md §3. They are kept in the same file so arming them is a one-word diff.
+  # -------------------------------------------------------------------------------------------
+
+  fmt:
+    name: rustfmt (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.83.0"
+          components: rustfmt
+      - run: bash ci/annotate.sh "rustfmt" cargo fmt --all -- --check
+
+  clippy:
+    name: clippy (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.83.0"
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # The wasm shell is excluded for the same reason as in the test job: it is a no_std cdylib with
+      # a wasm-only panic handler, so it cannot be checked for the host. Its lints are covered as part
+      # of the wasm32 build.
+      - run: bash ci/annotate.sh "clippy" cargo clippy --workspace --exclude odderon-dmath-wasm --all-targets -- -D warnings

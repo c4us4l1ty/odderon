@@ -1,0 +1,10 @@
+[package]
+name = "odderon-astro"
+description = "Two-body propagation, orbital elements and constants for the Odderon kernel."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+odderon-dmath = { path = "../odderon-dmath" }

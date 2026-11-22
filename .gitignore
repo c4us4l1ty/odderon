@@ -1,0 +1,14 @@
+# build output
+/target/
+/dist/
+**/*.wasm
+**/*.wasm.d.ts
+**/*.wasm_bg.js
+
+# node
+node_modules/
+npm-debug.log*
+
+# local tooling
+.DS_Store
+.artifacts/
