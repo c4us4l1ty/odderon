@@ -202,11 +202,19 @@ allOk &= report("atan2", (x) => atan(x / (1 - x)) + (1 - x < 0 ? (x >= 0 ? PI : 
 // exp/ln over a positive domain
 const expProbes = probes.map((x) => x * 0.01);
 let expMax = 0;
+let expSaturationBug = false;
 for (const x of expProbes) {
   const g = exp(x);
   const w = Math.exp(x);
+  // Saturation must agree: an infinity on one side only is a real bug, not a rounding difference.
+  if ((g === Infinity) !== (w === Infinity)) {
+    console.error(`  exp saturation mismatch at ${x}: got ${g}, libm ${w}`);
+    expSaturationBug = true;
+    continue;
+  }
   if (Number.isFinite(g) && Number.isFinite(w) && w !== 0) expMax = Math.max(expMax, Math.abs(g - w) / w);
 }
+if (expSaturationBug) expMax = Infinity;
 console.log(`${expMax < 1e-15 ? "PASS" : "FAIL"}  exp      max rel err ${expMax.toExponential(2)}`);
 allOk &= expMax < 1e-15;
 

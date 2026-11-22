@@ -789,10 +789,26 @@ mod tests {
             if x > 0.0 {
                 let e = x.ln();
                 assert!(fabs(ln(x) - e) < 1e-14 * fmax(fabs(e), 1.0), "ln at {}", x);
+
+                // `exp` saturates by design (see the saturation comments in `exp`), so the comparison
+                // has to respect that: comparing Infinity/Infinity yields NaN, and `NaN < tol` is
+                // false — which would report a failure for correct behaviour. Any *other* infinity
+                // here is a real bug, so it is checked explicitly rather than skipped.
                 let want = (x * 0.01).exp();
-                // 1e-15 relative is achievable and enforced: with EXP_P at 14 terms the measured
-                // error is ~2e-16, i.e. at the f64 floor. A regression to fewer terms fails here.
-                assert!(fabs(exp(x * 0.01) - want) / want < 1e-15, "exp at {}", x);
+                let got = exp(x * 0.01);
+                assert_eq!(
+                    got.is_infinite(),
+                    want.is_infinite(),
+                    "exp saturation mismatch at {}: got {}, want {}",
+                    x,
+                    got,
+                    want
+                );
+                if got.is_finite() && want.is_finite() && want != 0.0 {
+                    // 1e-15 relative is achievable and enforced: with EXP_P at 14 terms the measured
+                    // error is ~8.5e-16. A regression to ten terms fails here.
+                    assert!(fabs(got - want) / want < 1e-15, "exp at {}: {}", x, got);
+                }
             }
         }
     }
