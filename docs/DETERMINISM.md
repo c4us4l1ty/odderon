@@ -71,7 +71,10 @@ log. After that the gate is live and a single differing bit fails the build.
 An intentional algorithm change means updating `golden.txt` **and** noting it here, in the same commit.
 An unintentional one is a bug with a number attached.
 
-**Current state: armed.** The committed value is `0xfb98c19011ef498d`, and it has been reproduced on two
+**Current state: armed.** The committed value is `0xde40c5c2bd62aadb` (it was `0xfb98c19011ef498d` before
+`exp` gained its split-constant reduction and `cosh`, `sinh`, `acos`, `asin` joined the fingerprint — a
+deliberate change, so the value was re-bootstrapped by deleting the file and letting CI measure it, rather
+than by hand-editing a number). It has been reproduced on two
 targets — a native Linux x86-64 build and a wasm32 module loaded by Node — in the same CI job. That is
 the first end-to-end evidence for the claim this whole document exists to support: *a mission replayed
 elsewhere produces the same bits.* It is a small, unglamorous number and it is the foundation of Esse,
@@ -82,6 +85,14 @@ the first live run reported a mismatch, and the two hashes were identical. A `u6
 C ABI as a signed `i64`, so JavaScript received a *negative* BigInt and rendered `-0x4673e6fee10b673`
 instead of `0xfb98c19011ef498d`. The bug was in the reporting; the determinism was fine. `BigInt.asUintN`
 fixes it, and both checkers now use it. The lesson: **before believing a gate, read what it printed.**
+
+That lesson had a second, more expensive form. When the gate was re-armed, the *only* place the hash was
+printed was inside a failing test, and the job log that carried it was unreadable from this environment
+(blob storage returned EOF, and so did artifact download). Four commits went into discovering that the
+check-run **annotation** is the one channel that survives, and into moving the print into its own
+always-passing step that emits a `notice`. A gate whose failure cannot be read is a gate that gets
+switched off — so the diagnostic path is now part of the gate, not an afterthought, and it applies to
+`cargo test`'s own failures too.
 
 ### 1.4b A correction worth keeping visible
 

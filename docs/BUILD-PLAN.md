@@ -182,6 +182,31 @@ advance so a bad measurement produces a design change rather than a rationalisat
 
 ---
 
+## 4b. Where the ladder actually is
+
+Kept current, because a plan that says "P0" forever is not a plan.
+
+| Rung | State | Evidence |
+| --- | --- | --- |
+| CI as the compiler | **done** | Four hard gates run on every push: `cargo test`, wasm32 build, native↔wasm determinism, kernel policy. A Rust compile happens on a machine that is not this one, which is also why native-vs-wasm agreement is testable from Day 1. |
+| `odderon-dmath` | **done for now** | Own `sin, cos, atan, atan2, exp, ln, sqrt, cosh, sinh, acos, asin, pow, fabs, fmin, fmax`, `no_std`, no host libm symbol. Error measured, not asserted: 1e-16 to 1e-17 typical. Golden hash armed. |
+| `odderon-astro` | **two-body complete, validated** | Universal-variable Kepler propagator. One period returns to 0.17 µm after ten periods; a single jump over 1000 periods conserves specific energy *bit-exactly*; chained steps drift as √N·eps (1.8e-14 over 10000). Hyperbolic, parabolic and circular orbits need no special cases. |
+| `odderon-astro` remaining | next | Keplerian elements ↔ state vectors with the singular-case handling (i = 0, e = 0, e·i = 0), then the J2 perturbation on top of the two-body solution. The catalogue is next after that, because every other part of the game needs to say where a body is. |
+| The shell (WASM + WebGL2) | not started | `GRAPHICS.md` specifies it; no pixel has been shaded. Needs `odderon-astro` stable first, because the shell exists to display what the kernel computes. |
+| The Room (thermal) | not started | The five claims in §4. |
+
+Two things this table is deliberately not allowed to hide:
+
+- **Nothing here is "in progress" without a measurement.** The astro numbers above came from
+  `tests/validation.rs` on a real compile, in CI, not from the prototype that preceded it. The prototype
+  agreed, and the prototype is not evidence.
+- **The `rustfmt` gate is red and stays red (advisory).** No local toolchain can run a mechanical pass,
+  and hand-formatting against CI diffs is a losing game that has already cost two commits. It becomes a
+  hard gate the day a local `cargo fmt` is possible, and not before. `docs/BUILD-PLAN.md` §2.4 states
+  this in the gate table itself so it cannot be quietly forgotten.
+
+---
+
 ## 5. The cadence
 
 | Phase | Content | Gate to leave it |
