@@ -721,11 +721,12 @@ impl SimWorld {
         ];
 
         let street_colliders = [
-            Box2D { x0: -3.86, z0: -2.30, x1: 14.0, z1: 2.40 },  // Uchinoura Maison 1F facade
-            Box2D { x0: -16.0, z0: -2.30, x1: -5.24, z1: 2.40 }, // West yard fence behind stairs
-            Box2D { x0: -1.62, z0: 2.40, x1: -0.58, z1: 3.08 },  // Beverage vending machine
-            Box2D { x0: -7.68, z0: 4.05, x1: -5.82, z1: 4.54 },  // Bus stop bench & timetable pole
+            Box2D { x0: -3.86, z0: -2.30, x1: 14.5, z1: 2.46 },  // Uchinoura Maison 1F + Corrugated Steel Annex
+            Box2D { x0: -16.0, z0: -2.30, x1: -5.24, z1: 2.40 }, // Sister Kominka Machiya (#3) & Oya-stone wall
+            Box2D { x0: -1.62, z0: 2.40, x1: -0.30, z1: 3.12 },  // Beverage vending machine + side bin
+            Box2D { x0: -7.76, z0: 3.96, x1: -5.80, z1: 4.62 },  // Kominka bus stop shelter, bench & roundel pole
             Box2D { x0: 0.94, z0: 5.21, x1: 1.22, z1: 5.49 },    // Utility pole #1
+            Box2D { x0: 1.90, z0: 4.98, x1: 2.46, z1: 5.22 },    // Utility pole #1 guy-wire guard anchor
             Box2D { x0: -8.34, z0: 5.61, x1: -8.06, z1: 5.89 },  // Utility pole #2
             Box2D { x0: 10.06, z0: 5.31, x1: 10.34, z1: 5.59 },  // Utility pole #3
             Box2D { x0: 5.35, z0: 10.10, x1: 6.35, z1: 10.60 },  // Far-sidewalk parked bicycle

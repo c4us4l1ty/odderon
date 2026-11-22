@@ -289,7 +289,7 @@ pub fn outdoor_ac_condenser(buf: &mut MeshBuffer, pose: Pose) {
     buf.with_pose(pose, |b| {
         let ivory: [f32; 3] = [0.70, 0.68, 0.63];
         let dark = [0.10, 0.11, 0.13];
-        b.add_rounded_box(Vec3::new(-0.42, 0.01, -0.18), Vec3::new(0.42, 0.60, 0.18), 0.024, ivory, MAT_ALLOY);
+        b.add_box(Vec3::new(-0.42, 0.01, -0.18), Vec3::new(0.42, 0.60, 0.18), ivory, MAT_ALLOY);
         // Circular recessed fan shroud on `-Z` front face (`8 mm` proud so zero Z-fighting!)
         b.add_disc_neg_z(Vec3::new(-0.10, 0.30, -0.188), 0.21, 18, dark, MAT_ALLOY);
         b.add_disc_neg_z(Vec3::new(-0.10, 0.30, -0.194), 0.055, 12, [0.36, 0.37, 0.36], MAT_ALLOY);
@@ -351,66 +351,157 @@ pub fn parked_bicycle(buf: &mut MeshBuffer, pose: Pose) {
     });
 }
 
-/// Iconic Japanese Roadside Beverage Vending Machine (`自動販売機`, faces `+Z` toward street!).
+/// Weathered Japanese Coastal Beverage Vending Machine (`自動販売機`, recessed shadowbox + timber/iron eave hood!).
 pub fn japanese_vending_machine(buf: &mut MeshBuffer, pose: Pose) {
     buf.with_pose(pose, |b| {
-        let cabinet_white = [0.84, 0.84, 0.81];
-        let accent_red = [0.72, 0.16, 0.14];
-        let dark_slot = [0.10, 0.12, 0.14];
+        let cabinet_ivory = [0.68, 0.66, 0.60];
+        let base_navy = [0.10, 0.14, 0.20];
+        let dark_iron = [0.09, 0.10, 0.12];
+        let cedar_dark = [0.14, 0.075, 0.038];
 
-        b.add_rounded_box(Vec3::new(-0.50, 0.01, -0.32), Vec3::new(0.50, 1.84, 0.32), 0.028, cabinet_white, MAT_ALLOY);
-        b.add_box(Vec3::new(-0.502, 0.01, -0.322), Vec3::new(0.502, 0.24, 0.322), accent_red, MAT_ALLOY);
-        // Illuminated drink sample showcase (`+Z` face, proud `8 mm`)
-        b.add_box(Vec3::new(-0.42, 0.86, 0.322), Vec3::new(0.24, 1.70, 0.334), [0.96, 0.94, 0.86], MAT_EMISSIVE_WARM);
-        // Two shelves of miniature canned coffee / green tea / citrus sodas!
+        // Weathered concrete leveling plinth + dark navy lower skirt
+        b.add_box(Vec3::new(-0.54, 0.002, -0.35), Vec3::new(0.54, 0.06, 0.35), [0.34, 0.33, 0.30], MAT_MATTE);
+        b.add_box(Vec3::new(-0.50, 0.06, -0.31), Vec3::new(0.50, 0.30, 0.31), base_navy, MAT_ALLOY);
+        b.add_box(Vec3::new(-0.50, 0.30, -0.31), Vec3::new(0.50, 1.82, 0.31), cabinet_ivory, MAT_ALLOY);
+
+        // Small weathered corrugated-tin rain hood above vending machine (`classic rural Kyushu detail!`)
+        b.add_box(Vec3::new(-0.56, 1.82, -0.34), Vec3::new(0.56, 1.87, 0.44), [0.20, 0.24, 0.28], MAT_CORRUGATED);
+        b.add_box(Vec3::new(-0.55, 1.78, -0.33), Vec3::new(0.55, 1.82, 0.34), cedar_dark, MAT_WOOD);
+
+        // Deep dark glass display surround + warm backlit display interior (`z = 0.312 .. 0.330`)
+        b.add_box(Vec3::new(-0.44, 0.84, 0.311), Vec3::new(0.25, 1.70, 0.320), dark_iron, MAT_ALLOY);
+        b.add_box(Vec3::new(-0.41, 0.87, 0.321), Vec3::new(0.22, 1.67, 0.326), [0.78, 0.74, 0.64], MAT_MATTE);
+        // Horizontal stainless shelf bars + muted authentic Japanese coffee/tea cans
+        b.add_box(Vec3::new(-0.41, 1.25, 0.327), Vec3::new(0.22, 1.28, 0.338), [0.30, 0.32, 0.34], MAT_ALLOY);
+        b.add_box(Vec3::new(-0.41, 0.89, 0.327), Vec3::new(0.22, 0.92, 0.338), [0.58, 0.16, 0.12], MAT_ALLOY);
         let can_cols = [
-            [0.42, 0.22, 0.10],
-            [0.16, 0.46, 0.22],
-            [0.14, 0.36, 0.68],
-            [0.82, 0.48, 0.12],
-            [0.76, 0.16, 0.16],
+            [0.32, 0.16, 0.08],
+            [0.14, 0.32, 0.16],
+            [0.12, 0.24, 0.44],
+            [0.62, 0.38, 0.12],
+            [0.54, 0.14, 0.12],
         ];
         for (idx, &col) in can_cols.iter().enumerate() {
-            let cx = -0.34 + (idx as f32) * 0.125;
-            b.add_cylinder(Vec3::new(cx, 1.34, 0.336), Vec3::new(cx, 1.46, 0.336), 0.024, 0.024, 8, col, MAT_ALLOY, true);
-            b.add_cylinder(Vec3::new(cx, 0.98, 0.336), Vec3::new(cx, 1.10, 0.336), 0.024, 0.024, 8, col, MAT_ALLOY, true);
+            let cx = -0.33 + (idx as f32) * 0.12;
+            b.add_cylinder(Vec3::new(cx, 1.30, 0.334), Vec3::new(cx, 1.43, 0.334), 0.022, 0.022, 7, col, MAT_ALLOY, true);
+            b.add_cylinder(Vec3::new(cx, 0.94, 0.334), Vec3::new(cx, 1.07, 0.334), 0.022, 0.022, 7, col, MAT_ALLOY, true);
         }
-        // IC-card / coin slot panel & dark bottom retrieval flap
-        b.add_box(Vec3::new(0.28, 0.90, 0.322), Vec3::new(0.43, 1.48, 0.336), dark_slot, MAT_ALLOY);
-        b.add_box(Vec3::new(0.31, 1.32, 0.337), Vec3::new(0.40, 1.39, 0.344), [0.24, 0.88, 0.62], MAT_EMISSIVE_WARM);
-        b.add_rounded_box(Vec3::new(-0.36, 0.32, 0.322), Vec3::new(0.22, 0.56, 0.340), 0.010, dark_slot, MAT_ALLOY);
+        // Dark coin/IC panel + recessed pickup flap + side recycling bin (`空き缶入れ`)!
+        b.add_box(Vec3::new(0.28, 0.86, 0.312), Vec3::new(0.44, 1.54, 0.328), dark_iron, MAT_ALLOY);
+        b.add_box(Vec3::new(0.31, 1.34, 0.329), Vec3::new(0.41, 1.40, 0.335), [0.22, 0.78, 0.54], MAT_EMISSIVE_WARM);
+        b.add_box(Vec3::new(-0.38, 0.36, 0.312), Vec3::new(0.20, 0.58, 0.326), dark_iron, MAT_ALLOY);
+        b.add_box(Vec3::new(0.52, 0.002, -0.20), Vec3::new(0.76, 0.82, 0.22), [0.26, 0.29, 0.32], MAT_ALLOY);
     });
 }
 
-/// Rural Japanese Coastal Bus Stop Bench & Round `バス停` Timetable Sign (`Uchinoura Space Center Line`!).
+/// Authentic Kyushu Kominka Timber & Sloped Corrugated-Tin Bus Stop Shelter (`待合所`) + Two-Tone `バス停` Sign!
 pub fn bus_stop_shelter(buf: &mut MeshBuffer, pose: Pose) {
     buf.with_pose(pose, |b| {
-        let cedar_dark = [0.16, 0.09, 0.05];
-        let hinoki = [0.48, 0.33, 0.18];
-        let steel = [0.46, 0.49, 0.52];
+        let cedar_dark = [0.13, 0.068, 0.034];
+        let cedar_board = [0.22, 0.12, 0.058];
+        let hinoki_seat = [0.42, 0.28, 0.14];
+        let iron_rust = [0.22, 0.26, 0.31];
 
-        // Weathered wooden waiting bench (`x in [-0.85, +0.45]`)
-        b.add_rounded_box(Vec3::new(-0.85, 0.42, -0.22), Vec3::new(0.45, 0.47, 0.22), 0.010, hinoki, MAT_WOOD);
-        b.add_rounded_box(Vec3::new(-0.85, 0.56, -0.22), Vec3::new(0.45, 0.84, -0.17), 0.010, hinoki, MAT_WOOD);
-        for &lx in &[-0.74_f32, 0.34] {
-            b.add_box(Vec3::new(lx - 0.03, 0.002, -0.19), Vec3::new(lx + 0.03, 0.42, 0.19), cedar_dark, MAT_WOOD);
-            b.add_box(Vec3::new(lx - 0.025, 0.42, -0.21), Vec3::new(lx + 0.025, 0.84, -0.16), cedar_dark, MAT_WOOD);
+        // 4 stout square Kominka timber posts (`9cm x 9cm`) + slatted wooden back windbreak wall!
+        for &px in &[-0.88_f32, 0.44] {
+            b.add_box(Vec3::new(px - 0.045, 0.002, -0.28), Vec3::new(px + 0.045, 2.24, -0.19), cedar_dark, MAT_WOOD);
+            b.add_box(Vec3::new(px - 0.040, 0.002, 0.20), Vec3::new(px + 0.040, 2.06, 0.28), cedar_dark, MAT_WOOD);
+            // Diagonal timber roof rafters (`taruki`)
+            b.add_beam(Vec3::new(px, 2.26, -0.36), Vec3::new(px, 2.02, 0.48), 0.035, cedar_dark, MAT_WOOD);
         }
+        // Horizontal wooden windbreak boards across the back of the shelter
+        for row in 0..5 {
+            let by = 0.88 + (row as f32) * 0.24;
+            b.add_box(Vec3::new(-0.84, by, -0.26), Vec3::new(0.40, by + 0.18, -0.22), cedar_board, MAT_WOOD);
+        }
+        // Seasoned wooden waiting bench
+        b.add_box(Vec3::new(-0.84, 0.42, -0.20), Vec3::new(0.40, 0.47, 0.22), hinoki_seat, MAT_WOOD);
+        b.add_box(Vec3::new(-0.84, 0.55, -0.23), Vec3::new(0.40, 0.80, -0.18), hinoki_seat, MAT_WOOD);
+        for &lx in &[-0.72_f32, 0.28] {
+            b.add_box(Vec3::new(lx - 0.035, 0.002, -0.18), Vec3::new(lx + 0.035, 0.42, 0.18), cedar_dark, MAT_WOOD);
+        }
+        // Pitched corrugated galvanized roof sloping forward (`y: 2.28 -> 2.02`) + dark timber fascia!
+        b.push_quad(
+            Vec3::new(-1.02, 2.02, 0.50),
+            Vec3::new(0.58, 2.02, 0.50),
+            Vec3::new(0.58, 2.28, -0.38),
+            Vec3::new(-1.02, 2.28, -0.38),
+            iron_rust,
+            MAT_CORRUGATED,
+        );
+        b.push_quad(
+            Vec3::new(0.58, 2.00, 0.50),
+            Vec3::new(-1.02, 2.00, 0.50),
+            Vec3::new(-1.02, 2.26, -0.38),
+            Vec3::new(0.58, 2.26, -0.38),
+            cedar_dark,
+            MAT_WOOD,
+        );
 
-        // Small angled corrugated-tin rain canopy over bench
-        b.add_cylinder(Vec3::new(-0.80, 0.002, -0.24), Vec3::new(-0.80, 2.18, -0.24), 0.028, 0.028, 8, cedar_dark, MAT_WOOD, false);
-        b.add_cylinder(Vec3::new(0.40, 0.002, -0.24), Vec3::new(0.40, 2.18, -0.24), 0.028, 0.028, 8, cedar_dark, MAT_WOOD, false);
-        b.add_box(Vec3::new(-0.96, 2.14, -0.36), Vec3::new(0.56, 2.22, 0.46), [0.24, 0.29, 0.34], MAT_CORRUGATED);
+        // Iconic Japanese `バス停` Sign (`x = +0.85`, facing BOTH `+Z` street AND `-Z` sidewalk!):
+        b.add_lathe_y(Vec3::new(0.85, 0.002, 0.12), &[(0.0, 0.16), (0.09, 0.14), (0.13, 0.032)], 10, [0.20, 0.22, 0.24], MAT_ALLOY, true);
+        b.add_cylinder(Vec3::new(0.85, 0.13, 0.12), Vec3::new(0.85, 2.00, 0.12), 0.019, 0.019, 8, [0.38, 0.41, 0.44], MAT_ALLOY, false);
+        // Framed Timetable Box (`時刻表`, `z = 0.095 .. 0.145`) with blue header & red express stripe on BOTH faces!
+        b.add_box(Vec3::new(0.69, 1.10, 0.095), Vec3::new(1.01, 1.56, 0.145), [0.82, 0.80, 0.74], MAT_MATTE);
+        b.add_box(Vec3::new(0.685, 1.46, 0.090), Vec3::new(1.015, 1.55, 0.150), [0.09, 0.28, 0.56], MAT_ALLOY);
+        b.add_box(Vec3::new(0.71, 1.16, 0.146), Vec3::new(0.99, 1.43, 0.151), [0.90, 0.89, 0.85], MAT_MATTE);
+        // Classic Two-Tone Japanese Bus Stop Roundel (`blue top / cream middle / red bottom band` visible from street `+Z`!)
+        b.add_cylinder(Vec3::new(0.85, 2.16, 0.096), Vec3::new(0.85, 2.16, 0.144), 0.185, 0.185, 14, [0.84, 0.82, 0.76], MAT_MATTE, true);
+        b.add_box(Vec3::new(0.71, 2.19, 0.091), Vec3::new(0.99, 2.30, 0.149), [0.09, 0.28, 0.58], MAT_ALLOY);
+        b.add_box(Vec3::new(0.72, 2.04, 0.091), Vec3::new(0.98, 2.09, 0.149), [0.70, 0.16, 0.12], MAT_ALLOY);
+    });
+}
 
-        // Iconic Japanese `バス停` (Bus Stop) pole (`x = +0.85`): heavy cast-iron base, timetable plaque & round blue/white top disc!
-        b.add_lathe_y(Vec3::new(0.85, 0.002, 0.12), &[(0.0, 0.17), (0.08, 0.15), (0.12, 0.035)], 12, [0.22, 0.24, 0.26], MAT_ALLOY, true);
-        b.add_cylinder(Vec3::new(0.85, 0.12, 0.12), Vec3::new(0.85, 1.98, 0.12), 0.020, 0.020, 8, steel, MAT_ALLOY, false);
-        // Timetable schedule frame (`時刻表`)
-        b.add_rounded_box(Vec3::new(0.69, 1.10, 0.095), Vec3::new(1.01, 1.56, 0.145), 0.008, [0.88, 0.87, 0.83], MAT_MATTE);
-        b.add_box(Vec3::new(0.71, 1.46, 0.146), Vec3::new(0.99, 1.53, 0.152), [0.12, 0.36, 0.68], MAT_MATTE);
-        // Double-sided round Japanese Bus Stop disc (`y = 2.16`)
-        b.add_cylinder(Vec3::new(0.85, 2.16, 0.095), Vec3::new(0.85, 2.16, 0.145), 0.19, 0.19, 16, [0.88, 0.89, 0.88], MAT_MATTE, true);
-        b.add_disc_neg_z(Vec3::new(0.85, 2.16, 0.090), 0.15, 14, [0.12, 0.38, 0.72], MAT_ALLOY);
+/// Lush 3D Sunlit Japanese Summer Grass Verge (`image-18.png` foreground blades, double-sided outward CCW!).
+pub fn summer_grass_strip(buf: &mut MeshBuffer, pose: Pose, length_x: f32, clusters: usize, seed: u32) {
+    buf.with_pose(pose, |b| {
+        let s = seed as usize;
+        for c in 0..clusters {
+            let fx = (c as f32 + 0.5) / (clusters as f32) - 0.5;
+            let h1 = (((c * 73 + s * 17 + 19) % 29) as f32) / 29.0;
+            let h2 = (((c * 41 + s * 13 + 7) % 23) as f32) / 23.0;
+            let cx = fx * length_x + (h1 - 0.5) * 0.16;
+            let cz = (h2 - 0.5) * 0.22;
+            // 3 angled grass blades per cluster (`6` tris = `18` indices total per cluster!)
+            for k in 0..3 {
+                let ang_x = (k as f32 - 1.0) * 0.11 + (h1 - 0.5) * 0.08;
+                let blade_h = 0.34 + h2 * 0.26 + (k as f32) * 0.05;
+                let w = 0.026;
+                let bx = cx + (k as f32 - 1.0) * 0.055;
+                let bz = cz + ((k % 2) as f32 - 0.5) * 0.06;
+                let p0 = Vec3::new(bx - w, 0.0, bz);
+                let p1 = Vec3::new(bx + w, 0.0, bz);
+                let tip = Vec3::new(bx + ang_x, blade_h, bz + (h1 - 0.5) * 0.07);
+                let g_col = [0.20 + h1 * 0.12, 0.46 + h2 * 0.18, 0.10 + h1 * 0.06];
+                // Front (+Z) & back (-Z) triangles with exact outward normals!
+                let n_f = p1.sub(p0).cross(tip.sub(p0)).normalized();
+                let i_f = b.push_vert(p0, n_f, g_col, MAT_FOLIAGE);
+                b.push_vert(p1, n_f, g_col, MAT_FOLIAGE);
+                b.push_vert(tip, n_f, [g_col[0] + 0.10, g_col[1] + 0.14, g_col[2] + 0.04], MAT_FOLIAGE);
+                b.indices.extend_from_slice(&[i_f, i_f + 1, i_f + 2]);
+
+                let n_b = n_f.scale(-1.0);
+                let i_b = b.push_vert(p1, n_b, g_col, MAT_FOLIAGE);
+                b.push_vert(p0, n_b, g_col, MAT_FOLIAGE);
+                b.push_vert(tip, n_b, [g_col[0] + 0.10, g_col[1] + 0.14, g_col[2] + 0.04], MAT_FOLIAGE);
+                b.indices.extend_from_slice(&[i_b, i_b + 1, i_b + 2]);
+            }
+        }
+    });
+}
+
+/// Sunlit Japanese Roadside Flowering Shrub (`image-18.png` yellow-blossom bush beside Oya-stone wall!).
+pub fn flowering_roadside_shrub(buf: &mut MeshBuffer, pose: Pose) {
+    buf.with_pose(pose, |b| {
+        let leaf_dark = [0.10, 0.26, 0.09];
+        let leaf_mid = [0.16, 0.36, 0.12];
+        let blossom_gold = [0.88, 0.74, 0.14];
+        b.add_ellipsoid(Vec3::new(0.0, 0.42, 0.0), Vec3::new(0.38, 0.38, 0.34), 9, 6, leaf_dark, MAT_FOLIAGE);
+        b.add_ellipsoid(Vec3::new(-0.16, 0.68, 0.08), Vec3::new(0.28, 0.26, 0.26), 8, 5, leaf_mid, MAT_FOLIAGE);
+        b.add_ellipsoid(Vec3::new(0.14, 0.58, 0.10), Vec3::new(0.25, 0.24, 0.24), 8, 5, leaf_mid, MAT_FOLIAGE);
+        for &(fx, fy, fz) in &[(-0.22_f32, 0.86_f32, 0.16_f32), (-0.06, 0.92, 0.14), (0.16, 0.76, 0.22), (0.26, 0.58, 0.20), (-0.28, 0.62, 0.20)] {
+            b.add_ellipsoid(Vec3::new(fx, fy, fz), Vec3::new(0.055, 0.048, 0.055), 6, 4, blossom_gold, MAT_FOLIAGE);
+        }
     });
 }
 

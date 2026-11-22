@@ -71,7 +71,7 @@ pub fn build_machiya_house(buf: &mut MeshBuffer, pose: Pose, s: &MachiyaHouseSpe
                 b.add_box(Vec3::new(nx0, 1.38, -0.22), Vec3::new(nx0 + 0.36, 2.14, -0.19), [0.76, 0.75, 0.72], MAT_MATTE);
             }
             // Framed menu board on left cedar post (`image-15.png`!)
-            b.add_rounded_box(Vec3::new(-hw + 0.34, 0.78, -0.095), Vec3::new(-hw + 1.08, 1.92, -0.055), 0.012, [0.42, 0.16, 0.09], MAT_WOOD);
+            b.add_box(Vec3::new(-hw + 0.34, 0.78, -0.095), Vec3::new(-hw + 1.08, 1.92, -0.055), [0.42, 0.16, 0.09], MAT_WOOD);
             b.add_box(Vec3::new(-hw + 0.40, 0.84, -0.104), Vec3::new(-hw + 1.02, 1.86, -0.096), [0.78, 0.73, 0.62], MAT_MATTE);
 
             // Row of 4 hanging white `chouchin` paper lanterns under the dark 1st-floor eave (`image-15.png`!)
@@ -136,7 +136,7 @@ pub fn build_machiya_house(buf: &mut MeshBuffer, pose: Pose, s: &MachiyaHouseSpe
         let bal_x1 = if s.has_wide_balcony { win_x1 + 0.06 } else { 0.85 };
         let bal_z = -0.38_f32;
         b.add_box(Vec3::new(bal_x0, wy0 - 0.08, bal_z), Vec3::new(bal_x1, wy0 + 0.02, -0.03), s.timber_col, MAT_WOOD);
-        b.add_rounded_box(Vec3::new(bal_x0 - 0.04, wy0 + 0.54, bal_z - 0.03), Vec3::new(bal_x1 + 0.04, wy0 + 0.62, bal_z + 0.05), 0.012, s.timber_col, MAT_WOOD);
+        b.add_box(Vec3::new(bal_x0 - 0.04, wy0 + 0.54, bal_z - 0.03), Vec3::new(bal_x1 + 0.04, wy0 + 0.62, bal_z + 0.05), s.timber_col, MAT_WOOD);
         b.add_box(Vec3::new(bal_x0, wy0 + 0.54, bal_z), Vec3::new(bal_x0 + 0.06, wy0 + 0.61, -0.03), s.timber_col, MAT_WOOD);
         b.add_box(Vec3::new(bal_x1 - 0.06, wy0 + 0.54, bal_z), Vec3::new(bal_x1, wy0 + 0.61, -0.03), s.timber_col, MAT_WOOD);
         let slat_n = (((bal_x1 - bal_x0) / 0.22) as usize).clamp(4, 24);
@@ -189,30 +189,52 @@ pub fn build_machiya_house(buf: &mut MeshBuffer, pose: Pose, s: &MachiyaHouseSpe
     });
 }
 
-/// Realistic Weathered Spun-Concrete Japanese Utility Pole (muted grey concrete & galvanized iron — NO cartoon colors!).
+/// Realistic Weathered Spun-Concrete Japanese Utility Pole (`電柱`: grey concrete, lineman step-bolts,
+/// municipal ID plaque, streetlamp arm, twin transformers & yellow/black guy-wire guard `支線ガード`).
 pub fn build_japanese_utility_pole(buf: &mut MeshBuffer, pose: Pose, has_transformers: bool) {
     buf.with_pose(pose, |b| {
-        let concrete = [0.48, 0.47, 0.44];
-        let steel_band = [0.22, 0.24, 0.26];
+        let concrete = [0.40, 0.40, 0.38];
+        let steel_band = [0.16, 0.18, 0.20];
 
-        b.add_lathe_y(Vec3::ZERO, &[(0.0, 0.155), (7.10, 0.100)], 14, concrete, MAT_MATTE, true);
+        b.add_lathe_y(Vec3::ZERO, &[(0.0, 0.158), (7.10, 0.100)], 12, concrete, MAT_MATTE, true);
 
         for &by in &[1.65_f32, 3.10, 4.35, 5.55, 6.55] {
-            let r = 0.155 - (0.055 * by / 7.10) + 0.006;
-            b.add_lathe_y(Vec3::new(0.0, by, 0.0), &[(0.0, r), (0.042, r)], 14, steel_band, MAT_ALLOY, false);
+            let r = 0.158 - (0.058 * by / 7.10) + 0.006;
+            b.add_lathe_y(Vec3::new(0.0, by, 0.0), &[(0.0, r), (0.042, r)], 12, steel_band, MAT_ALLOY, false);
         }
+        // Vertical Japanese municipal ID plate (`東幹 14`) + alternating lineman step-bolts (`足場ボルト`)
+        b.add_box(Vec3::new(-0.042, 1.72, -0.156), Vec3::new(0.042, 2.38, -0.140), [0.76, 0.75, 0.69], MAT_MATTE);
+        for step in 0..6 {
+            let sy = 2.65 + (step as f32) * 0.62;
+            let side = if step % 2 == 0 { -1.0_f32 } else { 1.0_f32 };
+            b.add_box(Vec3::new(side * 0.10, sy, -0.012), Vec3::new(side * 0.21, sy + 0.022, 0.012), steel_band, MAT_ALLOY);
+        }
+
+        // Curved galvanized residential streetlamp arm (`防犯灯`)
+        b.add_beam(Vec3::new(0.0, 4.18, -0.12), Vec3::new(0.0, 4.46, -0.78), 0.022, [0.34, 0.37, 0.40], MAT_ALLOY);
+        b.add_box(Vec3::new(-0.075, 4.42, -0.94), Vec3::new(0.075, 4.49, -0.62), [0.78, 0.80, 0.82], MAT_ALLOY);
 
         if has_transformers {
             for &(tx, tz, r) in &[(-0.25_f32, -0.09_f32, 0.155_f32), (0.23, 0.07, 0.138)] {
-                b.add_lathe_y(Vec3::new(tx, 4.58, tz), &[(0.0, r), (0.56, r)], 14, [0.42, 0.43, 0.42], MAT_ALLOY, true);
+                b.add_lathe_y(Vec3::new(tx, 4.58, tz), &[(0.0, r), (0.56, r)], 12, [0.38, 0.40, 0.41], MAT_ALLOY, true);
                 b.add_cylinder(Vec3::new(0.0, 4.84, 0.0), Vec3::new(tx, 4.84, tz), 0.022, 0.022, 6, steel_band, MAT_ALLOY, false);
+            }
+            // Diagonal yellow-and-black Japanese guy-wire guard (`支線ガード`) anchored at curb!
+            b.add_beam(Vec3::new(0.08, 4.55, -0.04), Vec3::new(0.86, 1.72, -0.26), 0.010, [0.10, 0.11, 0.12], MAT_ALLOY);
+            for seg in 0..5 {
+                let f0 = (seg as f32) / 5.0;
+                let f1 = ((seg + 1) as f32) / 5.0;
+                let p0 = Vec3::new(0.86 + 0.48 * f0, 1.72 * (1.0 - f0), -0.26);
+                let p1 = Vec3::new(0.86 + 0.48 * f1, 1.72 * (1.0 - f1), -0.26);
+                let gcol = if seg % 2 == 0 { [0.84, 0.68, 0.09] } else { [0.10, 0.11, 0.12] };
+                b.add_beam(p0, p1, 0.030, gcol, MAT_ALLOY);
             }
         }
 
-        // Galvanized steel crossarm & dark porcelain insulators
-        b.add_cylinder(Vec3::new(0.0, 6.88, -0.62), Vec3::new(0.0, 6.88, 0.62), 0.024, 0.024, 8, steel_band, MAT_ALLOY, true);
+        // Galvanized steel crossarm & white porcelain insulators
+        b.add_cylinder(Vec3::new(0.0, 6.88, -0.62), Vec3::new(0.0, 6.88, 0.62), 0.026, 0.026, 8, steel_band, MAT_ALLOY, true);
         for &iz in &[-0.50_f32, -0.16, 0.16, 0.50] {
-            b.add_lathe_y(Vec3::new(0.0, 6.90, iz), &[(0.0, 0.028), (0.068, 0.018)], 8, [0.76, 0.77, 0.76], MAT_CERAMIC, true);
+            b.add_lathe_y(Vec3::new(0.0, 6.90, iz), &[(0.0, 0.028), (0.068, 0.018)], 8, [0.80, 0.82, 0.82], MAT_CERAMIC, true);
         }
     });
 }
@@ -222,32 +244,105 @@ pub fn build_uchinoura_street_static(buf: &mut MeshBuffer) {
     let ground_y = -3.20_f32;
 
     // 1. Deep Sunlit Summer Meadow/Town Ground, Sidewalks, Curbs & Dark Weathered Asphalt Street!
-    buf.add_box(Vec3::new(-220.0, ground_y - 0.35, -8.0), Vec3::new(220.0, ground_y, 160.0), [0.14, 0.24, 0.10], MAT_FOLIAGE);
+    buf.add_box(Vec3::new(-220.0, ground_y - 0.35, -95.0), Vec3::new(220.0, ground_y, 160.0), [0.12, 0.22, 0.08], MAT_FOLIAGE);
 
-    let sidewalk_stone = [0.46, 0.44, 0.40];
-    let curb_stone = [0.38, 0.36, 0.33];
+    let sidewalk_stone = [0.40, 0.38, 0.34];
+    let curb_stone = [0.32, 0.31, 0.28];
     buf.add_box(Vec3::new(-42.0, ground_y + 0.005, -2.5), Vec3::new(42.0, ground_y + 0.14, 4.78), sidewalk_stone, MAT_MATTE);
     buf.add_box(Vec3::new(-42.0, ground_y + 0.005, 9.45), Vec3::new(42.0, ground_y + 0.14, 12.6), sidewalk_stone, MAT_MATTE);
-    buf.add_rounded_box(Vec3::new(-42.0, ground_y + 0.006, 9.24), Vec3::new(42.0, ground_y + 0.16, 9.44), 0.018, curb_stone, MAT_MATTE);
-    buf.add_rounded_box(Vec3::new(-42.0, ground_y + 0.006, 4.80), Vec3::new(42.0, ground_y + 0.16, 5.00), 0.018, curb_stone, MAT_MATTE);
+    buf.add_box(Vec3::new(-42.0, ground_y + 0.006, 9.24), Vec3::new(42.0, ground_y + 0.16, 9.44), curb_stone, MAT_MATTE);
+    buf.add_box(Vec3::new(-42.0, ground_y + 0.006, 4.80), Vec3::new(42.0, ground_y + 0.16, 5.00), curb_stone, MAT_MATTE);
+    // Lush summer grass verge beds along the roadside curb seams (leaving bus-stop boarding zone clear!)
+    buf.add_box(Vec3::new(-18.0, ground_y + 0.141, 4.56), Vec3::new(-8.10, ground_y + 0.168, 4.79), [0.14, 0.30, 0.08], MAT_FOLIAGE);
+    buf.add_box(Vec3::new(-3.60, ground_y + 0.141, 4.58), Vec3::new(16.0, ground_y + 0.168, 4.79), [0.14, 0.30, 0.08], MAT_FOLIAGE);
+    buf.add_box(Vec3::new(-18.0, ground_y + 0.044, 8.94), Vec3::new(18.0, ground_y + 0.072, 9.23), [0.13, 0.28, 0.08], MAT_FOLIAGE);
 
-    // CHECKPOINT 1B NEAR-SIDEWALK PROPS: Roadside Beverage Vending Machine + `バス停` Range Shuttle Stop!
+    // CHECKPOINT 1B NEAR-SIDEWALK PROPS: Weathered Vending Machine + Kominka `バス停` Range Shuttle Stop!
     props::japanese_vending_machine(buf, Pose::at(-1.10, ground_y + 0.142, 2.72));
     props::bus_stop_shelter(buf, Pose::at(-6.80, ground_y + 0.142, 4.30));
+
+    // Sunlit 3D Summer Grass Verges & Golden-Blossom Roadside Shrubs (`image-18.png` foreground & stone base!)
+    props::summer_grass_strip(buf, Pose::at(-10.40, ground_y + 0.165, 4.68), 4.8, 20, 101);
+    props::summer_grass_strip(buf, Pose::at(-1.85, ground_y + 0.165, 4.68), 3.2, 16, 203);
+    props::summer_grass_strip(buf, Pose::at(2.85, ground_y + 0.165, 4.68), 4.8, 22, 307);
+    props::summer_grass_strip(buf, Pose::at(8.20, ground_y + 0.165, 4.68), 5.2, 20, 409);
+    props::summer_grass_strip(buf, Pose::at(-4.50, ground_y + 0.070, 9.08), 5.4, 18, 701);
+    props::summer_grass_strip(buf, Pose::at(2.60, ground_y + 0.070, 9.08), 5.4, 18, 809);
+    props::summer_grass_strip(buf, Pose::at(5.60, ground_y + 0.142, 2.52), 4.4, 16, 511);
+    props::summer_grass_strip(buf, Pose::at(-5.95, ground_y + 0.142, 2.38), 2.8, 12, 613);
+    props::flowering_roadside_shrub(buf, Pose::at(3.55, ground_y + 0.142, 2.68));
+    props::flowering_roadside_shrub(buf, Pose::at(-5.68, ground_y + 0.142, 2.52).with_scale(0.82));
 
     // Dark weathered Japanese residential asphalt (`z in [5.01, 9.23]`) + muted shoulder lines
     buf.add_box(Vec3::new(-45.0, ground_y + 0.004, 5.01), Vec3::new(45.0, ground_y + 0.042, 9.23), [0.14, 0.15, 0.17], MAT_MATTE);
     buf.add_box(Vec3::new(-42.0, ground_y + 0.048, 5.45), Vec3::new(42.0, ground_y + 0.056, 5.54), [0.64, 0.63, 0.59], MAT_MATTE);
     buf.add_box(Vec3::new(-42.0, ground_y + 0.048, 8.68), Vec3::new(42.0, ground_y + 0.056, 8.77), [0.64, 0.63, 0.59], MAT_MATTE);
 
-    // 2. WINDOW COMPOSITION (`image-15.png` aesthetic + Right-Side Launch Pad Sneak View!):
-    //    - Far-Left (`x in [+8.05, +13.6]`): Corrugated galvanized steel annex (`image-15.png` far left!).
-    //    - Left-to-Center (`x in [-0.30, +7.80]` at `z = 11.45`): Main 2-story Kominka Machiya (`House #1`).
-    //    - Right-of-Center (`x in [-3.55, -0.30]`): OPEN SNEAK-VIEW GAP looking out to far-away Launch Pad (`z = 380 m`)!
-    //    - Right Edge (`x in [-10.95, -3.55]` at `z = 11.75`): Second 2-story Machiya townhouse (`House #2`)!
-    let kominka_timber = [0.14, 0.08, 0.042];
-    let kominka_shutter = [0.22, 0.12, 0.062];
-    let kawara_dark = [0.12, 0.13, 0.15];
+    // 2A. `-Z` STREETSCAPE NEIGHBORS FLANKING `UCHINOURA MAISON` (`image-18.png` Shoulder-to-Shoulder Architecture!):
+    let kominka_timber = [0.12, 0.065, 0.032];
+    let kominka_shutter = [0.20, 0.105, 0.052];
+    let kawara_dark = [0.10, 0.11, 0.13];
+
+    // Right of `Uchinoura Maison` (`x in [2.82, 8.45], z in [-2.5, 2.38]`): 2-Story Weathered Corrugated Steel Annex
+    // (`image-18.png` left reference: ribbed blue-grey steel, Oya-stone plinth, cobalt casement window, rooftop wooden rail!)
+    buf.add_box(Vec3::new(2.80, ground_y + 0.142, -2.52), Vec3::new(8.48, ground_y + 0.68, 2.42), [0.34, 0.33, 0.30], MAT_MATTE);
+    buf.add_box(Vec3::new(2.84, ground_y + 0.68, -2.48), Vec3::new(8.44, 2.86, 2.38), [0.24, 0.30, 0.36], MAT_CORRUGATED);
+    // Cobalt-blue painted industrial window frame (`image-18.png` middle-left!) + dark recessed glass
+    buf.add_u_frame_xy(4.35, 5.75, -0.05, 1.05, 2.36, 2.44, 0.075, [0.14, 0.31, 0.52], MAT_ALLOY);
+    buf.add_box(Vec3::new(4.35, -0.12, 2.36), Vec3::new(5.75, -0.05, 2.45), [0.14, 0.31, 0.52], MAT_ALLOY);
+    buf.add_box(Vec3::new(4.36, -0.04, 2.381), Vec3::new(5.74, 1.04, 2.405), [0.08, 0.11, 0.14], MAT_ALLOY);
+    // Rooftop wooden cantilevered drying-deck railing (`image-18.png` top-left!)
+    buf.add_box(Vec3::new(2.80, 2.86, -2.52), Vec3::new(8.48, 2.96, 2.46), kominka_timber, MAT_WOOD);
+    buf.add_box(Vec3::new(2.86, 3.58, 2.38), Vec3::new(8.42, 3.65, 2.45), kominka_shutter, MAT_WOOD);
+    for p in 0..=6 {
+        let px = 2.92 + (p as f32) * 0.90;
+        buf.add_box(Vec3::new(px - 0.03, 2.96, 2.39), Vec3::new(px + 0.03, 3.64, 2.44), kominka_timber, MAT_WOOD);
+    }
+
+    // Far-Right `-Z` Neighbor (`x in [8.60, 15.60]`): Traditional 2-Story Plaster & Timber `Kura` Storehouse!
+    buf.add_box(Vec3::new(8.60, ground_y + 0.142, -2.60), Vec3::new(15.60, 2.62, 2.32), [0.54, 0.49, 0.40], MAT_MATTE);
+    buf.add_box(Vec3::new(8.58, ground_y + 0.142, 2.321), Vec3::new(15.62, -0.35, 2.355), kominka_shutter, MAT_WOOD);
+    buf.push_quad(
+        Vec3::new(8.42, 2.54, 2.86),
+        Vec3::new(15.78, 2.54, 2.86),
+        Vec3::new(15.78, 3.52, -0.10),
+        Vec3::new(8.42, 3.52, -0.10),
+        kawara_dark,
+        MAT_KAWARA,
+    );
+
+    // Left of `Uchinoura Maison` & Behind the `バス停` Bus Stop (`x in [-13.20, -5.80], z = 2.22`, rotated PI to face `+Z`!):
+    // Sister 2-Story Kominka Machiya (`House #3`, eliminating the left `-Z` green void!)
+    build_machiya_house(
+        buf,
+        Pose::at_yaw(-9.50, ground_y + 0.142, 2.22, core::f32::consts::PI),
+        &MachiyaHouseSpec {
+            width: 7.40,
+            depth: 6.4,
+            plaster_col: [0.50, 0.43, 0.33],
+            timber_col: kominka_timber,
+            shutter_wood_col: kominka_shutter,
+            tile_col: kawara_dark,
+            has_wide_balcony: true,
+            has_eave_ac: true,
+            has_izakaya_lanterns: false,
+            has_rooftop_aerial: true,
+        },
+    );
+
+    // Far-Left `-Z` Oya-Stone Compound Wall (`hei`, `x in [-22.0, -13.25]`) + Lush Summer Canopy Tree (`image-18.png` foliage!)
+    buf.add_box(Vec3::new(-22.0, ground_y + 0.142, 1.95), Vec3::new(-13.25, ground_y + 2.05, 2.32), [0.36, 0.35, 0.32], MAT_MATTE);
+    buf.add_box(Vec3::new(-22.05, ground_y + 2.05, 1.88), Vec3::new(-13.20, ground_y + 2.18, 2.40), kawara_dark, MAT_KAWARA);
+    // Tall roadside Zelkova (`Keyaki`) summer shade tree (`x = -14.4, z = 1.35`)
+    buf.add_cylinder(Vec3::new(-14.4, ground_y + 0.14, 1.35), Vec3::new(-14.2, 2.40, 1.45), 0.24, 0.15, 8, [0.18, 0.12, 0.07], MAT_WOOD, false);
+    buf.add_ellipsoid(Vec3::new(-14.1, 3.35, 1.65), Vec3::new(2.35, 1.65, 2.10), 10, 7, [0.12, 0.34, 0.10], MAT_FOLIAGE);
+    buf.add_ellipsoid(Vec3::new(-12.8, 2.75, 2.25), Vec3::new(1.55, 1.20, 1.45), 9, 6, [0.16, 0.40, 0.11], MAT_FOLIAGE);
+
+    // Second summer Zelkova tree on far-right (`x = 16.4, z = 1.60`) framing the `-Z` streetscape
+    buf.add_cylinder(Vec3::new(16.4, ground_y + 0.14, 1.60), Vec3::new(16.2, 2.55, 1.70), 0.24, 0.15, 8, [0.18, 0.12, 0.07], MAT_WOOD, false);
+    buf.add_ellipsoid(Vec3::new(16.0, 3.50, 1.85), Vec3::new(2.40, 1.70, 2.10), 10, 7, [0.13, 0.36, 0.10], MAT_FOLIAGE);
+
+    // 2B. `+Z` WINDOW COMPOSITION (`image-15.png` aesthetic + Right-Side Launch Pad Sneak View!):
 
     // Corrugated galvanized steel neighbor annex on the far left (`image-15.png` left edge!)
     buf.add_box(Vec3::new(8.05, ground_y + 0.142, 10.85), Vec3::new(13.8, ground_y + 6.35, 17.2), [0.26, 0.30, 0.35], MAT_CORRUGATED);
@@ -347,8 +442,34 @@ pub fn build_uchinoura_street_static(buf: &mut MeshBuffer) {
         0.008,
         wire_blk,
     );
+    // Service drop cable (`引込線`) from foreground pole across to `Uchinoura Maison` eave (`image-18.png` overhead wires!)
+    buf.add_catenary(
+        Vec3::new(pole_left_fg.x, pole_left_fg.y + 5.56, pole_left_fg.z - 0.14),
+        Vec3::new(-2.45, 2.52, 2.38),
+        0.22,
+        10,
+        0.008,
+        wire_blk,
+    );
 
-    // 5. LAYERED DEEP-FOREST UCHINOURA MOUNTAINS & SNEAK VIEW OF FAR-AWAY LAUNCH PAD-1 (`z = 380 m`)!
+    // 5. LAYERED DEEP-FOREST UCHINOURA MOUNTAINS (`+Z` Launch Vista AND `-Z` Coastal Hills — Zero Barren Horizon!):
+    // `-Z` Forested Uchinoura Hills rising behind `Uchinoura Maison` & neighboring roofs (`outward +Z/+Y CCW normals!`)
+    buf.push_quad(
+        Vec3::new(-200.0, ground_y, -68.0),
+        Vec3::new(20.0, ground_y, -68.0),
+        Vec3::new(20.0, 21.0, -125.0),
+        Vec3::new(-200.0, 26.0, -135.0),
+        [0.09, 0.22, 0.10],
+        MAT_FOLIAGE,
+    );
+    buf.push_quad(
+        Vec3::new(-15.0, ground_y, -74.0),
+        Vec3::new(200.0, ground_y, -74.0),
+        Vec3::new(200.0, 24.5, -132.0),
+        Vec3::new(-15.0, 17.5, -118.0),
+        [0.10, 0.24, 0.11],
+        MAT_FOLIAGE,
+    );
     // Mid-distance lush cedar-forested hills (`z = 135..160 m`, dipping into a saddle around `x = -26` so the distant Pad ridge rises clearly!)
     buf.push_quad(
         Vec3::new(-180.0, 16.0, 155.0),
