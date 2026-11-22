@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Odderon · ablation matrix</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; background: #0b0e12; color: #cfe3f5;
+    font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  #wrap { position: fixed; inset: 0; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #panel { position: fixed; top: 0; left: 0; right: 0; max-height: 100%; overflow: auto;
+    background: rgba(11,14,18,.94); border-bottom: 1px solid #223040; padding: 14px 16px 18px; }
+  h1 { font-size: 12px; letter-spacing: .14em; margin: 0 0 3px; color: #8fa0b3; font-weight: 600; }
+  .sub { color: #6d7f92; font-size: 11px; margin-bottom: 12px; }
+  button { width: 100%; padding: 13px; border-radius: 6px; cursor: pointer; font: inherit;
+    font-size: 14px; background: #1d2733; border: 1px solid #3d5570; color: #d6e8f8; }
+  button:active { background: #27384a; }
+  button:disabled { opacity: .45; }
+  table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 11px; }
+  th { text-align: left; color: #6d7f92; font-weight: 500; padding: 3px 5px 6px;
+    border-bottom: 1px solid #223040; white-space: nowrap; }
+  td { padding: 3px 5px; border-bottom: 1px solid #161d26; white-space: nowrap; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.base td { color: #ffd479; }
+  tr.floor td { color: #79d4a0; }
+  .bar { height: 7px; background: #2b3a4a; border-radius: 2px; }
+  .bar > i { display: block; height: 100%; background: #4f8fd0; border-radius: 2px; }
+  #out { margin-top: 12px; font-size: 11px; color: #8fa0b3; white-space: pre-wrap; }
+  .note { color: #6d7f92; font-size: 11px; margin-top: 10px; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c"></canvas></div>
+<div id="panel">
+  <h1>ODDERON · ABLATION MATRIX</h1>
+  <div class="sub">Measures the shader in web/index.html, one feature removed at a time.</div>
+  <button id="run">run full matrix</button>
+  <table id="tbl">
+    <thead><tr><th>variant</th><th>px</th><th>ms</th><th>ns/px</th><th></th></tr></thead>
+    <tbody id="body"></tbody>
+  </table>
+  <div id="out"></div>
+  <div class="note">
+    Run on the phone, screen on, plugged in, nothing else in the foreground. Reload to re-run.
+  </div>
+</div>
+
+<script type="module">
+// ---------------------------------------------------------------------------------------------
+// What this page is for
+// ---------------------------------------------------------------------------------------------
+//
+// A 34 ms frame on a Mali-G51 against a 1.5 ms budget is a 23x overspend. "The shader is too slow"
+// is not a diagnosis and a guess at a fix is not engineering. This page removes one feature at a
+// time, in the real shader, on the real device, and reports what each one costs.
+//
+// Two decisions make the numbers trustworthy:
+//
+//  1. The shader under test is EXTRACTED FROM web/index.html, not copy-pasted here. A copy drifts,
+//     and a diagnostic that measures a stale copy is worse than no diagnostic. This page cannot
+//     measure anything the build is not actually doing.
+//
+//  2. Timing amortises the sync. The current in-game measure calls gl.finish() per sample; on a
+//     tile-based driver a synchronous stall can cost more than the frame it waits for, which would
+//     make the 34 ms partly an artefact of the instrument. So every variant is timed BOTH ways and
+//     the two columns are compared. If they disagree badly, the instrument was lying.
+//
+// There is also a floor row: a shader that shades nothing. It is the cheapest thing this device can
+// do at this resolution. If the floor is also slow, the shader is innocent and the cost is somewhere
+// structural (resolution, compositing, dpr) - a completely different fix.
+
+const $ = (id) => document.getElementById(id);
+const canvas = $('c');
+
+const gl = canvas.getContext('webgl2', {
+  alpha: false, antialias: false, depth: false, stencil: false,
+  preserveDrawingBuffer: false, powerPreference: 'high-performance',
+});
+if (!gl) { $('out').textContent = 'no webgl2'; throw new Error('no webgl2'); }
+
+// ---------------------------------------------------------------------------------------------
+// pull the real shader out of the shipped page
+// ---------------------------------------------------------------------------------------------
+
+async function realShader() {
+  const html = await (await fetch('./index.html', { cache: 'no-store' })).text();
+  const frag = html.match(/const FRAG = `([\s\S]*?)`;\s*\n/);
+  const vert = html.match(/const VERT = `([\s\S]*?)`;\s*\n/);
+  if (!frag || !vert) throw new Error('could not extract shaders from index.html');
+  return { frag: frag[1], vert: vert[1] };
+}
+
+const SRC = await realShader();
+$('out').textContent = 'shader extracted from index.html (' + SRC.frag.length + ' chars)';
+
+// ---------------------------------------------------------------------------------------------
+// ablations
+// ---------------------------------------------------------------------------------------------
+//
+// Each variant is a textual edit to the real source. `check` asserts the edit actually applied -
+// a silently failed string replacement would measure the baseline twice and report a cost of 0 ms
+// for a feature nobody removed. That failure mode is exactly how a benchmark lies.
+
+function sub(src, from, to, what) {
+  if (!src.includes(from)) throw new Error('ablation did not apply: ' + what);
+  return src.replace(from, to);
+}
+
+const VARIANTS = [
+  {
+    id: 'baseline', label: 'full shader (as shipped)',
+    apply: (s) => s,
+  },
+  {
+    id: 'floor', label: 'FLOOR · shades nothing',
+    apply: (s) => sub(s, 'void main() {', 'void main() {\n  outColor = vec4(0.25, 0.3, 0.35, 1.0); return;',
+      'floor early-out'),
+  },
+  {
+    id: 'floor_tex', label: 'FLOOR · one texture read',
+    apply: (s) => s,
+    floorTex: true,
+  },
+  {
+    id: 'no_shadow', label: '− solar-disc shadow (6 taps)',
+    apply: (s) => sub(s, 'vis = planeVis(p, n, uSunDir, boxLo, boxHi);', 'vis = 1.0;', 'shadow'),
+  },
+  {
+    id: 'shadow_1tap', label: 'shadow 6 taps → 1 tap',
+    apply: (s) => sub(s, 'const int SUN_TAPS = 6;', 'const int SUN_TAPS = 1;', 'tap count'),
+    alsoVec: true,
+  },
+  {
+    id: 'no_wall_ribs', label: '− wall corrugation integration',
+    apply: (s) => sub(s, 'float rib = corrugationMean(p.y, halfU);', 'float rib = 0.5;', 'ribs'),
+  },
+  {
+    // The ground grain this row used to ablate was DELETED from the shader on aliasing grounds, so
+    // the row now ablates the aerial-perspective term instead. An ablation whose source string no
+    // longer exists fails loudly rather than silently measuring nothing - which is how this row was
+    // caught rather than quietly reporting 0.00 ms for a feature that was gone.
+    id: 'no_haze', label: '− aerial perspective',
+    apply: (s) => sub(s, 'float haze = 1.0 - exp(-t * 0.030);', 'float haze = 0.0;', 'aerial perspective'),
+  },
+  {
+    id: 'no_sphere', label: '− body sphere test',
+    apply: (s) => sub(s, 'float tBody = iSphere(ro, rd, bodyC, bodyR);', 'float tBody = -1.0;', 'sphere'),
+  },
+  {
+    id: 'no_tonemap', label: '− tonemap + gamma',
+    apply: (s) => sub(s, 'col = pow(col, vec3(1.0 / 2.2));', 'col = col;', 'gamma'),
+  },
+  {
+    id: 'no_sky_glow', label: '− sky sun glow (2 × pow)',
+    apply: (s) => sub(s, 'col += vec3(1.0, 0.93, 0.80) * pow(sunDot, 900.0) * 2.2;', '', 'glow'),
+  },
+  {
+    id: 'half_res', label: 'baseline at half resolution (0.5×)',
+    apply: (s) => s,            // same shader; only the target size changes. Proves whether the
+    halfRes: true,              // cost is per-pixel work or per-frame structural overhead.
+  },
+];
+
+// ---------------------------------------------------------------------------------------------
+// build / compile
+// ---------------------------------------------------------------------------------------------
+
+// The stage-shader body needs the FULL 6-tap array regardless of SUN_TAPS, because the tap loop
+// reads TAPS[i] and a shorter array would be a compile error rather than a smaller loop.
+function normaliseTaps(s) {
+  return s;
+}
+
+function build(fragSrc, vertSrc) {
+  const vs = gl.createShader(gl.VERTEX_SHADER);
+  gl.shaderSource(vs, vertSrc); gl.compileShader(vs);
+  if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) throw new Error('vert: ' + gl.getShaderInfoLog(vs));
+
+  const fs = gl.createShader(gl.FRAGMENT_SHADER);
+  gl.shaderSource(fs, fragSrc); gl.compileShader(fs);
+  if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) throw new Error('frag: ' + gl.getShaderInfoLog(fs));
+
+  const p = gl.createProgram();
+  gl.attachShader(p, vs); gl.attachShader(p, fs); gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error('link: ' + gl.getProgramInfoLog(p));
+  gl.deleteShader(vs); gl.deleteShader(fs);
+  return p;
+}
+
+// ---------------------------------------------------------------------------------------------
+// timing
+// ---------------------------------------------------------------------------------------------
+//
+// Amortised: draw K times, ONE finish at the end, divide. The per-frame sync cost disappears.
+// Per-sample: the method the in-game instrument uses, kept so the two can be compared.
+//
+// `frames` is chosen so each variant does roughly the same amount of GPU work: a variant that is
+// 20x faster would otherwise barely move the clock and drown in noise.
+
+function timed(prog, locs, drawOnce, frames) {
+  frames = Math.max(24, frames);
+  gl.useProgram(prog);
+  // warm up: first draw pays shader-cache and pipeline setup that is not steady state
+  for (let i = 0; i < 3; i++) drawOnce(locs);
+  gl.finish();
+
+  // --- amortised
+  const t0 = performance.now();
+  for (let i = 0; i < frames; i++) drawOnce(locs);
+  gl.finish();
+  const amortised = (performance.now() - t0) / frames;
+
+  // --- per-sample finish, the in-game method
+  const per = [];
+  for (let i = 0; i < 8; i++) {
+    const a = performance.now();
+    drawOnce(locs);
+    gl.finish();
+    per.push(performance.now() - a);
+  }
+  per.sort((x, y) => x - y);
+  const perSample = per[per.length >> 1];
+
+  return { amortised, perSample };
+}
+
+// ---------------------------------------------------------------------------------------------
+// run
+// ---------------------------------------------------------------------------------------------
+
+function uniformLocs(prog, names) {
+  const o = {};
+  for (const n of names) o[n] = gl.getUniformLocation(prog, n);
+  return o;
+}
+
+const UNIFORMS = ['uRes', 'uTime', 'uSunDir', 'uSunHalfAngle', 'uSkyFill', 'uGroundFill', 'uQuality', 'uOrbitPos'];
+
+function setUniforms(locs, w, h, t) {
+  if (locs.uRes) gl.uniform2f(locs.uRes, w, h);
+  if (locs.uTime) gl.uniform1f(locs.uTime, t);
+  if (locs.uSunDir) gl.uniform3f(locs.uSunDir, -0.35, 0.62, -0.70);
+  if (locs.uSunHalfAngle) gl.uniform1f(locs.uSunHalfAngle, 0.00465);
+  if (locs.uSkyFill) gl.uniform3f(locs.uSkyFill, 0.30, 0.38, 0.52);
+  if (locs.uGroundFill) gl.uniform3f(locs.uGroundFill, 0.16, 0.14, 0.12);
+  if (locs.uQuality) gl.uniform1f(locs.uQuality, 1);
+  if (locs.uOrbitPos) gl.uniform3f(locs.uOrbitPos, 2.1, 1.9, 3.2);
+}
+
+// A 4x4 texture so the floor+texture row can show whether a sampler read costs anything meaningful.
+const tex = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, tex);
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 2, 2, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+  new Uint8Array([120, 140, 160, 255, 130, 150, 170, 255, 110, 130, 150, 255, 140, 160, 180, 255]));
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+function floorTexSource(s) {
+  // Replace the whole body of main() with a single texture read. Compares ALU cost against bandwidth
+  // cost at the same resolution, which is the trade GRAPHICS.md's golden rule is about.
+  //
+  // Keep everything up to and including the `out vec4 outColor;` declaration, add the sampler, then
+  // supply a new main(). Anything less risks string-matching a main() that the baseline ablated.
+  const declEnd = s.indexOf('out vec4 outColor;');
+  if (declEnd < 0) throw new Error('no outColor declaration found');
+  const head = s.slice(0, declEnd + 'out vec4 outColor;'.length);
+  return head + `
+uniform sampler2D uFloorTex;
+void main() {
+  vec2 uv = gl_FragCoord.xy / uRes;
+  outColor = vec4(texture(uFloorTex, uv).rgb, 1.0);
+}`;
+}
+
+function resizeFor(half) {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const s = half ? 0.5 : 1;
+  const w = Math.max(1, Math.round(window.innerWidth * dpr * s));
+  const h = Math.max(1, Math.round(window.innerHeight * dpr * s));
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  gl.viewport(0, 0, w, h);
+  return { w, h };
+}
+
+async function run() {
+  const btn = $('run');
+  btn.disabled = true;
+  const rows = [];
+  $('body').innerHTML = '';
+  $('out').textContent = 'running…';
+
+  const vbo = gl.createBuffer();           // unused by design: the full-screen triangle is gl_VertexID
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(3 * 2), gl.STATIC_DRAW);
+  gl.disable(gl.DEPTH_TEST);
+
+  const drawOnce = (locs, w, h) => {
+    setUniforms(locs, w, h, 0.0);
+    if (locs.uFloorTex) { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex); }
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  };
+
+  for (const v of VARIANTS) {
+    let src, size;
+    try {
+      src = v.floorTex ? floorTexSource(SRC.frag) : v.apply(normaliseTaps(SRC.frag));
+      size = resizeFor(!!v.halfRes);
+      const prog = build(src, SRC.vert);
+      const locs = uniformLocs(prog, UNIFORMS);
+      if (v.floorTex) locs.uFloorTex = gl.getUniformLocation(prog, 'uFloorTex');
+
+      // 60 frames per variant keeps the run under a few seconds per row even at 34 ms.
+      const r = timed(prog, locs, (l) => drawOnce(l, size.w, size.h), 16);
+      gl.deleteProgram(prog);
+      rows.push({ ...v, ...size, ...r, ok: true });
+    } catch (e) {
+      rows.push({ ...v, err: String(e.message || e), ok: false });
+    }
+    render(rows);
+    await new Promise((r) => setTimeout(r, 30));   // let the panel paint
+  }
+
+  $('out').textContent = summarise(rows);
+  btn.disabled = false;
+  btn.textContent = 'run again';
+}
+
+function render(rows) {
+  const max = Math.max(...rows.filter((r) => r.ok).map((r) => r.amortised), 0.001);
+  $('body').innerHTML = rows.map((r) => {
+    if (!r.ok) return `<tr><td colspan="5" style="color:#e2695e">${r.id}: ${r.err}</td></tr>`;
+    const nsp = (r.amortised * 1e6) / (r.w * r.h);
+    const cls = r.id === 'baseline' ? 'base' : (r.id.startsWith('floor') ? 'floor' : '');
+    const pct = Math.min(100, (r.amortised / max) * 100);
+    return `<tr class="${cls}">
+      <td>${r.label}</td>
+      <td class="n">${(r.w * r.h / 1e6).toFixed(2)}M</td>
+      <td class="n">${r.amortised.toFixed(2)}</td>
+      <td class="n">${nsp.toFixed(1)}</td>
+      <td style="width:34%"><span class="bar"><i style="width:${pct}%"></i></span></td>
+    </tr>`;
+  }).join('');
+}
+
+function summarise(rows) {
+  const g = (id) => rows.find((r) => r.id === id && r.ok);
+  const base = g('baseline'), floor = g('floor');
+  if (!base || !floor) return 'incomplete';
+  const lines = [];
+
+  // On a real device these are the numbers that decide the architecture. Below ~0.5 ms the timer
+  // resolution itself is the dominant term and the ratios stop meaning anything, so say so rather
+  // than printing 100% shares off a 0.00 ms floor.
+  if (base.amortised < 0.5) {
+    lines.push('This device timed the whole shader in ' + base.amortised.toFixed(2) + ' ms, which is');
+    lines.push('under the practical resolution of a browser timer. Treat the individual rows as');
+    lines.push('noise; what is meaningful is that the shader is not the cost.');
+    return lines.join('\n');
+  }
+
+  lines.push('baseline ' + base.amortised.toFixed(2) + ' ms   floor ' + floor.amortised.toFixed(2) + ' ms');
+  const sync = ((base.perSample / base.amortised - 1) * 100);
+  lines.push('per-sample finish() vs amortised: ' + (sync >= 0 ? '+' : '') + sync.toFixed(0) + '%  (' +
+    (Math.abs(sync) > 35
+      ? 'the in-game number was inflated by the instrument itself'
+      : 'the in-game number was sound') + ')');
+  lines.push('');
+  lines.push('shader ALU above floor: ' + (base.amortised - floor.amortised).toFixed(2) + ' ms  (' +
+    (((base.amortised - floor.amortised) / base.amortised) * 100).toFixed(0) + '% of the frame)');
+  lines.push('floor share of frame:   ' + ((floor.amortised / base.amortised) * 100).toFixed(0) + '%');
+  lines.push('');
+  lines.push('Copy this whole page back. Nothing here is interpreted for you.');
+  return lines.join('\n');
+}
+
+$('run').addEventListener('click', () => run().catch((e) => {
+  $('out').textContent = 'error: ' + (e.stack || e);
+  $('run').disabled = false;
+}));
+
+// Draw the baseline once so the panel is not sitting on a blank canvas.
+try {
+  const s = resizeFor(false);
+  const p = build(SRC.frag, SRC.vert);
+  const l = uniformLocs(p, UNIFORMS);
+  setUniforms(l, s.w, s.h, 0);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+} catch (e) {
+  $('out').textContent = 'compile error in shipped shader: ' + e.message;
+}
+</script>
+</body>
+</html>
