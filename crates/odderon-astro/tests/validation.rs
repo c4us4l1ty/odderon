@@ -43,7 +43,7 @@ fn circular_orbit_returns_to_its_start_after_one_period() {
     for k in 1..=10 {
         let out = propagate(&s0, k as f64 * p, MU);
         assert!(!out.unconverged, "failed to converge at period {}", k);
-        let err_m = out.state.r.sub(s0.r).norm() * 1000.0;
+        let err_m = (out.state.r - s0.r).norm() * 1000.0;
         // Measured worst case 1.7e-7 m (0.17 micrometres). Bound at 1e-3 m — still 1 mm on a
         // 6,778 km orbit, and tight enough that a genuine regression cannot hide inside it.
         assert!(err_m < 1e-3, "after {} periods, position error {:.3e} m", k, err_m);
@@ -58,8 +58,8 @@ fn time_reversal_returns_the_original_state() {
     let p = period(s0.semi_major_axis(MU), MU);
     let forward = propagate(&s0, p * 0.37, MU).state;
     let back = propagate(&forward, -p * 0.37, MU).state;
-    let dr = back.r.sub(s0.r).norm();
-    let dv = back.v.sub(s0.v).norm();
+    let dr = (back.r - s0.r).norm();
+    let dv = (back.v - s0.v).norm();
     // Measured 6.3e-12 km and 8.2e-15 km/s. Bounds sit an order of magnitude above measurement so a
     // different inlining decision cannot fail the build, but tight enough that a real regression
     // will.
@@ -126,7 +126,7 @@ fn angular_momentum_is_conserved() {
     let p = period(s0.semi_major_axis(MU), MU);
 
     let out = propagate(&s0, 500.0 * p, MU);
-    let worst_single = out.state.angular_momentum().sub(h0).norm() / h0n;
+    let worst_single = (out.state.angular_momentum() - h0).norm() / h0n;
     assert!(worst_single < 1e-14, "single jump: {:.3e}", worst_single);
 
     let mut state = s0;
@@ -134,7 +134,7 @@ fn angular_momentum_is_conserved() {
     for _ in 0..2_000 {
         state = propagate(&state, p * 0.031, MU).state;
         let h = state.angular_momentum();
-        worst = f64_max(worst, h.sub(h0).norm() / h0n);
+        worst = f64_max(worst, (h - h0).norm() / h0n);
     }
     assert!(worst < 1e-12, "relative angular momentum drift {:.3e}", worst);
 }
@@ -162,7 +162,7 @@ fn s0_eccentricity(s: &State) -> f64 {
     let mu = MU;
     let r = s.r.norm();
     let v2 = s.v.dot(s.v);
-    let e = s.r.scale(v2 - mu / r).sub(s.v.scale(s.r.dot(s.v))).scale(1.0 / mu);
+    let e = (s.r * (v2 - mu / r) - s.v * s.r.dot(s.v)) * (1.0 / mu);
     e.norm()
 }
 

@@ -123,7 +123,11 @@ pub fn ops_reset() {
 }
 
 /// Operations performed since [`ops_reset`]. Available only in native debug builds.
-#[cfg(all(debug_assertions, not(target_arch = "wasm32"), target_has_atomic = "64"))]
+#[cfg(all(
+    debug_assertions,
+    not(target_arch = "wasm32"),
+    target_has_atomic = "64"
+))]
 pub fn ops_since_reset() -> u64 {
     counting::read()
 }
@@ -914,8 +918,18 @@ mod tests {
             // The bound is therefore relative to the input's own resolution, stated rather than
             // fudged until the test passed.
             let bound = 2e-16 * fmax(fabs(x), 1.0);
-            assert!(fabs(sin(x) - x.sin()) < bound, "sin at {} (bound {})", x, bound);
-            assert!(fabs(cos(x) - x.cos()) < bound, "cos at {} (bound {})", x, bound);
+            assert!(
+                fabs(sin(x) - x.sin()) < bound,
+                "sin at {} (bound {})",
+                x,
+                bound
+            );
+            assert!(
+                fabs(cos(x) - x.cos()) < bound,
+                "cos at {} (bound {})",
+                x,
+                bound
+            );
             assert!(fabs(atan(x) - x.atan()) < 1e-15, "atan at {}", x);
             assert!(
                 fabs(atan2(x, 1.0 - x) - x.atan2(1.0 - x)) < 1e-14,
@@ -1069,7 +1083,12 @@ mod tests {
             }
             assert_eq!(sin(-x).to_bits(), (-sin(x)).to_bits(), "sin odd at {}", x);
             assert_eq!(cos(-x).to_bits(), cos(x).to_bits(), "cos even at {}", x);
-            assert_eq!(atan(-x).to_bits(), (-atan(x)).to_bits(), "atan odd at {}", x);
+            assert_eq!(
+                atan(-x).to_bits(),
+                (-atan(x)).to_bits(),
+                "atan odd at {}",
+                x
+            );
         }
         for &x in [1e-6, 0.1, 0.5, 1.0, 2.0, 10.0, 1e6].iter() {
             let y = exp(ln(x));

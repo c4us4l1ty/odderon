@@ -42,6 +42,27 @@
 
 use odderon_dmath::{acos, atan2, clamp_unit, fabs, fmax, sinh, sqrt};
 
+// ---------------------------------------------------------------------------------------------
+// domain predicates
+// ---------------------------------------------------------------------------------------------
+//
+// These exist because `!(x > 0.0)` is the *correct* test wherever a NaN must be rejected rather than
+// propagated, and it reads badly enough that both clippy and a human reviewer are right to object.
+// Naming the intent resolves it: `positive(NaN)` is false, so a NaN radius takes the degenerate path
+// and is reported, instead of flowing onward looking like a valid state.
+
+/// True only for a real, strictly positive number. NaN is not.
+#[inline]
+fn positive(x: f64) -> bool {
+    x > 0.0
+}
+
+/// True only when `x` is a real number strictly greater than `bound`. NaN is not.
+#[inline]
+fn exceeds(x: f64, bound: f64) -> bool {
+    x > bound
+}
+
 /// Gravitational parameters, km³/s².
 ///
 /// Values from the IAU/JPL published constants. They are *data*, not physics: a body's `mu` is a
@@ -101,19 +122,7 @@ impl Vec3 {
         Vec3 { x, y, z }
     }
 
-    /// Component-wise addition.
-    #[inline]
-    pub fn add(self, o: Vec3) -> Vec3 {
-        Vec3::new(self.x + o.x, self.y + o.y, self.z + o.z)
-    }
-
-    /// Component-wise subtraction.
-    #[inline]
-    pub fn sub(self, o: Vec3) -> Vec3 {
-        Vec3::new(self.x - o.x, self.y - o.y, self.z - o.z)
-    }
-
-    /// Scalar multiplication.
+    /// Scalar multiplication, spelled out. `v * k` works too, via [`core::ops::Mul`].
     #[inline]
     pub fn scale(self, k: f64) -> Vec3 {
         Vec3::new(self.x * k, self.y * k, self.z * k)
@@ -153,6 +162,41 @@ impl Vec3 {
         } else {
             self.scale(1.0 / n)
         }
+    }
+}
+
+// Vector arithmetic as operators, so call sites read as physics: `r - v * dt` rather than
+// `r.sub(&v.mul(dt))`. `scale` still exists as a method for the cases where a name is clearer than
+// an operator.
+impl core::ops::Add for Vec3 {
+    type Output = Vec3;
+    #[inline]
+    fn add(self, o: Vec3) -> Vec3 {
+        Vec3::new(self.x + o.x, self.y + o.y, self.z + o.z)
+    }
+}
+
+impl core::ops::Sub for Vec3 {
+    type Output = Vec3;
+    #[inline]
+    fn sub(self, o: Vec3) -> Vec3 {
+        Vec3::new(self.x - o.x, self.y - o.y, self.z - o.z)
+    }
+}
+
+impl core::ops::Mul<f64> for Vec3 {
+    type Output = Vec3;
+    #[inline]
+    fn mul(self, k: f64) -> Vec3 {
+        self.scale(k)
+    }
+}
+
+impl core::ops::Neg for Vec3 {
+    type Output = Vec3;
+    #[inline]
+    fn neg(self) -> Vec3 {
+        Vec3::new(-self.x, -self.y, -self.z)
     }
 }
 
@@ -275,11 +319,7 @@ const TOLERANCE: f64 = 1e-12;
 /// simulator must survive being handed nonsense by a player mid-design.
 pub fn propagate(state: &State, dt: f64, mu: f64) -> Propagation {
     let r0 = state.r.norm();
-    // Note the negated comparisons: `!(r0 > 0.0)` rather than `r0 <= 0.0`, and the same throughout
-    // this crate. With a NaN radius the direct form is false and the NaN would flow onward as if it
-    // were a valid state; negated, NaN takes the degenerate path and is *reported*. Clippy permits
-    // this form for exactly this reason.
-    if !(r0 > 0.0) || !(mu > 0.0) {
+    if !positive(r0) || !positive(mu) {
         return Propagation {
             state: State::new(
                 Vec3::new(f64::NAN, f64::NAN, f64::NAN),
@@ -341,7 +381,7 @@ pub fn propagate(state: &State, dt: f64, mu: f64) -> Propagation {
         let step = f / r;
         chi -= step;
         residual = fabs(step);
-        if !(residual > TOLERANCE) {
+        if !exceeds(residual, TOLERANCE) {
             unconverged = false;
             break;
         }
@@ -360,9 +400,9 @@ pub fn propagate(state: &State, dt: f64, mu: f64) -> Propagation {
     // Lagrange f and g coefficients.
     let f = 1.0 - chi2 / r0 * c;
     let g = dt - chi2 * chi / sqrt_mu * s;
-    let r_new = state.r.scale(f).add(state.v.scale(g));
+    let r_new = state.r * f + state.v * g;
     let rn = r_new.norm();
-    if !(rn > 0.0) {
+    if !positive(rn) {
         return Propagation {
             state: State::new(
                 Vec3::new(f64::NAN, f64::NAN, f64::NAN),
@@ -375,7 +415,7 @@ pub fn propagate(state: &State, dt: f64, mu: f64) -> Propagation {
     }
     let fdot = sqrt_mu / (rn * r0) * (alpha * chi2 * chi * s - chi);
     let gdot = 1.0 - chi2 / rn * c;
-    let v_new = state.r.scale(fdot).add(state.v.scale(gdot));
+    let v_new = state.r * fdot + state.v * gdot;
 
     Propagation {
         state: State::new(r_new, v_new),
@@ -390,7 +430,7 @@ pub fn propagate(state: &State, dt: f64, mu: f64) -> Propagation {
 /// Kepler's third law. Cheap enough to call in a hot path, and used as the reference in the period
 /// validation test.
 pub fn period(semi_major_axis: f64, mu: f64) -> f64 {
-    if !(semi_major_axis > 0.0) {
+    if !positive(semi_major_axis) {
         return f64::INFINITY;
     }
     odderon_dmath::TAU * sqrt(semi_major_axis * semi_major_axis * semi_major_axis / mu)
@@ -408,7 +448,7 @@ pub fn true_anomaly(state: &State, mu: f64) -> f64 {
     let h = state.angular_momentum();
     let h_norm = h.norm();
     let r_norm = state.r.norm();
-    if !(h_norm > 0.0) || !(r_norm > 0.0) {
+    if !positive(h_norm) || !positive(r_norm) {
         return f64::NAN;
     }
     // e = ((v² − mu/r)·r − (r·v)·v) / mu
@@ -416,7 +456,7 @@ pub fn true_anomaly(state: &State, mu: f64) -> f64 {
     let e_vec = state
         .r
         .scale(v2 - mu / r_norm)
-        .sub(state.v.scale(state.r.dot(state.v)))
+        - state.v * state.r.dot(state.v)
         .scale(1.0 / mu);
     let e = e_vec.norm();
 

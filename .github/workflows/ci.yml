@@ -49,19 +49,34 @@ jobs:
           set -o pipefail
           cargo test --workspace --exclude odderon-dmath-wasm --all-targets 2>&1 \
             | tee /tmp/test.log || true
+          # Everything below must reach the *annotation*, not just the job log, because the job log
+          # is not always readable. Two files, one purpose each: SUMMARY is printed for humans, and
+          # the same lines are %0A-encoded for the annotation, which is what a restricted client sees.
+          SUMMARY=/tmp/summary.txt
+          : > "$SUMMARY"
+          fail_with() {
+            echo "======================= SUMMARY ======================="
+            cat "$SUMMARY"
+            echo "======================================================="
+            ENCODED=$(sed -e 's/%/%25/g' -e 's/\r$//' "$SUMMARY" | awk '{ printf "%s%%0A", $0 }')
+            printf '::error title=%s::%s\n' "$1" "$ENCODED"
+            exit 1
+          }
+
           if ! grep -qE "^test result: ok" /tmp/test.log; then
-            echo "======================= SUMMARY ======================="
-            grep -E "^test result|FAILED|panicked at|^error(\[|:)" /tmp/test.log || tail -40 /tmp/test.log
-            echo "======================================================="
-            echo "::error::no test binary reported success"
-            exit 1
+            grep -E "^test result|FAILED|panicked at|^error(\[|:)|^[[:space:]]+-->" /tmp/test.log \
+              || tail -40 /tmp/test.log
+          else
+            true
+          fi > "$SUMMARY" || true
+
+          if [ ! -s "$SUMMARY" ] && grep -qE "\.\.\. FAILED|panicked at|^error(\[|:)" /tmp/test.log; then
+            grep -E "^test .* FAILED|panicked at|^error(\[|:)|^[[:space:]]+-->" /tmp/test.log > "$SUMMARY" || true
+            [ -s "$SUMMARY" ] || true
           fi
-          if grep -qE "\.\.\. FAILED|panicked at at|^error(\[|:)" /tmp/test.log; then
-            echo "======================= SUMMARY ======================="
-            grep -E "^test .* FAILED|panicked at|^error(\[|:)" /tmp/test.log
-            echo "======================================================="
-            echo "::error::tests failed - diagnostics above"
-            exit 1
+
+          if [ -s "$SUMMARY" ]; then
+            fail_with "cargo test"
           fi
           grep -E "^test result" /tmp/test.log
 
