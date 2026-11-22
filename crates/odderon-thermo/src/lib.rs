@@ -12,6 +12,8 @@ pub struct HabThermoState {
     pub shoji_closed: f64,
     /// Sliding glass window sash opening: 0.0 = sealed, 1.0 = open to coastal air.
     pub window_open: f64,
+    /// Hinged apartment entry door opening: 0.0 = latched, 1.0 = swung open to 2F gallery breeze.
+    pub entry_door_open: f64,
     /// Main 15A wall breaker switch.
     pub main_breaker_on: bool,
     /// Dedicated AC unit breaker / power toggle.
@@ -97,6 +99,7 @@ impl HabThermoState {
         let mut s = Self {
             shoji_closed: 0.18, // Partially open at wake-up so golden sunbeams slice across desk & tatami!
             window_open: 0.15,  // Cracked slightly so cicadas & breeze drift in
+            entry_door_open: 0.0,
             main_breaker_on: true,
             ac_switch_on: true,
             ac_setpoint_k: 297.15, // 24.0 °C
@@ -149,9 +152,10 @@ impl HabThermoState {
         let eff_shgc = (1.0 - shoji) * Self::SHGC_OPEN + shoji * Self::SHGC_SHOJI;
         self.q_solar_gain_w = solar.window_incident_wm2 * Self::GLAZING_AREA_M2 * eff_shgc;
 
-        // 2. Conductive envelope leak + open-window coastal air ventilation
+        // 2. Conductive envelope leak + open-window / open-entry-door coastal cross-ventilation
+        let door_open = clamp_f64(self.entry_door_open, 0.0, 1.0);
         self.q_wall_leak_w = Self::UA_ENVELOPE_WK * (self.outdoor_temp_k - self.room_air_temp_k);
-        let ua_vent = 4.5 + win_open * 135.0;
+        let ua_vent = 4.5 + win_open * 135.0 + door_open * 95.0 + (win_open * door_open) * 110.0;
         self.q_ventilation_w = ua_vent * (self.outdoor_temp_k - self.room_air_temp_k);
 
         // 3. Electrical bus loads & vapour-compression AC cycle

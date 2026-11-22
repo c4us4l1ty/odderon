@@ -26,6 +26,11 @@ const TARGET_INFO = {
   14: { name: 'STAINLESS ELECTRIC KETTLE (0.45 kg H2O)', hint: '[Click/Tap] Toggle 1,060 W Boil Cycle on L-Galley Counter (Auto-Cutoffs at 100.0 °C)' },
   15: { name: 'INDOOR SPLIT AC EVAPORATOR UNIT', hint: '[Click/Tap] Toggle Heat Pump · Inspect Carnot-Derated COP in Eidos Visor' },
   16: { name: 'UNIT-BATH SLIDING POCKET DOOR', hint: '[Click/Tap] Slide Bathroom Door Open / Closed · Step Inside Modular Restroom Pod' },
+  17: { name: 'HAB #204 FRONT ENTRY DOOR (#204)', hint: '[Click/Tap] Swing Apartment Door Open / Closed · Walk Out to 2F Gallery, Stairs & Street!' },
+  18: { name: 'UCHINOURA SPACE CENTER BUS STOP (バス停)', hint: '[Click/Tap] Inspect Range Shuttle Timetable · Real 90s Coastal Schedule' },
+  19: { name: 'COASTAL BUS STOP WAITING BENCH', hint: '[Click/Tap] Sit & Wait Until Next Scheduled Range Shuttle Approaches Curb' },
+  20: { name: 'RANGE SHUTTLE BOARDING DOOR (PAD-1 LINE)', hint: '[Click/Tap] Board Shuttle (¥240 Fare) · Clock In for Morning Pad Shift (+¥4,800 Stipend)' },
+  21: { name: 'ROADSIDE BEVERAGE VENDING MACHINE (自動販売機)', hint: '[Click/Tap] Buy Cold Uchinoura Canned Coffee (¥130 from Bank Account)' },
 };
 
 // Pre-allocated matrices & vectors (0 allocations in frame loop — PERFORMANCE.md N4)
@@ -293,6 +298,8 @@ async function boot() {
   let smoothedFrameCostMs = 2.4;
   let lastDrawCalls = 3;
   let settleGraceFrames = 6; // Render a couple crisp frames then park at 0 rAF/s!
+  let shuttleWakeTimer = 0;
+  let parkedAtWallMs = 0;
 
   // Touch / Mouse drag state
   let isMouseDragging = false;
@@ -330,7 +337,7 @@ async function boot() {
   const elProvBody = document.getElementById('eidos-prov-body');
 
   function getTelemetryView() {
-    return new Float32Array(wasm.memory.buffer, wasm.odderon_telemetry_ptr(), 64);
+    return new Float32Array(wasm.memory.buffer, wasm.odderon_telemetry_ptr(), 76);
   }
 
   function unprojectClientRay(clientX, clientY) {
@@ -351,6 +358,22 @@ async function boot() {
   }
 
   function wakePresenter(frames = 8) {
+    if (shuttleWakeTimer) {
+      clearTimeout(shuttleWakeTimer);
+      shuttleWakeTimer = 0;
+    }
+    if (isParked && parkedAtWallMs > 0) {
+      let sleptMs = Math.min(120000, Math.max(0, Math.round(performance.now() - parkedAtWallMs)));
+      parkedAtWallMs = 0;
+      while (sleptMs > 0) {
+        const chunk = Math.min(250, sleptMs);
+        wasm.odderon_step(chunk, 0, 0, 0, 0);
+        sleptMs -= chunk;
+      }
+      const t = getTelemetryView();
+      syncDynamicMeshes(t[30] > 0.5);
+      syncAudioAndAck(t);
+    }
     settleGraceFrames = Math.max(settleGraceFrames, frames);
     if (!rafId) {
       isParked = false;
@@ -423,11 +446,29 @@ async function boot() {
       if (hovered === 9) extra = ` · Reading: ${Math.round(busW)} W${t[51] >= 0 ? ` | Mark: ${Math.round(t[51])} W` : ''}`;
       if (hovered === 10) extra = ` · Reading: ${busV.toFixed(1)} V (${busA.toFixed(1)} A)${t[52] >= 0 ? ` | Mark: ${t[52].toFixed(1)} V` : ''}`;
       if (hovered === 14) extra = ` · Water: ${t[28].toFixed(1)} °C`;
+      if (hovered === 17) extra = ` · Door ${t[65] > 0.5 ? 'OPEN' : 'CLOSED'}`;
+      if (hovered === 18 || hovered === 19) {
+        extra = t[68] > 0.25
+          ? ` · SHUTTLE AT CURB NOW (16s Boarding Window!)`
+          : ` · Next Pad-1 Shuttle in ${Math.ceil(t[67])}s`;
+      }
+      if (hovered === 20) extra = ` · Wallet: ¥${Math.round(t[66]).toLocaleString()} (Fare ¥240)`;
+      if (hovered === 21) extra = ` · Wallet: ¥${Math.round(t[66]).toLocaleString()} · Drinks: ${Math.round(t[70])}`;
       nextMain = `${info.name}${extra}`;
       nextSub = info.hint;
     } else {
-      nextMain = `${formatJstClock(t[10])} · Uchinoura Hab #204 · Cabin ${roomC.toFixed(1)} °C · Bus ${Math.round(busW)} W (${busV.toFixed(1)} V)`;
-      nextSub = `WASD Move · Drag / [L] Look · Click/Tap Shoji, Window, Breakers, Gauges, Kettle, VHF Radio, Clipboard, Bed, Bath Door`;
+      const isOutdoors = t[73] > 0.5;
+      const yenStr = `¥${Math.round(t[66]).toLocaleString()}`;
+      const shuttleStr = t[68] > 0.25
+        ? `Shuttle BOARDING AT CURB!`
+        : `Next Shuttle ${Math.ceil(t[67])}s`;
+      if (isOutdoors) {
+        nextMain = `${formatJstClock(t[10])} · Uchinoura Street · Wallet ${yenStr} · ${shuttleStr}`;
+        nextSub = `Walk Stairs / Sidewalk / Street · Click Bus Stop (バス停), Bench, Vending Machine (¥130), or Board Range Shuttle (¥240)`;
+      } else {
+        nextMain = `${formatJstClock(t[10])} · Uchinoura Hab #204 · ${yenStr} · Cabin ${roomC.toFixed(1)} °C · ${shuttleStr}`;
+        nextSub = `WASD Move · Drag/[L] Look · Click Right-Wall Entry Door (#204) to Step Outside & Walk Down Stairs to Street!`;
+      }
     }
     if (nextMain !== prevPromptMain) {
       elPromptMain.textContent = nextMain;
@@ -488,11 +529,19 @@ async function boot() {
     }
 
     if (clipOpen && allowHeavy) {
+      const shiftCode = Math.round(t[71]);
+      const shiftLabel = shiftCode === 1
+        ? 'CHECKED IN ON-TIME (1st Shuttle!)'
+        : (shiftCode === 2 ? 'CHECKED IN LATE (Missed 1st Shuttle — Rank 0 Lesson)' : (t[72] > 0.5 ? '1ST SHUTTLE MISSED — Catch Next Run!' : 'Awaiting Morning Commute'));
       document.getElementById('clipboard-clock').textContent =
-        `Epoch: ${formatJstClock(t[10])} · Sector [0,0,0] nm · Solar Gain ${Math.round(qSolar)} W · Bus ${busA.toFixed(1)} A`;
+        `${formatJstClock(t[10])} · Wallet ¥${Math.round(t[66]).toLocaleString()} · ${shiftLabel}`;
       document.getElementById('clip-task-1').className = 'clip-item' + (taskSolarDone ? ' done' : '');
       document.getElementById('clip-task-2').className = 'clip-item' + (taskWaveDone ? ' done' : '');
       document.getElementById('clip-task-3').className = 'clip-item ' + (taskBreakerTested ? 'done' : 'warn');
+      const elTask4 = document.getElementById('clip-task-4');
+      if (elTask4) {
+        elTask4.className = 'clip-item' + (Math.round(t[69]) > 0 ? ' done' : '');
+      }
     }
 
     // Performance & Doctrine Verification HUD (`[H]`)
@@ -560,6 +609,7 @@ async function boot() {
     gl.uniform3fv(worldLocs.uSunDir, sunVec);
     gl.uniform1f(worldLocs.uWarmth, warmth);
     gl.uniform1f(worldLocs.uShojiClosed, t[20]);
+    gl.uniform1f(worldLocs.uEntryDoorOpen, t[65] || 0.0);
     gl.uniform1f(worldLocs.uLampOn, (t[22] > 0.5 && t[26] > 0.5) ? 1.0 : 0.0);
     gl.uniform1f(worldLocs.uPlumeGlow, t[37]);
 
@@ -634,10 +684,19 @@ async function boot() {
     }
 
     if (!hasInput && settledFlag === 1 && settleGraceFrames === 0) {
-      // PARK! Schedule 0 rAFs — compositor holds our crisp painted frame at 0.0% CPU / 0.0% GPU!
+      // PARK! Schedule 0 rAFs — compositor holds our crisp painted frame at 0.0% CPU / 0.0% GPU,
+      // with a single discrete event timer when the next scheduled Range Shuttle enters Uchinoura Street!
       isParked = true;
+      parkedAtWallMs = performance.now();
       displayedRafHz = 0;
       updateDomOverlays(t, true);
+      const nextShuttleMs = t[75];
+      if (nextShuttleMs > 40 && !shuttleWakeTimer) {
+        shuttleWakeTimer = setTimeout(() => {
+          shuttleWakeTimer = 0;
+          wakePresenter(16);
+        }, Math.ceil(nextShuttleMs) + 25);
+      }
       return;
     }
 

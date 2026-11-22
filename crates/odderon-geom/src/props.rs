@@ -3,8 +3,8 @@
 //! using smooth-normal rounded boxes, ellipsoids, cylinders, and lathes so nothing looks blocky.
 
 use crate::{
-    MeshBuffer, Pose, MAT_ALLOY, MAT_CERAMIC, MAT_CRT, MAT_EMISSIVE_WARM, MAT_FOLIAGE, MAT_MATTE,
-    MAT_WOOD,
+    MeshBuffer, Pose, MAT_ALLOY, MAT_CERAMIC, MAT_CORRUGATED, MAT_CRT, MAT_EMISSIVE_WARM,
+    MAT_FOLIAGE, MAT_MATTE, MAT_WOOD,
 };
 use odderon_dmath::{dcos, dsin, Vec3, TAU};
 
@@ -193,27 +193,94 @@ pub fn bonsai_planter(buf: &mut MeshBuffer, pose: Pose) {
     });
 }
 
-/// Sculpted Smooth-Porcelain Japanese Washlet Toilet (`Pose`-placed!).
+/// Sculpted Japanese TOTO-Style Washlet Toilet with Hand-Wash Cistern Spout (`手洗い付きウォシュレット`) & Supply Plumbing!
 pub fn washlet_toilet(buf: &mut MeshBuffer, pose: Pose) {
     buf.with_pose(pose, |b| {
-        let porcelain = [0.95, 0.96, 0.95];
-        let chrome = [0.84, 0.86, 0.89];
-        // Smooth lathed porcelain bowl & base pedestal
+        let porcelain = [0.91, 0.92, 0.90];
+        let porcelain_inner = [0.80, 0.84, 0.86];
+        let water_tint = [0.58, 0.76, 0.82];
+        let chrome = [0.78, 0.80, 0.83];
+        let dark_valve = [0.24, 0.26, 0.29];
+
+        // 1. Contoured porcelain pedestal foot + sculpted elongated bowl + rear trapway skirt
+        b.add_rounded_box(Vec3::new(-0.145, 0.001, -0.24), Vec3::new(0.145, 0.042, 0.24), 0.018, porcelain, MAT_CERAMIC);
+        b.add_rounded_box(Vec3::new(-0.135, 0.042, -0.26), Vec3::new(0.135, 0.36, -0.02), 0.028, porcelain, MAT_CERAMIC);
         b.add_lathe_y(
-            Vec3::new(0.0, 0.0, 0.08),
-            &[(0.0, 0.135), (0.16, 0.145), (0.31, 0.205), (0.39, 0.215), (0.41, 0.19)],
+            Vec3::new(0.0, 0.040, 0.09),
+            &[(0.0, 0.125), (0.14, 0.140), (0.28, 0.205), (0.355, 0.218), (0.382, 0.206)],
             20,
             porcelain,
             MAT_CERAMIC,
             true,
         );
-        // Smooth rounded cistern tank + flush button + washlet control arm + rounded seat lid!
-        b.add_rounded_box(Vec3::new(-0.195, 0.36, -0.28), Vec3::new(0.195, 0.77, -0.06), 0.036, porcelain, MAT_CERAMIC);
-        b.add_cylinder(Vec3::new(0.0, 0.77, -0.17), Vec3::new(0.0, 0.785, -0.17), 0.028, 0.026, 12, chrome, MAT_ALLOY, true);
-        b.add_rounded_box(Vec3::new(-0.19, 0.405, -0.06), Vec3::new(0.19, 0.445, 0.29), 0.018, porcelain, MAT_CERAMIC);
-        b.add_rounded_box(Vec3::new(0.19, 0.39, -0.04), Vec3::new(0.28, 0.43, 0.18), 0.012, porcelain, MAT_CERAMIC);
-        // Tiny green/cyan washlet status LEDs
-        b.add_box(Vec3::new(0.22, 0.431, 0.08), Vec3::new(0.25, 0.435, 0.11), [0.20, 0.88, 0.65], MAT_CRT);
+        // Inner glazed water basin & clean water seal (`strictly stacked Y offsets!`)
+        b.add_ellipsoid(Vec3::new(0.0, 0.376, 0.10), Vec3::new(0.145, 0.014, 0.165), 14, 6, porcelain_inner, MAT_CERAMIC);
+        b.add_ellipsoid(Vec3::new(0.0, 0.384, 0.09), Vec3::new(0.105, 0.008, 0.120), 12, 5, water_tint, MAT_ALLOY);
+
+        // 2. Heated contoured Washlet seat ring + rear nozzle/hinge housing + closed/slightly-sculpted soft lid
+        b.add_rounded_box(Vec3::new(-0.185, 0.388, -0.10), Vec3::new(0.185, 0.432, 0.02), 0.016, porcelain, MAT_CERAMIC);
+        // Seat side rails & front bridge forming a realistic open oval seat ring!
+        b.add_rounded_box(Vec3::new(-0.192, 0.392, 0.01), Vec3::new(-0.122, 0.422, 0.28), 0.014, porcelain, MAT_CERAMIC);
+        b.add_rounded_box(Vec3::new(0.122, 0.392, 0.01), Vec3::new(0.192, 0.422, 0.28), 0.014, porcelain, MAT_CERAMIC);
+        b.add_rounded_box(Vec3::new(-0.175, 0.392, 0.22), Vec3::new(0.175, 0.422, 0.305), 0.014, porcelain, MAT_CERAMIC);
+        // Upright open contoured lid resting against tank (`classic inviting Japanese hotel/apartment presentation!`)
+        b.add_rounded_box(Vec3::new(-0.188, 0.432, -0.085), Vec3::new(0.188, 0.815, -0.052), 0.016, porcelain, MAT_CERAMIC);
+
+        // 3. Rear Cistern Tank + Iconic Japanese Top Hand-Wash Basin & Curved Chrome Spout (`手洗い管`)!
+        b.add_rounded_box(Vec3::new(-0.198, 0.365, -0.30), Vec3::new(0.198, 0.775, -0.095), 0.032, porcelain, MAT_CERAMIC);
+        b.add_ellipsoid(Vec3::new(0.0, 0.776, -0.195), Vec3::new(0.135, 0.012, 0.068), 12, 5, porcelain_inner, MAT_CERAMIC);
+        b.add_cylinder(Vec3::new(0.0, 0.776, -0.235), Vec3::new(0.0, 0.855, -0.225), 0.010, 0.009, 10, chrome, MAT_ALLOY, false);
+        b.add_cylinder(Vec3::new(0.0, 0.855, -0.225), Vec3::new(0.0, 0.840, -0.175), 0.009, 0.008, 10, chrome, MAT_ALLOY, true);
+        // Side chrome flush handle (`大 / 小`)
+        b.add_cylinder(Vec3::new(0.198, 0.69, -0.19), Vec3::new(0.238, 0.69, -0.19), 0.012, 0.010, 8, chrome, MAT_ALLOY, true);
+        b.add_cylinder(Vec3::new(0.232, 0.69, -0.19), Vec3::new(0.242, 0.675, -0.13), 0.007, 0.006, 8, chrome, MAT_ALLOY, true);
+
+        // 4. Side Washlet Electronic Module + Braided Stainless Water Supply Line & Shutoff Valve
+        b.add_rounded_box(Vec3::new(-0.255, 0.388, -0.06), Vec3::new(-0.186, 0.428, 0.14), 0.010, porcelain, MAT_CERAMIC);
+        b.add_box(Vec3::new(-0.242, 0.429, 0.04), Vec3::new(-0.215, 0.434, 0.08), [0.22, 0.88, 0.56], MAT_EMISSIVE_WARM);
+        b.add_cylinder(Vec3::new(-0.22, 0.18, -0.34), Vec3::new(-0.22, 0.18, -0.26), 0.014, 0.014, 8, dark_valve, MAT_ALLOY, true);
+        b.add_cylinder(Vec3::new(-0.22, 0.18, -0.27), Vec3::new(-0.16, 0.37, -0.21), 0.007, 0.007, 8, chrome, MAT_ALLOY, false);
+    });
+}
+
+/// Japanese Unit-Bath Chrome Shower Slide-Rail, Thermostatic Mixer, Hinoki Bath Stool & Amenity Bottles!
+pub fn unit_bath_shower_set(buf: &mut MeshBuffer, pose: Pose) {
+    buf.with_pose(pose, |b| {
+        let chrome = [0.78, 0.80, 0.83];
+        let hinoki = [0.56, 0.40, 0.23];
+        let hose_col = [0.62, 0.64, 0.67];
+
+        // Vertical chrome shower slide bar (`y = 0.88 .. 1.86`) + wall standoffs
+        b.add_cylinder(Vec3::new(0.0, 0.88, 0.06), Vec3::new(0.0, 1.86, 0.06), 0.011, 0.011, 10, chrome, MAT_ALLOY, true);
+        for &sy in &[0.92_f32, 1.82] {
+            b.add_cylinder(Vec3::new(0.0, sy, 0.0), Vec3::new(0.0, sy, 0.06), 0.013, 0.013, 8, chrome, MAT_ALLOY, false);
+        }
+        // Handheld angled shower wand & spray head (`y = 1.66`)
+        b.add_cylinder(Vec3::new(0.0, 1.60, 0.06), Vec3::new(0.0, 1.73, 0.14), 0.012, 0.016, 10, chrome, MAT_ALLOY, false);
+        b.add_ellipsoid(Vec3::new(0.0, 1.75, 0.16), Vec3::new(0.044, 0.018, 0.044), 12, 6, chrome, MAT_ALLOY);
+
+        // Horizontal thermostatic mixer bar (`y = 0.74`) with hot (red) & cold (blue) indicator rings!
+        b.add_cylinder(Vec3::new(-0.13, 0.74, 0.07), Vec3::new(0.13, 0.74, 0.07), 0.018, 0.018, 12, chrome, MAT_ALLOY, true);
+        b.add_cylinder(Vec3::new(-0.125, 0.74, 0.07), Vec3::new(-0.115, 0.74, 0.07), 0.019, 0.019, 10, [0.84, 0.20, 0.16], MAT_MATTE, false);
+        b.add_cylinder(Vec3::new(0.115, 0.74, 0.07), Vec3::new(0.125, 0.74, 0.07), 0.019, 0.019, 10, [0.16, 0.46, 0.86], MAT_MATTE, false);
+        b.add_cylinder(Vec3::new(0.0, 0.74, 0.07), Vec3::new(0.0, 0.67, 0.13), 0.010, 0.008, 8, chrome, MAT_ALLOY, true);
+
+        // Flexible drooping shower hose from mixer to shower wand
+        b.add_cylinder(Vec3::new(0.03, 0.73, 0.07), Vec3::new(0.06, 0.56, 0.09), 0.007, 0.007, 6, hose_col, MAT_ALLOY, false);
+        b.add_cylinder(Vec3::new(0.06, 0.56, 0.09), Vec3::new(0.02, 1.60, 0.06), 0.007, 0.007, 6, hose_col, MAT_ALLOY, false);
+
+        // Corner amenity shelf + amber shampoo & sage body-soap pump bottles
+        b.add_rounded_box(Vec3::new(0.16, 0.96, 0.005), Vec3::new(0.38, 0.985, 0.14), 0.006, [0.82, 0.84, 0.83], MAT_CERAMIC);
+        for &(bx, bcol) in &[(0.22_f32, [0.62, 0.34, 0.12]), (0.31, [0.18, 0.38, 0.28])] {
+            b.add_lathe_y(Vec3::new(bx, 0.986, 0.07), &[(0.0, 0.028), (0.11, 0.030), (0.14, 0.012)], 10, bcol, MAT_CERAMIC, true);
+            b.add_cylinder(Vec3::new(bx, 1.126, 0.07), Vec3::new(bx, 1.155, 0.09), 0.005, 0.004, 6, [0.88, 0.88, 0.86], MAT_MATTE, true);
+        }
+
+        // Low Japanese Hinoki wooden bath stool (`furo-isu`) + washbasin (`senmenki`) on floor!
+        b.add_rounded_box(Vec3::new(-0.14, 0.18, 0.20), Vec3::new(0.14, 0.215, 0.40), 0.008, hinoki, MAT_WOOD);
+        b.add_rounded_box(Vec3::new(-0.13, 0.002, 0.21), Vec3::new(-0.10, 0.182, 0.39), 0.005, hinoki, MAT_WOOD);
+        b.add_rounded_box(Vec3::new(0.10, 0.002, 0.21), Vec3::new(0.13, 0.182, 0.39), 0.005, hinoki, MAT_WOOD);
+        b.add_lathe_y(Vec3::new(0.0, 0.216, 0.30), &[(0.0, 0.075), (0.075, 0.105)], 14, hinoki, MAT_WOOD, true);
     });
 }
 
@@ -281,5 +348,123 @@ pub fn parked_bicycle(buf: &mut MeshBuffer, pose: Pose) {
         b.add_cylinder(Vec3::new(-0.36, 0.94, -0.22), Vec3::new(-0.36, 0.94, 0.22), 0.013, 0.013, 6, rim, MAT_ALLOY, true);
         b.add_cylinder(head_top, Vec3::new(-0.36, 0.94, 0.0), 0.014, 0.014, 6, rim, MAT_ALLOY, false);
         b.add_ellipsoid(Vec3::new(0.25, 0.81, 0.0), Vec3::new(0.11, 0.035, 0.075), 8, 5, saddle_tan, MAT_MATTE);
+    });
+}
+
+/// Iconic Japanese Roadside Beverage Vending Machine (`自動販売機`, faces `+Z` toward street!).
+pub fn japanese_vending_machine(buf: &mut MeshBuffer, pose: Pose) {
+    buf.with_pose(pose, |b| {
+        let cabinet_white = [0.84, 0.84, 0.81];
+        let accent_red = [0.72, 0.16, 0.14];
+        let dark_slot = [0.10, 0.12, 0.14];
+
+        b.add_rounded_box(Vec3::new(-0.50, 0.01, -0.32), Vec3::new(0.50, 1.84, 0.32), 0.028, cabinet_white, MAT_ALLOY);
+        b.add_box(Vec3::new(-0.502, 0.01, -0.322), Vec3::new(0.502, 0.24, 0.322), accent_red, MAT_ALLOY);
+        // Illuminated drink sample showcase (`+Z` face, proud `8 mm`)
+        b.add_box(Vec3::new(-0.42, 0.86, 0.322), Vec3::new(0.24, 1.70, 0.334), [0.96, 0.94, 0.86], MAT_EMISSIVE_WARM);
+        // Two shelves of miniature canned coffee / green tea / citrus sodas!
+        let can_cols = [
+            [0.42, 0.22, 0.10],
+            [0.16, 0.46, 0.22],
+            [0.14, 0.36, 0.68],
+            [0.82, 0.48, 0.12],
+            [0.76, 0.16, 0.16],
+        ];
+        for (idx, &col) in can_cols.iter().enumerate() {
+            let cx = -0.34 + (idx as f32) * 0.125;
+            b.add_cylinder(Vec3::new(cx, 1.34, 0.336), Vec3::new(cx, 1.46, 0.336), 0.024, 0.024, 8, col, MAT_ALLOY, true);
+            b.add_cylinder(Vec3::new(cx, 0.98, 0.336), Vec3::new(cx, 1.10, 0.336), 0.024, 0.024, 8, col, MAT_ALLOY, true);
+        }
+        // IC-card / coin slot panel & dark bottom retrieval flap
+        b.add_box(Vec3::new(0.28, 0.90, 0.322), Vec3::new(0.43, 1.48, 0.336), dark_slot, MAT_ALLOY);
+        b.add_box(Vec3::new(0.31, 1.32, 0.337), Vec3::new(0.40, 1.39, 0.344), [0.24, 0.88, 0.62], MAT_EMISSIVE_WARM);
+        b.add_rounded_box(Vec3::new(-0.36, 0.32, 0.322), Vec3::new(0.22, 0.56, 0.340), 0.010, dark_slot, MAT_ALLOY);
+    });
+}
+
+/// Rural Japanese Coastal Bus Stop Bench & Round `バス停` Timetable Sign (`Uchinoura Space Center Line`!).
+pub fn bus_stop_shelter(buf: &mut MeshBuffer, pose: Pose) {
+    buf.with_pose(pose, |b| {
+        let cedar_dark = [0.16, 0.09, 0.05];
+        let hinoki = [0.48, 0.33, 0.18];
+        let steel = [0.46, 0.49, 0.52];
+
+        // Weathered wooden waiting bench (`x in [-0.85, +0.45]`)
+        b.add_rounded_box(Vec3::new(-0.85, 0.42, -0.22), Vec3::new(0.45, 0.47, 0.22), 0.010, hinoki, MAT_WOOD);
+        b.add_rounded_box(Vec3::new(-0.85, 0.56, -0.22), Vec3::new(0.45, 0.84, -0.17), 0.010, hinoki, MAT_WOOD);
+        for &lx in &[-0.74_f32, 0.34] {
+            b.add_box(Vec3::new(lx - 0.03, 0.002, -0.19), Vec3::new(lx + 0.03, 0.42, 0.19), cedar_dark, MAT_WOOD);
+            b.add_box(Vec3::new(lx - 0.025, 0.42, -0.21), Vec3::new(lx + 0.025, 0.84, -0.16), cedar_dark, MAT_WOOD);
+        }
+
+        // Small angled corrugated-tin rain canopy over bench
+        b.add_cylinder(Vec3::new(-0.80, 0.002, -0.24), Vec3::new(-0.80, 2.18, -0.24), 0.028, 0.028, 8, cedar_dark, MAT_WOOD, false);
+        b.add_cylinder(Vec3::new(0.40, 0.002, -0.24), Vec3::new(0.40, 2.18, -0.24), 0.028, 0.028, 8, cedar_dark, MAT_WOOD, false);
+        b.add_box(Vec3::new(-0.96, 2.14, -0.36), Vec3::new(0.56, 2.22, 0.46), [0.24, 0.29, 0.34], MAT_CORRUGATED);
+
+        // Iconic Japanese `バス停` (Bus Stop) pole (`x = +0.85`): heavy cast-iron base, timetable plaque & round blue/white top disc!
+        b.add_lathe_y(Vec3::new(0.85, 0.002, 0.12), &[(0.0, 0.17), (0.08, 0.15), (0.12, 0.035)], 12, [0.22, 0.24, 0.26], MAT_ALLOY, true);
+        b.add_cylinder(Vec3::new(0.85, 0.12, 0.12), Vec3::new(0.85, 1.98, 0.12), 0.020, 0.020, 8, steel, MAT_ALLOY, false);
+        // Timetable schedule frame (`時刻表`)
+        b.add_rounded_box(Vec3::new(0.69, 1.10, 0.095), Vec3::new(1.01, 1.56, 0.145), 0.008, [0.88, 0.87, 0.83], MAT_MATTE);
+        b.add_box(Vec3::new(0.71, 1.46, 0.146), Vec3::new(0.99, 1.53, 0.152), [0.12, 0.36, 0.68], MAT_MATTE);
+        // Double-sided round Japanese Bus Stop disc (`y = 2.16`)
+        b.add_cylinder(Vec3::new(0.85, 2.16, 0.095), Vec3::new(0.85, 2.16, 0.145), 0.19, 0.19, 16, [0.88, 0.89, 0.88], MAT_MATTE, true);
+        b.add_disc_neg_z(Vec3::new(0.85, 2.16, 0.090), 0.15, 14, [0.12, 0.38, 0.72], MAT_ALLOY);
+    });
+}
+
+/// Parametric Uchinoura Space Center Range Shuttle Microbus (`Mitsubishi Rosa` style, travels `-X` along street!).
+pub fn uchinoura_shuttle_bus(buf: &mut MeshBuffer, pose: Pose, door_open: f32) {
+    buf.with_pose(pose, |b| {
+        let body_ivory = [0.86, 0.85, 0.81];
+        let stripe_teal = [0.10, 0.36, 0.48];
+        let dark_glass = [0.10, 0.14, 0.18];
+        let bumper_dark = [0.14, 0.15, 0.17];
+        let tire_blk = [0.09, 0.10, 0.11];
+        let hub_alloy = [0.72, 0.74, 0.77];
+
+        // Chassis & sculpted rounded microbus coachwork (`length = 6.2m` along X, `width = 2.06m` along Z)
+        b.add_rounded_box(Vec3::new(-3.10, 0.36, -1.02), Vec3::new(3.10, 1.24, 1.02), 0.06, body_ivory, MAT_ALLOY);
+        b.add_box(Vec3::new(-3.11, 0.78, -1.03), Vec3::new(3.11, 1.04, 1.03), stripe_teal, MAT_ALLOY);
+        b.add_rounded_box(Vec3::new(-3.04, 1.22, -0.99), Vec3::new(3.04, 2.46, 0.99), 0.08, body_ivory, MAT_ALLOY);
+        // Rooftop AC pod
+        b.add_rounded_box(Vec3::new(-0.95, 2.46, -0.68), Vec3::new(1.15, 2.66, 0.68), 0.04, [0.78, 0.79, 0.77], MAT_ALLOY);
+
+        // Panoramic tinted passenger windows (`-Z` curb side & `+Z` street side) + front `-X` windshield!
+        b.add_box(Vec3::new(-1.35, 1.32, -1.002), Vec3::new(2.82, 2.16, -0.97), dark_glass, MAT_ALLOY);
+        b.add_box(Vec3::new(-2.82, 1.32, 0.97), Vec3::new(2.82, 2.16, 1.002), dark_glass, MAT_ALLOY);
+        b.add_box(Vec3::new(-3.055, 1.28, -0.90), Vec3::new(-3.01, 2.20, 0.90), dark_glass, MAT_ALLOY);
+        // Illuminated LED destination header (`UCHINOURA PAD-1 / 内之浦射場`)
+        b.add_box(Vec3::new(-3.06, 2.24, -0.58), Vec3::new(-3.01, 2.38, 0.58), [1.0, 0.68, 0.22], MAT_EMISSIVE_WARM);
+
+        // Curb-side (`-Z`) animated bi-fold boarding doorway (`x in [-2.38, -1.52]`)!
+        b.add_box(Vec3::new(-2.38, 0.40, -1.025), Vec3::new(-1.52, 2.18, -0.82), [0.12, 0.13, 0.15], MAT_ALLOY);
+        let slide = door_open.clamp(0.0, 1.0) * 0.72;
+        b.add_rounded_box(
+            Vec3::new(-2.36 + slide, 0.42, -1.035),
+            Vec3::new(-1.54, 2.16, -0.995),
+            0.010,
+            [0.22, 0.28, 0.32],
+            MAT_ALLOY,
+        );
+
+        // Front & rear bumpers + warm headlights (`-X`) & red taillights (`+X`)
+        b.add_rounded_box(Vec3::new(-3.16, 0.32, -1.04), Vec3::new(-2.98, 0.54, 1.04), 0.03, bumper_dark, MAT_ALLOY);
+        b.add_rounded_box(Vec3::new(2.98, 0.32, -1.04), Vec3::new(3.16, 0.54, 1.04), 0.03, bumper_dark, MAT_ALLOY);
+        for &lz in &[-0.76_f32, 0.76] {
+            b.add_box(Vec3::new(-3.14, 0.60, lz - 0.14), Vec3::new(-3.09, 0.74, lz + 0.14), [1.0, 0.94, 0.76], MAT_EMISSIVE_WARM);
+            b.add_box(Vec3::new(3.09, 0.60, lz - 0.14), Vec3::new(3.14, 0.76, lz + 0.14), [0.92, 0.16, 0.12], MAT_EMISSIVE_WARM);
+        }
+
+        // Four rubber wheels + alloy hubs (`r = 0.38`)
+        for &wx in &[-1.92_f32, 1.78] {
+            for &wz in &[-0.94_f32, 0.94] {
+                let z_out = if wz < 0.0 { wz - 0.12 } else { wz + 0.12 };
+                b.add_cylinder(Vec3::new(wx, 0.38, wz), Vec3::new(wx, 0.38, z_out), 0.38, 0.38, 14, tire_blk, MAT_MATTE, true);
+                let z_hub = if wz < 0.0 { z_out - 0.008 } else { z_out + 0.008 };
+                b.add_cylinder(Vec3::new(wx, 0.38, z_out), Vec3::new(wx, 0.38, z_hub), 0.21, 0.21, 12, hub_alloy, MAT_ALLOY, true);
+            }
+        }
     });
 }

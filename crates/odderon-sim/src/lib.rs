@@ -9,6 +9,7 @@ use odderon_geom::{DynamicSceneParams, GAUGE_CENTERS, PANEL_SWITCH_XS};
 use odderon_thermo::{HabProvenanceIds, HabThermoState};
 
 pub const PAD_DISTANCE_M: f64 = 2820.0;
+pub const SHUTTLE_PERIOD_S: f64 = 90.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -30,6 +31,11 @@ pub enum TargetId {
     KettleBody = 14,
     AcUnit = 15,
     ToiletDoor = 16,
+    EntryDoor = 17,
+    TimetableSign = 18,
+    BusStopBench = 19,
+    ShuttleDoor = 20,
+    VendingMachine = 21,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -105,9 +111,18 @@ pub struct SimWorld {
     pub fan_omega_rad_s: f32,
     pub toilet_door_open: f32,
     pub toilet_door_target: f32,
+    pub entry_door_open: f32,
+    pub entry_door_target: f32,
     pub gauge_marks: [f32; 3],
     pub mark_timer_s: [f32; 3],
     pub calibration: CalibrationRecord,
+
+    // Checkpoint 1B: Day-1 Bank Account (`¥150,000`) & Scheduled Range Shuttle State
+    pub yen_balance: i64,
+    pub drinks_bought: u32,
+    pub shuttles_boarded: u32,
+    pub missed_first_shuttle: bool,
+    pub shift_status_code: u8, // 0 = Commute Pending, 1 = Checked In On-Time, 2 = Checked In Late (Rank 0 lesson!)
 
     // Distant Uchinoura Pad-1 static-fire & 343 m/s acoustic shockwave state
     pub static_fire_active: bool,
@@ -157,7 +172,7 @@ impl SimWorld {
             prov_ids,
 
             // Wake up standing beside the bed & tatami, facing the sunlit window, desk, L-kitchen (left) & AC/bonsai (right)!
-            player_pos: Vec3::new(0.18, 1.62, -0.06),
+            player_pos: Vec3::new(0.18, 0.035, -0.06),
             yaw_rad: -0.04,
             pitch_rad: -0.04,
             head_bob_phase: 0.0,
@@ -171,9 +186,17 @@ impl SimWorld {
             fan_omega_rad_s: 0.0,
             toilet_door_open: 0.0,
             toilet_door_target: 0.0,
+            entry_door_open: 0.0,
+            entry_door_target: 0.0,
             gauge_marks: [-1.0, -1.0, -1.0],
             mark_timer_s: [0.0, 0.0, 0.0],
             calibration: CalibrationRecord::default(),
+
+            yen_balance: 150_000,
+            drinks_bought: 0,
+            shuttles_boarded: 0,
+            missed_first_shuttle: false,
+            shift_status_code: 0,
 
             static_fire_active: false,
             static_fire_start_s: -100.0,
@@ -202,19 +225,71 @@ impl SimWorld {
     }
 
     #[inline]
-    pub fn eye_pos(&self) -> Vec3 {
-        let on_tatami = self.player_pos.x > -1.55
-            && self.player_pos.x < 1.78
-            && self.player_pos.z > -0.42
-            && self.player_pos.z < 1.94;
-        let in_bath = self.player_pos.x < -0.40 && self.player_pos.z < -0.28;
-        let floor_h = if in_bath {
-            0.06
-        } else if on_tatami {
-            0.035
+    pub fn floor_elevation_at(x: f32, z: f32) -> f32 {
+        if (-5.28..=-3.80).contains(&x) && (1.45..=4.53).contains(&z) {
+            let t = clamp_f32((z - 1.45) / (4.53 - 1.45), 0.0, 1.0);
+            return -3.058 * t;
+        }
+        if z < 2.20 {
+            if (-2.55..=-0.40).contains(&x) && z < -0.28 {
+                0.06
+            } else if (-1.55..=1.78).contains(&x) && (-0.42..=1.94).contains(&z) {
+                0.035
+            } else {
+                0.0
+            }
+        } else if (5.00..=9.24).contains(&z) {
+            -3.155
         } else {
-            0.0
-        };
+            -3.058
+        }
+    }
+
+    #[inline]
+    pub fn is_player_outdoors(&self) -> bool {
+        self.player_pos.x < -2.62 || self.player_pos.z > 2.15
+    }
+
+    /// Deterministic Uchinoura Range Shuttle schedule (`period = 90s`):
+    /// - `phase in [0, 38)`: en route along coast (`shuttle_x = 999.0`, `0 rAF/s` idle!)
+    /// - `phase in [38, 48)`: approaches `バス停` (`x: +42.0 -> -4.25`)
+    /// - `phase in [48, 64)`: halted at `バス停` (`x = -4.25`, `door_open = 1.0` for 16s boarding!)
+    /// - `phase in [64, 74)`: departs westward (`x: -4.25 -> -45.0`)
+    /// - `phase in [74, 90)`: en route to Launch Pad-1 (`shuttle_x = 999.0`, `0 rAF/s` idle!)
+    pub fn shuttle_kinematics(&self) -> (f32, f32, f32, u32) {
+        let now = self.sim_time_s();
+        let cycle = (now / SHUTTLE_PERIOD_S) as u32;
+        let phase = (now - (cycle as f64) * SHUTTLE_PERIOD_S) as f32;
+        if phase < 38.0 {
+            (999.0, 0.0, 48.0 - phase, cycle)
+        } else if phase < 48.0 {
+            let u = clamp_f32((phase - 38.0) / 10.0, 0.0, 1.0);
+            // Smooth deceleration (`1 - (1 - u)^2`) into the curb stop!
+            let decel = 1.0 - (1.0 - u) * (1.0 - u);
+            let x = 42.0 + (-4.25 - 42.0) * decel;
+            (x, 0.0, (48.0 - phase).max(0.0), cycle)
+        } else if phase < 64.0 {
+            let door = if phase < 49.0 {
+                clamp_f32(phase - 48.0, 0.0, 1.0)
+            } else if phase > 63.0 {
+                clamp_f32(64.0 - phase, 0.0, 1.0)
+            } else {
+                1.0
+            };
+            (-4.25, door, 0.0, cycle)
+        } else if phase < 74.0 {
+            let u = clamp_f32((phase - 64.0) / 10.0, 0.0, 1.0);
+            let accel = u * u;
+            let x = -4.25 + (-45.0 - (-4.25)) * accel;
+            (x, 0.0, (SHUTTLE_PERIOD_S as f32 - phase) + 48.0, cycle)
+        } else {
+            (999.0, 0.0, (SHUTTLE_PERIOD_S as f32 - phase) + 48.0, cycle)
+        }
+    }
+
+    #[inline]
+    pub fn eye_pos(&self) -> Vec3 {
+        let floor_h = Self::floor_elevation_at(self.player_pos.x, self.player_pos.z);
         let bob = 0.016 * (dsin(self.head_bob_phase as f64) as f32);
         let rattle_cam = self.window_rattle_pos * 0.35;
         Vec3::new(
@@ -291,6 +366,12 @@ impl SimWorld {
                         self.selected_target = TargetId::ToiletDoor;
                         self.pending_click_impulse = 0.50;
                         self.record_input(5, value, 0.0);
+                    }
+                    TargetId::EntryDoor => {
+                        self.entry_door_target = v as f32;
+                        self.selected_target = TargetId::EntryDoor;
+                        self.pending_click_impulse = 0.65;
+                        self.record_input(6, value, 0.0);
                     }
                     _ => {}
                 }
@@ -425,6 +506,70 @@ impl SimWorld {
                 self.pending_click_impulse = 0.60;
                 self.record_input(24, self.toilet_door_target, 0.0);
             }
+            TargetId::EntryDoor => {
+                self.entry_door_target = if self.entry_door_target < 0.5 { 1.0 } else { 0.0 };
+                self.pending_click_impulse = 0.75;
+                self.record_input(25, self.entry_door_target, 0.0);
+            }
+            TargetId::TimetableSign => {
+                self.clipboard_open = true;
+                self.pending_click_impulse = 0.50;
+                self.record_input(26, 1.0, 0.0);
+            }
+            TargetId::BusStopBench => {
+                // Wait on the wooden coastal bench until the next scheduled shuttle approaches (`phase = 39.0s`)!
+                let now = self.sim_time_s();
+                let cycle = (now / SHUTTLE_PERIOD_S) as u64;
+                let phase = now - (cycle as f64) * SHUTTLE_PERIOD_S;
+                let target_s = if phase < 38.0 {
+                    (cycle as f64) * SHUTTLE_PERIOD_S + 39.0
+                } else if phase >= 64.0 {
+                    ((cycle + 1) as f64) * SHUTTLE_PERIOD_S + 39.0
+                } else {
+                    now
+                };
+                if target_s > now + 0.2 {
+                    let jump_s = target_s - now;
+                    self.tick_ms = (target_s * 1000.0) as u64;
+                    self.local_hour_jst = (self.local_hour_jst + jump_s / 3600.0) % 24.0;
+                    self.solar = sun_state_uchinoura(self.local_hour_jst);
+                    self.hab.step(jump_s.min(15.0), self.local_hour_jst, &self.solar);
+                    if (self.tick_ms as f64 * 0.001) >= SHUTTLE_PERIOD_S && self.shuttles_boarded == 0 {
+                        self.missed_first_shuttle = true;
+                    }
+                }
+                self.pending_click_impulse = 0.60;
+                self.record_input(27, self.sim_time_s() as f32, 0.0);
+            }
+            TargetId::ShuttleDoor => {
+                let (_sx, sdoor, _eta, cycle) = self.shuttle_kinematics();
+                if sdoor > 0.25 && self.yen_balance >= 240 {
+                    // Pay ¥240 Uchinoura Transit Fare, log Rank-0 punctuality, complete Pad-1 morning check-in (+¥4,800 stipend), and return on next shuttle!
+                    self.yen_balance = self.yen_balance - 240 + 4_800;
+                    if self.shuttles_boarded == 0 {
+                        self.shift_status_code = if cycle == 0 && !self.missed_first_shuttle { 1 } else { 2 };
+                    }
+                    self.shuttles_boarded += 1;
+                    // Advance clock past current stop (`phase = 75s`) + 15 min shift check-in on JST clock
+                    let next_s = (cycle as f64) * SHUTTLE_PERIOD_S + 75.0;
+                    if next_s * 1000.0 > self.tick_ms as f64 {
+                        self.tick_ms = (next_s * 1000.0) as u64;
+                    }
+                    self.local_hour_jst = (self.local_hour_jst + 0.25) % 24.0;
+                    self.solar = sun_state_uchinoura(self.local_hour_jst);
+                    self.hab.step(5.0, self.local_hour_jst, &self.solar);
+                    self.pending_click_impulse = 0.90;
+                    self.record_input(28, self.shuttles_boarded as f32, self.shift_status_code as f32);
+                }
+            }
+            TargetId::VendingMachine => {
+                if self.yen_balance >= 130 {
+                    self.yen_balance -= 130;
+                    self.drinks_bought += 1;
+                    self.pending_click_impulse = 0.85;
+                    self.record_input(29, self.drinks_bought as f32, 0.0);
+                }
+            }
             TargetId::GaugeTemp | TargetId::GaugePower | TargetId::GaugeVoltage => {
                 let g_idx = match target {
                     TargetId::GaugeTemp => 0,
@@ -536,43 +681,99 @@ impl SimWorld {
         }
 
         let r = 0.22_f32;
-        let mut px = clamp_f32(self.player_pos.x + dx, -2.50 + r, 2.50 - r);
-        let mut pz = clamp_f32(self.player_pos.z + dz, -1.96 + r, 1.96 - r);
+        let mut px = clamp_f32(self.player_pos.x + dx, -15.5 + r, 12.8 - r);
+        let mut pz = clamp_f32(self.player_pos.z + dz, -1.96 + r, 10.65 - r);
+        let cur_y = Self::floor_elevation_at(self.player_pos.x, self.player_pos.z);
 
         let door_shift = self.toilet_door_open * 0.66;
-        let colliders = [
-            // 1. Top-Center Desk & Chair
-            Box2D { x0: -1.18, z0: 1.24, x1: 1.18, z1: 2.02 },
-            Box2D { x0: -0.25, z0: 0.60, x1: 0.25, z1: 1.06 },
-            // 2. Top-Left L-Kitchen
-            Box2D { x0: 1.32, z0: 1.36, x1: 2.56, z1: 2.04 },
-            Box2D { x0: 1.85, z0: 0.14, x1: 2.56, z1: 1.40 },
-            // 3. Top-Right Bonsai Table
-            Box2D { x0: -2.48, z0: 1.42, x1: -1.42, z1: 2.00 },
-            // 4. Bottom-Left Bed Alcove
-            Box2D { x0: 0.42, z0: -2.06, x1: 2.56, z1: -0.46 },
-            // 5. Bottom-Center Small Shelf
-            Box2D { x0: -0.38, z0: -2.06, x1: 0.42, z1: -0.48 },
-            // 6. Bottom-Right Unit-Bath Partition, Front Wall Piers, Sliding Pocket Door & Fixtures!
-            Box2D { x0: -0.45, z0: -2.06, x1: -0.35, z1: -0.23 }, // Side partition wall
-            Box2D { x0: -0.60, z0: -0.35, x1: -0.36, z1: -0.23 }, // Left jamb pier
-            Box2D { x0: -2.56, z0: -0.35, x1: -1.34, z1: -0.23 }, // Right pocket wall pier
-            Box2D { x0: -1.35 - door_shift, z0: -0.32, x1: -0.59 - door_shift, z1: -0.26 }, // Sliding door leaf
-            Box2D { x0: -2.20, z0: -1.98, x1: -1.68, z1: -1.26 }, // Washlet toilet inside bath
-            Box2D { x0: -1.28, z0: -1.98, x1: -0.68, z1: -1.56 }, // Vanity sink inside bath
+        let (shuttle_x, _, _, _) = self.shuttle_kinematics();
+
+        // Always-active staircase side stringers/handrails (`z in [1.42, 4.50]`) so stairs can only be entered top/bottom!
+        let stair_rails = [
+            Box2D { x0: -5.42, z0: 1.42, x1: -5.24, z1: 4.50 },
+            Box2D { x0: -3.86, z0: 1.42, x1: -3.72, z1: 4.50 },
         ];
 
-        // 2 solver passes guarantee clean corner sliding with zero sticking!
+        let upstairs_colliders = [
+            // Outer Hab #204 walls & 2nd-floor Breezeway Gallery railings
+            Box2D { x0: 2.50, z0: -2.10, x1: 2.95, z1: 2.45 },
+            Box2D { x0: -2.68, z0: -2.25, x1: 2.95, z1: -1.96 },
+            Box2D { x0: -2.68, z0: 1.96, x1: 2.95, z1: 2.45 },
+            Box2D { x0: -2.68, z0: -2.10, x1: -2.50, z1: 0.23 }, // -X wall pier south of Entry Door
+            Box2D { x0: -2.68, z0: 1.17, x1: -2.50, z1: 2.45 },  // -X wall pier north of Entry Door
+            Box2D { x0: -5.50, z0: -0.35, x1: -2.66, z1: -0.14 }, // Gallery -Z railing
+            Box2D { x0: -5.50, z0: -0.35, x1: -5.28, z1: 1.48 },  // Gallery -X railing
+            Box2D { x0: -3.86, z0: 1.42, x1: -2.66, z1: 1.62 },   // Gallery +Z railing beside stairs
+            // Interior furniture & Unit-Bath
+            Box2D { x0: -1.18, z0: 1.24, x1: 1.18, z1: 2.02 },
+            Box2D { x0: -0.25, z0: 0.60, x1: 0.25, z1: 1.06 },
+            Box2D { x0: 1.32, z0: 1.36, x1: 2.56, z1: 2.04 },
+            Box2D { x0: 1.85, z0: 0.14, x1: 2.56, z1: 1.40 },
+            Box2D { x0: -2.48, z0: 1.42, x1: -1.42, z1: 2.00 },
+            Box2D { x0: 0.42, z0: -2.06, x1: 2.56, z1: -0.46 },
+            Box2D { x0: -0.38, z0: -2.06, x1: 0.42, z1: -0.48 },
+            Box2D { x0: -0.45, z0: -2.06, x1: -0.35, z1: -0.23 },
+            Box2D { x0: -0.60, z0: -0.35, x1: -0.36, z1: -0.23 },
+            Box2D { x0: -2.56, z0: -0.35, x1: -1.34, z1: -0.23 },
+            Box2D { x0: -1.35 - door_shift, z0: -0.32, x1: -0.59 - door_shift, z1: -0.26 },
+            Box2D { x0: -2.20, z0: -1.98, x1: -1.68, z1: -1.26 },
+            Box2D { x0: -1.28, z0: -1.98, x1: -0.68, z1: -1.56 },
+        ];
+
+        let street_colliders = [
+            Box2D { x0: -3.86, z0: -2.30, x1: 14.0, z1: 2.40 },  // Uchinoura Maison 1F facade
+            Box2D { x0: -16.0, z0: -2.30, x1: -5.24, z1: 2.40 }, // West yard fence behind stairs
+            Box2D { x0: -1.62, z0: 2.40, x1: -0.58, z1: 3.08 },  // Beverage vending machine
+            Box2D { x0: -7.68, z0: 4.05, x1: -5.82, z1: 4.54 },  // Bus stop bench & timetable pole
+            Box2D { x0: 0.94, z0: 5.21, x1: 1.22, z1: 5.49 },    // Utility pole #1
+            Box2D { x0: -8.34, z0: 5.61, x1: -8.06, z1: 5.89 },  // Utility pole #2
+            Box2D { x0: 10.06, z0: 5.31, x1: 10.34, z1: 5.59 },  // Utility pole #3
+            Box2D { x0: 5.35, z0: 10.10, x1: 6.35, z1: 10.60 },  // Far-sidewalk parked bicycle
+            Box2D { x0: -0.35, z0: 10.02, x1: 0.25, z1: 10.58 }, // Far-sidewalk terracotta planter
+            Box2D { x0: -3.40, z0: 10.00, x1: -3.10, z1: 10.30 },// Far-sidewalk street sign post
+        ];
+
         for _ in 0..2 {
-            for c in &colliders {
+            for c in &stair_rails {
                 push_circle_out_of_box(&mut px, &mut pz, r, *c);
             }
-            px = clamp_f32(px, -2.50 + r, 2.50 - r);
-            pz = clamp_f32(pz, -1.96 + r, 1.96 - r);
+            if cur_y > -1.45 {
+                for c in &upstairs_colliders {
+                    push_circle_out_of_box(&mut px, &mut pz, r, *c);
+                }
+                if self.entry_door_open < 0.65 {
+                    push_circle_out_of_box(
+                        &mut px,
+                        &mut pz,
+                        r,
+                        Box2D { x0: -2.68, z0: 0.20, x1: -2.50, z1: 1.20 },
+                    );
+                }
+            } else {
+                for c in &street_colliders {
+                    push_circle_out_of_box(&mut px, &mut pz, r, *c);
+                }
+                if shuttle_x.abs() <= 45.0 {
+                    push_circle_out_of_box(
+                        &mut px,
+                        &mut pz,
+                        r,
+                        Box2D {
+                            x0: shuttle_x - 3.16,
+                            z0: 5.32,
+                            x1: shuttle_x + 3.16,
+                            z1: 7.38,
+                        },
+                    );
+                }
+            }
+            px = clamp_f32(px, -15.5 + r, 12.8 - r);
+            pz = clamp_f32(pz, -1.96 + r, 10.65 - r);
         }
 
         self.player_pos.x = px;
         self.player_pos.z = pz;
+        self.player_pos.y = Self::floor_elevation_at(px, pz);
     }
 
     pub fn cast_ray_target(&self, dir: Vec3) -> TargetId {
@@ -591,14 +792,19 @@ impl SimWorld {
         let mut best_t = max_d;
         let mut best_id = TargetId::None;
 
-        // First seed `best_t` with solid interior partition walls so rays cannot click targets through walls!
+        // First seed `best_t` with solid interior & exterior apartment walls so rays never click through walls!
         let occluder_walls = [
-            Aabb3::new(Vec3::new(-0.44, 0.0, -2.06), Vec3::new(-0.36, 2.68, -0.24)),   // Unit-Bath side wall
-            Aabb3::new(Vec3::new(-2.55, 0.0, -0.35), Vec3::new(-1.34, 2.68, -0.235)),  // Unit-Bath pocket wall
-            Aabb3::new(Vec3::new(-0.60, 0.0, -0.35), Vec3::new(-0.36, 2.68, -0.235)),  // Unit-Bath left jamb pier
-            Aabb3::new(Vec3::new(-1.34, 2.08, -0.35), Vec3::new(-0.60, 2.68, -0.235)), // Unit-Bath doorway header
-            Aabb3::new(Vec3::new(0.36, 0.0, -2.04), Vec3::new(0.42, 2.68, -0.46)),     // Shelf-to-bed wood divider
-            Aabb3::new(Vec3::new(-0.36, 0.0, -1.24), Vec3::new(0.36, 2.68, -1.16)),    // Shelf back Spine
+            Aabb3::new(Vec3::new(-0.44, 0.0, -2.06), Vec3::new(-0.36, 2.68, -0.24)),    // Unit-Bath side wall
+            Aabb3::new(Vec3::new(-2.55, 0.0, -0.35), Vec3::new(-1.34, 2.68, -0.235)),   // Unit-Bath pocket wall
+            Aabb3::new(Vec3::new(-0.60, 0.0, -0.35), Vec3::new(-0.36, 2.68, -0.235)),   // Unit-Bath left jamb pier
+            Aabb3::new(Vec3::new(-1.34, 2.08, -0.35), Vec3::new(-0.60, 2.68, -0.235)),  // Unit-Bath doorway header
+            Aabb3::new(Vec3::new(0.36, 0.0, -2.04), Vec3::new(0.42, 2.68, -0.46)),      // Shelf-to-bed wood divider
+            Aabb3::new(Vec3::new(-0.36, 0.0, -1.24), Vec3::new(0.36, 2.68, -1.16)),     // Shelf back spine
+            Aabb3::new(Vec3::new(-2.66, 0.0, -2.04), Vec3::new(-2.54, 2.71, 0.195)),    // -X exterior wall south of door
+            Aabb3::new(Vec3::new(-2.66, 0.0, 1.205), Vec3::new(-2.54, 2.71, 2.02)),     // -X exterior wall north of door
+            Aabb3::new(Vec3::new(-2.70, -0.16, -2.22), Vec3::new(2.72, 0.0, 2.20)),     // 2F floor slab
+            Aabb3::new(Vec3::new(-2.70, -0.12, 2.12), Vec3::new(2.72, 0.02, 2.90)),     // 2F exterior balcony slab (blocks 1F-to-2F clicks!)
+            Aabb3::new(Vec3::new(-3.82, -3.20, -2.22), Vec3::new(2.72, -0.14, 2.36)),   // Uchinoura Maison 1F building mass
         ];
         for wall in &occluder_walls {
             if let Some(t) = wall.ray_hit(eye, dir, best_t) {
@@ -647,6 +853,15 @@ impl SimWorld {
             Vec3::new(-0.58 - door_shift, 2.10, -0.22),
         );
 
+        let entry_door_box = if self.entry_door_open < 0.35 {
+            Aabb3::new(Vec3::new(-2.69, 0.01, 0.22), Vec3::new(-2.48, 2.12, 1.18))
+        } else {
+            Aabb3::new(Vec3::new(-3.56, 0.01, 0.14), Vec3::new(-2.58, 2.12, 0.48))
+        };
+        let timetable_box = Aabb3::new(Vec3::new(-6.18, -2.10, 4.24), Vec3::new(-5.72, -0.72, 4.58));
+        let bench_box = Aabb3::new(Vec3::new(-7.68, -3.05, 4.04), Vec3::new(-6.32, -2.18, 4.56));
+        let vending_box = Aabb3::new(Vec3::new(-1.62, -3.05, 2.40), Vec3::new(-0.58, -1.20, 3.09));
+
         let candidates = [
             (radio_box, TargetId::VhfPadRadio),
             (clip_box, TargetId::Clipboard),
@@ -654,6 +869,10 @@ impl SimWorld {
             (ac_box, TargetId::AcUnit),
             (bunk_box, TargetId::SleepingBunk),
             (toilet_door_box, TargetId::ToiletDoor),
+            (entry_door_box, TargetId::EntryDoor),
+            (timetable_box, TargetId::TimetableSign),
+            (bench_box, TargetId::BusStopBench),
+            (vending_box, TargetId::VendingMachine),
             (shoji_box, TargetId::ShojiScreen),
             (win_box, TargetId::WindowSash),
         ];
@@ -662,6 +881,17 @@ impl SimWorld {
             if let Some(t) = aabb.ray_hit(eye, dir, best_t) {
                 best_t = t;
                 best_id = tid;
+            }
+        }
+
+        let (shuttle_x, shuttle_door, _, _) = self.shuttle_kinematics();
+        if (shuttle_x - (-4.25)).abs() < 0.40 && shuttle_door > 0.25 {
+            let shuttle_door_box = Aabb3::new(
+                Vec3::new(shuttle_x - 2.45, -2.85, 5.25),
+                Vec3::new(shuttle_x - 1.45, -0.95, 5.68),
+            );
+            if let Some(_t) = shuttle_door_box.ray_hit(eye, dir, best_t) {
+                best_id = TargetId::ShuttleDoor;
             }
         }
         best_id
@@ -701,13 +931,15 @@ impl SimWorld {
             self.local_hour_jst -= 24.0;
         }
         self.solar = sun_state_uchinoura(self.local_hour_jst);
+        self.hab.entry_door_open = self.entry_door_open as f64;
         self.hab.step(dt_s, self.local_hour_jst, &self.solar);
 
         if !prev_tripped && self.hab.breaker_tripped {
             self.pending_breaker_trip = true;
         }
 
-        // Smooth sliding Unit-Bath pocket door animation
+        // Smooth sliding Unit-Bath pocket door & hinged Apartment Entry door animations
+        let mut door_moved = false;
         let door_diff = self.toilet_door_target - self.toilet_door_open;
         if door_diff.abs() > 0.004 {
             let step = clamp_f32((dt_s as f32) * 4.2, 0.0, 1.0);
@@ -715,9 +947,45 @@ impl SimWorld {
             if (self.toilet_door_target - self.toilet_door_open).abs() < 0.008 {
                 self.toilet_door_open = self.toilet_door_target;
             }
-            self.hovered_target = self.cast_ray_target(self.last_ray_dir);
+            door_moved = true;
         } else {
             self.toilet_door_open = self.toilet_door_target;
+        }
+
+        let edoor_diff = self.entry_door_target - self.entry_door_open;
+        if edoor_diff.abs() > 0.004 {
+            let step = clamp_f32((dt_s as f32) * 4.0, 0.0, 1.0);
+            self.entry_door_open += edoor_diff * step;
+            if (self.entry_door_target - self.entry_door_open).abs() < 0.008 {
+                self.entry_door_open = self.entry_door_target;
+            }
+            door_moved = true;
+        } else {
+            self.entry_door_open = self.entry_door_target;
+        }
+        if door_moved {
+            self.hovered_target = self.cast_ray_target(self.last_ray_dir);
+        }
+
+        // Rank 0 Schedule Tracking: if the first morning shuttle departs (`t >= 64s`) before boarding, record `missed_first_shuttle`!
+        if self.shuttles_boarded == 0 && self.sim_time_s() >= 64.0 {
+            self.missed_first_shuttle = true;
+        }
+
+        // Dynamic Shuttle Pedestrian Safety: if a stationary player stands in the roadway (`z in [5.08, 7.62]`)
+        // as the Range Shuttle passes, nudge them cleanly onto the nearer sidewalk curb so they never clip inside the bus!
+        let (shuttle_x, _, _, _) = self.shuttle_kinematics();
+        if shuttle_x.abs() <= 45.0 && self.player_pos.y <= -1.45 {
+            let r = 0.22_f32;
+            if self.player_pos.x >= shuttle_x - 3.16 - r
+                && self.player_pos.x <= shuttle_x + 3.16 + r
+                && self.player_pos.z >= 5.32 - r
+                && self.player_pos.z <= 7.38 + r
+            {
+                self.player_pos.z = if self.player_pos.z <= 6.35 { 5.32 - r - 0.02 } else { 7.38 + r + 0.02 };
+                self.player_pos.y = Self::floor_elevation_at(self.player_pos.x, self.player_pos.z);
+                self.hovered_target = self.cast_ray_target(self.last_ray_dir);
+            }
         }
 
         // Ceiling fan rotational inertia
@@ -798,7 +1066,10 @@ impl SimWorld {
             }
         }
 
-        self.prov_ids = self.hab.build_provenance(&self.solar, &mut self.prov_graph);
+        // Throttle Provenance DAG rebuild when Eidos visor is up (~90% reduction in inner-loop work!)
+        if self.visor_down || (self.tick_ms % 250) < (clamped_ms as u64) {
+            self.prov_ids = self.hab.build_provenance(&self.solar, &mut self.prov_graph);
+        }
     }
 
     /// Returns `true` when no visual motion is occurring so the presenter can park at 0 rAF/s!
@@ -807,7 +1078,10 @@ impl SimWorld {
         let plume_done = !self.static_fire_active;
         let rattle_done = self.window_rattle_pos.abs() < 2e-5 && self.window_rattle_vel.abs() < 2e-4;
         let kettle_idle = !self.hab.kettle_switch_on;
-        let door_settled = (self.toilet_door_target - self.toilet_door_open).abs() < 0.008;
+        let door_settled = (self.toilet_door_target - self.toilet_door_open).abs() < 0.008
+            && (self.entry_door_target - self.entry_door_open).abs() < 0.008;
+        let (shuttle_x, _, _, _) = self.shuttle_kinematics();
+        let shuttle_idle = shuttle_x.abs() > 46.0;
         let bus_live = self.hab.main_breaker_on && !self.hab.breaker_tripped;
         let temp_err = self.hab.room_air_temp_k - self.hab.ac_setpoint_k;
         let target_mod = if bus_live && self.hab.ac_switch_on {
@@ -827,7 +1101,7 @@ impl SimWorld {
         let mark_done = self.mark_timer_s[0] <= 0.0
             && self.mark_timer_s[1] <= 0.0
             && self.mark_timer_s[2] <= 0.0;
-        fan_still && plume_done && rattle_done && kettle_idle && door_settled && comp_settled && mark_done
+        fan_still && plume_done && rattle_done && kettle_idle && door_settled && shuttle_idle && comp_settled && mark_done
     }
 
     pub fn dynamic_scene_params(&self) -> DynamicSceneParams {
@@ -849,6 +1123,7 @@ impl SimWorld {
         } else {
             0.0
         };
+        let (shuttle_x, shuttle_door_open, _, _) = self.shuttle_kinematics();
 
         DynamicSceneParams {
             shoji_closed: self.hab.shoji_closed as f32,
@@ -862,6 +1137,9 @@ impl SimWorld {
             fan_switch_on: self.hab.fan_switch_on,
             kettle_switch_on: self.hab.kettle_switch_on,
             toilet_door_open: self.toilet_door_open,
+            entry_door_open: self.entry_door_open,
+            shuttle_x,
+            shuttle_door_open,
             room_temp_c: (self.hab.room_air_temp_k - 273.15) as f32,
             bus_power_w: self.hab.total_bus_power_w as f32,
             bus_voltage_v: self.hab.bus_voltage_v as f32,
@@ -877,6 +1155,7 @@ impl SimWorld {
         h.write_u64(self.tick_ms);
         h.write_f64(self.local_hour_jst);
         h.write_f64(self.player_pos.x as f64);
+        h.write_f64(self.player_pos.y as f64);
         h.write_f64(self.player_pos.z as f64);
         h.write_f64(self.yaw_rad as f64);
         h.write_f64(self.pitch_rad as f64);
@@ -886,7 +1165,16 @@ impl SimWorld {
         h.write_f64(self.hab.shoji_closed);
         h.write_f64(self.hab.window_open);
         h.write_f64(self.toilet_door_open as f64);
-        h.write_u32((self.hab.breaker_tripped as u32) | ((self.visor_down as u32) << 1));
+        h.write_f64(self.entry_door_open as f64);
+        h.write_u64(self.yen_balance as u64);
+        h.write_u32(self.shuttles_boarded);
+        h.write_u32(self.drinks_bought);
+        h.write_u32(
+            (self.hab.breaker_tripped as u32)
+                | ((self.visor_down as u32) << 1)
+                | ((self.missed_first_shuttle as u32) << 2)
+                | ((self.shift_status_code as u32) << 3),
+        );
         h.write_u32(self.calibration.count);
         h.write_u32(self.input_log.len() as u32);
         h.finish()
@@ -1043,5 +1331,135 @@ mod tests {
         }
         assert_eq!(w.calibration.count, 1, "China-marker prediction should be scored after 6s");
         assert!(w.is_visually_settled(), "Sim should settle to 0 rAF/s once plume & marker timer finish");
+    }
+
+    #[test]
+    fn checkpoint_1b_walk_out_door_down_stairs_to_street_shuttle_and_back_up() {
+        let mut w = SimWorld::new();
+        assert_eq!(w.yen_balance, 150_000, "Day 1 wallet starts at ¥150,000");
+
+        // 1. Walk to Entry Door (`x = -2.0, z = 0.70`) and verify closed door blocks exit!
+        w.player_pos = Vec3::new(-2.0, 0.0, 0.70);
+        w.yaw_rad = -(PI * 0.5) as f32; // facing `-X` toward Entry Door
+        for _ in 0..20 {
+            w.actuate(Actuator::Locomotion {
+                fwd: 1.0,
+                right: 0.0,
+                yaw_delta: 0.0,
+                pitch_delta: 0.0,
+                dt_s: 0.05,
+            });
+        }
+        assert!(w.player_pos.x > -2.35, "Closed Entry Door must block walking outside");
+
+        // 2. Open Entry Door and walk out onto the 2nd-floor Breezeway Gallery (`x = -4.55`)!
+        w.actuate(Actuator::ToggleSwitch {
+            target: TargetId::EntryDoor,
+        });
+        for _ in 0..25 {
+            w.step_ms(50);
+        }
+        assert!(w.entry_door_open > 0.99, "Entry door should swing fully open");
+        for _ in 0..30 {
+            w.actuate(Actuator::Locomotion {
+                fwd: 1.0,
+                right: 0.0,
+                yaw_delta: 0.0,
+                pitch_delta: 0.0,
+                dt_s: 0.05,
+            });
+        }
+        assert!(w.player_pos.x < -4.20 && w.is_player_outdoors(), "Player should stand on 2F Gallery");
+        assert!((w.player_pos.y - 0.0).abs() < 1e-3);
+
+        // 3. Align with 14-step staircase (`x = -4.55`), face `+Z` (`yaw = 0`), and walk down onto sunlit sidewalk & street!
+        w.player_pos.x = -4.55;
+        w.yaw_rad = 0.0;
+        for _ in 0..38 {
+            w.actuate(Actuator::Locomotion {
+                fwd: 1.0,
+                right: 0.0,
+                yaw_delta: 0.0,
+                pitch_delta: 0.0,
+                dt_s: 0.05,
+            });
+        }
+        assert!(w.player_pos.z > 4.60 && w.player_pos.z < 5.00, "Player reaches sunlit near sidewalk (z = {})", w.player_pos.z);
+        assert!((w.player_pos.y - (-3.058)).abs() < 0.01, "Sidewalk elevation is -3.058m (got {})", w.player_pos.y);
+
+        // Step off the curb onto the asphalt roadway (`z > 5.00 -> y = -3.155m`)!
+        for _ in 0..8 {
+            w.actuate(Actuator::Locomotion {
+                fwd: 1.0,
+                right: 0.0,
+                yaw_delta: 0.0,
+                pitch_delta: 0.0,
+                dt_s: 0.05,
+            });
+        }
+        assert!((w.player_pos.y - (-3.155)).abs() < 0.01, "Roadway elevation steps down curb to -3.155m");
+
+        // 4. Buy a ¥130 canned coffee at the vending machine, wait on the bench for the 1st shuttle, and board!
+        w.actuate(Actuator::ToggleSwitch {
+            target: TargetId::VendingMachine,
+        });
+        assert_eq!(w.yen_balance, 150_000 - 130);
+        assert_eq!(w.drinks_bought, 1);
+
+        w.actuate(Actuator::ToggleSwitch {
+            target: TargetId::BusStopBench,
+        });
+        // Advance 10s so shuttle halts at the curb (`phase = 49s`) with folding door open!
+        for _ in 0..50 {
+            w.step_ms(200);
+        }
+        let (sx, sdoor, _eta, cycle) = w.shuttle_kinematics();
+        assert!((sx - (-4.25)).abs() < 0.05 && sdoor > 0.8 && cycle == 0);
+
+        w.actuate(Actuator::ToggleSwitch {
+            target: TargetId::ShuttleDoor,
+        });
+        assert_eq!(w.shuttles_boarded, 1);
+        assert_eq!(w.shift_status_code, 1, "Catching Cycle 0 shuttle logs ON-TIME Rank 0 commute!");
+        assert_eq!(w.yen_balance, 150_000 - 130 - 240 + 4_800);
+
+        // 5. Walk right back up the 14 stairs (`yaw = PI`, facing `-Z`) into Hab #204!
+        w.player_pos = Vec3::new(-4.55, -3.058, 4.70);
+        w.yaw_rad = PI as f32;
+        for _ in 0..45 {
+            w.actuate(Actuator::Locomotion {
+                fwd: 1.0,
+                right: 0.0,
+                yaw_delta: 0.0,
+                pitch_delta: 0.0,
+                dt_s: 0.05,
+            });
+        }
+        assert!(w.player_pos.z < 1.20 && (w.player_pos.y - 0.0).abs() < 1e-3, "Player walks cleanly back up to 2F Gallery!");
+    }
+
+    #[test]
+    fn approaching_shuttle_nudges_stationary_pedestrian_onto_sidewalk_and_balcony_blocks_upward_rays() {
+        let mut w = SimWorld::new();
+        // 1. Stand on 1F sidewalk right under Hab #204's concrete balcony (`z = 2.65`) looking straight up at 2F window!
+        w.player_pos = Vec3::new(0.0, -3.058, 2.65);
+        let hit_through_balcony = w.cast_ray_target(Vec3::new(0.0, 2.8, -0.6));
+        assert_eq!(
+            hit_through_balcony,
+            TargetId::None,
+            "2F concrete balcony & floor slabs must occlude 1F-to-2F raycasts!"
+        );
+
+        // 2. Stand motionless in the middle of the asphalt street (`x = -4.0, z = 6.20`) right as the Range Shuttle arrives!
+        w.player_pos = Vec3::new(-4.0, -3.155, 6.20);
+        w.tick_ms = 47_500;
+        for _ in 0..8 {
+            w.step_ms(200);
+        }
+        assert!(
+            w.player_pos.z <= 5.12,
+            "Approaching shuttle must nudge stationary pedestrian safely onto near sidewalk (got z = {})",
+            w.player_pos.z
+        );
     }
 }

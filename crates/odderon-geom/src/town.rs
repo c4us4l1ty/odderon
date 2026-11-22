@@ -222,14 +222,18 @@ pub fn build_uchinoura_street_static(buf: &mut MeshBuffer) {
     let ground_y = -3.20_f32;
 
     // 1. Deep Sunlit Summer Meadow/Town Ground, Sidewalks, Curbs & Dark Weathered Asphalt Street!
-    buf.add_box(Vec3::new(-220.0, ground_y - 0.35, 2.2), Vec3::new(220.0, ground_y, 160.0), [0.14, 0.24, 0.10], MAT_FOLIAGE);
+    buf.add_box(Vec3::new(-220.0, ground_y - 0.35, -8.0), Vec3::new(220.0, ground_y, 160.0), [0.14, 0.24, 0.10], MAT_FOLIAGE);
 
     let sidewalk_stone = [0.46, 0.44, 0.40];
     let curb_stone = [0.38, 0.36, 0.33];
-    buf.add_box(Vec3::new(-42.0, ground_y + 0.005, 2.5), Vec3::new(42.0, ground_y + 0.14, 4.78), sidewalk_stone, MAT_MATTE);
+    buf.add_box(Vec3::new(-42.0, ground_y + 0.005, -2.5), Vec3::new(42.0, ground_y + 0.14, 4.78), sidewalk_stone, MAT_MATTE);
     buf.add_box(Vec3::new(-42.0, ground_y + 0.005, 9.45), Vec3::new(42.0, ground_y + 0.14, 12.6), sidewalk_stone, MAT_MATTE);
     buf.add_rounded_box(Vec3::new(-42.0, ground_y + 0.006, 9.24), Vec3::new(42.0, ground_y + 0.16, 9.44), 0.018, curb_stone, MAT_MATTE);
     buf.add_rounded_box(Vec3::new(-42.0, ground_y + 0.006, 4.80), Vec3::new(42.0, ground_y + 0.16, 5.00), 0.018, curb_stone, MAT_MATTE);
+
+    // CHECKPOINT 1B NEAR-SIDEWALK PROPS: Roadside Beverage Vending Machine + `バス停` Range Shuttle Stop!
+    props::japanese_vending_machine(buf, Pose::at(-1.10, ground_y + 0.142, 2.72));
+    props::bus_stop_shelter(buf, Pose::at(-6.80, ground_y + 0.142, 4.30));
 
     // Dark weathered Japanese residential asphalt (`z in [5.01, 9.23]`) + muted shoulder lines
     buf.add_box(Vec3::new(-45.0, ground_y + 0.004, 5.01), Vec3::new(45.0, ground_y + 0.042, 9.23), [0.14, 0.15, 0.17], MAT_MATTE);
@@ -448,8 +452,12 @@ pub fn build_uchinoura_street_static(buf: &mut MeshBuffer) {
     }
 }
 
-/// Builds the far-distant static-fire ignition flare & rising exhaust column at `EXTERIOR_PAD_POS`!
+/// Builds dynamic town actors: scheduled Range Shuttle Microbus + far-distant static-fire exhaust plume!
 pub fn build_distant_pad_plume(buf: &mut MeshBuffer, p: &DynamicSceneParams) {
+    if p.shuttle_x.abs() <= 46.0 {
+        props::uchinoura_shuttle_bus(buf, Pose::at(p.shuttle_x, -3.20 + 0.045, 6.35), p.shuttle_door_open);
+    }
+
     if p.plume_intensity <= 0.01 && p.plume_age_s >= 18.0 {
         return;
     }

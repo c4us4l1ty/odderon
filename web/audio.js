@@ -227,6 +227,10 @@ export class PhysicalAudioEngine {
     const acOn = busLive && t[24] > 0.5;
     const compMod = acOn ? t[46] : 0.0;
     const winOpen = t[21];
+    const entryDoorOpen = t[65] || 0.0;
+    const isOutdoors = (t[73] || 0.0) > 0.5;
+    const indoorAtten = isOutdoors ? 0.24 : 1.0;
+    const outdoorExposure = Math.max(winOpen, entryDoorOpen * 0.75, isOutdoors ? 1.0 : 0.0);
     const warmth = t[9];
     const kettleOn = busLive && t[27] > 0.5;
     const waterC = t[28];
@@ -234,17 +238,17 @@ export class PhysicalAudioEngine {
     // Compressor RPM frequency & hum amplitude scale directly with thermodynamic load!
     this.acHumOsc.frequency.setTargetAtTime(48.0 + compMod * 24.0, now, 0.12);
     this.acHarmOsc.frequency.setTargetAtTime(96.0 + compMod * 48.0, now, 0.12);
-    this.acGain.gain.setTargetAtTime(acOn ? (0.008 + compMod * 0.032) : 0.0, now, 0.12);
-    this.airGain.gain.setTargetAtTime(acOn ? (0.006 + compMod * 0.015) : 0.0, now, 0.15);
+    this.acGain.gain.setTargetAtTime(acOn ? (0.008 + compMod * 0.032) * indoorAtten : 0.0, now, 0.12);
+    this.airGain.gain.setTargetAtTime(acOn ? (0.006 + compMod * 0.015) * indoorAtten : 0.0, now, 0.15);
 
-    // Summer cicadas louder in daytime warmth and brighter when window sash slides open
-    const cicLevel = (0.005 + winOpen * 0.024) * Math.max(0.15, warmth);
+    // Summer cicadas swell cleanly when opening window/entry door or stepping onto the sunlit street!
+    const cicLevel = (0.005 + outdoorExposure * 0.028) * Math.max(0.15, warmth);
     this.cicadaGain.gain.setTargetAtTime(cicLevel, now, 0.15);
-    this.cicadaFilter.frequency.setTargetAtTime(850 + winOpen * 4200, now, 0.15);
+    this.cicadaFilter.frequency.setTargetAtTime(850 + outdoorExposure * 4600, now, 0.15);
 
     // Kettle nucleate boiling cavitation hiss above 68 °C
     const boilFrac = kettleOn ? Math.max(0.0, Math.min(1.0, (waterC - 65.0) / 35.0)) : 0.0;
-    this.kettleGain.gain.setTargetAtTime(boilFrac * 0.045, now, 0.12);
+    this.kettleGain.gain.setTargetAtTime(boilFrac * 0.045 * indoorAtten, now, 0.12);
 
     // Discrete impulses emitted by Rust kernel
     if (t[40] > 0.05) {

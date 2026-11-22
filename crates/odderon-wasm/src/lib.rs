@@ -6,10 +6,10 @@ use core::fmt::Write;
 use odderon_geom::{
     build_dynamic_parts, build_eidos_vectors, build_static_world, DynamicSceneParams, MeshBuffer,
 };
-use odderon_sim::{Actuator, SimWorld, TargetId, PAD_DISTANCE_M};
+use odderon_sim::{Actuator, SimWorld, TargetId, PAD_DISTANCE_M, SHUTTLE_PERIOD_S};
 use std::sync::Mutex;
 
-pub const TELEMETRY_FLOATS: usize = 64;
+pub const TELEMETRY_FLOATS: usize = 76;
 
 #[inline]
 fn dyn_params_visually_equal(a: &DynamicSceneParams, b: &DynamicSceneParams) -> bool {
@@ -24,6 +24,10 @@ fn dyn_params_visually_equal(a: &DynamicSceneParams, b: &DynamicSceneParams) -> 
         && (a.window_rattle_m - b.window_rattle_m).abs() < 2e-5
         && (a.fan_angle_rad - b.fan_angle_rad).abs() < 5e-4
         && (a.toilet_door_open - b.toilet_door_open).abs() < 2e-4
+        && (a.entry_door_open - b.entry_door_open).abs() < 2e-4
+        && ((a.shuttle_x.abs() > 46.0 && b.shuttle_x.abs() > 46.0)
+            || (a.shuttle_x - b.shuttle_x).abs() < 2e-3)
+        && (a.shuttle_door_open - b.shuttle_door_open).abs() < 2e-4
         && (a.room_temp_c - b.room_temp_c).abs() < 0.008
         && (a.bus_power_w - b.bus_power_w).abs() < 0.35
         && (a.bus_voltage_v - b.bus_voltage_v).abs() < 0.008
@@ -190,6 +194,29 @@ impl EngineInstance {
         t[61] = s.solar.window_incident_wm2 as f32;
         t[62] = (s.solar.elevation_rad * 180.0 / odderon_dmath::PI) as f32;
         t[63] = s.hab.breaker_thermal_load as f32;
+        // [64..76]: Checkpoint 1B Doorways, ¥150,000 Wallet, Outdoor Flag & Range Shuttle Schedule!
+        let (shuttle_x, shuttle_door, shuttle_eta_s, cycle) = s.shuttle_kinematics();
+        let now_s = s.sim_time_s();
+        let phase = now_s - (cycle as f64) * SHUTTLE_PERIOD_S;
+        let next_wake_s = if phase < 38.0 {
+            38.0 - phase
+        } else if phase >= 74.0 {
+            (SHUTTLE_PERIOD_S - phase) + 38.0
+        } else {
+            0.0
+        };
+        t[64] = s.toilet_door_open;
+        t[65] = s.entry_door_open;
+        t[66] = s.yen_balance as f32;
+        t[67] = shuttle_eta_s;
+        t[68] = shuttle_door;
+        t[69] = s.shuttles_boarded as f32;
+        t[70] = s.drinks_bought as f32;
+        t[71] = s.shift_status_code as f32;
+        t[72] = if s.missed_first_shuttle { 1.0 } else { 0.0 };
+        t[73] = if s.is_player_outdoors() { 1.0 } else { 0.0 };
+        t[74] = shuttle_x;
+        t[75] = (next_wake_s * 1000.0) as f32;
     }
 }
 
@@ -221,6 +248,11 @@ fn target_from_u8(code: u8) -> TargetId {
         14 => TargetId::KettleBody,
         15 => TargetId::AcUnit,
         16 => TargetId::ToiletDoor,
+        17 => TargetId::EntryDoor,
+        18 => TargetId::TimetableSign,
+        19 => TargetId::BusStopBench,
+        20 => TargetId::ShuttleDoor,
+        21 => TargetId::VendingMachine,
         _ => TargetId::None,
     }
 }
@@ -439,13 +471,18 @@ pub extern "C" fn odderon_build_proof_json() -> *const u8 {
         let s = &eng.sim;
         let _ = write!(
             &mut eng.export_buf,
-            "{{\n  \"schema\": \"odderon.proof-of-flight/1\",\n  \"checkpoint\": \"1A-the-sunlit-room\",\n  \"location\": \"Uchinoura Coastal Hab (31.2510N, 131.0791E, +94m MSL)\",\n  \"galactic_sector_nm\": [{}, {}, {}],\n  \"tick_ms\": {},\n  \"local_hour_jst\": {:.4},\n  \"state_hash_hex\": \"{:016x}\",\n  \"telemetry\": {{\n    \"room_temp_c\": {:.2},\n    \"q_solar_gain_w\": {:.1},\n    \"ac_cooling_w\": {:.1},\n    \"ac_cop\": {:.2},\n    \"bus_power_w\": {:.1},\n    \"bus_voltage_v\": {:.2}\n  }},\n  \"eidos_sensitivities\": {{\n    \"d_qsolar_d_shoji_w\": {:.1},\n    \"d_pac_d_shoji_w\": {:.1},\n    \"d_teq_d_shoji_k\": {:.2}\n  }},\n  \"calibration\": {{\n    \"predictions_scored\": {},\n    \"mean_abs_error_pct\": {:.2}\n  }},\n  \"actuator_events_count\": {}\n}}",
+            "{{\n  \"schema\": \"odderon.proof-of-flight/1\",\n  \"checkpoint\": \"1B-the-sunlit-street\",\n  \"location\": \"Uchinoura Coastal Hab #204 & Bus Stop (31.2510N, 131.0791E)\",\n  \"galactic_sector_nm\": [{}, {}, {}],\n  \"tick_ms\": {},\n  \"local_hour_jst\": {:.4},\n  \"state_hash_hex\": \"{:016x}\",\n  \"commute_and_wallet\": {{\n    \"yen_balance\": {},\n    \"drinks_bought\": {},\n    \"shuttles_boarded\": {},\n    \"missed_first_shuttle\": {},\n    \"shift_status_code\": {}\n  }},\n  \"telemetry\": {{\n    \"room_temp_c\": {:.2},\n    \"q_solar_gain_w\": {:.1},\n    \"ac_cooling_w\": {:.1},\n    \"ac_cop\": {:.2},\n    \"bus_power_w\": {:.1},\n    \"bus_voltage_v\": {:.2}\n  }},\n  \"eidos_sensitivities\": {{\n    \"d_qsolar_d_shoji_w\": {:.1},\n    \"d_pac_d_shoji_w\": {:.1},\n    \"d_teq_d_shoji_k\": {:.2}\n  }},\n  \"calibration\": {{\n    \"predictions_scored\": {},\n    \"mean_abs_error_pct\": {:.2}\n  }},\n  \"actuator_events_count\": {}\n}}",
             s.world_pos.sector.x_nm,
             s.world_pos.sector.y_nm,
             s.world_pos.sector.z_nm,
             s.tick_ms,
             s.local_hour_jst,
             hash,
+            s.yen_balance,
+            s.drinks_bought,
+            s.shuttles_boarded,
+            s.missed_first_shuttle,
+            s.shift_status_code,
             s.hab.room_air_temp_k - 273.15,
             s.hab.q_solar_gain_w,
             s.hab.q_ac_cooling_w,
