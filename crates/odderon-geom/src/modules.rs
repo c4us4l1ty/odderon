@@ -273,6 +273,81 @@ fn slab(b: &mut MeshBuffer, x0: f32, x1: f32, y0: f32, y1: f32, z0: f32, z1: f32
     b.add_box(Vec3::new(x0, y0, z0), Vec3::new(x1, y1, z1), col, mat);
 }
 
+/// One flat face in the x-y plane at `z`, normal +Z, **two triangles**.
+///
+/// This is the kit's workhorse for anything that is a *surface* rather than a
+/// volume: boards, slats, balusters, rafter tails, screens. A box costs 12
+/// triangles and six faces; nine of those faces are never visible on a facade
+/// part, and a 40-board wall built from boxes was the single largest cost in
+/// the town (480 triangles where 80 will do).
+pub fn plate_z(b: &mut MeshBuffer, x0: f32, x1: f32, y0: f32, y1: f32, z: f32, col: [f32; 3], mat: f32) {
+    b.push_quad(
+        Vec3::new(x0, y0, z),
+        Vec3::new(x1, y0, z),
+        Vec3::new(x1, y1, z),
+        Vec3::new(x0, y1, z),
+        col,
+        mat,
+    );
+}
+
+/// One flat face in the x-z plane at `y`: two triangles, normal up or down.
+/// Floors, mats, ceilings and the tops of boards are surfaces, not volumes.
+pub fn plate_y(b: &mut MeshBuffer, x0: f32, x1: f32, z0: f32, z1: f32, y: f32, up: bool, col: [f32; 3], mat: f32) {
+    if up {
+        b.push_quad(
+            Vec3::new(x0, y, z0),
+            Vec3::new(x0, y, z1),
+            Vec3::new(x1, y, z1),
+            Vec3::new(x1, y, z0),
+            col,
+            mat,
+        );
+    } else {
+        b.push_quad(
+            Vec3::new(x0, y, z1),
+            Vec3::new(x0, y, z0),
+            Vec3::new(x1, y, z0),
+            Vec3::new(x1, y, z1),
+            col,
+            mat,
+        );
+    }
+}
+
+/// A full-volume slat: front face plus the two long sides. Six triangles,
+/// half of a box, and it still has a silhouette from a raking angle.
+pub fn slat_z(
+    b: &mut MeshBuffer,
+    x0: f32,
+    x1: f32,
+    y0: f32,
+    y1: f32,
+    z_back: f32,
+    z_front: f32,
+    col: [f32; 3],
+    mat: f32,
+) {
+    plate_z(b, x0, x1, y0, y1, z_front, col, mat);
+    // Left and right returns, wound to face outwards.
+    b.push_quad(
+        Vec3::new(x0, y0, z_back),
+        Vec3::new(x0, y0, z_front),
+        Vec3::new(x0, y1, z_front),
+        Vec3::new(x0, y1, z_back),
+        col,
+        mat,
+    );
+    b.push_quad(
+        Vec3::new(x1, y0, z_front),
+        Vec3::new(x1, y0, z_back),
+        Vec3::new(x1, y1, z_back),
+        Vec3::new(x1, y1, z_front),
+        col,
+        mat,
+    );
+}
+
 // ===========================================================================
 // 1. Walls
 // ===========================================================================
@@ -312,6 +387,7 @@ struct SkinCtx<'a> {
     split: f32,
     z_skin: f32,
     hw: f32,
+    plinth: bool,
 }
 
 /// The base of a building: a stone plinth with a proud course line and a
@@ -361,27 +437,76 @@ pub fn wall_open(
         split,
         z_skin: if skin == Skin::Corrugated { -0.075 } else { -0.085 },
         hw,
+        plinth: y0.abs() < 0.01,
     };
 
     // Panels: full-height columns between holes, plus the strips above and
-    // below each hole.
+    // below each hole. Holes must arrive sorted by `x0`; `building()` sorts
+    // them, and an unsorted list used to produce inverted (inside-out) panels.
     let mut cursor = -hw;
     for h in holes {
+        if h.x1 <= cursor + 0.002 {
+            continue; // fully behind a previous hole: skip rather than invert
+        }
         if h.x0 > cursor + 0.004 {
             skin_panel(b, &ctx, cursor, h.x0, y0, y1, None);
         }
         let a = h.x0.max(cursor);
-        if h.y0 > y0 + 0.01 {
-            skin_panel(b, &ctx, a, h.x1, y0, h.y0, Some(h));
-        }
-        if h.y1 < y1 - 0.01 {
-            skin_panel(b, &ctx, a, h.x1, h.y1, y1, Some(h));
+        if h.x1 > a + 0.004 {
+            if h.y0 > y0 + 0.01 {
+                skin_panel(b, &ctx, a, h.x1, y0, h.y0, Some(h));
+            }
+            if h.y1 < y1 - 0.01 {
+                skin_panel(b, &ctx, a, h.x1, h.y1, y1, Some(h));
+            }
+            // The opening's own jambs: four quads instead of relying on the
+            // thickness of the panels either side, which are now flat faces.
+            jamb(b, &ctx, h);
         }
         cursor = h.x1;
     }
     if cursor < hw - 0.004 {
         skin_panel(b, &ctx, cursor, hw, y0, y1, None);
     }
+}
+
+/// The four inner faces of an opening: reveals, in 8 triangles.
+fn jamb(b: &mut MeshBuffer, c: &SkinCtx, h: &Hole) {
+    let col = lerp3(c.pal.plaster_dark, c.pal.stone, 0.35);
+    // Sides.
+    b.push_quad(
+        Vec3::new(h.x0, h.y0, 0.0),
+        Vec3::new(h.x0, h.y0, c.z_skin),
+        Vec3::new(h.x0, h.y1, c.z_skin),
+        Vec3::new(h.x0, h.y1, 0.0),
+        col,
+        MAT_MATTE,
+    );
+    b.push_quad(
+        Vec3::new(h.x1, h.y0, c.z_skin),
+        Vec3::new(h.x1, h.y0, 0.0),
+        Vec3::new(h.x1, h.y1, 0.0),
+        Vec3::new(h.x1, h.y1, c.z_skin),
+        col,
+        MAT_MATTE,
+    );
+    // Head (faces down) and sill (faces up).
+    b.push_quad(
+        Vec3::new(h.x0, h.y1, c.z_skin),
+        Vec3::new(h.x1, h.y1, c.z_skin),
+        Vec3::new(h.x1, h.y1, 0.0),
+        Vec3::new(h.x0, h.y1, 0.0),
+        scale3(col, 0.82),
+        MAT_MATTE,
+    );
+    b.push_quad(
+        Vec3::new(h.x0, h.y0, 0.0),
+        Vec3::new(h.x1, h.y0, 0.0),
+        Vec3::new(h.x1, h.y0, c.z_skin),
+        Vec3::new(h.x0, h.y0, c.z_skin),
+        col,
+        MAT_MATTE,
+    );
 }
 
 /// One rectangular piece of wall skin, with its plinth share.
@@ -402,21 +527,36 @@ fn skin_panel(
     let edge_right = x1 >= c.hw - 0.002;
 
     // --- plinth ---------------------------------------------------------
+    // Only at the base of the building: a stone course half way up a wall is
+    // both wrong and 24 triangles per panel.
     let p0 = ya;
-    let p1 = yb.min(c.plinth_top);
+    let p1 = if c.plinth { yb.min(c.plinth_top) } else { ya };
     if p1 > p0 + 0.008 {
-        slab(b, x0 - if edge_left { 0.045 } else { 0.0 }, x1 + if edge_right { 0.045 } else { 0.0 }, p0, p1, -0.16, 0.055, pal.stone, MAT_MATTE);
+        // The plinth is read as a face with a proud cap course; its volume only
+        // shows at the building's ends, where the cap box covers it.
+        plate_z(
+            b,
+            x0 - if edge_left { 0.045 } else { 0.0 },
+            x1 + if edge_right { 0.045 } else { 0.0 },
+            p0,
+            p1,
+            0.055,
+            pal.stone,
+            MAT_MATTE,
+        );
         // The proud cap course sits right at the top of the plinth; only emit
-        // the part of it this panel actually owns.
+        // the part of it this panel actually owns. It is 4.5 cm deep on a wall
+        // seen from the front, so it is a face: this used to be a box, and it
+        // was a box *per panel*, which is 12 triangles times six panels times
+        // two storeys for a stripe 2 cm tall on screen.
         if yb >= c.plinth_top - 0.002 {
-            slab(
+            plate_z(
                 b,
                 x0 - if edge_left { 0.06 } else { 0.0 },
                 x1 + if edge_right { 0.06 } else { 0.0 },
                 c.plinth_top - 0.045,
                 c.plinth_top,
-                -0.17,
-                0.072,
+                0.062,
                 scale3(pal.stone, 1.08),
                 MAT_MATTE,
             );
@@ -432,13 +572,13 @@ fn skin_panel(
     let top_edge = yb >= c.y1 - 0.002;
     match c.skin {
         Skin::Plaster => {
-            slab(b, x0, x1, s0, s1, c.z_skin, 0.0, pal.plaster, MAT_MATTE);
+            plate_z(b, x0, x1, s0, s1, 0.0, pal.plaster, MAT_MATTE);
             // Shallow pilaster strips, aligned to a global 2.4 m grid so they
             // continue across panels.
             let mut sx = (x0 / 2.4).ceil() * 2.4;
             while sx < x1 {
                 if sx > x0 + 0.1 && sx < x1 - 0.1 {
-                    slab(b, sx - 0.035, sx + 0.035, s0, s1, -0.02, 0.012, pal.plaster_dark, MAT_MATTE);
+                    plate_z(b, sx - 0.035, sx + 0.035, s0, s1, 0.010, pal.plaster_dark, MAT_MATTE);
                 }
                 sx += 2.4;
             }
@@ -457,14 +597,17 @@ fn skin_panel(
                 }
                 let tone = 0.86 + 0.28 * (((k * 37 + 11) % 13) as f32 / 13.0) - 0.10 * c.dark_mix;
                 let col = lerp3(scale3(pal.board, tone), pal.board_dark, ((k * 7 + 3) % 11) as f32 / 22.0);
-                slab(b, a + 0.004, z - 0.004, s0, board_top, c.z_skin, -0.004, col, MAT_WOOD);
+                // A board is a face: 2 triangles, not 12.
+                plate_z(b, a + 0.004, z - 0.004, s0, board_top, -0.004, col, MAT_WOOD);
             }
             if c.split < s1 - 0.05 {
-                slab(b, x0, x1, c.split, s1, -0.09, -0.005, pal.plaster, MAT_MATTE);
-                slab(b, x0, x1, c.split - 0.10, c.split + 0.02, -0.12, 0.035, pal.timber, MAT_WOOD);
+                plate_z(b, x0, x1, c.split, s1, 0.0, pal.plaster, MAT_MATTE);
+                plate_z(b, x0, x1, c.split - 0.10, c.split + 0.02, 0.030, pal.timber, MAT_WOOD);
             }
         }
         Skin::Corrugated => {
+            // Corrugated sheet is deep enough to read from an angle, and it is
+            // what the near-row annexes are made of: keep its volume.
             slab(b, x0, x1, s0, s1, c.z_skin, 0.0, pal.steel, MAT_CORRUGATED);
             if edge_left {
                 slab(b, -c.hw - 0.02, -c.hw + 0.05, s0, s1, -0.10, 0.03, scale3(pal.steel, 0.92), MAT_ALLOY);
@@ -477,12 +620,12 @@ fn skin_panel(
             }
         }
         Skin::Stone => {
-            slab(b, x0, x1, s0, s1, c.z_skin, 0.0, pal.stone, MAT_MATTE);
+            plate_z(b, x0, x1, s0, s1, 0.0, pal.stone, MAT_MATTE);
             let rows = (((c.y1 - c.plinth_top) / 0.34).round() as usize).max(2);
             for r in 1..rows {
                 let y = c.plinth_top + (c.y1 - c.plinth_top) * (r as f32) / (rows as f32);
                 if y > s0 + 0.02 && y < s1 - 0.02 {
-                    slab(b, x0, x1, y - 0.012, y + 0.012, -0.02, 0.008, scale3(pal.stone, 0.82), MAT_MATTE);
+                    plate_z(b, x0, x1, y - 0.012, y + 0.012, 0.006, scale3(pal.stone, 0.82), MAT_MATTE);
                 }
             }
         }
@@ -493,9 +636,7 @@ fn skin_panel(
 /// A horizontal structural band (nageshi / floor separation) across the facade.
 pub fn band(b: &mut MeshBuffer, w: f32, y: f32, pal: &Pal) {
     let hw = w * 0.5;
-    slab(b, -hw, hw, y - 0.055, y + 0.075, -0.115, 0.050, pal.timber, MAT_WOOD);
-    // Small shadow shadow-gap under the beam.
-    slab(b, -hw, hw, y - 0.075, y - 0.055, -0.10, 0.030, scale3(pal.timber, 0.6), MAT_WOOD);
+    slab(b, -hw, hw, y - 0.075, y + 0.075, -0.115, 0.050, pal.timber, MAT_WOOD);
 }
 
 // ===========================================================================
@@ -514,6 +655,25 @@ pub fn window_unit(
     style: WindowStyle,
     pal: &Pal,
     rng: &mut Rng,
+) {
+    window_unit_lod(b, cx, w, y0, y1, style, pal, rng, true);
+}
+
+/// The same window with the trim switchable. At `full = false` the casing,
+/// sill, head and fly screen are dropped, leaving a recessed glass face and its
+/// frame - about 55 triangles instead of 110. That is the difference between a
+/// window you walk past and one you look at through another window ten metres
+/// away, and the far row is entirely the second case.
+pub fn window_unit_lod(
+    b: &mut MeshBuffer,
+    cx: f32,
+    w: f32,
+    y0: f32,
+    y1: f32,
+    style: WindowStyle,
+    pal: &Pal,
+    rng: &mut Rng,
+    full: bool,
 ) {
     let x0 = cx - w * 0.5;
     let x1 = cx + w * 0.5;
@@ -538,16 +698,19 @@ pub fn window_unit(
         _ => lerp3(pal.trim, [0.66, 0.65, 0.62], 0.4),
     };
     let cw = 0.065;
-    let cz0 = -0.03;
+    // The casing is the reveal's front edge as well as its trim: it runs from
+    // the wall plane back to the frame, so there is no gap between the painted
+    // wall and the window for the eye (or the sky) to fall into.
+    let cz0 = -0.105;
     let cz1 = 0.050;
-    slab(b, x0 - cw, x1 + cw, y1, y1 + cw, cz0, cz1, case_col, MAT_WOOD);
-    slab(b, x0 - cw, x0, y1, y1 + cw, cz0, cz1, case_col, MAT_WOOD);
-    slab(b, x1, x1 + cw, y1, y1 + cw, cz0, cz1, case_col, MAT_WOOD);
-    slab(b, x0 - cw, x0, y0, y1, cz0, cz1, case_col, MAT_WOOD);
-    slab(b, x1, x1 + cw, y0, y1, cz0, cz1, case_col, MAT_WOOD);
-
-    // Reveal: a recessed dark pocket so the glass has depth behind the skin.
-    slab(b, x0, x1, y0, y1, -0.19, -0.16, scale3(pal.glass, 0.55), MAT_MATTE);
+    if full {
+        // Top strip spans the full casing width, so it must *not* be repeated at
+        // the corners: those two blocks were coplanar with it (z-fighting) and
+        // were pure waste in every window in the town.
+        slab(b, x0 - cw, x1 + cw, y1, y1 + cw, cz0, cz1, case_col, MAT_WOOD);
+        slab(b, x0 - cw, x0, y0, y1, cz0, cz1, case_col, MAT_WOOD);
+        slab(b, x1, x1 + cw, y0, y1, cz0, cz1, case_col, MAT_WOOD);
+    }
     // Glass itself, set back.
     let glass_mat = match style {
         WindowStyle::Shoji => MAT_SHOJI,
@@ -559,7 +722,9 @@ pub fn window_unit(
         // horizon colour is what stops windows reading as holes cut in cardboard.
         _ => lerp3(pal.glass, [0.175, 0.215, 0.255], 0.42),
     };
-    slab(b, x0 + 0.02, x1 - 0.02, y0 + 0.02, y1 - 0.02, -0.165, -0.150, glass_col, glass_mat);
+    // Glass is a face seen through an opening: 2 triangles, not a 12-triangle
+    // box whose back and edges can never be seen.
+    plate_z(b, x0 + 0.02, x1 - 0.02, y0 + 0.02, y1 - 0.02, -0.150, glass_col, glass_mat);
 
     match style {
         WindowStyle::Sash => {
@@ -567,22 +732,26 @@ pub fn window_unit(
             // other, which is the detail that stops a sash reading as a grid.
             let mid = cx + rng.range(-0.06, 0.06);
             let fw = 0.042;
-            slab(b, x0, x1, y0, y0 + fw, -0.175, -0.108, frame, mat);
-            slab(b, x0, x1, y1 - fw, y1, -0.175, -0.108, frame, mat);
-            slab(b, x0, x0 + fw, y0, y1, -0.175, -0.108, frame, mat);
-            slab(b, x1 - fw, x1, y0, y1, -0.175, -0.108, frame, mat);
-            slab(b, mid - 0.020, mid + 0.020, y0, y1, -0.178, -0.112, frame, mat);
-            slab(b, mid - 0.020, mid + 0.020, y0, y1, -0.196, -0.176, scale3(frame, 0.9), mat);
-            // Sill: proud, with a drip shadow under it.
-            slab(b, x0 - 0.06, x1 + 0.06, y0 - 0.05, y0, -0.055, 0.085, lerp3(frame, pal.stone, 0.45), MAT_MATTE);
-            // Drip line: a thin rust/dirt streak below the sill is added in the
-            // shader (see `sillStreak`), here we only give it a lip to run off.
-            slab(b, x0 - 0.03, x1 + 0.03, y1, y1 + 0.055, -0.10, 0.020, scale3(frame, 0.75), mat);
+            let fz = -0.105;
+            // Frame members are faces on the frame plane, shaded as metal.
+            plate_z(b, x0, x1, y0, y0 + fw, fz, frame, mat);
+            plate_z(b, x0, x1, y1 - fw, y1, fz, frame, mat);
+            plate_z(b, x0, x0 + fw, y0, y1, fz, frame, mat);
+            plate_z(b, x1 - fw, x1, y0, y1, fz, frame, mat);
+            // The two sliding lights are on different planes: that offset is
+            // the whole reason a sash reads as a sash.
+            plate_z(b, mid - 0.020, mid + 0.020, y0, y1, fz + 0.010, frame, mat);
+            plate_z(b, mid - 0.024, mid + 0.024, y0, y1, fz - 0.014, scale3(frame, 0.9), mat);
+            // Sill: proud, and it is the one ledge that has a visible edge.
+            if full {
+                slab(b, x0 - 0.06, x1 + 0.06, y0 - 0.05, y0, -0.055, 0.085, lerp3(frame, pal.stone, 0.45), MAT_MATTE);
+                plate_z(b, x0 - 0.03, x1 + 0.03, y1, y1 + 0.055, 0.020, scale3(frame, 0.75), mat);
+            }
             // Fly screen on one side, half the time.
-            if rng.chance(0.4) {
+            if full && rng.chance(0.4) {
                 let sx0 = if rng.chance(0.5) { x0 + 0.05 } else { mid + 0.02 };
                 let sx1 = if sx0 < mid { mid - 0.02 } else { x1 - 0.05 };
-                slab(b, sx0, sx1, y0 + 0.06, y1 - 0.06, -0.140, -0.134, [0.10, 0.11, 0.12], MAT_ALLOY);
+                plate_z(b, sx0, sx1, y0 + 0.06, y1 - 0.06, -0.134, [0.10, 0.11, 0.12], MAT_ALLOY);
             }
         }
         WindowStyle::Lattice => {
@@ -594,7 +763,8 @@ pub fn window_unit(
             for i in 0..=n {
                 let x = x0 + step * i as f32;
                 let proud = if i % 3 == 0 { 0.042 } else { 0.020 };
-                slab(b, x - 0.010, x + 0.010, y0, y1, -0.02, proud, pal.timber, MAT_WOOD);
+                // Koshi slats are the same story: face quads, not boxes.
+                plate_z(b, x - 0.010, x + 0.010, y0, y1, proud, pal.timber, MAT_WOOD);
             }
             for &fy in &[y0 + 0.06, y1 - 0.075] {
                 slab(b, x0, x1, fy, fy + 0.045, 0.02, 0.055, pal.timber, MAT_WOOD);
@@ -603,10 +773,11 @@ pub fn window_unit(
         }
         WindowStyle::Casement => {
             let fw = 0.05;
-            slab(b, x0, x1, y0, y0 + fw, -0.175, -0.100, frame, mat);
-            slab(b, x0, x1, y1 - fw, y1, -0.175, -0.100, frame, mat);
-            slab(b, x0, x0 + fw, y0, y1, -0.175, -0.100, frame, mat);
-            slab(b, x1 - fw, x1, y0, y1, -0.175, -0.100, frame, mat);
+            let fz = -0.105;
+            plate_z(b, x0, x1, y0, y0 + fw, fz, frame, mat);
+            plate_z(b, x0, x1, y1 - fw, y1, fz, frame, mat);
+            plate_z(b, x0, x0 + fw, y0, y1, fz, frame, mat);
+            plate_z(b, x1 - fw, x1, y0, y1, fz, frame, mat);
             // Opened pane: a swung light at an angle, which is the whole point
             // of a casement and a strong cue at eye height.
             if rng.chance(0.55) {
@@ -686,21 +857,27 @@ pub fn door_unit(
     let x1 = cx + w * 0.5;
     // Recessed threshold + reveal.
     slab(b, x0, x1, y0 - 0.10, y0, -0.02, 0.10, scale3(pal.stone, 0.9), MAT_MATTE);
-    slab(b, x0, x1, y0, y1, -0.24, -0.20, scale3(pal.board_dark, 0.8), MAT_MATTE);
+    // 1 mm in front of the building's mass: at exactly -0.24 the two faces
+    // z-fought along every door in the street.
+    slab(b, x0, x1, y0, y1, -0.239, -0.20, scale3(pal.board_dark, 0.8), MAT_MATTE);
 
     match style {
         DoorStyle::ShopGlass => {
             let fw = 0.055;
-            slab(b, x0, x1, y0, y0 + fw, -0.21, -0.14, pal.trim, MAT_ALLOY);
-            slab(b, x0, x1, y1 - fw, y1, -0.21, -0.14, pal.trim, MAT_ALLOY);
-            slab(b, x0, x0 + fw, y0, y1, -0.21, -0.14, pal.trim, MAT_ALLOY);
-            slab(b, x1 - fw, x1, y0, y1, -0.21, -0.14, pal.trim, MAT_ALLOY);
+            for &(a, c2, d, e) in &[
+                (x0, x1, y0, y0 + fw),
+                (x0, x1, y1 - fw, y1),
+                (x0, x0 + fw, y0, y1),
+                (x1 - fw, x1, y0, y1),
+            ] {
+                plate_z(b, a, c2, d, e, -0.150, pal.trim, MAT_ALLOY);
+            }
             let mid = cx + rng.range(-0.03, 0.03);
-            slab(b, mid - 0.022, mid + 0.022, y0, y1, -0.212, -0.135, pal.trim, MAT_ALLOY);
-            slab(b, x0 + fw, x1 - fw, y0 + fw, y1 - fw, -0.235, -0.225, pal.glass, MAT_ALLOY);
+            plate_z(b, mid - 0.022, mid + 0.022, y0, y1, -0.152, pal.trim, MAT_ALLOY);
+            plate_z(b, x0 + fw, x1 - fw, y0 + fw, y1 - fw, -0.168, pal.glass, MAT_ALLOY);
             // Kick plate, hand-height push bar.
-            slab(b, x0 + fw, x1 - fw, y0 + fw, y0 + 0.26, -0.215, -0.13, scale3(pal.trim, 0.8), MAT_ALLOY);
-            slab(b, x0 + 0.10, x1 - 0.10, y0 + 1.02, y0 + 1.06, -0.30, -0.24, [0.55, 0.55, 0.56], MAT_ALLOY);
+            plate_z(b, x0 + fw, x1 - fw, y0 + fw, y0 + 0.26, -0.155, scale3(pal.trim, 0.8), MAT_ALLOY);
+            plate_z(b, x0 + 0.10, x1 - 0.10, y0 + 1.02, y0 + 1.06, -0.190, [0.55, 0.55, 0.56], MAT_ALLOY);
         }
         DoorStyle::Plank => {
             let n = ((w / 0.17).round() as usize).max(3);
@@ -708,11 +885,14 @@ pub fn door_unit(
             for i in 0..n {
                 let x = x0 + step * i as f32;
                 let tone = 0.85 + 0.3 * (((i * 29 + 5) % 9) as f32 / 9.0);
-                slab(b, x + 0.006, x + step - 0.006, y0 + 0.02, y1 - 0.02, -0.20, -0.14, scale3(pal.board, tone), MAT_WOOD);
+                // A plank is a face at the door's own recess plane: the shadow
+                // between planks comes from the tone step, not from a 6 cm box
+                // that costs 12 triangles and never shows its sides.
+                plate_z(b, x + 0.004, x + step - 0.004, y0 + 0.02, y1 - 0.02, -0.150, scale3(pal.board, tone), MAT_WOOD);
             }
             // Iron straps and a handle.
             for &sy in &[y0 + 0.35, y1 - 0.55] {
-                slab(b, x0, x1, sy, sy + 0.05, -0.13, -0.115, [0.10, 0.10, 0.11], MAT_ALLOY);
+                plate_z(b, x0, x1, sy, sy + 0.05, -0.135, [0.10, 0.10, 0.11], MAT_ALLOY);
             }
             slab(b, x0 + w - 0.16, x0 + w - 0.10, y0 + 0.95, y0 + 1.02, -0.135, -0.075, [0.35, 0.30, 0.22], MAT_ALLOY);
             // Frame.
@@ -818,13 +998,17 @@ pub fn eave(b: &mut MeshBuffer, w: f32, y: f32, depth: f32, pal: &Pal, rng: &mut
         // pattern under an eave is half of why they read as Japanese.
         let pitch_x = rng.range(0.40, 0.55);
         let n = ((w / pitch_x).round() as usize).max(2);
+        let rc = scale3(lerp3(pal.timber, [0.42, 0.34, 0.26], 0.45), 1.0);
         for i in 0..=n {
             let x = -hw + w * (i as f32) / (n as f32);
-            b.add_beam(
-                Vec3::new(x, y - 0.07, 0.0),
-                Vec3::new(x, y - 0.045, depth - 0.04),
-                0.022,
-                scale3(lerp3(pal.timber, [0.42, 0.34, 0.26], 0.45), 1.0),
+            // A rafter tail is read from below as a dark strip: one face, two
+            // triangles. Round beams here cost 15x more for no visible gain.
+            b.push_quad(
+                Vec3::new(x - 0.026, y - 0.075, depth - 0.04),
+                Vec3::new(x + 0.026, y - 0.075, depth - 0.04),
+                Vec3::new(x + 0.026, y - 0.075, 0.06),
+                Vec3::new(x - 0.026, y - 0.075, 0.06),
+                rc,
                 MAT_WOOD,
             );
         }
@@ -872,6 +1056,12 @@ pub fn downpipe(b: &mut MeshBuffer, x: f32, y0: f32, y1: f32, pal: &Pal) {
 /// volume all the way to the rear wall, which is what keeps the flat top of the
 /// body box from showing as a beige terrace from any elevated camera.
 pub fn roof_kawara(b: &mut MeshBuffer, w: f32, y_eave: f32, depth: f32, rise: f32, pal: &Pal) {
+    roof_kawara_lod(b, w, y_eave, depth, rise, pal, true);
+}
+
+/// The gable roof with the `marugawara` eave caps optional: they are ~400
+/// triangles per roof, a fifth of a whole building.
+pub fn roof_kawara_lod(b: &mut MeshBuffer, w: f32, y_eave: f32, depth: f32, rise: f32, pal: &Pal, caps: bool) {
     let hw = w * 0.5 + 0.22;
     // The soffit is cedar lit by bounce off the street, not raw timber: an
     // honest dark brown turns into a black slab from below.
@@ -879,7 +1069,7 @@ pub fn roof_kawara(b: &mut MeshBuffer, w: f32, y_eave: f32, depth: f32, rise: f3
     let z_eave = EAVE_LIP;
     let z_ridge = -(depth * 0.5);
     let z_back = -(depth + 0.18);
-    b.add_kawara_eave_slope(-hw, hw, y_eave, z_eave, y_eave + rise, z_ridge, pal.tile, soffit);
+    b.add_kawara_eave_slope_lod(-hw, hw, y_eave, z_eave, y_eave + rise, z_ridge, pal.tile, soffit, caps);
     // Back slope: same tiles, falling away from the ridge to the rear eave.
     b.push_quad(
         Vec3::new(hw, y_eave + rise, z_ridge),
@@ -956,11 +1146,18 @@ pub fn balcony(b: &mut MeshBuffer, w: f32, y: f32, depth: f32, pal: &Pal, rng: &
     let hw = w * 0.5;
     // Deck slab.
     slab(b, -hw, hw, y - 0.10, y, -0.02, depth, pal.timber_light, MAT_WOOD);
-    // Joists under the deck.
+    // Joists under the deck: seen from below, so one downward face each.
     let n = ((w / 0.55).round() as usize).max(2);
     for i in 0..=n {
         let x = -hw + w * (i as f32) / (n as f32);
-        slab(b, x - 0.03, x + 0.03, y - 0.16, y - 0.10, -0.02, depth - 0.04, scale3(pal.timber, 0.85), MAT_WOOD);
+        b.push_quad(
+            Vec3::new(x - 0.03, y - 0.16, depth - 0.04),
+            Vec3::new(x + 0.03, y - 0.16, depth - 0.04),
+            Vec3::new(x + 0.03, y - 0.16, -0.02),
+            Vec3::new(x - 0.03, y - 0.16, -0.02),
+            scale3(pal.timber, 0.85),
+            MAT_WOOD,
+        );
     }
     // Railing: handrail, bottom rail, balusters at ~11 cm pitch, and a mid rail
     // every other bay (the reference railings are dense and dark).
@@ -978,7 +1175,9 @@ pub fn balcony(b: &mut MeshBuffer, w: f32, y: f32, depth: f32, pal: &Pal, rng: &
     for i in 1..nb {
         let x = -hw + w * (i as f32) / (nb as f32);
         let top = if i % 2 == 0 { ry - 0.045 } else { ry - 0.20 };
-        slab(b, x - 0.012, x + 0.012, y + 0.10, top, depth - 0.075, depth - 0.045, pal.timber, MAT_WOOD);
+        // A baluster is a slat: front face only, 2 triangles instead of 12.
+        // 50 of these on one balcony was the most expensive thing in the kit.
+        plate_z(b, x - 0.011, x + 0.011, y + 0.10, top, depth - 0.045, pal.timber, MAT_WOOD);
     }
     // Steel brackets back to the wall.
     for sx in [-1.0_f32, 1.0] {
@@ -1146,6 +1345,31 @@ pub fn awning(b: &mut MeshBuffer, w: f32, y: f32, depth: f32, a: [f32; 3], b_col
 // 6. Building composer
 // ===========================================================================
 
+/// Test-only triangle accounting, so the kit can be profiled part by part
+/// without eyeballing a screenshot. Compiled out of release/wasm builds.
+#[cfg(test)]
+pub mod probe {
+    use std::sync::Mutex;
+    pub static LOG: Mutex<Vec<(&'static str, usize)>> = Mutex::new(Vec::new());
+    pub fn mark(label: &'static str, tris: usize) {
+        LOG.lock().unwrap().push((label, tris));
+    }
+    pub fn take() -> Vec<(&'static str, usize)> {
+        core::mem::take(&mut *LOG.lock().unwrap())
+    }
+}
+
+#[cfg(test)]
+macro_rules! pm {
+    ($b:expr, $l:expr) => {
+        crate::modules::probe::mark($l, $b.indices.len() / 3)
+    };
+}
+#[cfg(not(test))]
+macro_rules! pm {
+    ($b:expr, $l:expr) => {};
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct BuildingSpec {
     pub width: f32,
@@ -1161,6 +1385,11 @@ pub struct BuildingSpec {
     pub balcony: bool,
     /// 0..1, higher = more wear, smaller openings, more clutter.
     pub wear: f32,
+    /// Detail level. `0` is the far side of the street: flat windows without
+    /// casings or sills, no eave end caps, no AC units, meter boxes, crates or
+    /// signage - about 45 % of the triangles for a building that is only ever
+    /// seen at ten metres through a window. `1` is a building you walk past.
+    pub detail: u8,
 }
 
 impl Default for BuildingSpec {
@@ -1178,6 +1407,7 @@ impl Default for BuildingSpec {
             roof: RoofKind::Kawara,
             balcony: true,
             wear: 0.5,
+            detail: 1,
         }
     }
 }
@@ -1194,6 +1424,7 @@ pub fn building(b: &mut MeshBuffer, s: &BuildingSpec) {
     let hw = s.width * 0.5;
     let total_h = s.floor_h * s.floors as f32;
     let gh = s.floor_h * 0.86;
+    let full = s.detail > 0;
 
     // --- body -------------------------------------------------------------
     // A thin mass so the building has a side and a top, not just a facade.
@@ -1292,18 +1523,21 @@ pub fn building(b: &mut MeshBuffer, s: &BuildingSpec) {
         }
 
         // ---- the skin itself
+        pm!(b, if f == 0 { "0 pre-skin" } else { "2 upper pre-skin" });
         wall_open(b, s.width, y0, y1 - 0.06, skin, &s.pal, &mut rng, &holes[..n_holes]);
+        pm!(b, if f == 0 { "1 ground skin" } else { "3 upper skin" });
         if f > 0 {
             band(b, s.width, y0 + 0.02, &s.pal);
         }
 
+        pm!(b, if f == 0 { "1b ground band" } else { "3b upper band" });
         // ---- fill the holes with real units
         if f == 0 {
             match s.ground {
                 GroundFloor::Shop => {
                     let shop_w = s.width * 0.56;
                     let shop_cx = if door_left { hw - 0.35 - shop_w * 0.5 } else { -hw + 0.35 + shop_w * 0.5 };
-                    window_unit(b, shop_cx, shop_w, 0.58, gh - 0.26, WindowStyle::Shopfront, &s.pal, &mut rng);
+                    window_unit_lod(b, shop_cx, shop_w, 0.58, gh - 0.26, WindowStyle::Shopfront, &s.pal, &mut rng, full);
                     door_unit(b, door_cx, door_w * 0.94, 0.10, gh - 0.34, DoorStyle::ShopGlass, &s.pal, &mut rng);
                     awning(b, s.width - 0.5, gh + 0.06, 0.72, s.pal.accent, lerp3(s.pal.accent, [0.92, 0.90, 0.86], 0.75));
                     sign_plate(
@@ -1324,8 +1558,10 @@ pub fn building(b: &mut MeshBuffer, s: &BuildingSpec) {
                         door_cx - door_w * 0.5 - 0.40 - win_w * 0.5
                     };
                     let win_cx = win_cx.max(-hw + win_w * 0.5 + 0.12).min(hw - win_w * 0.5 - 0.12);
-                    window_unit(b, win_cx, win_w, 0.70, gh - 0.40, WindowStyle::Lattice, &s.pal, &mut rng);
+                    window_unit_lod(b, win_cx, win_w, 0.70, gh - 0.40, WindowStyle::Lattice, &s.pal, &mut rng, full);
+                    pm!(b, "1c shop window");
                     door_unit(b, door_cx, door_w, 0.10, gh - 0.14, DoorStyle::Plank, &s.pal, &mut rng);
+                    pm!(b, "1d door");
                     slab(b, door_cx - door_w * 0.6, door_cx + door_w * 0.6, 0.0, 0.13, -0.05, 0.46, scale3(s.pal.stone, 1.05), MAT_MATTE);
                     // A noren curtain in the accent colour: the cheapest way to
                     // put colour on a street that is otherwise all cedar.
@@ -1339,7 +1575,7 @@ pub fn building(b: &mut MeshBuffer, s: &BuildingSpec) {
                     let sh_cx = -hw * 0.35;
                     door_unit(b, sh_cx, sh_w, 0.05, gh - 0.20, DoorStyle::RollerShutter, &s.pal, &mut rng);
                     let win_w = s.width * 0.28;
-                    window_unit(b, hw * 0.46, win_w, 1.20, gh - 0.55, WindowStyle::Casement, &s.pal, &mut rng);
+                    window_unit_lod(b, hw * 0.46, win_w, 1.20, gh - 0.55, WindowStyle::Casement, &s.pal, &mut rng, full);
                     meter_box(b, -hw + 0.32, 1.15, &s.pal, &mut rng);
                     vent(b, hw - 0.45, 2.20, 0.34, 0.24, &s.pal);
                 }
@@ -1359,7 +1595,7 @@ pub fn building(b: &mut MeshBuffer, s: &BuildingSpec) {
                 _ => WindowStyle::Lattice,
             };
             for h in &holes[..n_holes] {
-                window_unit(b, (h.x0 + h.x1) * 0.5, h.x1 - h.x0, win_y0, win_y1, style, &s.pal, &mut rng);
+                window_unit_lod(b, (h.x0 + h.x1) * 0.5, h.x1 - h.x0, win_y0, win_y1, style, &s.pal, &mut rng, full);
             }
             // Vertical timber post between bays: the frame that holds a machiya
             // together visually.
@@ -1367,11 +1603,14 @@ pub fn building(b: &mut MeshBuffer, s: &BuildingSpec) {
                 slab(b, h.x1 + 0.02, h.x1 + 0.13, y0, y1 - 0.04, -0.12, 0.03, s.pal.timber, MAT_WOOD);
             }
 
+            pm!(b, "3c upper windows");
             // Eave over this storey, over the ground floor and every floor above.
-            eave(b, s.width + 0.10, y0 - 0.06, rng.range(0.46, 0.66), &s.pal, &mut rng, true);
+            eave(b, s.width + 0.10, y0 - 0.06, rng.range(0.46, 0.66), &s.pal, &mut rng, full);
+            pm!(b, "4 eave");
 
             if f == 1 && s.balcony {
                 balcony(b, (s.width * rng.range(0.62, 0.86)).min(s.width - 0.5), y0 + 0.03, rng.range(0.74, 0.95), &s.pal, &mut rng);
+                pm!(b, "5 balcony");
             }
         }
     }
@@ -1383,7 +1622,7 @@ pub fn building(b: &mut MeshBuffer, s: &BuildingSpec) {
             // ~24 degrees: a machiya roof is shallow, but at 13 the tile plane
             // was invisible edge-on and every house read as flat-roofed.
             let rise = (s.depth * 0.5) * rng.range(0.40, 0.50);
-            roof_kawara(b, s.width, top + 0.02, s.depth, rise, &s.pal)
+            roof_kawara_lod(b, s.width, top + 0.02, s.depth, rise, &s.pal, full)
         }
         RoofKind::Corrugated => roof_corrugated(b, s.width, top + 0.02, s.depth, &s.pal),
         RoofKind::Parapet => {
@@ -1455,29 +1694,34 @@ pub fn building(b: &mut MeshBuffer, s: &BuildingSpec) {
         }
     }
 
+    pm!(b, "6 roof");
     // --- fixtures ---------------------------------------------------------
     let pipe_x = if rng.chance(0.5) { -hw + 0.10 } else { hw - 0.10 };
     downpipe(b, pipe_x, 0.15, top - 0.1, &s.pal);
 
-    let ac_count = if s.floors > 1 && rng.chance(0.55) { 1 } else { 0 };
+    let ac_count = if full && s.floors > 1 && rng.chance(0.55) { 1 } else { 0 };
     for i in 0..ac_count {
         let f = 1 + (i % (s.floors - 1).max(1));
         let y = f as f32 * s.floor_h + rng.range(1.15, 1.55);
         let cx = rng.range(-hw + 0.9, hw - 0.9);
         ac_unit(b, cx, y, &mut rng);
     }
+    pm!(b, "7 downpipe+ac");
 
-    if s.floors > 1 && rng.chance(0.34) {
+    if full && s.floors > 1 && rng.chance(0.34) {
         let n = 2 + rng.pick(3);
         for i in 0..n {
             let cx = -hw + s.width * ((i as f32) + 1.0) / ((n + 1) as f32);
             lantern(b, cx, s.floor_h - 0.22);
         }
     }
+    pm!(b, "8 lanterns");
 
-    sign_plate(b, door_cx + door_w * 0.7, 1.55, 0.30, 0.42, s.pal.trim, &s.pal);
+    if full {
+        sign_plate(b, door_cx + door_w * 0.7, 1.55, 0.30, 0.42, s.pal.trim, &s.pal);
+    }
 
-    if rng.chance(0.6) {
+    if full && rng.chance(0.6) {
         let cx = if door_left { door_cx - door_w * 0.8 } else { door_cx + door_w * 0.8 };
         let n = 1 + rng.pick(3);
         for i in 0..n {
@@ -1490,6 +1734,7 @@ pub fn building(b: &mut MeshBuffer, s: &BuildingSpec) {
             );
         }
     }
+    pm!(b, "9 crates");
 }
 
 /// A shop unit that can be dropped in front of a machiya: sign, awning, glass
@@ -1564,6 +1809,7 @@ mod kit_tests {
             roof,
             balcony: true,
             wear: 0.5,
+            detail: 1,
         }
     }
 

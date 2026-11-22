@@ -321,6 +321,7 @@ pub fn build_uchinoura_street_static(buf: &mut MeshBuffer) {
         roof: modules::RoofKind::Parapet,
         balcony: false,
         wear: 0.8,
+        detail: 1,
         },
     );
 
@@ -341,6 +342,7 @@ pub fn build_uchinoura_street_static(buf: &mut MeshBuffer) {
         roof: modules::RoofKind::Kawara,
         balcony: false,
         wear: 0.35,
+        detail: 1,
         },
     );
 
@@ -362,6 +364,7 @@ pub fn build_uchinoura_street_static(buf: &mut MeshBuffer) {
         roof: modules::RoofKind::Kawara,
         balcony: true,
         wear: 0.55,
+        detail: 1,
         },
     );
 
@@ -397,6 +400,7 @@ pub fn build_uchinoura_street_static(buf: &mut MeshBuffer) {
         roof: modules::RoofKind::Parapet,
         balcony: false,
         wear: 0.7,
+        detail: 0,
         },
     );
 
@@ -419,6 +423,7 @@ pub fn build_uchinoura_street_static(buf: &mut MeshBuffer) {
         roof: modules::RoofKind::Kawara,
         balcony: true,
         wear: 0.62,
+        detail: 1,
         },
     );
 
@@ -441,6 +446,7 @@ pub fn build_uchinoura_street_static(buf: &mut MeshBuffer) {
         roof: modules::RoofKind::Kawara,
         balcony: false,
         wear: 0.45,
+        detail: 0,
         },
     );
 

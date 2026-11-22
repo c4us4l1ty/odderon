@@ -9,6 +9,8 @@
 pub mod hab;
 pub mod modules;
 pub mod primitives;
+#[cfg(test)]
+mod profiling;
 pub mod props;
 pub mod rooms;
 pub mod town;

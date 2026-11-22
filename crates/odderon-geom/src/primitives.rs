@@ -423,6 +423,28 @@ impl MeshBuffer {
         tile_col: [f32; 3],
         wood_col: [f32; 3],
     ) {
+        self.add_kawara_eave_slope_lod(x0, x1, y_eave, z_eave, y_ridge, z_ridge, tile_col, wood_col, true);
+    }
+
+    /// Same slope, with the `marugawara` end caps optional.
+    ///
+    /// The caps are a strong silhouette cue on a roof you can see the edge of,
+    /// and they are ~400 triangles: every 0.42 m along the eave is a cylinder
+    /// plus an end disc. Buildings that are only ever seen from ten metres away
+    /// through a window do not earn that, so the kit passes `false` for them.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_kawara_eave_slope_lod(
+        &mut self,
+        x0: f32,
+        x1: f32,
+        y_eave: f32,
+        z_eave: f32,
+        y_ridge: f32,
+        z_ridge: f32,
+        tile_col: [f32; 3],
+        wood_col: [f32; 3],
+        caps: bool,
+    ) {
         // Upper Kawara tile deck (normal +Y/-Z!)
         self.push_quad(
             Vec3::new(x0, y_ridge, z_ridge),
@@ -448,21 +470,27 @@ impl MeshBuffer {
         // Timber eave soffit & fascia beam under front lip
         self.add_box(Vec3::new(x0, y_eave - 0.11, z_eave), Vec3::new(x1, y_eave, z_eave + 0.14), wood_col, MAT_WOOD);
         // Sculpted round Kawara end-cap cylinders (`marugawara`) along eave front — iconic silhouette from ref images!
-        let span = x1 - x0;
-        let count = ((span / 0.42) as usize).clamp(4, 20);
-        for i in 0..=count {
-            let tx = x0 + span * (i as f32) / (count as f32);
-            self.add_cylinder(
-                Vec3::new(tx, y_eave + 0.035, z_eave + 0.14),
-                Vec3::new(tx, y_eave + 0.015, z_eave - 0.02),
-                0.048,
-                0.052,
-                5,
-                tile_col,
-                MAT_KAWARA,
-                false,
-            );
-            self.add_disc_neg_z(Vec3::new(tx, y_eave + 0.015, z_eave - 0.02), 0.052, 6, tile_col, MAT_KAWARA);
+        if caps {
+            let span = x1 - x0;
+            let count = ((span / 0.42) as usize).clamp(4, 20);
+            for i in 0..=count {
+                let tx = x0 + span * (i as f32) / (count as f32);
+                // Three sides, not five: the cap is 10 cm long and sticks out
+                // over a shadowed soffit, so at 5 m the extra two sides were
+                // never resolvable, and there are twenty caps on every roof in
+                // the street.
+                self.add_cylinder(
+                    Vec3::new(tx, y_eave + 0.035, z_eave + 0.14),
+                    Vec3::new(tx, y_eave + 0.015, z_eave - 0.02),
+                    0.048,
+                    0.052,
+                    3,
+                    tile_col,
+                    MAT_KAWARA,
+                    false,
+                );
+                self.add_disc_neg_z(Vec3::new(tx, y_eave + 0.015, z_eave - 0.02), 0.052, 4, tile_col, MAT_KAWARA);
+            }
         }
         // Horizontal half-round PVC/copper rain gutter right below the Kawara eave!
         self.add_cylinder(

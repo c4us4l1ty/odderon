@@ -16,6 +16,7 @@
 //! Colours come from [`IntPal`], so a whole room can be re-toned in one place.
 
 use crate::{
+    modules::{plate_y, plate_z},
     MeshBuffer, Pose, MAT_ALLOY, MAT_EMISSIVE_WARM, MAT_FOLIAGE, MAT_MATTE,
     MAT_SHOJI, MAT_TATAMI, MAT_WOOD,
 };
@@ -140,14 +141,13 @@ pub fn tatami_floor(b: &mut MeshBuffer, x0: f32, x1: f32, z0: f32, z1: f32, pal:
             for wi in 0..weave_n {
                 let wt = (wi as f32 + 0.5) / weave_n as f32;
                 let shade = 0.86 + 0.10 * wav(wi + r * 3 + c, seed);
+                let c = [face[0] * shade, face[1] * shade, face[2] * shade];
                 if (mx1 - mx0) > (mz1 - mz0) {
                     let y = mz0 + (mz1 - mz0) * wt;
-                    slab(b, mx0 + 0.05, mx1 - 0.05, 0.049, 0.0505, y - 0.011, y + 0.011,
-                        [face[0] * shade, face[1] * shade, face[2] * shade], MAT_TATAMI);
+                    plate_y(b, mx0 + 0.05, mx1 - 0.05, y - 0.011, y + 0.011, 0.0505, true, c, MAT_TATAMI);
                 } else {
                     let x = mx0 + (mx1 - mx0) * wt;
-                    slab(b, x - 0.011, x + 0.011, 0.049, 0.0505, mz0 + 0.05, mz1 - 0.05,
-                        [face[0] * shade, face[1] * shade, face[2] * shade], MAT_TATAMI);
+                    plate_y(b, x - 0.011, x + 0.011, mz0 + 0.05, mz1 - 0.05, 0.0505, true, c, MAT_TATAMI);
                 }
             }
             slab(b, mx0 + 0.006, mx1 - 0.006, 0.024, 0.049, mz0 + 0.006, mz1 - 0.006, face, MAT_TATAMI);
@@ -186,12 +186,17 @@ pub fn plank_deck(
         let t = 0.88 + 0.26 * wav(i, seed);
         let col = IntPal::mix3(pal.wood_light, pal.wood, wav(i + 31, seed) * 0.55);
         let col = [col[0] * t, col[1] * t, col[2] * t];
+        // One board is a board, not a beam: a face up and a face down cost four
+        // triangles and still close the deck from either side, where a box cost
+        // twelve and spent ten of them on 2 cm edges nobody can see.
         if run_along_x {
             let bx0 = x0 + step * i as f32;
-            slab(b, bx0 + 0.002, bx0 + step - 0.002, y, y + thickness, z0, z1, col, MAT_WOOD);
+            plate_y(b, bx0 + 0.002, bx0 + step - 0.002, z0, z1, y + thickness, true, col, MAT_WOOD);
+            plate_y(b, bx0 + 0.002, bx0 + step - 0.002, z0, z1, y, false, col, MAT_WOOD);
         } else {
             let bz0 = z0 + step * i as f32;
-            slab(b, x0, x1, y, y + thickness, bz0 + 0.002, bz0 + step - 0.002, col, MAT_WOOD);
+            plate_y(b, x0, x1, bz0 + 0.002, bz0 + step - 0.002, y + thickness, true, col, MAT_WOOD);
+            plate_y(b, x0, x1, bz0 + 0.002, bz0 + step - 0.002, y, false, col, MAT_WOOD);
         }
     }
 }
@@ -207,26 +212,29 @@ pub fn shoji_panel(b: &mut MeshBuffer, w: f32, h: f32, pal: &IntPal, seed: u32) 
     let hw = w * 0.5;
     let ft = 0.032; // frame thickness
     let fd = 0.030; // frame depth
-    // Paper sits behind the grid, glowing very slightly.
+    // Paper sits behind the grid, glowing very slightly. It is the one surface
+    // on a shoji that genuinely has two sides, so it keeps its volume.
     slab(b, -hw + ft, hw - ft, ft, h - ft, -0.004, 0.001, pal.paper, MAT_SHOJI);
-    // Outer frame.
-    slab(b, -hw, hw, 0.0, ft, -0.01, fd, pal.wood, MAT_WOOD);
-    slab(b, -hw, hw, h - ft, h, -0.01, fd, pal.wood, MAT_WOOD);
-    slab(b, -hw, -hw + ft, 0.0, h, -0.01, fd, pal.wood, MAT_WOOD);
-    slab(b, hw - ft, hw, 0.0, h, -0.01, fd, pal.wood, MAT_WOOD);
+    // Outer frame. Every member of a shoji is a flat board seen face-on, so it
+    // is a plate at the face plane: four boxes were 48 triangles of end grain
+    // and inner faces that no one can see through the paper behind them.
+    plate_z(b, -hw, hw, 0.0, ft, fd, pal.wood, MAT_WOOD);
+    plate_z(b, -hw, hw, h - ft, h, fd, pal.wood, MAT_WOOD);
+    plate_z(b, -hw, -hw + ft, ft, h - ft, fd, pal.wood, MAT_WOOD);
+    plate_z(b, hw - ft, hw, ft, h - ft, fd, pal.wood, MAT_WOOD);
     // Kumiko: 3 vertical, 4 horizontal bars, at slightly uneven spacing so the
     // paper panes are not all the same size.
     for i in 1..4 {
         let x = -hw + ft + (w - 2.0 * ft) * (i as f32) / 4.0 + (wav(i, seed) - 0.5) * 0.012;
-        slab(b, x - 0.008, x + 0.008, ft, h - ft, -0.006, 0.018, pal.wood, MAT_WOOD);
+        plate_z(b, x - 0.008, x + 0.008, ft, h - ft, 0.018, pal.wood, MAT_WOOD);
     }
     for i in 1..5 {
         let y = ft + (h - 2.0 * ft) * (i as f32) / 5.0 + (wav(i + 9, seed) - 0.5) * 0.012;
-        slab(b, -hw + ft, hw - ft, y - 0.008, y + 0.008, -0.006, 0.018, pal.wood, MAT_WOOD);
+        plate_z(b, -hw + ft, hw - ft, y - 0.008, y + 0.008, 0.018, pal.wood, MAT_WOOD);
     }
     // Kick rail along the bottom and a pull recess on the leading edge.
-    slab(b, -hw + ft, hw - ft, 0.10, 0.145, 0.0, 0.026, pal.wood_dark, MAT_WOOD);
-    slab(b, hw - ft - 0.055, hw - ft, h * 0.45, h * 0.55, 0.018, 0.026, pal.wood_dark, MAT_WOOD);
+    plate_z(b, -hw + ft, hw - ft, 0.10, 0.145, 0.026, pal.wood_dark, MAT_WOOD);
+    plate_z(b, hw - ft - 0.055, hw - ft, h * 0.45, h * 0.55, 0.028, pal.wood_dark, MAT_WOOD);
 }
 
 /// A run of sliding shoji in a timber track: `panels` leaves, one of them slid
@@ -519,7 +527,10 @@ pub fn shelf_run(
             let bh = 0.16 + 0.14 * wav(k + 17, seed);
             let bd = 0.12 + 0.08 * wav(k + 5, seed);
             let col = IntPal::mix3(pal.cloth, pal.accent, wav(k + 29, seed));
-            slab(b, x, x + bw, y, y + bh.min(h / n as f32 - 0.04), 0.03, 0.03 + bd, col, MAT_MATTE);
+            // A book in a packed row shows its spine: one face, two triangles.
+            let top = y + bh.min(h / n as f32 - 0.04);
+            plate_z(b, x, x + bw, y, top, 0.03 + bd, col, MAT_MATTE);
+            plate_y(b, x, x + bw, 0.03 + bd - 0.02, 0.03 + bd, top, true, col, MAT_MATTE);
             x += bw + 0.008;
             k += 1;
         }
