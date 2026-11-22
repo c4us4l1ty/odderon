@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
-# Run a command; if it fails, surface its diagnostics as GitHub check annotations.
+# Run a command; if it fails, publish a diagnosable summary as a check annotation.
 #
-# Why this exists: job logs are served from blob storage, which a restricted
-# environment (or an agent working without browser access) may not be able to
-# fetch. Annotations are served by the GitHub API itself, so a failure reported
-# this way is readable from anywhere that can talk to api.github.com:
+# Why this exists: job logs are served from blob storage, which a restricted client may not be able to
+# fetch. That makes a failed build report "failure" with no cause, which is the least useful possible
+# outcome. Annotations are served by the GitHub API itself:
 #
-#   gh api repos/{owner}/{repo}/check-runs/{id}/annotations \
-#     --jq '.[] | "\(.path):\(.start_line) \(.message)"'
+#   gh api repos/{owner}/{repo}/check-runs/{id}/annotations --jq '.[].message'
+#
+# Two GitHub limits shape the implementation:
+#   * a step emits at most 10 annotations, so emitting one per line loses the important ones;
+#   * a message may contain newlines only if they are encoded as %0A.
+#
+# So: exactly ONE annotation, containing the tail of the output, newline-encoded.
 #
 # Usage: ci/annotate.sh <label> <command...>
 set -uo pipefail
@@ -17,39 +21,34 @@ shift
 log="$(mktemp)"
 
 set +e
-"$@" 2>&1 | tee "$log"
-status="${PIPESTATUS[0]}"
+"$@" >"$log" 2>&1
+status=$?
 set -e
 
+# Always show the output in the job log, for anyone who can read it.
+cat "$log"
+
 if [ "$status" -eq 0 ]; then
+  rm -f "$log"
   exit 0
 fi
 
-echo "::error::${label} failed (exit ${status})"
+# Build one encoded message: percent-escape first, then encode newlines, so the escaping cannot
+# corrupt the separator. ANSI colour codes are stripped because they render as noise.
+message="$(
+  tail -n 80 "$log" \
+    | sed -e 's/\x1b\[[0-9;]*m//g' \
+    | sed -e 's/%/%25/g' \
+    | sed -e 's/\r$//' \
+    | awk '{ printf "%s%%0A", $0 }'
+)"
 
-# Emit each diagnostic as its own annotation, capped so a catastrophic failure
-# cannot spam thousands of them.
-n=0
-while IFS= read -r line; do
-  case "$line" in
-    error\[*|error:*|warning:*|"  -->"*|"note: "*)
-      # Escape the workflow-command delimiters that would otherwise truncate a line.
-      safe="${line//'%'/%25}"
-      safe="${safe//$'\r'/}"
-      echo "::error::${safe}"
-      n=$((n + 1))
-      [ "$n" -ge 60 ] && { echo "::error::(truncated at 60 annotations; see the job log for the rest)"; break; }
-      ;;
-  esac
-done < "$log"
+# Keep well clear of the 64 KB annotation limit.
+if [ "${#message}" -gt 60000 ]; then
+  message="${message:0:60000}...[truncated]"
+fi
 
-# Always end with the tail of the output, so a failure whose message does not
-# match the patterns above is still visible.
-echo "::error::---- last lines of ${label} ----"
-tail -n 25 "$log" | while IFS= read -r line; do
-  safe="${line//'%'/%25}"
-  safe="${safe//$'\r'/}"
-  echo "::error::${safe}"
-done
+printf '::error title=%s failed (exit %s)::%s\n' "$label" "$status" "$message"
 
+rm -f "$log"
 exit "$status"

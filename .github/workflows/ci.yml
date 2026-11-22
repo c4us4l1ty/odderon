@@ -13,7 +13,6 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -D warnings
 
 jobs:
   # -------------------------------------------------------------------------------------------
@@ -34,6 +33,8 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - name: cargo test
+        # Warnings are not denied here on purpose: this job's question is "is the physics right?",
+        # and a warning must not mask that answer. The lint jobs enforce style with -D warnings.
         run: bash ci/annotate.sh "cargo test" cargo test --workspace --all-targets
       - name: determinism hash (native)
         run: cargo test -p odderon-dmath --test '*' -- --nocapture
@@ -114,4 +115,4 @@ jobs:
           targets: wasm32-unknown-unknown
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: bash ci/annotate.sh "clippy" cargo clippy --workspace --all-targets -- -W clippy::all
+      - run: bash ci/annotate.sh "clippy" cargo clippy --workspace --all-targets -- -D warnings
