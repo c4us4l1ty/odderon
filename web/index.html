@@ -75,6 +75,16 @@
     <button data-scale="0.75">0.75×</button>
     <button data-scale="0.5">0.5×  <span class="muted">docs fallback</span></button>
   </div>
+  <div class="row"><span>shadow taps</span><span id="m-taps">8</span></div>
+  <div class="scales" id="taps">
+    <button data-taps="8" class="on">8  <span class="muted">no banding</span></button>
+    <button data-taps="4">4  <span class="muted">half cost</span></button>
+  </div>
+  <div class="row"><span>detail</span><span id="m-simple">full</span></div>
+  <div class="scales" id="simple">
+    <button data-simple="0" class="on">full</button>
+    <button data-simple="1">simple <span class="muted">buys taps</span></button>
+  </div>
   <div class="row"><span>exposure</span><span id="m-exposure">1.00</span></div>
   <div class="scales" id="exposures">
     <button data-ev="0.62">−2/3</button>
@@ -172,6 +182,8 @@ uniform vec3  uGroundFill;
 uniform float uQuality;     // 1.0 = native; the deterministic fallback is 0.5
 uniform vec3  uOrbitPos;    // a real body position from the kernel, in scene units
 uniform float uFrame;       // frame counter: decorrelates the grain so it reads as sensor noise
+uniform int   uTaps;        // solar-disc taps: 8 measured, 4 affordable
+uniform float uSimple;      // 1 = drop per-pixel features to buy shadow quality on tiny screens
 uniform float uExposure;    // stops: the setting every real camera exposes by hand
 
 out vec4 outColor;
@@ -262,9 +274,12 @@ float iBox(vec3 ro, vec3 rd, vec3 lo, vec3 hi) {
 const int SUN_TAPS = 8;
 const float GOLDEN_ANGLE = 2.399963229728653;
 
-vec2 tapOffset(int i) {
-  // sqrt for uniform area coverage of the disc; (i + 0.5)/N to avoid a point exactly at the centre
-  float r = sqrt((float(i) + 0.5) / float(SUN_TAPS));
+vec2 tapOffset(int i, int total) {
+  // sqrt for uniform area coverage of the disc; (i + 0.5)/N to avoid a point exactly at the centre.
+  // The total is a uniform so the same shader covers 4 and 8 taps: a spiral is equidistributed at
+  // any count, so lowering it genuinely reduces work rather than just dropping points from a cluster.
+  float n = max(float(total), 1.0);
+  float r = sqrt((float(i) + 0.5) / n);
   float a = float(i) * GOLDEN_ANGLE;
   return vec2(cos(a), sin(a)) * r;
 }
@@ -284,13 +299,15 @@ float planeVis(vec3 p, vec3 n, vec3 sd, vec3 bxlo, vec3 bxhi) {
   vec3 ty = cross(sd, tx);
 
   float t = tan(uSunHalfAngle);
+  int total = clamp(uTaps, 1, SUN_TAPS);
   float vis = 0.0;
   for (int i = 0; i < SUN_TAPS; i++) {
-    vec2 o = tapOffset(i);
+    if (i >= total) break;
+    vec2 o = tapOffset(i, total);
     vec3 off = tx * o.x + ty * o.y;
     if (iBox(p + n * 0.002, normalize(sd + off * t), bxlo, bxhi) < 0.0) vis += 1.0;
   }
-  return vis / float(SUN_TAPS);
+  return vis / float(total);
 }
 
 // ---------- analytical filter integration (GRAPHICS.md innovation 3) ----------------------------
@@ -354,7 +371,7 @@ void main() {
     float up = clamp(rd.y, 0.0, 1.0);
     col = mix(vec3(0.62, 0.72, 0.86), sky, pow(up, 0.55));
     float sunDot = max(dot(rd, uSunDir), 0.0);
-    col += vec3(1.0, 0.93, 0.80) * pow(sunDot, 900.0) * 2.2;
+    if (uSimple < 0.5) col += vec3(1.0, 0.93, 0.80) * pow(sunDot, 900.0) * 2.2;
     col += vec3(1.0, 0.90, 0.76) * pow(sunDot, 18.0) * 0.055;
     outColor = vec4(col, 1.0);
     return;
@@ -461,8 +478,10 @@ void main() {
   // frame - it never wakes the GPU by itself. If R2 ever regresses, this line is the first suspect.
   //
   // Cost: one fract/sin hash, measured in ablate.html rather than asserted here.
-  float g = fract(sin(dot(gl_FragCoord.xy + uFrame, vec2(12.9898, 78.233))) * 43758.5453);
-  col += (g - 0.5) * 0.016;
+  if (uSimple < 0.5) {
+    float g = fract(sin(dot(gl_FragCoord.xy + uFrame, vec2(12.9898, 78.233))) * 43758.5453);
+    col += (g - 0.5) * 0.016;
+  }
   outColor = vec4(col, 1.0);
 }`;
 
@@ -515,6 +534,8 @@ const U = {
   quality: gl.getUniformLocation(prog, 'uQuality'),
   orbitPos: gl.getUniformLocation(prog, 'uOrbitPos'),
   frame: gl.getUniformLocation(prog, 'uFrame'),
+  taps: gl.getUniformLocation(prog, 'uTaps'),
+  simple: gl.getUniformLocation(prog, 'uSimple'),
   exposure: gl.getUniformLocation(prog, 'uExposure'),
 };
 
@@ -607,6 +628,13 @@ const state = {
   scale: 1.0,               // render scale; the documented fallback is 0.5
   useHalfRes: false,
   exposure: 1.0,        // stops; the control a camera operator actually turns
+  // Quality knobs the measurements justified, not invented:
+  //   shadowTaps - 8 measured below one pixel of penumbra error, 4 costs half as much and shows
+  //                some banding. The shadow is 65% of the frame, so this is the single biggest lever.
+  //   simpleGeometry - the floor is 0.67 ms at 1.04 Mpx, i.e. 45% of the 1.5 ms budget, so on a
+  //                screen that small per-pixel features are the only way to buy shadow quality.
+  shadowTaps: 8,
+  simpleGeometry: 0,
 };
 
 // wrap into [0, 2π). Written out rather than using %, because % on a negative number returns a
@@ -874,6 +902,8 @@ function cacheResize(w, h) {
 function cacheInvalidated(sun) {
   if (!cache.valid) return true;
   if (cache.lastExposure !== state.exposure) return true;
+  if (cache.lastTaps !== state.shadowTaps) return true;
+  if (cache.lastSimple !== state.simpleGeometry) return true;
   if (!cache.lastSun || Math.abs(sun[0] - cache.lastSun[0]) > 1e-6 ||
       Math.abs(sun[1] - cache.lastSun[1]) > 1e-6 || Math.abs(sun[2] - cache.lastSun[2]) > 1e-6) return true;
   return false;
@@ -930,6 +960,8 @@ function drawFrame(nowMs) {
     gl.uniform3fv(U.sunDir, sun);
     gl.uniform1f(U.frame, bench.framesDrawn % 1024);
     gl.uniform1f(U.exposure, state.exposure);
+    gl.uniform1i(U.taps, state.shadowTaps);
+    gl.uniform1f(U.simple, state.simpleGeometry);
 
     beginGpuTimer();
     gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -940,6 +972,8 @@ function drawFrame(nowMs) {
     cache.valid = true;
     cache.lastSun = sun;
     cache.lastExposure = state.exposure;
+    cache.lastTaps = state.shadowTaps;
+    cache.lastSimple = state.simpleGeometry;
     cache.fullShades++;
     cache.lastFullShadeMs = performance.now() - a;
     path = 'shade';
@@ -1028,6 +1062,8 @@ function measureFrame(samples = 12) {
     gl.uniform3fv(U.sunDir, sun);
     gl.uniform1f(U.frame, i);
     gl.uniform1f(U.exposure, state.exposure);
+    gl.uniform1i(U.taps, state.shadowTaps);
+    gl.uniform1f(U.simple, state.simpleGeometry);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.finish();                                  // the deliberate stall, once per sample
     shadeTimes.push(performance.now() - a);
@@ -1137,7 +1173,11 @@ function updateHud() {
   // R2 asks about the settled state. The settled state's cost is the BLIT, not the shade - which is
   // exactly the distinction the ablation numbers forced: a full shade is 49 ms and unreachable, a
   // blit is one texture read and is the thing R2 was always talking about.
-  const staticCost = Number.isFinite(bench.blitMs) ? bench.blitMs : cache.lastBlitMs;
+  // ONLY a GPU measurement may become an R2 verdict. `cache.lastBlitMs` is CPU submit time measured
+  // around drawArrays, which on a tile-based GPU says nothing about when the work completed - and
+  // using it here is exactly the "submit time wearing a frame-time label" error this instrument has
+  // been fixed for twice already. If there is no GPU number, R2 says so instead of guessing.
+  const staticCost = Number.isFinite(bench.blitMs) ? bench.blitMs : NaN;
   const r2 = $('m-r2');
   if (!settled) {
     r2.textContent = 'settling…'; r2.className = 'muted';
@@ -1145,14 +1185,18 @@ function updateHud() {
     // Zero draws. The strictest possible pass: nothing is spent at all.
     r2.textContent = '0 draws when idle';
     r2.className = 'pass';
-  } else if (Number.isFinite(staticCost)) {
+  } else if (!Number.isFinite(staticCost)) {
+    // Frames are being drawn but the per-frame cost has not been measured on the GPU. Saying
+    // "drawing" here is honest; saying a number would not be.
+    r2.textContent = bench.blitSamples?.length >= 4 && Number.isFinite(bench.gpuBlitMs)
+      ? fmt(bench.gpuBlitMs, 2) + ' ms gpu blit'
+      : 'press measure';
+    r2.className = 'warn';
+  } else {
     // Frames are being drawn, so the question is what a static frame costs. That is the blit.
     const ok = staticCost < 1.5;
     r2.textContent = fmt(staticCost, 2) + ' ms static ' + (ok ? '< 1.5' : '> 1.5');
     r2.className = ok ? 'pass' : 'fail';
-  } else {
-    r2.textContent = 'drawing (not measured)';
-    r2.className = 'warn';
   }
 
   const r3 = $('m-r3');
@@ -1190,6 +1234,27 @@ canvas.addEventListener('pointermove', (e) => {
 let dragging = false;
 canvas.addEventListener('pointerdown', () => { dragging = true; state.lastInput = performance.now(); });
 canvas.addEventListener('pointerup',   () => { dragging = false; state.lastInput = performance.now(); });
+
+// The shadow is 65% of the frame, so these two controls are the only affordable quality levers on a
+// phone whose entire budget is 45% flat-fill. Switching either MUST invalidate the cache or it will
+// silently do nothing - which is the failure mode this file has already been bitten by.
+document.querySelectorAll('#taps button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    state.shadowTaps = Number(btn.dataset.taps);
+    document.querySelectorAll('#taps button').forEach((b2) => b2.classList.toggle('on', b2 === btn));
+    $('m-taps').textContent = state.shadowTaps;
+    requestFrame();
+  });
+});
+
+document.querySelectorAll('#simple button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    state.simpleGeometry = Number(btn.dataset.simple);
+    document.querySelectorAll('#simple button').forEach((b2) => b2.classList.toggle('on', b2 === btn));
+    $('m-simple').textContent = state.simpleGeometry ? 'simple' : 'full';
+    requestFrame();
+  });
+});
 
 document.querySelectorAll('#exposures button').forEach((btn) => {
   btn.addEventListener('click', () => {

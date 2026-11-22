@@ -268,27 +268,33 @@ corrugation, aerial perspective, tonemap and grain. So R2 is satisfiable and uns
 only on resolution, which makes it a policy statement wearing a hardware test's clothes. The clause
 names the budget: **0.68 Mpx**, i.e. roughly 825x825, or a phone at 0.81x device pixels.
 
-**R2 and R3 are not yet known to be compatible, and that is the largest open risk in this document.**
-They were written independently and have never been checked against each other. Measured on Reference B,
-the cost of a pass is roughly:
+**R2 and R3, measured against each other.** These were written independently and had never been
+checked against each other. They are not in conflict, but the margin is narrow and worth stating.
+Measured on Reference B at 1.04 Mpx:
 
-| component | measured |
-| --- | --- |
-| flat fill, no memory traffic | **0.64 ms/Mpx** |
-| observing one 4-byte read (i.e. a blit) | **+1.56 ms/Mpx** |
-| implied bandwidth cost | **~0.39 ms/Mpx per byte/pixel** |
+| pass | measured | ratio to a flat fill |
+| --- | --- | --- |
+| flat fill, no memory traffic | **0.67 ms** | 1.0x |
+| **FBO to screen blit (the cached frame)** | **1.25 ms** | 1.9x |
+| one texture read into the same target | 1.58 ms | 2.4x |
 
-Put those into R3's ceiling and the two gates collide: **32 bytes/pixel costs about 13.1 ms/Mpx**, so
-R2's 1.5 ms budget permits **0.11 Mpx — a 338x338 image**. A gate that allows a postage stamp at full
-bandwidth headroom is not a useful manufacturing constraint. Either the bandwidth figure is wrong (the
-most likely explanation, since one read of a freshly written texture may be missing an entire
-accumulation pass and so be charged unusually), or R2 and R3 describe different scenes and one of them
-has to move.
+So a **cached static frame costs 1.25 ms at native resolution, which passes R2 with 17% to spare.**
+The temporal cache is the mechanism, and it is now measured rather than argued.
 
-**This is unresolved and is not presented as settled.** `web/ablate.html` now separates three floors
-that were previously conflated — flat fill, one texture read into the same target, and an FBO-to-screen
-blit — because a flat fill, a texture read and a cross-domain blit cost wildly different amounts, and
-treating them as one number is how a blit came to look free.
+Subtracting the flat fill leaves 0.58 ms for 8 bytes/pixel, i.e. **~0.073 ms per byte/pixel per Mpx**.
+At R3's ceiling of 32 B/px that would be 2.99 ms, which R2 does not permit. The effective bandwidth
+ceiling at native resolution under R2 is **~11 B/px**, not 32. R3 is therefore not a binding constraint
+at native resolution — it only binds if R2's pixel budget is met some other way. *An earlier revision of
+this section claimed R2 and R3 were incompatible, based on a 2.29 ms texture-read figure that turned out
+to be measuring a different operation from the one the renderer actually performs. The correction is
+recorded rather than quietly deleted.*
+
+**Three floors, and they are not interchangeable.** A flat fill, a texture read into the same target,
+and a framebuffer-to-screen blit are three different operations costing 0.67, 1.58 and 1.25 ms. An
+earlier note treated "one texture read" as the cost of the blit and concluded the cache was insufficient.
+The blit is in fact *cheaper* than an ordinary texture read, because the HUD samples a framebuffer's
+colour attachment rather than a general texture. Any future measurement of the per-frame path must
+measure that path.
 
 **What 1.5 ms at 0.68 Mpx is for.** It is the *idle* budget — what a settled frame costs, which on a
 render-on-demand renderer is zero because nothing is drawn. The cost of a frame that is actually drawn
