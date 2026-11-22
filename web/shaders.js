@@ -19,7 +19,9 @@ void main() {
 
 // ---- NEW SKY FRAGMENT (spliced into shaders.js by tools/… no, by hand) ----
 export const SKY_FRAG_GL2 = `#version 300 es
-precision mediump float;
+// highp matters here: pow(sunAmt, 2400.0) in a 10-bit mantissa prints
+// concentric rings around the sun instead of a disc.
+precision highp float;
 in vec2 vNdc;
 out vec4 fragColor;
 
@@ -128,8 +130,10 @@ void main() {
   // projected as rd.xz/rd.y, so distant towers converge at the horizon
   // instead of smearing like the old azimuth-space hack).
   // ---------------------------------------------------------------------
-  vec3 cloudLit = mix(vec3(0.92, 0.46, 0.25), vec3(0.90, 0.88, 0.845), dayMix);
-  vec3 cloudShade = mix(vec3(0.10, 0.09, 0.17), vec3(0.155, 0.245, 0.410), dayMix);
+  // Lit cumulus sits a stop and a half under paper white: at 0.90 the backs
+    // clip to 255 and the towers lose their body entirely.
+    vec3 cloudLit = mix(vec3(0.86, 0.44, 0.24), vec3(0.700, 0.706, 0.686), dayMix);
+  vec3 cloudShade = mix(vec3(0.10, 0.09, 0.17), vec3(0.180, 0.248, 0.372), dayMix);
   vec3 cb = mix(vec3(0.020, 0.026, 0.048), cloudLit, skyActive);
   vec3 cs = mix(vec3(0.008, 0.010, 0.020), cloudShade, skyActive);
 
@@ -147,14 +151,14 @@ void main() {
     float mass = fbm3(qw * 0.48 + vec2(11.0, 5.0));
     float body = fbm3(qw * 1.35 + vec2(3.0, 8.0));
     float detail = fbm3(qw * 5.50 + vec2(21.0, 7.0));
-    float field = mass * 0.68 + body * 0.34;
+    float field = mass * 0.62 + body * 0.40;
     field -= (1.0 - smoothstep(0.28, 0.78, body)) * 0.14;
-    field += (detail - 0.5) * 0.26;
+    field += (detail - 0.5) * 0.12;
     // Fair-weather cumulus band: quantity of cloud peaks 15-40 deg up, which is
     // where the reference frame's towers stand over the ridge line, and the
     // zenith stays comparatively open.
     field += 0.050 * smoothstep(0.04, 0.22, rd.y) * (1.0 - smoothstep(0.50, 0.92, rd.y));
-    float density = smoothstep(0.462, 0.508, field);
+    float density = smoothstep(0.470, 0.560, field);
     density *= smoothstep(0.010, 0.075, rd.y);
 
     if (density > 0.004) {
@@ -163,7 +167,7 @@ void main() {
       vec2 sunStep = vec2(uSunDir.x, uSunDir.z) * 0.075 * (1.0 / max(uSunDir.y, 0.25));
       float lit = fbm3((qw + sunStep * 1.2) * 1.35 + vec2(3.0, 8.0));
       float thick = smoothstep(0.50, 0.86, field);
-      float selfShade = clamp(0.62 + (body - lit) * 8.0 - thick * 0.30, 0.0, 1.0);
+      float selfShade = clamp(0.62 + (body - lit) * 4.5 - thick * 0.30, 0.0, 1.0);
       // Low elevations see the flat, self-shadowed bases of the towers.
       selfShade *= mix(0.45, 1.0, smoothstep(0.02, 0.34, rd.y));
       vec3 cCol = mix(cs, cb, selfShade);
@@ -701,8 +705,8 @@ void main() {
 
     // Cool window-driven sky fill + warm timber bounce, both occluded.
     float shojiDim = 1.0 - 0.38 * uShojiClosed;
-    vec3 skyFill = mix(vec3(0.075, 0.090, 0.135), vec3(0.215, 0.265, 0.395), dayMix);
-    vec3 bounceFill = mix(vec3(0.048, 0.034, 0.025), vec3(0.270, 0.195, 0.118), dayMix);
+    vec3 skyFill = mix(vec3(0.080, 0.096, 0.146), vec3(0.335, 0.412, 0.610), dayMix);
+    vec3 bounceFill = mix(vec3(0.052, 0.037, 0.027), vec3(0.418, 0.302, 0.183), dayMix);
     float upness = 0.5 + 0.5 * N.y;
     ambient = (mix(bounceFill, skyFill, upness) * (0.55 + 0.45 * (0.5 + 0.5 * N.y))
               + vec3(0.90, 0.72, 0.44) * (sunMask.y * 0.30)) * ao * shojiDim;
@@ -844,7 +848,7 @@ void main() {
   // Vibrance: push saturated mids harder than neutrals, then a little global
   // chroma so foliage and tiles read as pigment rather than grey plastic.
   float sat = max(max(mapped.r, mapped.g), mapped.b) - min(min(mapped.r, mapped.g), mapped.b);
-  mapped = mix(vec3(luma), mapped, 1.05 + 0.34 * (1.0 - sat));
+  mapped = mix(vec3(luma), mapped, 1.05 + 0.46 * (1.0 - sat));
   // Split tone: cool violet shade, warm amber light — the two-temperature
   // grade the reference frame is built on.
   mapped += vec3(-0.004, 0.010, 0.030) * (1.0 - smoothstep(0.0, 0.45, luma));
