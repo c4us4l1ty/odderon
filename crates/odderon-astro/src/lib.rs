@@ -656,7 +656,6 @@ impl State {
 
         let mut raan = 0.0;
         let mut argp = 0.0;
-        let mut nu = 0.0;
 
         if !equatorial {
             raan = wrap_two_pi(atan2(n.y, n.x));
@@ -676,26 +675,31 @@ impl State {
             argp = wrap_two_pi(atan2(e_vec.y, e_vec.x));
         }
 
-        if !circular {
+        // `acos` returns `[0, π]`, so the sign of the sine — which distinguishes the two halves of the
+        // orbit — has to come from somewhere else. In each case it comes from a quantity that is
+        // unambiguous rather than from the angle being solved for.
+        let nu = if !circular {
             let cos_nu = clamp_unit(e_vec.dot(self.r) / (e * r_norm));
-            nu = acos(cos_nu);
+            let unsigned = acos(cos_nu);
+            // Before periapsis `r·v < 0`: moving inward, so the true anomaly is in the second half.
             if self.r.dot(self.v) < 0.0 {
-                nu = odderon_dmath::TAU - nu;
+                odderon_dmath::TAU - unsigned
+            } else {
+                unsigned
             }
         } else if !equatorial {
-            // Circular: nu carries the argument of latitude u, the angle from the node to the body.
-            let n_hat = n.unit();
-            let r_hat = self.r.unit();
-            let cos_u = clamp_unit(n_hat.dot(r_hat));
-            nu = acos(cos_u);
-            // Sign: ascending or descending side of the orbit.
+            // Circular: nu carries the argument of latitude u, the angle from the node to the body,
+            // measured in the direction of motion.
+            let unsigned = acos(clamp_unit(n.unit().dot(self.r.unit())));
             if n.cross(self.r).dot(h) < 0.0 {
-                nu = odderon_dmath::TAU - nu;
+                odderon_dmath::TAU - unsigned
+            } else {
+                unsigned
             }
         } else {
             // Circular and equatorial: nothing but the true longitude is defined.
-            nu = wrap_two_pi(atan2(self.r.y, self.r.x));
-        }
+            wrap_two_pi(atan2(self.r.y, self.r.x))
+        };
 
         Elements {
             p,
@@ -780,11 +784,21 @@ fn to_reference_frame(v: Vec3, p_axis: Vec3, q_axis: Vec3, w_axis: Vec3) -> Vec3
     )
 }
 
-/// Reduce an angle to `[0, 2π)`.
+/// Reduce an angle in `(−π, π]` to `[0, 2π)`.
 ///
-/// `rem_euclid` is a `core` method on `f64` and is exact here: `atan2` returns at worst `π`, so at
-/// most one correction is ever needed. NaN propagates, which is what we want.
+/// The domain is a precondition, not a hope: every caller passes an [`atan2`] result, and `atan2`
+/// returns in `(−π, π]` by definition. So at most one correction is ever needed, and the correction is
+/// a single addition.
+///
+/// `f64::rem_euclid` would express this in one call and is *not* available: it lives in `std`, not
+/// `core`, because it is built on the float remainder operation. This function exists in the crate for
+/// the same reason the rest of the arithmetic does — to specify the behaviour rather than inherit it.
+/// NaN propagates, which is what we want.
 #[inline]
 fn wrap_two_pi(x: f64) -> f64 {
-    x.rem_euclid(odderon_dmath::TAU)
+    if x < 0.0 {
+        x + odderon_dmath::TAU
+    } else {
+        x
+    }
 }
