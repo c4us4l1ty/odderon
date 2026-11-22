@@ -71,7 +71,7 @@ jobs:
           fi > "$SUMMARY" || true
 
           if [ ! -s "$SUMMARY" ] && grep -qE "\.\.\. FAILED|panicked at|^error(\[|:)" /tmp/test.log; then
-            grep -E "^test .* FAILED|panicked at|^error(\[|:)|^[[:space:]]+-->" /tmp/test.log > "$SUMMARY" || true
+            grep -A1 -E "^test .* FAILED|panicked at|^error(\[|:)|^[[:space:]]+-->" /tmp/test.log > "$SUMMARY" || true
             [ -s "$SUMMARY" ] || true
           fi
 

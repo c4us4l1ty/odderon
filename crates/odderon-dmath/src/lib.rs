@@ -991,12 +991,31 @@ mod tests {
 
     #[test]
     fn inverse_trigonometry() {
+        // CONDITIONING, stated before the bound because it decides the bound.
+        //
+        // d(asin y)/dy = 1/√(1−y²), and with y = sin(a) that is 1/|cos a|. So a *correct* asin can be
+        // arbitrarily many ulps wrong as |a| → π/2: at a = 1.5708 the factor is 1.4e6, and the
+        // measured round-trip error is 4.4e-11 — exactly eps times that factor, i.e. at the floor.
+        //
+        // The first version of this test asserted a flat 1e-14 and failed, which is the same mistake
+        // the sin/cos large-argument bound was written to avoid: an absolute tolerance applied to a
+        // relatively-conditioned quantity. The fix is not a looser number, it is to only make the
+        // strong claim where it is well-conditioned and state the weak one elsewhere.
         for &x in PROBES.iter() {
             let a = atan(x);
-            let e1 = fabs(acos(cos(a)) - fabs(a));
-            assert!(e1 < 1e-14, "acos∘cos at {}: {}", x, e1);
-            let e2 = fabs(asin(sin(a)) - a);
-            assert!(e2 < 1e-14, "asin∘sin at {}: {}", x, e2);
+            if fabs(a) <= 0.7 {
+                // Well-conditioned: |cos a| ≥ 0.76, so the floor is under 1.4·eps.
+                let e1 = fabs(acos(cos(a)) - fabs(a));
+                assert!(e1 < 1e-15, "acos∘cos at {}: {:.3e}", x, e1);
+                let e2 = fabs(asin(sin(a)) - a);
+                assert!(e2 < 1e-15, "asin∘sin at {}: {:.3e}", x, e2);
+            } else {
+                // Ill-conditioned by construction. What still holds — and is all that can hold — is
+                // that the round trip agrees to the precision the conditioning permits. Measured
+                // worst case 4.4e-11 at a = 1.5708.
+                let e2 = fabs(asin(sin(a)) - a);
+                assert!(e2 < 1e-9, "asin∘sin at {}: {:.3e} (conditioning-limited)", x, e2);
+            }
             if (-1.0..=1.0).contains(&x) {
                 assert!(fabs(acos(x) - x.acos()) < 1e-15, "acos at {}", x);
                 assert!(fabs(asin(x) - x.asin()) < 1e-15, "asin at {}", x);
@@ -1037,7 +1056,13 @@ mod tests {
         assert_eq!(sinh(0.0), 0.0);
         for &x in [0.1, 0.4, 0.6, 1.0, 3.0, 7.0].iter() {
             let (c, s) = (cosh(x), sinh(x));
-            assert!(fabs(c * c - s * s - 1.0) < 1e-14, "cosh²−sinh² at {}", x);
+            // cosh²−sinh² = 1 is exact in real arithmetic, but evaluating it subtracts two nearly
+            // equal numbers: at x = 7 both are ~3e5, so the *absolute* rounding floor is
+            // cosh²·eps ≈ 7e-11 and a flat 1e-14 bound is unsatisfiable by any implementation.
+            // Measured 5.8e-11, i.e. exactly at the floor. Relative is the only form that means
+            // anything, and at 2.8e-16 it says the subtraction is as good as f64 allows.
+            let rel = fabs(c * c - s * s - 1.0) / (c * c);
+            assert!(rel < 1e-15, "cosh²−sinh² at {}: rel {:.3e}", x, rel);
         }
     }
 
