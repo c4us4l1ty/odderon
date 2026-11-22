@@ -213,6 +213,18 @@ pub fn fmax(a: f64, b: f64) -> f64 {
     }
 }
 
+/// Smaller of two values, NaN-propagating, the mirror of [`fmax`].
+#[inline]
+pub fn fmin(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else if a < b {
+        a
+    } else {
+        b
+    }
+}
+
 /// Square root, computed here rather than borrowed.
 ///
 /// IEEE-754 specifies `sqrt` exactly, and in wasm it is a single instruction — so the platform's
@@ -993,29 +1005,42 @@ mod tests {
     fn inverse_trigonometry() {
         // CONDITIONING, stated before the bound because it decides the bound.
         //
-        // d(asin y)/dy = 1/√(1−y²), and with y = sin(a) that is 1/|cos a|. So a *correct* asin can be
-        // arbitrarily many ulps wrong as |a| → π/2: at a = 1.5708 the factor is 1.4e6, and the
-        // measured round-trip error is 4.4e-11 — exactly eps times that factor, i.e. at the floor.
+        // Round-tripping through sin or cos destroys information, and how much is known exactly:
+        // y = sin(a) is representable only to eps, and d(asin y)/dy = 1/|cos a|, so a *correct* asin
+        // returns an error up to eps/|cos a|. Symmetrically for acos and |sin a|. So the floor is
         //
-        // The first version of this test asserted a flat 1e-14 and failed, which is the same mistake
-        // the sin/cos large-argument bound was written to avoid: an absolute tolerance applied to a
-        // relatively-conditioned quantity. The fix is not a looser number, it is to only make the
-        // strong claim where it is well-conditioned and state the weak one elsewhere.
+        //     eps / min(|sin a|, |cos a|)
+        //
+        // which is 2.2e-16 near a = 0.7 and 2.2e-10 at a = 1.5708. Two earlier versions of this test
+        // got it wrong in opposite directions and both failed for the same underlying reason — they
+        // asserted a constant: 1e-14 flat was unsatisfiable near π/2, and 1e-15 for |a| ≤ 0.7 was
+        // unsatisfiable near 0, where 1 − cos(a) rounds to zero and acos honestly returns pi/2 for
+        // any |a| below ~1e-8. That last case is not a defect: cos(1e-9) *is* 1.0 in binary64, so the
+        // angle is not recoverable from it by any method.
+        //
+        // The bound below is that floor with a factor of four of headroom; measured worst ratio over
+        // PROBES is 0.35.
         for &x in PROBES.iter() {
             let a = atan(x);
-            if fabs(a) <= 0.7 {
-                // Well-conditioned: |cos a| ≥ 0.76, so the floor is under 1.4·eps.
-                let e1 = fabs(acos(cos(a)) - fabs(a));
-                assert!(e1 < 1e-15, "acos∘cos at {}: {:.3e}", x, e1);
-                let e2 = fabs(asin(sin(a)) - a);
-                assert!(e2 < 1e-15, "asin∘sin at {}: {:.3e}", x, e2);
-            } else {
-                // Ill-conditioned by construction. What still holds — and is all that can hold — is
-                // that the round trip agrees to the precision the conditioning permits. Measured
-                // worst case 4.4e-11 at a = 1.5708.
-                let e2 = fabs(asin(sin(a)) - a);
-                assert!(e2 < 1e-9, "asin∘sin at {}: {:.3e} (conditioning-limited)", x, e2);
-            }
+            let sin_a = fabs(sin(a));
+            let cos_a = fabs(cos(a));
+            let floor = 4.0 * 2.220_446_049_250_313_1e-16 / fmin(sin_a, cos_a);
+            let e1 = fabs(acos(cos(a)) - fabs(a));
+            assert!(
+                e1 <= floor,
+                "acos∘cos at {}: {:.3e} exceeds conditioning floor {:.3e}",
+                x,
+                e1,
+                floor
+            );
+            let e2 = fabs(asin(sin(a)) - a);
+            assert!(
+                e2 <= floor,
+                "asin∘sin at {}: {:.3e} exceeds conditioning floor {:.3e}",
+                x,
+                e2,
+                floor
+            );
             if (-1.0..=1.0).contains(&x) {
                 assert!(fabs(acos(x) - x.acos()) < 1e-15, "acos at {}", x);
                 assert!(fabs(asin(x) - x.asin()) < 1e-15, "asin at {}", x);
