@@ -181,6 +181,7 @@ uniform vec3 uCamPos;
 uniform vec3 uSunDir;
 uniform float uWarmth;
 uniform float uShojiClosed;
+uniform float uEntryDoorOpen;
 uniform float uLampOn;
 uniform float uPlumeGlow;
 
@@ -267,6 +268,14 @@ float computeExteriorEaveShadow(vec3 p) {
     sh *= (1.0 - 0.52 * exp(-pow((p.z - wz1) * 18.0, 2.0)));
     sh *= (1.0 - 0.46 * exp(-pow((p.z - wz2) * 20.0, 2.0)));
   }
+  // Architectural eave shade under Uchinoura Maison 2F balcony & 2F Breezeway Gallery!
+  if (p.y < -0.10 && p.z > 2.25 && p.z < 3.15 && p.x > -3.85 && p.x < 2.80) {
+    float underBalcony = smoothstep(-1.45, -0.18, p.y) * (1.0 - smoothstep(2.85, 3.15, p.z));
+    sh *= (1.0 - 0.65 * underBalcony);
+  }
+  if (p.y < -0.14 && p.x < -2.65 && p.x > -5.40 && p.z > -0.25 && p.z < 1.65) {
+    sh *= 0.42;
+  }
   return sh;
 }
 
@@ -310,7 +319,7 @@ void main() {
     return;
   }
 
-  bool indoor = (vWorldPos.z < 1.995 && abs(vWorldPos.x) < 2.58 && vWorldPos.y < 2.69);
+  bool indoor = (vWorldPos.z < 1.995 && vWorldPos.z > -2.10 && abs(vWorldPos.x) < 2.58 && vWorldPos.y > -0.06 && vWorldPos.y < 2.695);
 
   // Photographic Procedural Material Micro-Surface & Weathered Patina (0 texture bytes!)
   float rough = 0.62;
@@ -328,11 +337,16 @@ void main() {
       rough = 0.76;
     }
   } else if (mat == 1) {
-    // Roasted Yakisugi / Hinoki / Keyaki timber plank seams + organic grain rings
-    float grain = sin((vWorldPos.x * 38.0 + vWorldPos.y * 16.0) + sin(vWorldPos.z * 12.0) * 2.4) * 0.075;
-    float plank = (!indoor) ? (0.92 + 0.08 * smoothstep(0.04, 0.12, abs(fract(vWorldPos.x * 5.5) - 0.5))) : 1.0;
+    // Roasted Yakisugi / Hinoki / Keyaki timber plank seams + coffered ceiling plank grain
+    float grainCoord = (abs(N.y) > 0.5)
+      ? (vWorldPos.x * 28.0 + vWorldPos.z * 14.0 + sin(vWorldPos.z * 9.0) * 2.0)
+      : (vWorldPos.x * 38.0 + vWorldPos.y * 16.0 + sin(vWorldPos.z * 12.0) * 2.4);
+    float grain = sin(grainCoord) * 0.075;
+    float plank = (abs(N.y) > 0.5)
+      ? (0.93 + 0.07 * smoothstep(0.03, 0.09, abs(fract(vWorldPos.x * 4.5) - 0.5)))
+      : ((!indoor) ? (0.92 + 0.08 * smoothstep(0.04, 0.12, abs(fract(vWorldPos.x * 5.5) - 0.5))) : 1.0);
     baseCol *= (1.0 + grain) * plank;
-    rough = 0.46;
+    rough = 0.44;
   } else if (mat == 2) {
     // Woven Igusa rush-grass Japanese Tatami weave
     float weave = sin(vWorldPos.z * 230.0) * 0.065 + sin(vWorldPos.x * 18.0) * 0.025;
@@ -417,11 +431,11 @@ void main() {
     clamp(dayMix + duskMix, 0.0, 1.0)
   ) * (0.48 + 0.52 * max(N.y, 0.0));
   vec3 warmBounce = mix(
-    vec3(0.006, 0.005, 0.008),
-    vec3(0.062, 0.048, 0.030),
+    vec3(0.012, 0.010, 0.014),
+    vec3(0.115, 0.088, 0.054),
     dayMix
-  ) * (0.45 + 0.55 * max(-N.y, 0.20));
-  vec3 washiFill = vec3(0.95, 0.76, 0.44) * (sunMask.y * 0.24 + (indoor ? 0.05 * uShojiClosed * dayMix : 0.0));
+  ) * (0.42 + 0.85 * max(-N.y, 0.18));
+  vec3 washiFill = vec3(0.95, 0.76, 0.44) * (sunMask.y * 0.24 + (indoor ? 0.06 * (1.0 - 0.5 * uShojiClosed) * dayMix : 0.0));
 
   vec3 ambient = ((skyFill + warmBounce) * windowVis * shojiDim + washiFill) * ao;
   if (!indoor) {
@@ -430,9 +444,10 @@ void main() {
     ambient = (extSky + extGround) * ao;
   }
 
-  // Interior Warm 2700K Architectural & Task Point Lights
+  // Interior Warm 2700K Architectural & Task Point Lights + Coffered Ceiling Cove Wash
   vec3 localLights = vec3(0.0);
   if (indoor) {
+    localLights += vec3(1.0, 0.80, 0.48) * (0.09 * smoothstep(2.10, 2.68, vWorldPos.y));
     if (uLampOn > 0.5) {
       vec3 toAndon = vec3(-2.25, 0.76, 1.70) - vWorldPos;
       float dA2 = dot(toAndon, toAndon) + 0.30;
@@ -452,9 +467,15 @@ void main() {
     localLights += vec3(0.96, 0.64, 0.30) * (max(dot(N, normalize(toBed)), 0.06) * 0.15 * bedAlcoveMask / dB2);
 
     if (vWorldPos.x < -0.35 && vWorldPos.z < -0.18) {
-      vec3 toBath = vec3(-1.42, 2.30, -1.18) - vWorldPos;
-      float dT2 = dot(toBath, toBath) + 0.45;
-      localLights += vec3(1.0, 0.90, 0.74) * (max(dot(N, normalize(toBath)), 0.22) * 0.44 / dT2);
+      vec3 toBath = vec3(-1.42, 2.52, -1.18) - vWorldPos;
+      float dT2 = dot(toBath, toBath) + 0.38;
+      localLights += vec3(1.0, 0.92, 0.78) * (max(dot(N, normalize(toBath)), 0.30) * 0.62 / dT2);
+    }
+    // Natural coastal sky spill pouring through the open -X Apartment Entry Doorway into the genkan!
+    if (uEntryDoorOpen > 0.04 && dayMix > 0.05) {
+      vec3 toEntry = vec3(-2.62, 1.15, 0.70) - vWorldPos;
+      float dE2 = dot(toEntry, toEntry) + 0.42;
+      localLights += vec3(0.76, 0.88, 1.0) * (uEntryDoorOpen * dayMix * max(dot(N, normalize(toEntry)), 0.18) * 0.48 / dE2);
     }
   }
 
