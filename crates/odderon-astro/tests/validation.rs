@@ -384,8 +384,9 @@ fn a_nearly_equatorial_orbit_is_not_folded() {
     assert!(el.degeneracy.is_none(), "1e-4 degrees is a real inclination");
     // Measured 3.2e-11 relative — the elements are recoverable, but the node is now ill-conditioned
     // because |n| = |h| sin i is small. That is physics, and it is the honest bound.
+    let s0 = el0.to_state(MU);
     let back = el.to_state(MU);
-    let dr = (back.r - el0.to_state(MU).r).norm() / el0.to_state(MU).r.norm();
+    let dr = (back.r - s0.r).norm() / s0.r.norm();
     assert!(dr < 1e-9, "rel error {:.3e} at i = 1e-4 deg", dr);
 }
 

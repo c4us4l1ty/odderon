@@ -382,6 +382,13 @@ pub fn cos(x: f64) -> f64 {
 /// Prefer this whenever both are needed: the reduction is the costly part, and calling [`sin`] and
 /// [`cos`] separately performs it twice. The trajectory code calls this once per orbital element
 /// update, so it is the hottest transcendental in the kernel.
+///
+/// # Returns
+///
+/// `(sin x, cos x)` — **sine first**, the reverse of the order in the function's name, and the reverse
+/// of what a careless reader assumes. The order is stated here because it was guessed wrong the first
+/// time this function was called from another crate, which silently transposed every rotation matrix
+/// it fed. Rust would have caught a type mismatch; it cannot catch an ordering convention.
 pub fn sin_cos(x: f64) -> (f64, f64) {
     note_op();
     if !is_finite(x) {

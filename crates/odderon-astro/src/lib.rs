@@ -744,25 +744,25 @@ impl Elements {
         );
 
         // Rotate perifocal → reference frame: R3(−Ω)·R1(−i)·R3(−ω). Its columns are the basis.
-        let (c_o, s_o) = odderon_dmath::sin_cos(self.raan);
-        let (c_i, s_i) = odderon_dmath::sin_cos(self.i);
-        let (c_w, s_w) = odderon_dmath::sin_cos(self.argp);
+        // `sin_cos` returns (sin, cos) — sine first. Bound with explicit names rather than `(c, s)` so
+        // that the transpose cannot happen again; it did happen once, and silently rotated every
+        // element by the wrong angle.
+        let (sin_raan, cos_raan) = odderon_dmath::sin_cos(self.raan);
+        let (sin_i, cos_i) = odderon_dmath::sin_cos(self.i);
+        let (sin_argp, cos_argp) = odderon_dmath::sin_cos(self.argp);
 
-        let px = c_o * c_w - s_o * s_w * c_i;
-        let py = s_o * c_w + c_o * s_w * c_i;
-        let pz = s_w * s_i;
-
-        let qx = -c_o * s_w - s_o * c_w * c_i;
-        let qy = -s_o * s_w + c_o * c_w * c_i;
-        let qz = c_w * s_i;
-
-        let wx = s_o * s_i;
-        let wy = -c_o * s_i;
-        let wz = c_i;
-
-        let p_axis = Vec3::new(px, py, pz);
-        let q_axis = Vec3::new(qx, qy, qz);
-        let w_axis = Vec3::new(wx, wy, wz);
+        // Columns of R3(−Ω)·R1(−i)·R3(−ω): the perifocal axes expressed in the reference frame.
+        let p_axis = Vec3::new(
+            cos_raan * cos_argp - sin_raan * sin_argp * cos_i,
+            sin_raan * cos_argp + cos_raan * sin_argp * cos_i,
+            sin_argp * sin_i,
+        );
+        let q_axis = Vec3::new(
+            -cos_raan * sin_argp - sin_raan * cos_argp * cos_i,
+            -sin_raan * sin_argp + cos_raan * cos_argp * cos_i,
+            cos_argp * sin_i,
+        );
+        let w_axis = Vec3::new(sin_raan * sin_i, -cos_raan * sin_i, cos_i);
 
         State::new(
             to_reference_frame(r_pf, p_axis, q_axis, w_axis),
