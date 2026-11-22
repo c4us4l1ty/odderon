@@ -144,24 +144,24 @@ void main() {
     // Three scales: the grouping of the towers, the billow shape, and a fine
     // octave used to ERODE the rim. Without the erosion every cloud has the
     // same soft edge and the whole deck reads as out-of-focus smoke.
-    float mass = fbm3(qw * 0.30 + vec2(11.0, 5.0));
-    float body = fbm3(qw * 0.92 + vec2(3.0, 8.0));
-    float detail = fbm3(qw * 4.20 + vec2(21.0, 7.0));
+    float mass = fbm3(qw * 0.48 + vec2(11.0, 5.0));
+    float body = fbm3(qw * 1.35 + vec2(3.0, 8.0));
+    float detail = fbm3(qw * 5.50 + vec2(21.0, 7.0));
     float field = mass * 0.68 + body * 0.34;
     field -= (1.0 - smoothstep(0.28, 0.78, body)) * 0.14;
-    field += (detail - 0.5) * 0.30;
+    field += (detail - 0.5) * 0.26;
     // Fair-weather cumulus band: quantity of cloud peaks 15-40 deg up, which is
     // where the reference frame's towers stand over the ridge line, and the
     // zenith stays comparatively open.
-    field += 0.085 * smoothstep(0.04, 0.22, rd.y) * (1.0 - smoothstep(0.50, 0.92, rd.y));
-    float density = smoothstep(0.452, 0.520, field);
+    field += 0.050 * smoothstep(0.04, 0.22, rd.y) * (1.0 - smoothstep(0.50, 0.92, rd.y));
+    float density = smoothstep(0.462, 0.508, field);
     density *= smoothstep(0.010, 0.075, rd.y);
 
     if (density > 0.004) {
       // Shadowing: compare the field with itself offset toward the sun. Cheap,
       // and it gives the "top of the tower glows, base goes blue" structure.
       vec2 sunStep = vec2(uSunDir.x, uSunDir.z) * 0.075 * (1.0 / max(uSunDir.y, 0.25));
-      float lit = fbm3((qw + sunStep * 1.2) * 0.92 + vec2(3.0, 8.0));
+      float lit = fbm3((qw + sunStep * 1.2) * 1.35 + vec2(3.0, 8.0));
       float thick = smoothstep(0.50, 0.86, field);
       float selfShade = clamp(0.62 + (body - lit) * 8.0 - thick * 0.30, 0.0, 1.0);
       // Low elevations see the flat, self-shadowed bases of the towers.
@@ -805,8 +805,12 @@ void main() {
   }
 
   // ---- Aerial perspective ------------------------------------------------
-  if (!indoor && abs(vWorldPos.z) > 30.0) {
-    float haze = 1.0 - exp(-(abs(vWorldPos.z) - 18.0) * 0.0160);
+  // Aerial perspective keyed to distance from the eye, not to |z|: the green
+  // bank at the end of the street is close in world units but far in screen
+  // terms, and z-only haze left it reading as a flat green wall.
+  float eyeDist = length(vWorldPos - uCamPos);
+  if (!indoor && eyeDist > 12.0) {
+    float haze = 1.0 - exp(-(eyeDist - 12.0) * 0.0220);
     vec3 hazeCol = mix(vec3(0.016, 0.026, 0.060), vec3(0.150, 0.280, 0.430), dayMix);
     hazeCol += vec3(1.0, 0.74, 0.40) * uPlumeGlow * 0.12;
     litColor = mix(litColor, hazeCol, clamp(haze, 0.0, 0.72));

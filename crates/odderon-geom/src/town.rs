@@ -244,7 +244,7 @@ pub fn build_uchinoura_street_static(buf: &mut MeshBuffer) {
     let ground_y = -3.20_f32;
 
     // 1. Deep Sunlit Summer Meadow/Town Ground, Sidewalks, Curbs & Dark Weathered Asphalt Street!
-    buf.add_box(Vec3::new(-220.0, ground_y - 0.35, -95.0), Vec3::new(220.0, ground_y, 160.0), [0.12, 0.22, 0.08], MAT_FOLIAGE);
+    buf.add_box(Vec3::new(-220.0, ground_y - 0.35, -95.0), Vec3::new(220.0, ground_y, 160.0), [0.072, 0.132, 0.055], MAT_FOLIAGE);
 
     let sidewalk_stone = [0.40, 0.38, 0.34];
     let curb_stone = [0.32, 0.31, 0.28];
