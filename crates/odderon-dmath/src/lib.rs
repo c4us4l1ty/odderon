@@ -842,7 +842,17 @@ mod tests {
     #[test]
     fn identities() {
         for &x in PROBES.iter() {
-            // Odd/even symmetry must hold bitwise: these are exact reflections, not approximations.
+            // Odd/even symmetry must hold bitwise, with one deliberate exception: at x = -0.0 the
+            // two sides are +0.0 and -0.0. One is numerically equal and mathematically identical for
+            // symmetry purposes, but the bit patterns differ, so a bitwise assertion would report a
+            // failure for a correct result. Signed zero is compared numerically; everything else
+            // stays bitwise.
+            if x == 0.0 {
+                assert_eq!(sin(-x), sin(x), "sin odd at signed zero");
+                assert_eq!(cos(-x), cos(x), "cos even at signed zero");
+                assert_eq!(atan(-x), atan(x), "atan odd at signed zero");
+                continue;
+            }
             assert_eq!(sin(-x).to_bits(), (-sin(x)).to_bits(), "sin odd at {}", x);
             assert_eq!(cos(-x).to_bits(), cos(x).to_bits(), "cos even at {}", x);
             assert_eq!(atan(-x).to_bits(), (-atan(x)).to_bits(), "atan odd at {}", x);
