@@ -110,12 +110,20 @@ if (!settle.settled) fail0.push("never settled: frames kept being drawn for 20 s
 const report = await page.evaluate(() => {
   const o = window.__odderon;
   if (!o) return { fatal: "window.__odderon missing — the module did not run" };
-  const s = o.bench.samples.slice().sort((a, b) => a - b);
+  // The HUD's arrays were renamed when submit time and GPU time were separated. Read the GPU samples
+  // when present, fall back to submit samples, and if neither exists say so rather than throwing a
+  // TypeError from inside page.evaluate, which reports as a checker crash instead of a finding.
+  const src = o.bench.gpuSamples?.length ? o.bench.gpuSamples
+            : o.bench.submitSamples;
+  if (!Array.isArray(src)) return { fatal: "bench arrays renamed again — update tools/check-shell.mjs" };
+  const s = src.slice().sort((a, b) => a - b);
+  const kind = o.bench.gpuSamples?.length ? "gpu" : "submit";
   const q = (p) => (s.length ? s[Math.min(s.length - 1, Math.floor(s.length * p))] : NaN);
   return {
     renderer: o.renderer(),
     framesDrawn: o.bench.framesDrawn,
     samples: s.length,
+    kind,
     medianMs: q(0.5),
     p95Ms: q(0.95),
     canvas: [o.gl.drawingBufferWidth, o.gl.drawingBufferHeight],

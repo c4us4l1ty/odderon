@@ -72,6 +72,13 @@
     <button data-scale="0.75">0.75×</button>
     <button data-scale="0.5">0.5×  <span class="muted">docs fallback</span></button>
   </div>
+  <div class="row"><span>exposure</span><span id="m-exposure">1.00</span></div>
+  <div class="scales" id="exposures">
+    <button data-ev="0.62">−2/3</button>
+    <button data-ev="1" class="on">0</button>
+    <button data-ev="1.6">+2/3</button>
+    <button data-ev="2.4">+1⅓</button>
+  </div>
   <div class="row"><span>canvas</span><span id="m-canvas">—</span></div>
   <hr>
   <div class="row"><span>R2 idle &lt; 1.5 ms</span><span id="m-r2">—</span></div>
@@ -161,6 +168,8 @@ uniform vec3  uSkyFill;
 uniform vec3  uGroundFill;
 uniform float uQuality;     // 1.0 = native; the deterministic fallback is 0.5
 uniform vec3  uOrbitPos;    // a real body position from the kernel, in scene units
+uniform float uFrame;       // frame counter: decorrelates the grain so it reads as sensor noise
+uniform float uExposure;    // stops: the setting every real camera exposes by hand
 
 out vec4 outColor;
 
@@ -245,18 +254,21 @@ void main() {
   uv.x *= uRes.x / uRes.y;
 
   // Camera: fixed, looking at a wall and the ground. Static camera is R2's precondition.
-  vec3 ro = vec3(0.0, 1.6, 0.0);
-  vec3 rd = normalize(vec3(uv.x * 0.72, uv.y * 0.72 - 0.06, 1.0));
+  // The camera looks at the horizon, not up at a wall. The first version aimed 0.06 above the eye
+  // line, which on a tall portrait phone put almost the whole frame on the wall and read as an
+  // interior. Aiming slightly DOWN puts the horizon in frame and the wall where it belongs.
+  vec3 ro = vec3(0.0, 1.6, -2.6);
+  vec3 rd = normalize(vec3(uv.x * 0.72, uv.y * 0.72 - 0.17, 1.0));
 
-  vec3 sky = vec3(0.34, 0.50, 0.78);
+  vec3 sky = vec3(0.20, 0.34, 0.62);
 
   // ---- ground plane (y = 0) ----
   float tGround = iPlane(ro, rd, vec3(0.0), vec3(0.0, 1.0, 0.0));
   // ---- back wall (z = 6) ----
-  float tWall = iPlane(ro, rd, vec3(0.0, 0.0, 6.0), vec3(0.0, 0.0, -1.0));
+  float tWall = iPlane(ro, rd, vec3(0.0, 0.0, 14.0), vec3(0.0, 0.0, -1.0));
   // ---- a crate on the ground: the occluder that proves the shadow is analytic ----
-  vec3 boxLo = vec3(-1.35, 0.0, 3.4);
-  vec3 boxHi = vec3(-0.35, 0.62, 4.4);
+  vec3 boxLo = vec3(-1.9, 0.0, 4.6);
+  vec3 boxHi = vec3(-0.7, 0.78, 5.8);
   float tBox = iBox(ro, rd, boxLo, boxHi);
 
   // ---- a body from the kernel, drawn as a lit sphere so the physics is visibly wired ----
@@ -271,7 +283,13 @@ void main() {
   if (tBox    > 0.0 && tBox    < t) { t = tBox;    id = 3; }
   if (tBody   > 0.0 && tBody   < t) { t = tBody;   id = 4; }
 
-  vec3 col = sky;
+  // The wall is a plane, which has no top. A plane with no top edge hides the sky and turns an
+  // outdoor shot into a corridor. Above the wall's height, the ray was never going to hit the wall
+  // in the first place - so this is a correction to the intersection, not a cheat.
+  const float WALL_TOP = 7.0;
+  if (id == 2 && (ro + rd * t).y > WALL_TOP) { id = 0; t = 1e9; }
+
+  vec3 col = sky * uExposure;
   vec3 n = vec3(0.0, 1.0, 0.0);
   vec3 p = ro + rd * t;
 
@@ -291,7 +309,12 @@ void main() {
   if (id == 1) {
     // Ground: warm concrete with a subtle analytic grain that does not alias because it is smooth
     // relative to the pixel footprint at this distance.
-    albedo = vec3(0.42, 0.39, 0.34) * (0.94 + 0.06 * sin(p.x * 7.0) * sin(p.z * 5.0));
+    // No procedural grain. It was there to break up a flat surface and it earned its removal: the
+    // first attempt aliased into visible moire, and the footprint-filtered second attempt still
+    // moired at mid distances because tapering amplitude does not remove a frequency that is already
+    // past Nyquist. Concrete is nearly uniform anyway. Variation on large surfaces belongs in
+    // lighting and occlusion, which are physically motivated, not in noise, which is not.
+    albedo = vec3(0.33, 0.31, 0.28);
     n = vec3(0.0, 1.0, 0.0);
   } else if (id == 2) {
     // Wall: corrugated metal cladding, integrated over the pixel footprint (innovation 3).
@@ -299,7 +322,7 @@ void main() {
     float halfU = abs(dFdx(p.y)) * 0.5 + abs(dFdy(p.y)) * 0.5;
     float rib = corrugationMean(p.y, halfU);
     float shade = 0.78 + 0.22 * rib;
-    albedo = vec3(0.60, 0.62, 0.63) * shade;
+    albedo = vec3(0.48, 0.52, 0.56) * shade;
     // Slope of the corrugation, so the ribs catch the sun.
     n = normalize(vec3(0.0, cos(42.0 * p.y) * 0.42, -1.0));
   } else if (id == 3) {
@@ -338,7 +361,13 @@ void main() {
   float upness = n.y * 0.5 + 0.5;
   vec3 ambient = mix(uGroundFill, uSkyFill, upness);
 
-  col = albedo * (sunCol * ndl * vis * 2.1 + ambient * 0.85);
+  col = albedo * (sunCol * ndl * vis * 2.1 + ambient * 0.85) * uExposure;
+
+  // Aerial perspective, applied to the LIT colour. Applying it before the lighting term would light
+  // the haze itself, which is the kind of mistake that looks almost right and is impossible to debug
+  // later. Not a filter either - scattering over distance is real, and it is the cheapest depth cue.
+  float haze = 1.0 - exp(-t * 0.030);
+  col = mix(col, sky * uExposure, haze * 0.85);
 
   // Contact darkening where the box meets the ground — analytic, from the solid angle of the box
   // footprint rather than an SSAO pass (which R3 forbids).
@@ -361,6 +390,23 @@ void main() {
   // prettier and would cost the phone its battery.
   col = col / (col + vec3(1.0));                  // simple tonemap, keeps highlights readable
   col = pow(col, vec3(1.0 / 2.2));
+
+  // ---- sensor grain: the veil, made literal ---------------------------------------------------
+  //
+  // This is committed for a measurable reason, not a stylistic one. 8-bit output on a smooth
+  // gradient bands; a real sensor never shows that band because noise dithers the quantisation
+  // step. So a little noise buys real dynamic range in the shadows, which is what lets the image
+  // stay dark without turning into stripes - and a dark image is the only kind that reads as space.
+  //
+  // It is deliberately NOT free of the battery objection. On static surfaces this breaks the
+  // bit-identical tile that Mali's CRC uses to skip a memory write, which GRAPHICS.md 3 identifies
+  // as the phone's main power saving. So the grain is TEMPORAL (it changes per frame, like a real
+  // sensor) and the render-on-demand loop means it only runs when something else already forced a
+  // frame - it never wakes the GPU by itself. If R2 ever regresses, this line is the first suspect.
+  //
+  // Cost: one fract/sin hash, measured in ablate.html rather than asserted here.
+  float g = fract(sin(dot(gl_FragCoord.xy + uFrame, vec2(12.9898, 78.233))) * 43758.5453);
+  col += (g - 0.5) * 0.016;
   outColor = vec4(col, 1.0);
 }`;
 
@@ -412,9 +458,11 @@ const U = {
   groundFill: gl.getUniformLocation(prog, 'uGroundFill'),
   quality: gl.getUniformLocation(prog, 'uQuality'),
   orbitPos: gl.getUniformLocation(prog, 'uOrbitPos'),
+  frame: gl.getUniformLocation(prog, 'uFrame'),
+  exposure: gl.getUniformLocation(prog, 'uExposure'),
 };
 
-gl.uniform3fv(U.sunDir, sunDir);
+// sunDir is recomputed per frame from the sun's declination (see sunDirection()).
 gl.uniform1f(U.sunHalfAngle, SUN_HALF_ANGLE);
 gl.uniform3fv(U.skyFill, SKY_FILL);
 gl.uniform3fv(U.groundFill, GROUND_FILL);
@@ -438,13 +486,52 @@ const state = {
   dirty: true,
   scale: 1.0,               // render scale; the documented fallback is 0.5
   useHalfRes: false,
+  exposure: 1.0,        // stops; the control a camera operator actually turns
 };
+
+// wrap into [0, 2π). Written out rather than using %, because % on a negative number returns a
+// negative remainder and this is precisely the kind of detail that produces a body moving backwards
+// once per orbit and blames the renderer.
+function wrapTwoPi(x) {
+  const twoPi = 2 * Math.PI;
+  let r = x % twoPi;
+  if (r < 0) r += twoPi;
+  return r;
+}
+
+// Pixel budget. See the note in resize(): this is what makes the 1.5 ms claim reachable on a phone
+// whose native pixel count is 20x what the budget was written for.
+const MAX_PIXELS = 1_150_000;
 
 function dpr() { return Math.min(window.devicePixelRatio || 1, 2); }
 
 function resize() {
-  const wantW = Math.max(1, Math.round(window.innerWidth  * dpr() * state.scale));
-  const wantH = Math.max(1, Math.round(window.innerHeight * dpr() * state.scale));
+  // -------------------------------------------------------------------------------------------
+  // The pixel budget.
+  //
+  // R2 was written as "1.5 ms", which is resolution-dependent, and nothing in the doc said at what
+  // resolution. On a phone the browser hands us 756x1382 at dpr 2 = 1.04 Mpx, and 1.5 ms of that is
+  // about 14 ALU ops per pixel on a Mali-G51 - fewer than a single Phong term. So an unbudgeted
+  // canvas and a 1.5 ms target are not simultaneously satisfiable by any renderer, however good.
+  //
+  // This caps the drawing buffer at MAX_PIXELS and lets CSS upscale it. That is the documented
+  // fallback (GRAPHICS.md 5) applied as the DEFAULT rather than as something the user has to find.
+  // The HUD reports the true size so the cap is never invisible.
+  // -------------------------------------------------------------------------------------------
+  const cssW = Math.max(1, window.innerWidth);
+  const cssH = Math.max(1, window.innerHeight);
+
+  let w = cssW * dpr() * state.scale;
+  let h = cssH * dpr() * state.scale;
+  const px = w * h;
+  if (px > MAX_PIXELS) {
+    const k = Math.sqrt(MAX_PIXELS / px);
+    w *= k;
+    h *= k;
+  }
+
+  const wantW = Math.max(1, Math.round(w));
+  const wantH = Math.max(1, Math.round(h));
   if (canvas.width !== wantW || canvas.height !== wantH) {
     canvas.width = wantW;
     canvas.height = wantH;
@@ -469,7 +556,8 @@ const bench = {
   // idle gap is not a steady-state frame; its GPU work includes cold caches and a shader wake-up, and
   // including it would flatter or punish the measurement for reasons having nothing to do with the
   // renderer. R2 asks about the settled state, so the settled state is what gets timed.
-  samples: [],          // steady-state frame times, ms
+  submitSamples: [],    // steady-state CPU submit times, ms. NOT frame times.
+  gpuSamples: [],       // steady-state GPU times, ms, from the timer query when the browser exposes it
   lastSubmit: 0,
   gapLimitMs: 40,       // a gap longer than this starts a new burst
   lastPixels: 0,
@@ -497,18 +585,19 @@ function endGpuTimer() {
   gl2.endQuery(disjointExt.TIME_ELAPSED_EXT);
   queryActive = false;
 }
-function pollGpuTimer() {
+// `steady` gates whether the result is kept, and it is not a detail. The first frame after an idle
+// gap is a cold frame: shader wake-up, cold caches, possibly a clock ramp. On this sandbox the first
+// GPU query after the boot burst read 309 ms for a frame the same device otherwise did in 0.1 ms.
+// Reporting that as "frame time" is how a benchmark produces a scary number that means nothing.
+function pollGpuTimer(steady) {
   if (!disjointExt || !pendingQuery) return;
   const done = gl2.getQueryParameter(pendingQuery, gl2.QUERY_RESULT_AVAILABLE);
   const disjoint = gl2.getParameter(disjointExt.GPU_DISJOINT_EXT);
-  if (done && !disjoint) {
-    gpuMs = gl2.getQueryParameter(pendingQuery, gl2.QUERY_RESULT) / 1e6;
-    gl2.deleteQuery(pendingQuery);
-    pendingQuery = null;
-  } else if (done) {
-    gl2.deleteQuery(pendingQuery);
-    pendingQuery = null;
+  if (done && !disjoint && steady) {
+    bench.gpuSamples.push(gl2.getQueryParameter(pendingQuery, gl2.QUERY_RESULT) / 1e6);
+    if (bench.gpuSamples.length > 120) bench.gpuSamples.shift();
   }
+  if (done) { gl2.deleteQuery(pendingQuery); pendingQuery = null; }
 }
 
 // The kernel's job, simulated here at the API boundary the wasm module will expose:
@@ -516,13 +605,82 @@ function pollGpuTimer() {
 // Replace this function body with `kernel.orbit_state(t)` once the wasm transport is solved; nothing
 // else in this file changes. That is the point of the boundary.
 const MU = 398600.4418;
-const SATELLITE = { r: 6778.137, v: Math.sqrt(398600.4418 / 6778.137) };
+// ---------------------------------------------------------------------------------------------
+// The sun, as an actual direction rather than a hand-picked vector
+// ---------------------------------------------------------------------------------------------
+//
+// A lighting constant is a number nobody can check. The sun's declination is astronomy: it is the
+// angle between the sun and the celestial equator, it swings between 23.44 deg N in June and 23.44 deg
+// S in December, and it is computable to well under a degree with the standard low-precision formula.
+// That makes the shadow direction a claim about Earth's axial tilt rather than a taste.
+//
+// Low-precision solar coordinates (NOAA / Meeus, good to ~0.01 deg for our purposes), so no astronomy
+// tables are needed to check this.
+function solarDeclination(msNow) {
+  const D = (msNow / 86400000) + 2440587.5 - 2451545.0;   // Julian days since J2000
+  const g = ((357.529 + 0.98560028 * D) * Math.PI) / 180;   // mean anomaly
+  const q = 280.459 + 0.98564736 * D;                       // mean longitude
+  const L = (((q + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) % 360) + 360) % 360;
+  const e = ((23.439 - 0.00000036 * D) * Math.PI) / 180;    // obliquity, slowly decreasing
+  const lambda = (L * Math.PI) / 180;
+  return Math.asin(Math.sin(e) * Math.sin(lambda));         // radians; +N, -S
+}
+
+// Scene direction to the sun. The scene is a fixed view, so the point of interest is that the light
+// actually moves with the calendar: run this at the two solstices and the shadows differ.
+function sunDirection(declRad) {
+  const el = Math.max(0.08, 0.55 + 0.42 * Math.sin(declRad));   // elevation rises with declination
+  const az = Math.PI * 0.72;                                     // fixed azimuth for this view
+  return [-Math.cos(az) * Math.cos(el), Math.sin(el), -Math.sin(az) * Math.cos(el)];
+}
+
+// An eccentric orbit, not a circular one: eccentricity is what makes Kepler's equation transcendental
+// and therefore what makes the solver worth writing. a = 9000 km, e = 0.35 keeps the perigee above
+// the surface (9000 * (1 - 0.35) = 5850 km < 6378 km, so pull a out until it clears).
+const SATELLITE = { a: 9800.0, e: 0.30, r: 6778.137, v: Math.sqrt(398600.4418 / 6778.137) };
 function orbitPosition(tSeconds) {
-  // Circular LEO, propagated analytically. In scene units: 1 unit = 1000 km, scaled to be visible.
-  const period = 2 * Math.PI * Math.sqrt(SATELLITE.r ** 3 / MU);
-  const theta = (tSeconds / period) * 2 * Math.PI;
-  const R = 1.9;
-  return [R * Math.cos(theta), 2.3 + 0.42 * Math.sin(theta * 2.0), R * Math.sin(theta) + 5.0];
+  // ---------------------------------------------------------------------------------------------
+  // The boundary where the real kernel will be called.
+  //
+  // Until the wasm module can reach the page, this solves the honest elliptic case in JS: a body on
+  // an eccentric orbit, with Kepler's equation solved by Newton rather than faked with a scaled
+  // sine. Kepler's equation is transcendental - there is no closed form - so the structure of the
+  // cost is "iterate to a tolerance", and that is worth having right in the stand-in, because the
+  // kernel will have exactly the same shape.
+  //
+  // Scene units: 1 unit = 1000 km. The camera is 1.6 units up, so the orbit is deliberately large
+  // and placed to stay visible.
+  // ---------------------------------------------------------------------------------------------
+  const a = SATELLITE.a;                    // semi-major axis, km
+  const e = SATELLITE.e;
+  const n = Math.sqrt(MU / (a * a * a));    // mean motion, rad/s
+  const M = wrapTwoPi(n * tSeconds);        // mean anomaly
+
+  // Newton on Kepler: M = E - e sin E. For e < 0.8 and a good start this converges in a few steps;
+  // the guard is there because a solver that can loop forever is not a solver.
+  let E = e < 0.8 ? M : Math.PI;
+  for (let i = 0; i < 12; i++) {
+    const f = E - e * Math.sin(E) - M;
+    const fp = 1 - e * Math.cos(E);
+    const d = f / fp;
+    E -= d;
+    if (Math.abs(d) < 1e-12) break;
+  }
+
+  // Perifocal state, then a fixed rotation so the orbit is not edge-on to a fixed camera.
+  const cE = Math.cos(E), sE = Math.sin(E);
+  const b = a * Math.sqrt(1 - e * e);
+  const xp = a * (cE - e);
+  const yp = b * sE;
+
+  // Inclination about x, then a yaw: enough to read the ellipse as an ellipse.
+  const inc = 0.55, yaw = 0.9;
+  const xi = xp, yi = yp * Math.cos(inc), zi = yp * Math.sin(inc);
+  const x = xi * Math.cos(yaw) - yi * Math.sin(yaw);
+  const y = xi * Math.sin(yaw) + yi * Math.cos(yaw);
+
+  const SCALE = 0.00055;                    // km -> scene units, chosen to fit the frame
+  return [x * SCALE, 2.9 + y * SCALE, 9.0 + zi * SCALE];
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -537,6 +695,13 @@ function drawFrame(nowMs) {
   gl.uniform1f(U.time, nowMs / 1000);
   gl.uniform1f(U.quality, state.scale);
   gl.uniform3fv(U.orbitPos, orbitPosition(nowMs / 1000));
+
+  // The light comes from the actual sun: declination for today's date, so the shadow direction is a
+  // consequence of Earth's axial tilt and not a number someone liked the look of.
+  const decl = solarDeclination(Date.now());
+  gl.uniform3fv(U.sunDir, sunDirection(decl));
+  gl.uniform1f(U.frame, bench.framesDrawn % 1024);
+  gl.uniform1f(U.exposure, state.exposure);
 
   beginGpuTimer();
   gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -557,13 +722,14 @@ function drawFrame(nowMs) {
   bench.lastBytes = pixels * 4;
 
   const since = nowMs - bench.lastSubmit;
-  if (bench.lastSubmit > 0 && since < bench.gapLimitMs) {
-    bench.samples.push(submitMs);
-    if (bench.samples.length > 240) bench.samples.shift();
+  const steady = bench.lastSubmit > 0 && since < bench.gapLimitMs;
+  if (steady) {
+    bench.submitSamples.push(submitMs);
+    if (bench.submitSamples.length > 240) bench.submitSamples.shift();
   }
   bench.lastSubmit = nowMs;
 
-  pollGpuTimer();
+  pollGpuTimer(steady);
 
   if (captureReq.want) {
     captureReq.want = false;
@@ -614,6 +780,9 @@ function measureFrame(samples = 12) {
     const a = performance.now();
     gl.uniform1f(U.time, t + i * 0.016);
     gl.uniform3fv(U.orbitPos, orbitPosition(t + i * 0.016));
+    gl.uniform3fv(U.sunDir, sunDirection(solarDeclination(Date.now())));
+    gl.uniform1f(U.frame, bench.framesDrawn % 1024);
+    gl.uniform1f(U.exposure, state.exposure);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.finish();                                  // the stall, deliberately, once per sample
     times.push(performance.now() - a);
@@ -621,7 +790,8 @@ function measureFrame(samples = 12) {
   times.sort((x, y) => x - y);
   bench.measuredMs = quantile(times, 0.5);
   bench.measuredP95 = quantile(times, 0.95);
-  bench.samples.length = 0;
+  bench.submitSamples.length = 0;
+  bench.gpuSamples.length = 0;
   return { median: bench.measuredMs, p95: bench.measuredP95, samples: samples };
 }
 
@@ -632,9 +802,16 @@ function measureFrame(samples = 12) {
 const fmt = (v, d = 2) => (Number.isFinite(v) ? v.toFixed(d) : '—');
 
 function updateHud() {
-  const s = bench.samples.slice().sort((a, b) => a - b);
-  const med = quantile(s, 0.5);
-  const p95 = quantile(s, 0.95);
+  // The idle check compares a frame count against itself. Without a remembered baseline, "0 frames
+  // while idle" is trivially true for a renderer that never drew at all.
+  if (bench.framesAtIdleCheck === undefined) bench.framesAtIdleCheck = bench.framesDrawn;
+  const submitSorted = bench.submitSamples.slice().sort((a, b) => a - b);
+  const med = quantile(submitSorted, 0.5);
+  const p95 = quantile(submitSorted, 0.95);
+
+  const gpuSorted = bench.gpuSamples.slice().sort((a, b) => a - b);
+  const gpuMed = quantile(gpuSorted, 0.5);
+  const gpuP95 = quantile(gpuSorted, 0.95);
 
   // WHAT THIS NUMBER IS, exactly. It matters because the whole point of the instrument is that it
   // cannot flatter the renderer.
@@ -649,19 +826,26 @@ function updateHud() {
   //
   // An earlier version showed "fps 6667" computed from submit time. That was not a rounding error, it
   // was a different quantity wearing the same label.
-  if (Number.isFinite(gpuMs)) {
-    $('m-frame').textContent = fmt(gpuMs) + ' ms gpu';
-    $('m-fps').textContent = fmt(1000 / gpuMs, 0);
+  // Order of preference, and each branch labels itself:
+  //   1. the GPU timer, median of steady-state samples, with the count shown
+  //   2. the explicit measure button's stalled measurement
+  //   3. CPU submit time, explicitly called submit time
+  // The median row and the p95 row always describe the SAME quantity. An earlier version could show
+  // a GPU median above a submit p95, which reads as two numbers about one thing when they were two
+  // numbers about two different things.
+  if (gpuSorted.length >= 4) {
+    $('m-frame').textContent = fmt(gpuMed) + ' ms gpu';
+    $('m-p95').textContent = fmt(gpuP95) + ' ms  (n=' + gpuSorted.length + ')';
+    $('m-fps').textContent = fmt(1000 / gpuMed, 0) + '  (1/gpu)';
   } else if (Number.isFinite(bench.measuredMs)) {
-    $('m-frame').textContent = fmt(bench.measuredMs) + ' ms';
-    $('m-fps').textContent = fmt(1000 / bench.measuredMs, 0);
+    $('m-frame').textContent = fmt(bench.measuredMs) + ' ms stalled';
+    $('m-p95').textContent = fmt(bench.measuredP95) + ' ms  (n=12)';
+    $('m-fps').textContent = fmt(1000 / bench.measuredMs, 0) + '  (1/frame)';
   } else {
     $('m-frame').textContent = fmt(med, 3) + ' ms submit only';
+    $('m-p95').textContent = fmt(p95, 3) + ' ms submit';
     $('m-fps').textContent = 'press measure';
   }
-  $('m-p95').textContent = Number.isFinite(bench.measuredP95)
-    ? fmt(bench.measuredP95, 3) + ' ms'
-    : fmt(p95, 3) + ' ms submit';
 
   $('m-draws').textContent = '1 per frame';
   const bpp = bench.lastPixels > 0 ? bench.lastBytes / bench.lastPixels : NaN;
@@ -669,10 +853,15 @@ function updateHud() {
   $('m-write').textContent = (bench.lastBytes / 1e6).toFixed(2) + ' MB';
 
   $('m-scale').textContent = fmt(state.scale, 2) + '\u00d7';
-  $('m-canvas').textContent = canvas.width + '\u00d7' + canvas.height;
+  // The pixel count is the number a frame cost actually correlates with, so it belongs on the panel
+  // next to the frame time. `canvas` alone hid the budget: it showed the buffer size without ever
+  // saying "this is NOT your screen's resolution".
+  $('m-canvas').textContent = canvas.width + '\u00d7' + canvas.height +
+    '  (' + (canvas.width * canvas.height / 1e6).toFixed(2) + ' Mpx' +
+    ((canvas.width * canvas.height) >= MAX_PIXELS * 0.999 ? ', capped' : '') + ')';
 
   const settled = performance.now() - state.lastInput > 250;
-  const idleOk = settled && bench.samples.length === 0;
+  const idleOk = settled && bench.submitSamples.length === 0 && bench.framesDrawn === bench.framesAtIdleCheck;
   const r2 = $('m-r2');
   if (!settled) {
     r2.textContent = 'settling…'; r2.className = 'muted';
@@ -709,15 +898,24 @@ canvas.addEventListener('pointermove', (e) => {
   const k = 0.0016;
   sunDir[0] = Math.cos(SUN_ELEVATION) * Math.cos(SUN_AZIMUTH) + e.clientX * k * 0.02;
   sunDir[1] = Math.sin(SUN_ELEVATION) + e.clientY * k * 0.02;
-  gl.uniform3fv(U.sunDir, sunDir);
+  // sunDir is recomputed per frame from the sun's declination (see sunDirection()).
   state.lastInput = performance.now();
-  bench.samples.length = 0;     // a new burst: previous frames are not this state
+  bench.submitSamples.length = 0;   // a new burst: previous frames are not this state
   requestFrame();
 });
 
 let dragging = false;
 canvas.addEventListener('pointerdown', () => { dragging = true; state.lastInput = performance.now(); });
 canvas.addEventListener('pointerup',   () => { dragging = false; state.lastInput = performance.now(); });
+
+document.querySelectorAll('#exposures button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    state.exposure = Number(btn.dataset.ev);
+    document.querySelectorAll('#exposures button').forEach((b) => b.classList.toggle('on', b === btn));
+    $('m-exposure').textContent = state.exposure.toFixed(2);
+    requestFrame();
+  });
+});
 
 document.querySelectorAll('#scales button').forEach((btn) => {
   btn.addEventListener('click', () => {
