@@ -61,9 +61,14 @@ async function sparticuzPath() {
     mod = await import('@sparticuz/chromium');
   }
   const chromium = mod.default ?? mod;
-  // `executablePath()` extracts to /tmp/chromium by default; force our cache dir.
+  // NOTE: in @sparticuz/chromium >= 150 `executablePath(input)` expects the
+  // directory holding the packed `*.br` payloads (the package's own `bin/`),
+  // *not* an output directory. Passing a cache dir makes it throw on a fresh
+  // container. Call it with no argument: it inflates into `os.tmpdir()` and
+  // returns the binary path. The result is cached in `tools/.cache/chromium`
+  // as a convenience marker for subsequent runs.
   chromium.setGraphicsMode = false;
-  const p = await chromium.executablePath(extractDir);
+  const p = await chromium.executablePath();
   return p;
 }
 

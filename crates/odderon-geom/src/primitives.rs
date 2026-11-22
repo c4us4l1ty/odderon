@@ -432,12 +432,16 @@ impl MeshBuffer {
             tile_col,
             MAT_KAWARA,
         );
-        // Dark roasted-cedar eave underside soffit (`nokiten`, normal -Y/+Z so closed under CULL_FACE!)
+        // Dark roasted-cedar eave underside soffit (`nokiten`). Wound so its
+        // normal points **down and back**, i.e. out of the building: the
+        // previous order faced up-and-forward, so the whole soffit was
+        // backface-culled and every roof in the town read as a floating black
+        // slab with a stripe of sky under it.
         self.push_quad(
-            Vec3::new(x0, y_eave - 0.05, z_eave + 0.12),
-            Vec3::new(x1, y_eave - 0.05, z_eave + 0.12),
-            Vec3::new(x1, y_ridge - 0.08, z_ridge),
             Vec3::new(x0, y_ridge - 0.08, z_ridge),
+            Vec3::new(x1, y_ridge - 0.08, z_ridge),
+            Vec3::new(x1, y_eave - 0.05, z_eave + 0.12),
+            Vec3::new(x0, y_eave - 0.05, z_eave + 0.12),
             wood_col,
             MAT_WOOD,
         );

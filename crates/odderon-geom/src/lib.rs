@@ -7,6 +7,7 @@
 //! - `town`: Parameterized 2-story Japanese houses, utility poles, streetscape & distant launch complex.
 
 pub mod hab;
+pub mod modules;
 pub mod primitives;
 pub mod props;
 pub mod town;
