@@ -40,7 +40,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-use odderon_dmath::{acos, atan2, clamp_unit, fabs, fmax, is_finite, sinh, sqrt};
+use odderon_dmath::{atan2, clamp_unit, fabs, fmax, is_finite, sinh, sqrt};
 
 // ---------------------------------------------------------------------------------------------
 // domain predicates

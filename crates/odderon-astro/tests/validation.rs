@@ -638,19 +638,17 @@ fn true_anomaly_agrees_with_the_element_set() {
 fn a_degenerate_mu_or_radius_is_not_silently_accepted() {
     // Belt and braces on the same failure mode as `overflow_is_reported_not_hidden`: every early-out in
     // propagate() must pair a NaN state with `unconverged: true`, never with success.
-    for &(r, v, mu) in [
-        (Vec3::ZERO, Vec3::new(0.0, 7.0, 0.0), MU),
-        (Vec3::new(7000.0, 0.0, 0.0), Vec3::new(0.0, 7.0, 0.0), 0.0),
-        (Vec3::new(7000.0, 0.0, 0.0), Vec3::new(0.0, 7.0, 0.0), -1.0),
-        (
-            Vec3::new(f64::NAN, 0.0, 0.0),
-            Vec3::new(0.0, 7.0, 0.0),
-            MU,
-        ),
-    ]
-    .iter()
-    {
-        let out = propagate(&State::new(*r, *v), 100.0, *mu);
+    let cases: [(f64, f64, f64); 4] = [
+        // rx, vx, mu — the message prints r and mu, so no label is needed.
+        (0.0, 0.0, MU),
+        (7000.0, 0.0, 0.0),
+        (7000.0, 0.0, -1.0),
+        (f64::NAN, 0.0, MU),
+    ];
+    for &(rx, vx, mu) in cases.iter() {
+        let r = Vec3::new(rx, 0.0, 0.0);
+        let v = Vec3::new(vx, 7.0, 0.0);
+        let out = propagate(&State::new(r, v), 100.0, mu);
         assert!(
             out.unconverged,
             "degenerate input (r={:?}, mu={}) reported success",
