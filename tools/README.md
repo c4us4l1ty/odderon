@@ -60,10 +60,29 @@ Mode 4 is the one that finds "why is this wall black": it separates *no sun*
 from *no light at all*. Mode 7/8 splits the massing-shadow term from the
 procedural gobo term when one of them misbehaves.
 
+## 3b. Why the shots are reproducible
+
+A capture is meant to be a pure function of its URL, which means the world is
+not allowed to drift between runs:
+
+* capture mode holds the world clock still (`dtMs = 0` every frame), so the sim
+  sits at its boot state no matter how long the page took to load: the sun angle
+  and the shuttle bus used to drift by a few hundred milliseconds between runs;
+* capture mode ignores the presenter's park catch-up (`wakePresenter` normally
+  fast-forwards the sim across a parked spell), so the shuttle never jumps onto
+  its 90 s schedule mid-shot;
+* capture mode does not schedule the T = 9 s static fire, which is wall-clock
+  timed and used to drop a 300 m plume into some shots and not others;
+* `freeze()` paints its own frame before returning, because a parked page keeps
+  whatever the compositor last held.
+
+Two runs of the same view are byte-identical. If that ever stops being true,
+one of the three rules above has been broken.
+
 ## 4. Reading `art-compare.mjs`
 
 It downsamples every view to 640x360 and prints mean / p5 / p25 / p50 / p75 /
-p95 luma, the share of pixels below 0.09 ("dark") and above 0.95 ("hot"), mean
+p95 luma, the share of pixels below 0.15 ("dark") and above 0.85 ("hot"), mean
 saturation, and the warm/cool balance, next to the same numbers for
 `.artifacts/reference-summer-noon.png`. Side-by-side sheets land in
 `.artifacts/compare/`.

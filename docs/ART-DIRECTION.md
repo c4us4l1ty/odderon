@@ -93,20 +93,19 @@ and a warm timber `bounceFill` 0.418/0.302/0.183, both multiplied by
 `tools/art-compare.mjs` prints the distribution of every view next to the
 reference frame. The reference is a low-key image:
 
-| | mean | p25 | p50 | p95 | dark<0.09 | hot>0.95 | sat | warm/cool |
+| | mean | p25 | p50 | p95 | dark<0.15 | hot>0.85 | sat | warm/cool |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | reference | 0.288 | 0.092 | 0.228 | 0.684 | 39 % | 0 % | 0.444 | 55/38 |
-| 01 room window | 0.178 | 0.099 | 0.126 | 0.497 | 67 % | 0 % | 0.465 | 62/31 |
-| 02 window vista | 0.389 | 0.216 | 0.441 | 0.783 | 18 % | 2 % | 0.480 | 67/26 |
-| 03 gallery | 0.367 | 0.119 | 0.316 | 0.776 | 29 % | 0 % | 0.455 | 58/36 |
-| 04 street machiya | 0.335 | 0.191 | 0.319 | 0.732 | 17 % | 0 % | 0.375 | 52/25 |
-| 05 street meadow | 0.326 | 0.150 | 0.317 | 0.618 | 25 % | 0 % | 0.470 | 49/47 |
-| 06 sky cumulus | 0.398 | 0.214 | 0.400 | 0.826 | 18 % | 3 % | 0.488 | 43/46 |
-| 07 interior desk | 0.297 | 0.128 | 0.226 | 0.859 | 31 % | 6 % | 0.297 | 49/23 |
+| 01 room window | 0.178 | 0.099 | 0.126 | 0.496 | 67 % | 0 % | 0.466 | 62/31 |
+| 02 window vista | 0.389 | 0.216 | 0.440 | 0.782 | 18 % | 2 % | 0.481 | 67/26 |
+| 03 gallery | 0.367 | 0.118 | 0.316 | 0.776 | 29 % | 0 % | 0.456 | 58/36 |
+| 04 street machiya | 0.325 | 0.186 | 0.296 | 0.725 | 18 % | 0 % | 0.402 | 59/16 |
+| 05 street meadow | 0.318 | 0.145 | 0.306 | 0.618 | 27 % | 0 % | 0.491 | 54/41 |
+| 06 sky cumulus | 0.398 | 0.214 | 0.399 | 0.826 | 18 % | 3 % | 0.488 | 43/46 |
+| 07 interior desk | 0.297 | 0.129 | 0.226 | 0.858 | 31 % | 6 % | 0.297 | 49/23 |
 
-The numbers move a few points between runs: the range shuttle drives
-through some frames and the simulation clock lands a frame or two apart, so
-treat them as one significant figure, not as a regression gate.
+Captures are byte-identical between runs (`tools/README.md` §3b), so a change
+in this table is a change in the renderer, not in the weather.
 
 The film chain is: `aces(lit * 0.52)` → sRGB → gamma 1.10 → 22 % S-curve →
 vibrance `1.05 + 0.46·(1-sat)` → split tone (cool violet shade, warm amber
@@ -146,7 +145,7 @@ low elevation; crowns keep a silver lining.
 * **Cover quads pattern in world space.** Blades use their own UV; the verge
   strips and the meadow use `x z · 0.55`, because a 0..1 box UV stretched over
   60 m of hillside prints the noise grid as a visible checkerboard.
-* **Interiors are dark.** A 25 m² room with one window is mostly below 0.09
+* **Interiors are dark.** A 25 m² room with one window is mostly below 0.15
   luma, and that is the point — the window is the brightest thing in the game.
   View 01 (mean 0.180, 66 % dark) is the deliberate cost of that rule.
 * **Plaster is nearly neutral.** Lime plaster is grey-cream, not ochre. A
