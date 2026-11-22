@@ -253,23 +253,37 @@ pub fn build_uchinoura_street_static(buf: &mut MeshBuffer) {
     buf.add_box(Vec3::new(-42.0, ground_y + 0.006, 9.24), Vec3::new(42.0, ground_y + 0.16, 9.44), curb_stone, MAT_MATTE);
     buf.add_box(Vec3::new(-42.0, ground_y + 0.006, 4.80), Vec3::new(42.0, ground_y + 0.16, 5.00), curb_stone, MAT_MATTE);
     // Lush summer grass verge beds along the roadside curb seams (leaving bus-stop boarding zone clear!)
-    buf.add_box(Vec3::new(-18.0, ground_y + 0.141, 4.56), Vec3::new(-8.10, ground_y + 0.168, 4.79), [0.14, 0.30, 0.08], MAT_FOLIAGE);
-    buf.add_box(Vec3::new(-3.60, ground_y + 0.141, 4.58), Vec3::new(16.0, ground_y + 0.168, 4.79), [0.14, 0.30, 0.08], MAT_FOLIAGE);
-    buf.add_box(Vec3::new(-18.0, ground_y + 0.044, 8.94), Vec3::new(18.0, ground_y + 0.072, 9.23), [0.13, 0.28, 0.08], MAT_FOLIAGE);
+    buf.add_box(Vec3::new(-18.0, ground_y + 0.141, 4.56), Vec3::new(-8.10, ground_y + 0.168, 4.79), [0.075, 0.155, 0.045], MAT_FOLIAGE);
+    buf.add_box(Vec3::new(-3.60, ground_y + 0.141, 4.58), Vec3::new(16.0, ground_y + 0.168, 4.79), [0.075, 0.155, 0.045], MAT_FOLIAGE);
+    buf.add_box(Vec3::new(-18.0, ground_y + 0.044, 8.94), Vec3::new(18.0, ground_y + 0.072, 9.23), [0.070, 0.145, 0.042], MAT_FOLIAGE);
 
     // CHECKPOINT 1B NEAR-SIDEWALK PROPS: Weathered Vending Machine + Kominka `バス停` Range Shuttle Stop!
     props::japanese_vending_machine(buf, Pose::at(-1.10, ground_y + 0.142, 2.72));
     props::bus_stop_shelter(buf, Pose::at(-6.80, ground_y + 0.142, 4.30));
 
     // Sunlit 3D Summer Grass Verges & Golden-Blossom Roadside Shrubs (`image-18.png` foreground & stone base!)
-    props::summer_grass_strip(buf, Pose::at(-10.40, ground_y + 0.165, 4.68), 4.8, 20, 101);
-    props::summer_grass_strip(buf, Pose::at(-1.85, ground_y + 0.165, 4.68), 3.2, 16, 203);
-    props::summer_grass_strip(buf, Pose::at(2.85, ground_y + 0.165, 4.68), 4.8, 22, 307);
-    props::summer_grass_strip(buf, Pose::at(8.20, ground_y + 0.165, 4.68), 5.2, 20, 409);
-    props::summer_grass_strip(buf, Pose::at(-4.50, ground_y + 0.070, 9.08), 5.4, 18, 701);
-    props::summer_grass_strip(buf, Pose::at(2.60, ground_y + 0.070, 9.08), 5.4, 18, 809);
-    props::summer_grass_strip(buf, Pose::at(5.60, ground_y + 0.142, 2.52), 4.4, 16, 511);
-    props::summer_grass_strip(buf, Pose::at(-5.95, ground_y + 0.142, 2.38), 2.8, 12, 613);
+    // Dense by design: in the reference the foreground grass is a third of the
+    // frame and it is *thick*. Two staggered rows per verge (a near row and a
+    // half-metre-offset far row) read as a continuous bed from eye height
+    // without paying for a blade per square centimetre.
+    props::summer_grass_strip(buf, Pose::at(-10.40, ground_y + 0.165, 4.62), 4.8, 26, 101);
+    props::summer_grass_strip(buf, Pose::at(-10.40, ground_y + 0.166, 4.74), 4.8, 22, 137);
+    props::summer_grass_strip(buf, Pose::at(-1.85, ground_y + 0.165, 4.62), 3.2, 20, 203);
+    props::summer_grass_strip(buf, Pose::at(-1.85, ground_y + 0.166, 4.74), 3.2, 17, 229);
+    props::summer_grass_strip(buf, Pose::at(2.85, ground_y + 0.165, 4.62), 4.8, 26, 307);
+    props::summer_grass_strip(buf, Pose::at(2.85, ground_y + 0.166, 4.74), 4.8, 22, 331);
+    props::summer_grass_strip(buf, Pose::at(8.20, ground_y + 0.165, 4.62), 5.2, 26, 409);
+    props::summer_grass_strip(buf, Pose::at(8.20, ground_y + 0.166, 4.74), 5.2, 22, 433);
+    props::summer_grass_strip(buf, Pose::at(-4.50, ground_y + 0.070, 9.02), 5.4, 24, 701);
+    props::summer_grass_strip(buf, Pose::at(-4.50, ground_y + 0.071, 9.14), 5.4, 20, 733);
+    props::summer_grass_strip(buf, Pose::at(2.60, ground_y + 0.070, 9.02), 5.4, 24, 809);
+    props::summer_grass_strip(buf, Pose::at(2.60, ground_y + 0.071, 9.14), 5.4, 20, 833);
+    props::summer_grass_strip(buf, Pose::at(5.60, ground_y + 0.142, 2.48), 4.4, 20, 511);
+    props::summer_grass_strip(buf, Pose::at(-5.95, ground_y + 0.142, 2.34), 2.8, 16, 613);
+    // Curb-line tufts right outside the vending machine & bus stop, so the
+    // player's eye lands on grass when they walk out of the stairwell.
+    props::summer_grass_strip(buf, Pose::at(-2.90, ground_y + 0.145, 4.90), 1.6, 12, 907);
+    props::summer_grass_strip(buf, Pose::at(6.90, ground_y + 0.145, 4.88), 1.8, 12, 941);
     props::flowering_roadside_shrub(buf, Pose::at(3.55, ground_y + 0.142, 2.68));
     props::flowering_roadside_shrub(buf, Pose::at(-5.68, ground_y + 0.142, 2.52).with_scale(0.82));
 
@@ -279,8 +293,8 @@ pub fn build_uchinoura_street_static(buf: &mut MeshBuffer) {
     buf.add_box(Vec3::new(-42.0, ground_y + 0.048, 8.68), Vec3::new(42.0, ground_y + 0.056, 8.77), [0.64, 0.63, 0.59], MAT_MATTE);
 
     // 2A. `-Z` STREETSCAPE NEIGHBORS FLANKING `UCHINOURA MAISON` (`image-18.png` Shoulder-to-Shoulder Architecture!):
-    let kominka_timber = [0.12, 0.065, 0.032];
-    let kominka_shutter = [0.20, 0.105, 0.052];
+    let kominka_timber = [0.135, 0.082, 0.050];
+    let kominka_shutter = [0.185, 0.122, 0.086];
     let kawara_dark = [0.10, 0.11, 0.13];
 
     // Right of `Uchinoura Maison` (`x in [2.82, 8.45], z in [-2.5, 2.38]`): 2-Story Weathered Corrugated Steel Annex

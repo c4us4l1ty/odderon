@@ -33,6 +33,29 @@ const TARGET_INFO = {
   21: { name: 'ROADSIDE BEVERAGE VENDING MACHINE (自動販売機)', hint: '[Click/Tap] Buy Cold Uchinoura Canned Coffee (¥130 from Bank Account)' },
 };
 
+// ---------------------------------------------------------------------------
+// DEV CAPTURE HOOK (`tools/screenshot.mjs` / `tools/art-compare.mjs`)
+// Zero cost in normal play: with no `?capture=` query string every branch below is a
+// single string test done once at boot. Used by the art-direction iteration tooling
+// so a screenshot is reproducible from a URL instead of a hand-driven keyboard.
+//   ?capture=1&cam=x,y,z,yawDeg,pitchDeg&sun=x,y,z&warmth=0.65&hud=0
+// ---------------------------------------------------------------------------
+const CAPTURE_QS = new URLSearchParams(location.search);
+const CAPTURE_MODE = CAPTURE_QS.has('capture');
+const CAPTURE_HIDE_HUD = CAPTURE_QS.get('hud') === '0';
+const CAPTURE_CAM = CAPTURE_QS.get('cam');
+const CAPTURE_SUN = CAPTURE_QS.get('sun');
+const CAPTURE_WARMTH = CAPTURE_QS.get('warmth');
+const captureCamPose = CAPTURE_CAM ? CAPTURE_CAM.split(',').map(Number) : null;
+const captureSunDir = CAPTURE_SUN ? CAPTURE_SUN.split(',').map(Number) : null;
+const captureWarmth = CAPTURE_WARMTH !== null ? Number(CAPTURE_WARMTH) : null;
+// ?debug=N is a dev-only AOV switch (never set in play):
+//   1 sun visibility  2 ambient occlusion  3 material id   4 sun share
+//   5 albedo          6 world normal       7 massing boxes  8 fine gobos
+//   9 art-sun vector
+// tools/screenshot.mjs and tools/art-compare.mjs use it for art iteration.
+const captureDebugMode = CAPTURE_MODE ? Number(CAPTURE_QS.get('debug') || 0) : 0;
+
 // Pre-allocated matrices & vectors (0 allocations in frame loop — PERFORMANCE.md N4)
 const projMat = new Float32Array(16);
 const viewMat = new Float32Array(16);
@@ -164,6 +187,7 @@ async function boot() {
     uShojiClosed: gl.getUniformLocation(worldProg, 'uShojiClosed'),
     uLampOn: gl.getUniformLocation(worldProg, 'uLampOn'),
     uPlumeGlow: gl.getUniformLocation(worldProg, 'uPlumeGlow'),
+    uDebugMode: gl.getUniformLocation(worldProg, 'uDebugMode'),
   };
 
   const emptyVao = gl.createVertexArray();
@@ -252,6 +276,48 @@ async function boot() {
   function syncAudioAndAck(t) {
     audio.syncFromTelemetry(t);
     wasm.odderon_ack_audio();
+  }
+
+  // Dev-only: override the presented eye / sun so a screenshot is a pure function of a URL.
+  function applyCaptureOverrides(t) {
+    if (captureCamPose) {
+      const yaw = (captureCamPose[3] || 0) * Math.PI / 180;
+      const pitch = (captureCamPose[4] || 0) * Math.PI / 180;
+      const cp = Math.cos(pitch);
+      t[0] = captureCamPose[0];
+      t[1] = captureCamPose[1];
+      t[2] = captureCamPose[2];
+      t[3] = Math.sin(yaw) * cp;
+      t[4] = Math.sin(pitch);
+      t[5] = Math.cos(yaw) * cp;
+    }
+    if (captureSunDir) {
+      const l = Math.hypot(captureSunDir[0], captureSunDir[1], captureSunDir[2]) || 1;
+      t[6] = captureSunDir[0] / l;
+      t[7] = captureSunDir[1] / l;
+      t[8] = captureSunDir[2] / l;
+    }
+    if (captureWarmth !== null) t[9] = captureWarmth;
+  }
+
+  // Dev-only introspection surface for `tools/screenshot.mjs` (frame budget + pose read-out).
+  let captureFrozen = false;
+  if (CAPTURE_MODE) {
+    globalThis.__odderonCapture = {
+      pose: () => Array.from(getTelemetryView()).slice(0, 10),
+      frame: () => ({ ms: smoothedFrameCostMs, draws: lastDrawCalls, quality: qualityScale,
+                      px: [fbWidth, fbHeight], parked: isParked }),
+      freeze: () => { captureFrozen = true; },
+      thaw: () => { captureFrozen = false; wakePresenter(4); },
+    };
+  }
+
+  if (CAPTURE_MODE && CAPTURE_HIDE_HUD) {
+    for (const id of ['brow-bar', 'wave-banner', 'eidos-visor', 'perf-hud', 'clipboard-sheet',
+                      'touch-walk-zone', 'hand-prompt', 'reticle']) {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    }
   }
 
   // 3. Adaptive Resolution Governor for 2015 Intel UHD (capped <= 1.30 Mpx, floor 0.55x)
@@ -612,6 +678,7 @@ async function boot() {
     gl.uniform1f(worldLocs.uEntryDoorOpen, t[65] || 0.0);
     gl.uniform1f(worldLocs.uLampOn, (t[22] > 0.5 && t[26] > 0.5) ? 1.0 : 0.0);
     gl.uniform1f(worldLocs.uPlumeGlow, t[37]);
+    gl.uniform1f(worldLocs.uDebugMode, captureDebugMode);
 
     gl.bindVertexArray(staticMesh.vao);
     gl.drawElements(gl.TRIANGLES, staticMesh.indexCount, gl.UNSIGNED_INT, 0);
@@ -663,6 +730,7 @@ async function boot() {
     pendingPitch = 0;
 
     const t = getTelemetryView();
+    if (CAPTURE_MODE) applyCaptureOverrides(t);
     syncDynamicMeshes(t[30] > 0.5);
     syncAudioAndAck(t);
 
@@ -697,6 +765,16 @@ async function boot() {
           wakePresenter(16);
         }, Math.ceil(nextShuttleMs) + 25);
       }
+      return;
+    }
+
+    // Dev-only: `__odderonCapture.freeze()` parks the presenter so a software-rasterised
+    // screenshot is not competing with a 60 Hz loop on the main thread.
+    if (CAPTURE_MODE && captureFrozen) {
+      isParked = true;
+      parkedAtWallMs = performance.now();
+      displayedRafHz = 0;
+      updateDomOverlays(t, true);
       return;
     }
 

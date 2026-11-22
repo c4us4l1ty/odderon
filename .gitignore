@@ -13,3 +13,9 @@
 # OS / editor scratch
 .DS_Store
 *.swp
+
+# Dev screenshot artefacts (tools/screenshot.mjs). Dot-prefixed so the Law-5
+# zero-asset walker (crates/odderon-sim/tests/doctrine_invariants.rs) skips them.
+/.artifacts/
+/tools/node_modules/
+/tools/.cache/
