@@ -40,7 +40,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-use odderon_dmath::{acos, atan2, clamp_unit, fabs, fmax, sinh, sqrt};
+use odderon_dmath::{acos, atan2, clamp_unit, fabs, sinh, sqrt};
 
 // ---------------------------------------------------------------------------------------------
 // domain predicates
@@ -267,7 +267,7 @@ pub fn stumpff(z: f64) -> (f64, f64) {
         ((ch - 1.0) / -z, (sinh(s) - s) / (s * s * s))
     } else {
         // Series in z. C = 1/2! − z/4! + z²/6! − z³/8!; S = 1/3! − z/5! + z²/7! − z³/9!.
-        let c = 1.0 / 2.0 - z / 24.0 + z * z / 720.0 - z * z * z / 40_320.0;
+        let c = 0.5 - z / 24.0 + z * z / 720.0 - z * z * z / 40_320.0;
         let s = 1.0 / 6.0 - z / 120.0 + z * z / 5_040.0 - z * z * z / 362_880.0;
         (c, s)
     }
@@ -359,17 +359,13 @@ pub fn propagate(state: &State, dt: f64, mu: f64) -> Propagation {
     let mut iterations: u32 = 0;
     let mut residual = f64::INFINITY;
     let mut unconverged = true;
-    let mut c = 0.5;
-    let mut s = 1.0 / 6.0;
 
     while iterations < MAX_ITERATIONS {
         iterations += 1;
-        let psi = chi * chi * alpha;
-        let (cc, ss) = stumpff(psi);
-        c = cc;
-        s = ss;
-
         let chi2 = chi * chi;
+        let psi = chi2 * alpha;
+        let (c, s) = stumpff(psi);
+
         // F(chi) = the universal Kepler equation, expressed in the numerically stable form.
         let f = rv / sqrt_mu * chi2 * c
             + (1.0 - r0 * alpha) * chi2 * chi * s
@@ -387,16 +383,14 @@ pub fn propagate(state: &State, dt: f64, mu: f64) -> Propagation {
         }
     }
 
-    // Recompute C and S at the final chi (the loop's values are one step stale on the way out).
-    let psi = chi * chi * alpha;
-    let (c, s) = if unconverged {
-        stumpff(psi)
-    } else {
-        (c, s)
-    };
-    let _ = psi;
-
+    // Recompute C and S at the FINAL chi. This is not bookkeeping: the last thing the loop did was
+    // move chi, so the (c, s) it computed describe the previous iterate. Using those to form the
+    // Lagrange coefficients is a real error — it was in the first draft of this function, and the
+    // validation tests caught it. The prototype in /tmp always recomputed, which is why the JavaScript
+    // passed and the Rust did not.
     let chi2 = chi * chi;
+    let psi = chi2 * alpha;
+    let (c, s) = stumpff(psi);
     // Lagrange f and g coefficients.
     let f = 1.0 - chi2 / r0 * c;
     let g = dt - chi2 * chi / sqrt_mu * s;
@@ -453,11 +447,7 @@ pub fn true_anomaly(state: &State, mu: f64) -> f64 {
     }
     // e = ((v² − mu/r)·r − (r·v)·v) / mu
     let v2 = state.v.dot(state.v);
-    let e_vec = state
-        .r
-        .scale(v2 - mu / r_norm)
-        - state.v * state.r.dot(state.v)
-        .scale(1.0 / mu);
+    let e_vec = (state.r * (v2 - mu / r_norm) - state.v * state.r.dot(state.v)) * (1.0 / mu);
     let e = e_vec.norm();
 
     if e < 1e-10 {
