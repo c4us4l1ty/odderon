@@ -703,7 +703,7 @@ void main() {
   // =========================================================================
   float dayMix = smoothstep(0.14, 0.70, uWarmth);
   float duskMix = smoothstep(0.01, 0.35, uWarmth) * (1.0 - dayMix);
-  vec3 sunColor = mix(vec3(1.34, 0.46, 0.15), vec3(1.60, 1.24, 0.86), dayMix)
+  vec3 sunColor = mix(vec3(1.34, 0.46, 0.15), vec3(1.62, 1.17, 0.74), dayMix)
                 * smoothstep(-0.02, 0.10, uSunDir.y);
 
   vec3 dbgL = uSunDir;
@@ -786,7 +786,7 @@ void main() {
     ambient = mix(groundFill, skyFill, upness) * ao;
     // Shade is dimmer than sun, but it is still *sky*, so keep most of the fill:
     // the reference's shaded timber is a deep blue-brown, never black.
-    ambient *= mix(0.66, 1.0, shadowVis);
+    ambient *= mix(0.58, 1.0, shadowVis);
     // Sunlight that lands on the street bounces sideways into shaded
     // verticals, which is why real shade is dirty-amber, not blue.
     ambient += groundFill * (1.0 - shadowVis) * dayMix * (1.0 - upness) * 0.15;
