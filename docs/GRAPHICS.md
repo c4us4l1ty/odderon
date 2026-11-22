@@ -247,10 +247,25 @@ Search the repository and the network tab for `.png .jpg .jpeg .webp .dds .ktx .
 be a function `S(u, v, t)` derived from physical state.
 
 **R2 — The static-camera power test (the painting test).**
-Load the summer-noon street on Reference A at output resolution. Take your hands off the input. Within
-250 ms of the last change, frame time must fall **below 1.5 ms** (< 10 % GPU load), and edge quality
-must be indistinguishable from a supersampled offline render of the same scene. *If it does not settle,
-the temporal cache is lying about what is static.*
+Load the summer-noon street on Reference A, **shading at no more than 1.15 megapixels** (CSS-upscaled
+to the display, see the resolution clause below). Take your hands off the input. Within 250 ms of the
+last change, no further frame is drawn at all, and frame cost must fall **below 1.5 ms** (< 10 % GPU
+load). Edge quality must be indistinguishable from a supersampled offline render of the same scene.
+*If it does not settle, the temporal cache is lying about what is static.*
+
+**R2's resolution clause, and why it had to exist.** R2 was written as a time with no pixel count, and
+that makes it unfalsifiable rather than strict: frame cost is very nearly linear in pixels, so "1.5 ms"
+describes an entirely different shader at 0.5 Mpx than at 4 Mpx. Measured on Reference B (Mali-G51),
+34.50 ms at 0.96 Mpx is 36 ns/pixel, which is roughly 340 ALU operations per pixel; a 1.5 ms budget is
+roughly **15**. Fifteen operations is a flat colour, or a counted few layers — not analytic shadows,
+corrugation, aerial perspective, tonemap and grain. So R2 is satisfiable and unsatisfiable depending
+only on resolution, which makes it a policy statement wearing a hardware test's clothes. The clause
+names the budget: **1.15 Mpx**, i.e. 1280x900 or a phone at roughly 0.75x device pixels.
+
+**What 1.5 ms at 1.15 Mpx is for.** It is the *idle* budget — what a settled frame costs, which on a
+render-on-demand renderer is zero because nothing is drawn. The cost of a frame that is actually drawn
+is a separate quantity and the honest target is the one the ablation matrix measures per scene, not a
+single global number. Do not use R2 to justify a per-moving-frame budget; that is R3's job.
 
 **R3 — The single-pass bandwidth ceiling (the Mali test).**
 Profile a frame on Reference B. External memory bandwidth must never exceed **32 bytes per screen
@@ -260,6 +275,31 @@ conventional TAA chain before anyone proposes them.
 
 A fourth, project-level gate lives in `PERFORMANCE.md` and `IMMERSION.md` N9: **no shader compiles
 after boot, no synchronous GPU stalls in the loop, no allocation in the frame path.**
+
+**How these are measured, since that is where this document previously misled itself.** The build ships
+its own instruments, because the sandbox that compiles the code has no GPU and a timing from it would
+be a fabrication:
+
+| instrument | answers | how it stays honest |
+| --- | --- | --- |
+| `web/index.html` + HUD | what a frame costs on real silicon | labels every number `gpu` / `stalled` / `submit only`; never presents submit time as frame time |
+| `web/ablate.html` | which feature costs what, and at what resolution R2 fits | removes one feature at a time from the *real* shader, extracting it at runtime so a copy cannot drift; times amortised and per-sample and reports the disagreement |
+| `web/shadow-check.html` | whether the soft shadow agrees with physics | brute-force 256-ray sun as the reference; measures the penumbra rather than deriving it; chooses the tap count from a sweep |
+
+Three findings from those instruments are recorded here because they are the kind of thing this
+document got wrong by assertion:
+
+1. The penumbra of a 0.78 m occluder is **23 mm**, about 7 screen pixels — not the 92 mm an earlier
+   note claimed, which had multiplied the sun's angular size by the distance from the camera rather
+   than from the occluder.
+2. The soft shadow's taps were offset in **world XY**, which is only the plane of the solar disc when
+   the sun is overhead. The penumbra was therefore sharp along one axis and soft along another, and it
+   looked entirely plausible. Measured worst error against the brute force: 0.3177, versus a
+   quantisation floor of 0.0833.
+3. Two exact closed forms for that shadow were attempted and **withdrawn with numbers**: a
+   parallelogram (worst error 1.0000 — the shadow of a resting box is its footprint Minkowski-summed
+   with a segment, i.e. a hexagon) and a correct hexagon (0.3038 — the Minkowski identity assumes
+   parallel light, and the receiver here is metres away, not at infinity). Neither shipped.
 
 ---
 
