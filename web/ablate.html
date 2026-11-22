@@ -119,18 +119,31 @@ const VARIANTS = [
       'floor early-out'),
   },
   {
-    id: 'floor_tex', label: 'FLOOR · one texture read',
+    id: 'floor_tex', label: 'FLOOR · one texture read (same target)',
     apply: (s) => s,
     floorTex: true,
+  },
+  {
+    id: 'floor_tex_sample', label: 'FLOOR · one tex read, point-sampled',
+    apply: (s) => s,
+    floorTex: true,
+    pointSample: true,
+  },
+  {
+    // THE ONE THAT MATTERS. The HUD's blit draws a texture from a framebuffer's colour attachment to
+    // the DEFAULT framebuffer, which is a different and more expensive thing than sampling a texture
+    // into the same kind of target - it crosses memory domains. This row measures exactly that.
+    id: 'floor_blit', label: 'FLOOR · FBO→screen blit (the HUD path)',
+    apply: (s) => s,
+    floorBlit: true,
   },
   {
     id: 'no_shadow', label: '− solar-disc shadow (6 taps)',
     apply: (s) => sub(s, 'vis = planeVis(p, n, uSunDir, boxLo, boxHi);', 'vis = 1.0;', 'shadow'),
   },
   {
-    id: 'shadow_1tap', label: 'shadow 6 taps → 1 tap',
-    apply: (s) => sub(s, 'const int SUN_TAPS = 6;', 'const int SUN_TAPS = 1;', 'tap count'),
-    alsoVec: true,
+    id: 'shadow_4tap', label: 'shadow 8 taps → 4 taps',
+    apply: (s) => sub(s, 'const int SUN_TAPS = 8;', 'const int SUN_TAPS = 4;', 'tap count'),
   },
   {
     id: 'no_wall_ribs', label: '− wall corrugation integration',
@@ -264,6 +277,8 @@ gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 2, 2, 0, gl.RGBA, gl.UNSIGNED_BYTE,
   new Uint8Array([120, 140, 160, 255, 130, 150, 170, 255, 110, 130, 150, 255, 140, 160, 180, 255]));
 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
 function floorTexSource(s) {
   // Replace the whole body of main() with a single texture read. Compares ALU cost against bandwidth
@@ -279,6 +294,21 @@ uniform sampler2D uFloorTex;
 void main() {
   vec2 uv = gl_FragCoord.xy / uRes;
   outColor = vec4(texture(uFloorTex, uv).rgb, 1.0);
+}`;
+}
+
+// The HUD's blit, isolated: shade once into an FBO-sized texture, clear the default framebuffer,
+// then draw that texture to the screen. This is the whole per-frame cost of the cached renderer,
+// and it is NOT the same as sampling a texture into an FBO - it crosses from framebuffer memory to
+// the default framebuffer, which on a tile-based GPU is where the expensive part can live.
+function makeBlitSource() {
+  return `#version 300 es
+precision highp float;
+uniform sampler2D uFloorTex;
+uniform vec2 uRes;
+out vec4 outColor;
+void main() {
+  outColor = texture(uFloorTex, gl_FragCoord.xy / uRes);
 }`;
 }
 
@@ -304,23 +334,44 @@ async function run() {
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(3 * 2), gl.STATIC_DRAW);
   gl.disable(gl.DEPTH_TEST);
 
-  const drawOnce = (locs, w, h) => {
+  // an FBO + texture to stand in for the HUD's cached image
+  const blitTex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, blitTex);
+  gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, 1024, 1024);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  const blitFbo = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, blitFbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, blitTex, 0);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+  const drawOnce = (locs, w, h, mode) => {
     setUniforms(locs, w, h, 0.0);
-    if (locs.uFloorTex) { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex); }
+    if (locs.uFloorTex) {
+      gl.activeTexture(gl.TEXTURE0);
+      // mode 'blit': sample the FBO attachment (the HUD's real path).
+      // mode 'tex' : sample a plain uploaded texture into the same kind of target.
+      gl.bindTexture(gl.TEXTURE_2D, mode === 'blit' ? blitTex : tex);
+    }
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   };
 
   for (const v of VARIANTS) {
     let src, size;
     try {
-      src = v.floorTex ? floorTexSource(SRC.frag) : v.apply(normaliseTaps(SRC.frag));
+      src = v.floorBlit ? makeBlitSource()
+          : v.floorTex ? floorTexSource(SRC.frag)
+          : v.apply(normaliseTaps(SRC.frag));
       size = resizeFor(v.resScale ?? !!v.halfRes);
       const prog = build(src, SRC.vert);
       const locs = uniformLocs(prog, UNIFORMS);
-      if (v.floorTex) locs.uFloorTex = gl.getUniformLocation(prog, 'uFloorTex');
+      if (v.floorTex || v.floorBlit) locs.uFloorTex = gl.getUniformLocation(prog, 'uFloorTex');
 
       // 60 frames per variant keeps the run under a few seconds per row even at 34 ms.
-      const r = timed(prog, locs, (l) => drawOnce(l, size.w, size.h), 16);
+      const mode = v.floorBlit ? 'blit' : 'tex';
+      const r = timed(prog, locs, (l) => drawOnce(l, size.w, size.h, mode), 16);
       gl.deleteProgram(prog);
       rows.push({ ...v, ...size, ...r, ok: true });
     } catch (e) {
@@ -378,6 +429,31 @@ function summarise(rows) {
   lines.push('shader ALU above floor: ' + (base.amortised - floor.amortised).toFixed(2) + ' ms  (' +
     (((base.amortised - floor.amortised) / base.amortised) * 100).toFixed(0) + '% of the frame)');
   lines.push('floor share of frame:   ' + ((floor.amortised / base.amortised) * 100).toFixed(0) + '%');
+
+  // The three floors are different operations and cost wildly different amounts. Conflating them was
+  // the mistake that made a blit look free: a flat fill is not a texture read is not an FBO blit.
+  const ft = rows.find((r) => r.id === 'floor_tex' && r.ok);
+  const fb = rows.find((r) => r.id === 'floor_blit' && r.ok);
+  if (ft || fb) {
+    lines.push('');
+    lines.push('THE FLOORS, separated (same resolution, so these are directly comparable):');
+    lines.push('  flat fill, no memory access   ' + floor.amortised.toFixed(2) + ' ms');
+    if (ft) lines.push('  one texture read              ' + ft.amortised.toFixed(2) + ' ms   (' + (ft.amortised / floor.amortised).toFixed(1) + 'x the flat fill)');
+    if (fb) lines.push('  FBO -> screen blit            ' + fb.amortised.toFixed(2) + ' ms   (' + (fb.amortised / floor.amortised).toFixed(1) + 'x the flat fill)');
+    const cached = (fb || ft);
+    if (cached) {
+      lines.push('');
+      lines.push('A CACHED STATIC FRAME costs ' + cached.amortised.toFixed(2) + ' ms at native resolution.');
+      lines.push(cached.amortised < 1.5
+        ? 'That PASSES R2 at native resolution, and the temporal cache is the answer.'
+        : 'That FAILS R2 at native. A cache removes the shade but not the blit, so the blit itself must shrink:');
+      if (cached.amortised >= 1.5) {
+        const fits = 1.5 / (cached.amortised / (cached.w * cached.h / 1e6));
+        lines.push('  1.5 ms of this blit needs ' + fits.toFixed(3) + ' Mpx, a render scale of ' +
+          Math.sqrt(fits / (cached.w * cached.h / 1e6)).toFixed(2) + 'x.');
+      }
+    }
+  }
   lines.push('');
   // the answer: extrapolate the resolution that fits 1.5 ms
   const pts = rows.filter((r) => r.ok && r.resScale).map((r) => ({ mpx: r.w * r.h / 1e6, ms: r.amortised }));
