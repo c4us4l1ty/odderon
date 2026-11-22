@@ -96,13 +96,17 @@ reference frame. The reference is a low-key image:
 | | mean | p25 | p50 | p95 | dark<0.09 | hot>0.95 | sat | warm/cool |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | reference | 0.288 | 0.092 | 0.228 | 0.684 | 39 % | 0 % | 0.444 | 55/38 |
-| 01 room window | 0.179 | 0.099 | 0.126 | 0.499 | 66 % | 0 % | 0.461 | 62/31 |
-| 02 window vista | 0.403 | 0.223 | 0.448 | 0.809 | 17 % | 4 % | 0.450 | 66/27 |
-| 03 gallery | 0.373 | 0.127 | 0.325 | 0.787 | 28 % | 0 % | 0.428 | 56/35 |
-| 04 street machiya | 0.332 | 0.192 | 0.305 | 0.735 | 17 % | 0 % | 0.405 | 59/33 |
-| 05 street meadow | 0.325 | 0.156 | 0.315 | 0.630 | 21 % | 0 % | 0.466 | 52/42 |
-| 06 sky cumulus | 0.402 | 0.219 | 0.402 | 0.826 | 16 % | 3 % | 0.473 | 42/46 |
-| 07 interior desk | 0.300 | 0.131 | 0.226 | 0.867 | 31 % | 6 % | 0.283 | 48/24 |
+| 01 room window | 0.178 | 0.099 | 0.126 | 0.497 | 67 % | 0 % | 0.465 | 62/31 |
+| 02 window vista | 0.389 | 0.216 | 0.441 | 0.783 | 18 % | 2 % | 0.480 | 67/26 |
+| 03 gallery | 0.367 | 0.119 | 0.316 | 0.776 | 29 % | 0 % | 0.455 | 58/36 |
+| 04 street machiya | 0.335 | 0.191 | 0.319 | 0.732 | 17 % | 0 % | 0.375 | 52/25 |
+| 05 street meadow | 0.326 | 0.150 | 0.317 | 0.618 | 25 % | 0 % | 0.470 | 49/47 |
+| 06 sky cumulus | 0.398 | 0.214 | 0.400 | 0.826 | 18 % | 3 % | 0.488 | 43/46 |
+| 07 interior desk | 0.297 | 0.128 | 0.226 | 0.859 | 31 % | 6 % | 0.297 | 49/23 |
+
+The numbers move a few points between runs: the range shuttle drives
+through some frames and the simulation clock lands a frame or two apart, so
+treat them as one significant figure, not as a regression gate.
 
 The film chain is: `aces(lit * 0.52)` → sRGB → gamma 1.10 → 22 % S-curve →
 vibrance `1.05 + 0.46·(1-sat)` → split tone (cool violet shade, warm amber
