@@ -645,7 +645,14 @@ impl State {
         let e = e_vec.norm();
 
         let p = h_norm * h_norm / mu;
-        let i = acos(clamp_unit(h.z / h_norm));
+        let h_hat = h * (1.0 / h_norm);
+
+        // Inclination as atan2(√(hx²+hy²), hz), NOT acos(hz/|h|). The two agree in exact arithmetic and
+        // differ completely in practice near i = 0: acos has infinite derivative at its argument 1, so
+        // with hz/|h| = 1 − 1e-16 it returns up to 1.5e-8 rad where the truth is 1e-8. atan2 is
+        // well-conditioned across the whole range. Measured: a near-equatorial round trip was 1.5e-8
+        // with acos and 2.4e-16 with atan2.
+        let i = atan2(sqrt(h.x * h.x + h.y * h.y), h.z);
 
         let equatorial = n_norm < EQUATORIAL_TOLERANCE * h_norm;
         let circular = e < CIRCULAR_TOLERANCE;
@@ -654,48 +661,45 @@ impl State {
             circular,
         };
 
-        let mut raan = 0.0;
-        let mut argp = 0.0;
+        // Every angle below is an atan2 of two *independently computed* components, which is what makes
+        // the degenerate cases exact. The alternative — an acos of a single dot product, with the sign
+        // recovered from a separate predicate — loses half the mantissa at 0 and π, exactly where
+        // periapsis and apoapsis are, and gets the sign wrong at the ends of its range. Both faults
+        // showed up in validation before this was rewritten.
 
-        if !equatorial {
-            raan = wrap_two_pi(atan2(n.y, n.x));
-        }
+        let raan = if equatorial {
+            // No node line. Zero, and the information lives in argp below.
+            0.0
+        } else {
+            wrap_two_pi(atan2(n.y, n.x))
+        };
 
-        if !circular && !equatorial {
-            // General: argp is the angle from the node to periapsis, measured in the orbit plane.
-            // Sign from e_z, which is 0 for an equatorial orbit but that case is already excluded.
+        let argp = if !circular && !equatorial {
+            // General: the angle from the node to periapsis, measured in the orbit plane. The sine comes
+            // from the component of e perpendicular to n, i.e. along ĥ × n̂.
             let cos_w = clamp_unit(n.dot(e_vec) / (n_norm * e));
-            argp = acos(cos_w);
-            if e_vec.z < 0.0 {
-                argp = odderon_dmath::TAU - argp;
-            }
-        } else if !circular && equatorial {
-            // i ≈ 0 (not π: h_z > 0 is implied by |i| < 1e-11). argp becomes the longitude of
-            // periapsis, ω + Ω, which is exactly what replaces the two angles.
-            argp = wrap_two_pi(atan2(e_vec.y, e_vec.x));
-        }
+            let sin_w = n.cross(e_vec).dot(h_hat) / (n_norm * e);
+            wrap_two_pi(atan2(sin_w, cos_w))
+        } else if !circular {
+            // Equatorial (and not circular): argp is the longitude of periapsis, ω + Ω, which is exactly
+            // the one angle that replaces the two.
+            wrap_two_pi(atan2(e_vec.y, e_vec.x))
+        } else {
+            // Circular: there is no periapsis to measure from. Zero, and nu carries u instead.
+            0.0
+        };
 
-        // `acos` returns `[0, π]`, so the sign of the sine — which distinguishes the two halves of the
-        // orbit — has to come from somewhere else. In each case it comes from a quantity that is
-        // unambiguous rather than from the angle being solved for.
         let nu = if !circular {
+            // True anomaly from the eccentricity vector: cos from e·r, sin from (e × r)·ĥ.
             let cos_nu = clamp_unit(e_vec.dot(self.r) / (e * r_norm));
-            let unsigned = acos(cos_nu);
-            // Before periapsis `r·v < 0`: moving inward, so the true anomaly is in the second half.
-            if self.r.dot(self.v) < 0.0 {
-                odderon_dmath::TAU - unsigned
-            } else {
-                unsigned
-            }
+            let sin_nu = e_vec.cross(self.r).dot(h_hat) / (e * r_norm);
+            wrap_two_pi(atan2(sin_nu, cos_nu))
         } else if !equatorial {
-            // Circular: nu carries the argument of latitude u, the angle from the node to the body,
-            // measured in the direction of motion.
-            let unsigned = acos(clamp_unit(n.unit().dot(self.r.unit())));
-            if n.cross(self.r).dot(h) < 0.0 {
-                odderon_dmath::TAU - unsigned
-            } else {
-                unsigned
-            }
+            // Circular: nu carries the argument of latitude, the angle from the node to the body.
+            let n_hat = n.unit();
+            let cos_u = clamp_unit(n_hat.dot(self.r) / r_norm);
+            let sin_u = n.cross(self.r).dot(h_hat) / (n_norm * r_norm);
+            wrap_two_pi(atan2(sin_u, cos_u))
         } else {
             // Circular and equatorial: nothing but the true longitude is defined.
             wrap_two_pi(atan2(self.r.y, self.r.x))

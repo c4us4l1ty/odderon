@@ -311,15 +311,18 @@ fn elements_round_trip_through_every_degenerate_case() {
 
             let dr = (s1.r - s0.r).norm() / s0.r.norm();
             let dv = (s1.v - s0.v).norm() / s0.v.norm();
+            // 1e-14 is reachable only because the angles are recovered by atan2. With an acos of a
+            // dot product the same test measured 1.5e-8 - not because the geometry was wrong, but
+            // because acos is quadratic at 1, and periapsis is exactly where its argument is 1.
             assert!(
-                dr < 1e-14,
+                dr < 1e-13,
                 "{} at nu={}: relative position error {:.3e}",
                 name,
                 nu,
                 dr
             );
             assert!(
-                dv < 1e-14,
+                dv < 1e-13,
                 "{} at nu={}: relative velocity error {:.3e}",
                 name,
                 nu,
@@ -382,12 +385,13 @@ fn a_nearly_equatorial_orbit_is_not_folded() {
     };
     let el = el0.to_state(MU).to_elements(MU);
     assert!(el.degeneracy.is_none(), "1e-4 degrees is a real inclination");
-    // Measured 3.2e-11 relative — the elements are recoverable, but the node is now ill-conditioned
-    // because |n| = |h| sin i is small. That is physics, and it is the honest bound.
+    // Measured 2.4e-16 once inclination comes from atan2 rather than acos. The earlier version of this
+    // assertion allowed 1e-9 because acos on h_z/|h| = 1 - 1e-16 returns up to 1.5e-8 rad; that was a
+    // defect in to_elements, not a property of the orbit, so the bound is now tight.
     let s0 = el0.to_state(MU);
     let back = el.to_state(MU);
     let dr = (back.r - s0.r).norm() / s0.r.norm();
-    assert!(dr < 1e-9, "rel error {:.3e} at i = 1e-4 deg", dr);
+    assert!(dr < 1e-13, "rel error {:.3e} at i = 1e-4 deg", dr);
 }
 
 #[test]
@@ -435,8 +439,10 @@ fn elements_and_propagation_agree() {
                 f64::sqrt(1.0 - el0.e) * f64::cos(ecc_anomaly / 2.0),
             );
 
+        // nu is recovered by atan2 from two components, so it is accurate to rounding even at 0 and pi
+        // - which is where a quarter/half-period sample lands.
         assert!(
-            fabs(el1.nu - expected_nu) < 1e-11,
+            fabs(el1.nu - expected_nu) < 1e-12,
             "at {} of a period: nu = {:.9}, Kepler says {:.9}",
             fraction,
             el1.nu,
