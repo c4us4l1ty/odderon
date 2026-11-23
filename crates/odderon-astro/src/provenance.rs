@@ -100,7 +100,10 @@ impl Prov {
     /// `Derived` is included because a derivation from measured parents is still knowledge. `Assumed` and
     /// `Unknown` are not, and the two differ in whether a human made the number up or nobody knows it.
     pub fn is_knowledge(self) -> bool {
-        matches!(self, Prov::Measured { .. } | Prov::Defined | Prov::Derived { .. })
+        matches!(
+            self,
+            Prov::Measured { .. } | Prov::Defined | Prov::Derived { .. }
+        )
     }
 
     /// A short, stable, machine-readable tag. Used by tests and by the manifest, never by prose.

@@ -178,7 +178,11 @@ pub enum PassError {
 /// 80° — for 400 km.
 ///
 /// Returns `None` when the geometry has no solution: a target inside the body has no horizon to clear.
-pub fn central_half_angle(body_radius: f64, target_radius: f64, mask_elevation_deg: f64) -> Option<f64> {
+pub fn central_half_angle(
+    body_radius: f64,
+    target_radius: f64,
+    mask_elevation_deg: f64,
+) -> Option<f64> {
     if !is_positive_finite(body_radius) || !is_positive_finite(target_radius) {
         return None;
     }
@@ -250,7 +254,12 @@ pub fn minimum_pass_seconds(
 /// Uses the **slowest** angular rate the orbit has, so the window is an upper bound rather than an optimistic
 /// guess. Returns `None` for a geostationary target, where the relative geometry never changes and no finite
 /// window can be guaranteed — a genuinely different answer from "very long", and one the caller must handle.
-pub fn guaranteed_scan_window_seconds(a: f64, e: f64, mu: f64, body_rotation_rate: f64) -> Option<f64> {
+pub fn guaranteed_scan_window_seconds(
+    a: f64,
+    e: f64,
+    mu: f64,
+    body_rotation_rate: f64,
+) -> Option<f64> {
     let (slow, _) = rate_bounds(a, e, mu)?;
     if !body_rotation_rate.is_finite() {
         return None;
@@ -374,8 +383,8 @@ pub fn next_pass(
 
     // Both guards are evaluated before a single propagation happens. If either bound cannot be computed the
     // question is ill-posed and the caller is told, rather than being handed a scan that might have worked.
-    let least_window =
-        guaranteed_scan_window_seconds(a, el.e, mu, body_rate).ok_or(PassError::GeometryNeverRepeats)?;
+    let least_window = guaranteed_scan_window_seconds(a, el.e, mu, body_rate)
+        .ok_or(PassError::GeometryNeverRepeats)?;
     // `GUARD_SLACK` rather than an exact comparison; see the constant for the measurement that forced it.
     if window_s < least_window * (1.0 - GUARD_SLACK) {
         return Err(PassError::WindowTooShort {
@@ -386,8 +395,9 @@ pub fn next_pass(
 
     // Circular-equivalent radius makes the bound slightly pessimistic for an eccentric orbit — the safe
     // direction, since it shortens the permitted step.
-    let greatest_step = minimum_pass_seconds(body_radius, a, mask_elevation_deg, a, el.e, mu, body_rate)
-        .ok_or(PassError::BadInput)?;
+    let greatest_step =
+        minimum_pass_seconds(body_radius, a, mask_elevation_deg, a, el.e, mu, body_rate)
+            .ok_or(PassError::BadInput)?;
     if step_s > greatest_step * (1.0 + GUARD_SLACK) {
         return Err(PassError::StepTooCoarse {
             greatest_step_s: greatest_step,
