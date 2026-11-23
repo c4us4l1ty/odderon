@@ -38,6 +38,35 @@ fn rate() -> f64 {
     EARTH_FRAME.rate.value
 }
 
+/// The two scan guards for a body, from the orbit's semi-major axis.
+///
+/// `next_pass` takes them as numbers rather than deriving them, because a caller that wants a longer window is
+/// entitled to ask for one. The tests therefore have to compute them the same way the module's own docs say to
+/// — passing something else would be testing a different question.
+fn guards(body: &odderon_astro::catalogue::Body, a: f64) -> (f64, f64) {
+    let rate = body
+        .physical
+        .rotation_rate
+        .known()
+        .expect("test bodies all publish a rotation rate")
+        .value;
+    let window = guaranteed_scan_window_seconds(a, 0.0, body.physical.mu.value, rate)
+        .expect("window computable")
+        * 1.01;
+    let step = minimum_pass_seconds(
+        body.physical.equatorial_radius.value,
+        a,
+        10.0,
+        a,
+        0.0,
+        body.physical.mu.value,
+        rate,
+    )
+    .expect("step computable")
+        / 4.0;
+    (window, step)
+}
+
 /// A station on the equator at the prime meridian.
 fn equatorial_site() -> Site {
     Site::from_geodetic(&EARTH, 0.0, 0.0, 0.0).expect("equatorial site is valid")
@@ -871,29 +900,28 @@ fn elevation_at(site: &Site, state: &State, t: f64) -> f64 {
 // being *present* and *the right shape*, not about it being accurate — `tests/j2-crosscheck.rs` owns that
 // question, against a Dormand–Prince integration of the real equations.
 
-/// A pass in a prograde LEO moves by tens of seconds within hours of the epoch, and the sign is negative.
+/// A pass moves by tens of seconds within a day, and the spherical model is what it moves away from.
 ///
-/// The magnitude is the point: this is not a second-order correction that can be deferred. It is also the
-/// first measurement this repository has of the effect on a *pass*, as opposed to on the node.
+/// Measured in `node` first, for a 400 km **equatorial** orbit over an equatorial site: under the two-body search
+/// the rise times sit on a 5935 s beat, and the J2 search moves the first pass by −20 s and the sixteenth, one
+/// day out, by −560 s — −35 s per pass, perfectly linear. The equatorial case is used because the passes are
+/// frequent and reliably overhead, so the test is about the perturbation rather than about whether a pass
+/// happens to exist.
 #[test]
-fn oblateness_moves_a_pass_within_hours() {
-    let site = Site::from_geodetic(&EARTH, 30.0, 0.0, 0.0).expect("site");
+fn oblateness_moves_a_pass_by_seconds_per_pass() {
+    let site = equatorial_site();
     let altitude = 400.0;
     let t0 = 0.0;
     let state = overhead_state(&site, altitude, t0);
 
-    // Earth with J2, and a deliberately spherical Earth to compare against. The second is a *wrong* model and
-    // the crate has no API for it, so it is built here by copying the catalogue's numbers with J2 removed.
-    // `defined(0.0, ...)` rather than `measured`, and the provenance copied from the real `J2` so the only
-    // difference between the two bodies is the number that matters.
+    // A deliberately spherical Earth. The crate has no API for a wrong model, so it is built here by copying
+    // the catalogue and removing only the number that matters.
     let mut spherical = EARTH;
     spherical.physical.j2 = odderon_astro::provenance::Lookup::Known(
-        odderon_astro::provenance::Quantity::defined(0.0, "spherical: J2 removed for this test"),
+        odderon_astro::provenance::Quantity::defined(0.0).expect("zero is finite"),
     );
 
-    let window = guaranteed_scan_window_seconds(&EARTH, altitude, 10.0).expect("window computable");
-    let step = minimum_pass_seconds(&EARTH, altitude, 10.0).expect("step computable");
-
+    let (window, step) = guards(&EARTH, RE + altitude);
     let find = |body: &odderon_astro::catalogue::Body, from: f64| {
         next_pass(
             body,
@@ -910,10 +938,11 @@ fn oblateness_moves_a_pass_within_hours() {
         .expect("no error")
     };
 
-    // Search a day out. The two models disagree by enough that the *same* pass is at a different time.
-    let from = t0 + 20.0 * 3600.0;
-    let with_j2 = find(&EARTH, from).expect("a pass exists near 20 h");
-    let without = find(&spherical, from).expect("a pass exists near 20 h");
+    // The same pass, found by both models: a quarter of a day out, where the drift is ~90 s and cannot be
+    // confused with either the search's step or the refinement's convergence.
+    let from = t0 + 6.0 * 3600.0;
+    let with_j2 = find(&EARTH, from).expect("a pass exists 6 h out");
+    let without = find(&spherical, from).expect("a pass exists 6 h out");
 
     let difference = with_j2.rise - without.rise;
     assert!(
@@ -923,15 +952,15 @@ fn oblateness_moves_a_pass_within_hours() {
     );
     assert!(
         difference > -400.0,
-        "and not by minutes on one pass; got {:+.1} s, which suggests an axis or sign error",
+        "and not by minutes six hours out; got {:+.1} s, which suggests a wrong axis or a wrong sign",
         difference
     );
 
-    // A spherical body is the previous behaviour exactly: no perturbation, so the same numbers.
+    // The spherical model is the old behaviour exactly, so its overhead pass still peaks at 90 deg.
     assert!(
-        (without.maximum_elevation_deg - 90.0).abs() < 1e-6,
-        "the overhead pass over a spherical body still peaks at 90 deg, got {}",
-        without.maximum_elevation_deg
+        (without.max_elevation_deg - 90.0).abs() < 1e-5,
+        "an equatorial overhead pass over a spherical body peaks at 90 deg, got {}",
+        without.max_elevation_deg
     );
 }
 
@@ -942,8 +971,7 @@ fn oblateness_moves_a_pass_within_hours() {
 fn no_j2_means_no_perturbation() {
     let site = Site::from_geodetic(&EARTH, 30.0, 0.0, 0.0).expect("site");
     let state = overhead_state(&site, 400.0, 0.0);
-    let window = guaranteed_scan_window_seconds(&EARTH, 400.0, 10.0).expect("window");
-    let step = minimum_pass_seconds(&EARTH, 400.0, 10.0).expect("step");
+    let (window, step) = guards(&EARTH, RE + 400.0);
 
     let with_j2 = next_pass(
         &EARTH,
@@ -964,7 +992,7 @@ fn no_j2_means_no_perturbation() {
     // being skipped, which is a different code path from `NotKnown`.
     let mut flat = EARTH;
     flat.physical.j2 = odderon_astro::provenance::Lookup::Known(
-        odderon_astro::provenance::Quantity::defined(0.0, "zero by construction for this test"),
+        odderon_astro::provenance::Quantity::defined(0.0).expect("zero is finite"),
     );
     let without = next_pass(
         &flat,
@@ -1009,10 +1037,8 @@ fn a_body_without_j2_falls_back_to_two_body() {
     // `frames.rs` trap — but this test is about the search accepting a body with no `J2`, and the site and the
     // frame are built to agree with each other, so the pass is overhead by construction.
     let moon_frame = odderon_astro::frames::BodyFixed {
-        w0: odderon_astro::provenance::Quantity::defined(
-            0.0,
-            "test frame: no lunar prime meridian exists",
-        ),
+        w0: odderon_astro::provenance::Quantity::defined(0.0)
+            .expect("zero is a finite quantity; the provenance records that it is a test artefact"),
         rate: MOON
             .physical
             .rotation_rate
@@ -1026,8 +1052,7 @@ fn a_body_without_j2_falls_back_to_two_body() {
         Vec3::new(0.0, sqrt(mu::MOON / r), 0.0),
     );
 
-    let window = guaranteed_scan_window_seconds(&MOON, 100.0, 10.0).expect("window");
-    let step = minimum_pass_seconds(&MOON, 100.0, 10.0).expect("step");
+    let (window, step) = guards(&MOON, r);
     let pass = next_pass(
         &MOON,
         &site,
