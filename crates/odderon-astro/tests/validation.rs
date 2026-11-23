@@ -38,7 +38,11 @@ fn circular_orbit_returns_to_its_start_after_one_period() {
     // accumulate the way it does in a stepper — which is precisely the claim being tested.
     let s0 = leo_circular();
     let p = period(s0.semi_major_axis(MU), MU);
-    assert!(p > 5000.0 && p < 6000.0, "LEO period should be ~92 min, got {}", p);
+    assert!(
+        p > 5000.0 && p < 6000.0,
+        "LEO period should be ~92 min, got {}",
+        p
+    );
 
     for k in 1..=10 {
         let out = propagate(&s0, k as f64 * p, MU);
@@ -46,7 +50,12 @@ fn circular_orbit_returns_to_its_start_after_one_period() {
         let err_m = (out.state.r - s0.r).norm() * 1000.0;
         // Measured worst case 1.7e-7 m (0.17 micrometres). Bound at 1e-3 m — still 1 mm on a
         // 6,778 km orbit, and tight enough that a genuine regression cannot hide inside it.
-        assert!(err_m < 1e-3, "after {} periods, position error {:.3e} m", k, err_m);
+        assert!(
+            err_m < 1e-3,
+            "after {} periods, position error {:.3e} m",
+            k,
+            err_m
+        );
     }
 }
 
@@ -136,7 +145,11 @@ fn angular_momentum_is_conserved() {
         let h = state.angular_momentum();
         worst = f64_max(worst, (h - h0).norm() / h0n);
     }
-    assert!(worst < 1e-12, "relative angular momentum drift {:.3e}", worst);
+    assert!(
+        worst < 1e-12,
+        "relative angular momentum drift {:.3e}",
+        worst
+    );
 }
 
 #[test]
@@ -177,7 +190,10 @@ fn hyperbolic_orbit_expands() {
         Vec3::new(0.0, v_escape * 1.12, 0.0),
     );
     assert!(s0.specific_energy(MU) > 0.0, "should be hyperbolic");
-    assert!(s0.semi_major_axis(MU) < 0.0, "hyperbolic a must be negative");
+    assert!(
+        s0.semi_major_axis(MU) < 0.0,
+        "hyperbolic a must be negative"
+    );
 
     let mut previous = r0;
     for k in 1..=20 {
@@ -271,8 +287,16 @@ fn vallado_example_2_5() {
     assert!(fabs(el.p - 11067.790) < 2e-2, "p = {}", el.p);
     assert!(fabs(el.e - 0.83285) < 1e-5, "e = {}", el.e);
     assert!(fabs(el.i * deg - 87.87) < 1e-2, "i = {}°", el.i * deg);
-    assert!(fabs(el.raan * deg - 227.898) < 1e-3, "RAAN = {}°", el.raan * deg);
-    assert!(fabs(el.argp * deg - 53.38) < 1e-2, "argp = {}°", el.argp * deg);
+    assert!(
+        fabs(el.raan * deg - 227.898) < 1e-3,
+        "RAAN = {}°",
+        el.raan * deg
+    );
+    assert!(
+        fabs(el.argp * deg - 53.38) < 1e-2,
+        "argp = {}°",
+        el.argp * deg
+    );
     assert!(fabs(el.nu * deg - 92.335) < 1e-3, "nu = {}°", el.nu * deg);
     assert!(el.degeneracy.is_none(), "this orbit is general");
 }
@@ -632,7 +656,6 @@ fn the_convergence_tolerance_scales_with_chi() {
             );
         }
     }
-
 
     // A long hyperbolic flight: χ is large here, which is the case the old tolerance could not reach.
     let v_escape = sqrt(2.0 * MU / 7000.0);
