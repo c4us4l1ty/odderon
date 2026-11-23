@@ -68,6 +68,12 @@ pub(crate) fn is_positive_finite(x: f64) -> bool {
     x > 0.0 && x.is_finite()
 }
 
+/// The body catalogue: opaque-body constants, each carrying its provenance.
+pub mod catalogue;
+
+/// Provenance as a type: a physical quantity that cannot be separated from where it came from.
+pub mod provenance;
+
 /// A high-precision J2 numerical integrator, used only as the reference the secular theory is checked
 /// against. Never called from a frame.
 pub mod integrate;
