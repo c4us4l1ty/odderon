@@ -226,7 +226,11 @@ pub const LEAP_TABLE_ENDS: Civil = Civil {
 /// `no_std`, and 399 days of overflow is the price). `day` is 1-based and the algorithm subtracts one, which
 /// is exact in integers, so no rounding can hide.
 const fn days_from_civil(year: i32, month: u8, day: u8) -> i64 {
-    let y = if month <= 2 { year as i64 - 1 } else { year as i64 };
+    let y = if month <= 2 {
+        year as i64 - 1
+    } else {
+        year as i64
+    };
     let m = month as i64;
     let d = day as i64;
     let era = if y >= 0 { y } else { y - 399 } / 400;
@@ -284,7 +288,14 @@ const _: () = {
     let last_day = day_of(last.year, last.month, last.day);
     // The declared end of the table is its last row — the claim `LEAP_TABLE_ENDS` makes in prose, made in
     // code so it cannot drift.
-    assert!(last_day == day_of(LEAP_TABLE_ENDS.year, LEAP_TABLE_ENDS.month, LEAP_TABLE_ENDS.day));
+    assert!(
+        last_day
+            == day_of(
+                LEAP_TABLE_ENDS.year,
+                LEAP_TABLE_ENDS.month,
+                LEAP_TABLE_ENDS.day
+            )
+    );
     // And the hand-written day number the converter uses is that same day.
     assert!(last_day == LEAP_TABLE_END_DAY);
 };
@@ -326,7 +337,15 @@ impl Civil {
         if day > max_day {
             return Err(TimeError::BadCivil);
         }
-        Ok(Civil { year, month, day, hour, minute, second, fraction })
+        Ok(Civil {
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            fraction,
+        })
     }
 
     /// Whether two readings name the same clock time, to within `tolerance_seconds`.
@@ -337,9 +356,21 @@ impl Civil {
     /// much error to expect has not thought about the question, and a silent `1e-9` would fail conversions
     /// whose drift is real and understood.
     pub fn same_instant(&self, other: &Civil, tolerance_seconds: f64) -> bool {
-        (self.year, self.month, self.day, self.hour, self.minute, self.second)
-            == (other.year, other.month, other.day, other.hour, other.minute, other.second)
-            && odderon_dmath::fabs(self.fraction - other.fraction) <= tolerance_seconds
+        (
+            self.year,
+            self.month,
+            self.day,
+            self.hour,
+            self.minute,
+            self.second,
+        ) == (
+            other.year,
+            other.month,
+            other.day,
+            other.hour,
+            other.minute,
+            other.second,
+        ) && odderon_dmath::fabs(self.fraction - other.fraction) <= tolerance_seconds
     }
 
     /// Days since 1970-01-01 for this date. The time of day is not included.
@@ -547,7 +578,9 @@ fn floor_div(numerator: f64, denominator: f64) -> f64 {
 pub fn utc_to_tdb(civil: &Civil) -> Result<f64, TimeError> {
     let days = civil.days_since_1970();
     if beyond_table(days) {
-        return Err(TimeError::BeyondLeapSecondTable { table_ends: LEAP_TABLE_ENDS });
+        return Err(TimeError::BeyondLeapSecondTable {
+            table_ends: LEAP_TABLE_ENDS,
+        });
     }
     let offset = tai_minus_utc_at(days)?;
     if civil.second == 60 && leap_seconds_on(days) == 0 {
@@ -634,7 +667,11 @@ pub fn tdb_to_utc(tdb_seconds_since_j2000: f64) -> Result<Civil, TimeError> {
                 });
             }
             let whole = second_of_day as i64;
-            return Ok(Civil::from_days_and_second(day, whole, second_of_day - whole as f64));
+            return Ok(Civil::from_days_and_second(
+                day,
+                whole,
+                second_of_day - whole as f64,
+            ));
         }
     }
 
@@ -649,7 +686,9 @@ pub fn tdb_to_utc(tdb_seconds_since_j2000: f64) -> Result<Civil, TimeError> {
     if tai < first {
         Err(TimeError::BeforeLeapSecondEra)
     } else if tai >= last {
-        Err(TimeError::BeyondLeapSecondTable { table_ends: LEAP_TABLE_ENDS })
+        Err(TimeError::BeyondLeapSecondTable {
+            table_ends: LEAP_TABLE_ENDS,
+        })
     } else {
         Err(TimeError::BadCivil)
     }
