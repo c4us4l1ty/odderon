@@ -52,6 +52,7 @@
 //! The honest summary: this module can show a player that closing a curtain lowers the meter reading, and it
 //! can say by how much a lumped model says it should. It cannot be used to size a real air conditioner.
 
+use crate::is_positive_finite;
 use crate::provenance::{Prov, Quantity};
 use odderon_dmath::{exp, is_finite, pow};
 
@@ -194,7 +195,7 @@ impl Zone {
         outdoors: &Outdoors,
         internal: &InternalGain,
     ) -> Option<f64> {
-        if !(self.loss_conductance.value > 0.0) {
+        if !is_positive_finite(self.loss_conductance.value) {
             return None;
         }
         Some(
@@ -236,7 +237,7 @@ impl Zone {
     /// where the scheme stops being *stable*, not where it stops being accurate, and the two are different
     /// questions: a step at the limit conserves energy but rings.
     pub fn max_stable_step(&self) -> Option<f64> {
-        if !(self.loss_conductance.value > 0.0) {
+        if !is_positive_finite(self.loss_conductance.value) {
             return None;
         }
         Some(self.heat_capacity.value / self.loss_conductance.value)
@@ -310,11 +311,11 @@ impl VapourCompression {
     pub fn cop(&self) -> Option<f64> {
         let t_evap = self.evaporating_k.value;
         let t_cond = self.condensing_k.value;
-        if !is_finite(t_evap) || !is_finite(t_cond) || !(t_cond > t_evap) {
+        if !is_finite(t_evap) || !is_finite(t_cond) || !is_positive_finite(t_cond - t_evap) {
             return None;
         }
         let eta = self.second_law_efficiency.value;
-        if !(eta > 0.0) || !is_finite(eta) {
+        if !is_positive_finite(eta) {
             return None;
         }
         Some(eta * t_evap / (t_cond - t_evap))
@@ -387,7 +388,7 @@ pub fn radiative_rejection(
     if area_m2 < 0.0
         || !(0.0..=1.0).contains(&emissivity)
         || surface_k <= 0.0
-        || surroundings_k <= 0.0
+        || surroundings_k < 0.0
     {
         return None;
     }
@@ -417,7 +418,7 @@ pub fn radiator_temperature(
     if heat_load_w < 0.0
         || area_m2 <= 0.0
         || !(0.0..=1.0).contains(&emissivity)
-        || surroundings_k <= 0.0
+        || surroundings_k < 0.0
     {
         return None;
     }
@@ -434,7 +435,7 @@ pub fn radiator_temperature(
 /// Returns the ratio `COP(lift_small)/COP(lift_large)` — i.e. how much better a cycle is when it has less lift
 /// to work across. `None` for a non-positive lift, where the question has no meaning.
 pub fn cop_ratio_between_lifts(lift_1_k: f64, lift_2_k: f64) -> Option<f64> {
-    if !(lift_1_k > 0.0) || !(lift_2_k > 0.0) || !is_finite(lift_1_k) || !is_finite(lift_2_k) {
+    if !is_positive_finite(lift_1_k) || !is_positive_finite(lift_2_k) {
         return None;
     }
     Some(lift_2_k / lift_1_k)
@@ -446,7 +447,7 @@ pub fn cop_ratio_between_lifts(lift_1_k: f64, lift_2_k: f64) -> Option<f64> {
 /// §6.7 claim ("cool by several kelvin over minutes") and it is the half a step-by-step integration makes hard to
 /// state. `None` for a non-positive time constant.
 pub fn first_order_fraction_remaining(tau_s: f64, elapsed_s: f64) -> Option<f64> {
-    if !(tau_s > 0.0) || !is_finite(tau_s) || !is_finite(elapsed_s) {
+    if !is_positive_finite(tau_s) || !is_finite(elapsed_s) || elapsed_s < 0.0 {
         return None;
     }
     Some(exp(-elapsed_s / tau_s))
