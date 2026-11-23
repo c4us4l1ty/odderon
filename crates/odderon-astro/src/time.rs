@@ -318,18 +318,20 @@ fn civil_from_days(days: i64) -> (i32, u8, u8) {
 /// against the calendar by the `const _` block below *and* by a test.
 const TAI_UTC_COVERED_THROUGH_DAY: i64 = 20_818;
 
-/// The day number of [`TAI_UTC_PINNED_START`]: 2017-01-01 is 17 167 days after 1970-01-01.
-const TAI_UTC_PINNED_START_DAY: i64 = 17_167;
-
-/// The day number of [`TAI_UTC_PINNED_THROUGH`]. The same reasoning as above, and it exists as a separate
-/// literal for exactly the reason the two dates are separate constants.
-const TAI_UTC_PINNED_THROUGH_DAY: i64 = 20_818;
+// The pinned span's two day numbers are asserted inline in the `const _` block below rather than given named
+// constants, because nothing at run time consults them: `beyond_table` and the inverse both use the *covered*
+// boundary. A named constant with no consumer is dead code, which this crate denies, and the property worth
+// keeping is only that the literals be checked against the calendar — which a literal in an `assert!` does.
 
 /// The first day of the announced zero-leap-second span: the date `LEAP_SECONDS`'s last row takes effect.
 ///
 /// Named because the compile-time checks below need it as a *date* rather than as "the table's last row",
 /// and because the distinction is the whole point of this section: a row is an instant, a span is a claim.
-const TAI_UTC_PINNED_START: Civil = Civil {
+///
+/// Public so a test can assert that the span starts where the table's last row does, and so a UI can describe
+/// the range it is showing. It has no run-time consumer inside the module, which is why the two day-number
+/// literals below it stay literals: a named constant nothing calls is dead code.
+pub const TAI_UTC_PINNED_START: Civil = Civil {
     year: 2017,
     month: 1,
     day: 1,
@@ -402,8 +404,14 @@ const _: () = {
             TAI_UTC_COVERED_THROUGH.day
         ) == TAI_UTC_COVERED_THROUGH_DAY
     );
-    assert!(last_row_day == TAI_UTC_PINNED_START_DAY);
-    assert!(TAI_UTC_PINNED_THROUGH_DAY >= TAI_UTC_PINNED_START_DAY);
+    assert!(last_row_day == 17_167);
+    assert!(
+        day_of(
+            TAI_UTC_PINNED_THROUGH.year,
+            TAI_UTC_PINNED_THROUGH.month,
+            TAI_UTC_PINNED_THROUGH.day
+        ) == 20_818
+    );
 };
 
 impl Civil {
