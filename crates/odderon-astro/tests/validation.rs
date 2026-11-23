@@ -384,7 +384,10 @@ fn a_nearly_equatorial_orbit_is_not_folded() {
         degeneracy: Degeneracy::default(),
     };
     let el = el0.to_state(MU).to_elements(MU);
-    assert!(el.degeneracy.is_none(), "1e-4 degrees is a real inclination");
+    assert!(
+        el.degeneracy.is_none(),
+        "1e-4 degrees is a real inclination"
+    );
     // Measured 2.4e-16 once inclination comes from atan2 rather than acos. The earlier version of this
     // assertion allowed 1e-9 because acos on h_z/|h| = 1 - 1e-16 returns up to 1.5e-8 rad; that was a
     // defect in to_elements, not a property of the orbit, so the bound is now tight.
@@ -429,9 +432,8 @@ fn elements_and_propagation_agree() {
         let mean_anomaly = core::f64::consts::TAU * fraction;
         let mut ecc_anomaly = mean_anomaly;
         for _ in 0..60 {
-            ecc_anomaly -=
-                (ecc_anomaly - el0.e * f64::sin(ecc_anomaly) - mean_anomaly)
-                    / (1.0 - el0.e * f64::cos(ecc_anomaly));
+            ecc_anomaly -= (ecc_anomaly - el0.e * f64::sin(ecc_anomaly) - mean_anomaly)
+                / (1.0 - el0.e * f64::cos(ecc_anomaly));
         }
         let expected_nu = 2.0
             * f64::atan2(
@@ -472,12 +474,15 @@ fn derived_elements_are_consistent() {
     // p = a(1 - e²) is the definition, so apoapsis must be 13333.33...
     assert!(fabs(el.apoapsis() - 40000.0 / 3.0) < 1e-9);
 
-    let hyperbolic = Elements {
-        e: 1.5,
-        ..el
-    };
-    assert!(hyperbolic.apoapsis().is_infinite(), "hyperbola has no apoapsis");
-    assert!(hyperbolic.semi_major_axis() < 0.0, "hyperbolic a is negative");
+    let hyperbolic = Elements { e: 1.5, ..el };
+    assert!(
+        hyperbolic.apoapsis().is_infinite(),
+        "hyperbola has no apoapsis"
+    );
+    assert!(
+        hyperbolic.semi_major_axis() < 0.0,
+        "hyperbolic a is negative"
+    );
     // Periapsis stays defined for every conic.
     assert!(hyperbolic.periapsis() > 0.0);
 }
@@ -538,8 +543,7 @@ fn overflow_is_reported_not_hidden() {
                 assert!(
                     out.unconverged,
                     "v={}x escape, dt={}: an overflow reported as success",
-                    factor,
-                    dt
+                    factor, dt
                 );
             }
             if !out.unconverged {
@@ -559,7 +563,10 @@ fn overflow_is_reported_not_hidden() {
         Vec3::new(0.0, v_escape * 1.05, 0.0),
     );
     let ok = propagate(&modest, 1.0e4, MU);
-    assert!(!ok.unconverged, "1.05x escape over 2.8 h is well inside range");
+    assert!(
+        !ok.unconverged,
+        "1.05x escape over 2.8 h is well inside range"
+    );
     assert!(ok.state.r.x.is_finite());
 }
 
@@ -584,9 +591,7 @@ fn the_convergence_tolerance_scales_with_chi() {
             assert!(
                 !out.unconverged,
                 "e = 1+{} at dt = {} reported unconverged (residual {:.3e})",
-                delta,
-                dt,
-                out.residual
+                delta, dt, out.residual
             );
             assert!(out.state.r.x.is_finite());
         }
