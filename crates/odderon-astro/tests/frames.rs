@@ -52,7 +52,10 @@ fn the_transform_preserves_length_and_axial_component() {
     for t in [0.0, 1000.0, 50_000.0, 1e7] {
         let b = EARTH_FRAME.to_body_fixed(p, t).expect("frame available");
         assert!(fabs(b.norm() - r0) < 1e-9, "length changed at t={t}");
-        assert!(fabs(b.z - p.z) < 1e-9, "z changed at t={t}, so the rotation is not about z");
+        assert!(
+            fabs(b.z - p.z) < 1e-9,
+            "z changed at t={t}, so the rotation is not about z"
+        );
     }
 }
 
@@ -70,7 +73,10 @@ fn one_sidereal_day_is_one_full_rotation() {
     }
     // Either it wrapped to ~0 or to ~2π depending on rounding; both mean "the same angle".
     let err = if d > TAU / 2.0 { TAU - d } else { d };
-    assert!(err < 1e-6, "one sidereal day should be one full rotation, residual {err} rad");
+    assert!(
+        err < 1e-6,
+        "one sidereal day should be one full rotation, residual {err} rad"
+    );
 }
 
 /// The angle stays in `[0, 2π)` even after years of accumulated rotation.
@@ -105,7 +111,10 @@ fn the_prime_meridian_is_the_iau_value_and_not_zero() {
         fabs(w0 - expected) < 1e-9,
         "prime meridian should be the IAU 2015 value {expected:e} rad, got {w0:e}"
     );
-    assert!(fabs(w0) > 1.0, "a zero (or near-zero) prime meridian is the bug this test exists to catch");
+    assert!(
+        fabs(w0) > 1.0,
+        "a zero (or near-zero) prime meridian is the bug this test exists to catch"
+    );
 }
 
 /// A satellite in a geostationary orbit holds a **fixed** body-fixed longitude.
@@ -198,8 +207,14 @@ fn the_frame_origin_is_latitude_zero_longitude_zero() {
     let body = Vec3::new(RE, 0.0, 0.0);
     let g = geodetic_of(body);
     assert!(fabs(g.latitude) < 1e-12, "equator should be latitude 0");
-    assert!(fabs(g.longitude) < 1e-12, "prime meridian should be longitude 0");
-    assert!(fabs(g.radius - RE) < 1e-9, "radius should be the equatorial radius");
+    assert!(
+        fabs(g.longitude) < 1e-12,
+        "prime meridian should be longitude 0"
+    );
+    assert!(
+        fabs(g.radius - RE) < 1e-9,
+        "radius should be the equatorial radius"
+    );
 }
 
 /// The pole is at latitude ±90°, and longitude there is degenerate but finite.
@@ -209,7 +224,10 @@ fn the_pole_is_at_ninety_degrees() {
     let south = geodetic_of(Vec3::new(0.0, 0.0, -RE));
     assert!(fabs(north.latitude - core::f64::consts::FRAC_PI_2) < 1e-12);
     assert!(fabs(south.latitude + core::f64::consts::FRAC_PI_2) < 1e-12);
-    assert!(north.longitude.is_finite(), "longitude at the pole must not be NaN");
+    assert!(
+        north.longitude.is_finite(),
+        "longitude at the pole must not be NaN"
+    );
 }
 
 /// Latitude is `atan2`-based, so it stays accurate at the poles where `asin(z/r)` loses precision.
@@ -245,8 +263,13 @@ fn a_missing_rotation_constant_is_refused_not_defaulted() {
         w0: Quantity::unknown(),
         rate: Quantity::unknown(),
     };
-    assert!(broken.angle_at(0.0).is_none(), "unknown constants must not yield an angle");
-    assert!(broken.to_body_fixed(Vec3::new(1.0, 2.0, 3.0), 0.0).is_none());
+    assert!(
+        broken.angle_at(0.0).is_none(),
+        "unknown constants must not yield an angle"
+    );
+    assert!(broken
+        .to_body_fixed(Vec3::new(1.0, 2.0, 3.0), 0.0)
+        .is_none());
     assert!(broken.to_inertial(Vec3::new(1.0, 2.0, 3.0), 0.0).is_none());
 
     // and a non-finite epoch is refused too, rather than producing NaN coordinates
