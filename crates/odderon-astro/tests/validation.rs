@@ -652,10 +652,10 @@ fn true_anomaly_agrees_with_the_element_set() {
     // They are now the same function. This test pins that, so they cannot drift again.
     let deg = odderon_dmath::PI / 180.0;
     let cases: [(f64, f64, f64); 4] = [
-        (0.3, 0.6, 51.6),  // general
-        (0.0, 0.0, 0.0),   // circular equatorial
-        (0.0, 0.0, 51.6),  // circular inclined
-        (0.4, 0.0, 0.0),   // equatorial eccentric
+        (0.3, 0.6, 51.6), // general
+        (0.0, 0.0, 0.0),  // circular equatorial
+        (0.0, 0.0, 51.6), // circular inclined
+        (0.4, 0.0, 0.0),  // equatorial eccentric
     ];
     for &(e, raan, i_deg) in cases.iter() {
         for &nu_deg in [10.0, 90.0, 190.0, 270.0, 350.0].iter() {

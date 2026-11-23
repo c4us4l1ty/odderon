@@ -90,7 +90,11 @@ const SQRT_2: f64 = 1.414_213_562_373_095_1;
 // The counter exists to keep the cost ceilings in the tests honest. It is compiled out of release
 // builds, and out of wasm entirely, because `AtomicU64` requires the `atomics` target feature that
 // `wasm32-unknown-unknown` does not enable by default.
-#[cfg(all(debug_assertions, not(target_arch = "wasm32"), target_has_atomic = "64"))]
+#[cfg(all(
+    debug_assertions,
+    not(target_arch = "wasm32"),
+    target_has_atomic = "64"
+))]
 mod counting {
     use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -112,12 +116,20 @@ mod counting {
 
 #[inline(always)]
 fn note_op() {
-    #[cfg(all(debug_assertions, not(target_arch = "wasm32"), target_has_atomic = "64"))]
+    #[cfg(all(
+        debug_assertions,
+        not(target_arch = "wasm32"),
+        target_has_atomic = "64"
+    ))]
     counting::note();
 }
 
 /// Reset the operation counter. Available only in native debug builds.
-#[cfg(all(debug_assertions, not(target_arch = "wasm32"), target_has_atomic = "64"))]
+#[cfg(all(
+    debug_assertions,
+    not(target_arch = "wasm32"),
+    target_has_atomic = "64"
+))]
 pub fn ops_reset() {
     counting::reset();
 }
@@ -1149,7 +1161,12 @@ mod tests {
         }
         for &x in [1e-6, 0.1, 0.5, 1.0, 2.0, 10.0, 1e6].iter() {
             let y = exp(ln(x));
-            assert!(fabs(y - x) <= 1e-14 * fmax(x, 1.0), "exp∘ln at {} -> {}", x, y);
+            assert!(
+                fabs(y - x) <= 1e-14 * fmax(x, 1.0),
+                "exp∘ln at {} -> {}",
+                x,
+                y
+            );
         }
         for &x in [0.25, 1.0, 2.0, 4.0, 1e6].iter() {
             let y = pow(x, 0.5);
@@ -1160,7 +1177,11 @@ mod tests {
     /// Cost ceilings, in native debug builds where operations are counted. Not micro-optimisation
     /// targets: they exist so that a refactor which replaces a reduction with a long series is caught
     /// by a test rather than by a laptop fan.
-    #[cfg(all(debug_assertions, not(target_arch = "wasm32"), target_has_atomic = "64"))]
+    #[cfg(all(
+        debug_assertions,
+        not(target_arch = "wasm32"),
+        target_has_atomic = "64"
+    ))]
     #[test]
     fn cost_ceilings() {
         let n = PROBES.len() as u64;
