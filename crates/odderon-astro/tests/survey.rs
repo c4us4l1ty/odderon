@@ -517,8 +517,7 @@ fn no_gated_dataset_name_appears_in_the_kernel() {
         "every source needs a name"
     );
 
-    for i in 0..gated_count {
-        let name = gated[i];
+    for name in gated.iter().copied().take(gated_count) {
         // Hyphens cannot appear in a Rust identifier, so the realistic bypass spells it with underscores.
         let underscored: &str = &name.replace('-', "_");
         for (n, source) in sources.iter().enumerate() {
@@ -547,8 +546,7 @@ fn no_gated_dataset_name_appears_in_the_kernel() {
             .iter()
             .position(|s| *s == name)
             .expect("listed source");
-        for i in 0..gated_count {
-            let dataset = gated[i];
+        for dataset in gated.iter().copied().take(gated_count) {
             let mut in_declaration = false;
             for line in sources[idx].lines() {
                 let code = line.trim_start();
