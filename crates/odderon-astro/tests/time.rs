@@ -15,7 +15,7 @@
 //! 2. **The leap second is a real second**, measured as three consecutive deltas of exactly 1.000000000 s.
 //! 3. **Every boundary round-trips**, at all 28 table rows, both directions — not the one date someone thought
 //!    of. 328 instants.
-//! 4. **The refusals are distinct**, because "before 1972" and "after 2017" need different responses.
+//! 4. **The refusals are distinct**, because "before 1972" and "after 2026" need different responses.
 //! 5. **The corrections are big enough to matter**, expressed in metres of along-track motion, so the module's
 //!    justification is a number in a test rather than a claim in a comment.
 //!
@@ -24,7 +24,7 @@
 
 use odderon_astro::time::{
     convert_constant_offset, tdb_minus_tt, tdb_to_utc, utc_to_tdb, Civil, Scale, TimeError,
-    LEAP_SECONDS, LEAP_TABLE_ENDS,
+    LEAP_SECONDS, TAI_UTC_COVERED_THROUGH, TAI_UTC_PINNED_START, TAI_UTC_PINNED_THROUGH,
 };
 
 /// `2000-01-01T11:58:55.816` UTC is J2000: 12:00:00 TT, minus 32.184 s of TT − TAI, minus 32 s of TAI − UTC.
@@ -176,6 +176,30 @@ fn a_sixty_second_on_a_non_leap_day_is_refused() {
     assert!(utc_to_tdb(&Civil::new(2000, 1, 1, 0, 0, 0, 0.0).expect("valid")).is_ok());
 }
 
+/// A `:60` anywhere other than the last second of the last minute is not a time at all.
+///
+/// It used to be accepted at construction and refused later as `NoLeapSecondOnThisDay` — an error about the
+/// *day* for a fault in the *time of day*, which points a reader at the wrong thing. The distinction matters
+/// because the two faults have different fixes: a `13:00:60` is a malformed input, while a `23:59:60` on a
+/// day with no leap second is a well-formed input the table happens to disagree with.
+#[test]
+fn a_sixty_second_must_be_the_last_second_of_the_day() {
+    for (hour, minute) in [(13u8, 0u8), (0, 59), (23, 58), (0, 0)] {
+        assert_eq!(
+            Civil::new(2016, 12, 31, hour, minute, 60, 0.0).err(),
+            Some(TimeError::BadCivil),
+            "{hour:02}:{minute:02}:60 is not a time of day"
+        );
+    }
+    // And the one position where it *is* meaningful is accepted at construction, whatever the table later says
+    // about that day — 1999 is used precisely because it had no leap second, so this asserts construction does
+    // not consult the table.
+    assert!(
+        Civil::new(1999, 12, 31, 23, 59, 60, 0.0).is_ok(),
+        "the last second of the day is a legal Civil value regardless of what happened that day"
+    );
+}
+
 // -------------------------------------------------------------------------------------------
 // 3. Every boundary, both directions
 // -------------------------------------------------------------------------------------------
@@ -302,18 +326,20 @@ fn the_table_is_monotone_and_ends_where_it_says() {
     assert_eq!(
         (last.year, last.month, last.day),
         (
-            LEAP_TABLE_ENDS.year,
-            LEAP_TABLE_ENDS.month,
-            LEAP_TABLE_ENDS.day
+            TAI_UTC_PINNED_START.year,
+            TAI_UTC_PINNED_START.month,
+            TAI_UTC_PINNED_START.day
         ),
-        "the declared end of the table must be its last row"
+        "the zero-leap-second span must start at the table's last row"
     );
     assert_eq!(
         last.tai_minus_utc, 37,
         "TAI - UTC has been 37 s since 2017-01-01"
     );
-    // The literal the converter compares against, cross-checked against the calendar through the public API.
-    assert_eq!(LEAP_TABLE_ENDS.days_since_1970(), 17_167);
+    // The literals the converter compares against, cross-checked against the calendar through the public API.
+    assert_eq!(TAI_UTC_PINNED_START.days_since_1970(), 17_167);
+    assert_eq!(TAI_UTC_COVERED_THROUGH.days_since_1970(), 20_818);
+    assert_eq!(TAI_UTC_PINNED_THROUGH.days_since_1970(), 20_818);
 }
 
 // -------------------------------------------------------------------------------------------
@@ -377,52 +403,94 @@ fn before_the_leap_second_era_is_refused() {
     assert_eq!(tdb_to_utc(-1.0e12), Err(TimeError::BeforeLeapSecondEra));
 }
 
-/// After the table ends the conversion says *where* it ends, in the error itself.
+/// Beyond the announced range the conversion says *where* it ends, in the error itself.
 ///
 /// The payload is not decoration: a UI that shows a provisional clock needs the date to display. A bare
-/// `Err(())` would push the caller to hard-code 2017 in a second place, which is how two constants become one
+/// `Err(())` would push the caller to hard-code 2026 in a second place, which is how two constants become one
 /// that is wrong.
 #[test]
-fn after_the_table_ends_is_refused_and_says_where_it_ends() {
-    let beyond = Civil::new(2017, 1, 2, 0, 0, 0, 0.0).expect("valid");
+fn after_the_covered_range_ends_is_refused_and_says_where_it_ends() {
+    let beyond = Civil::new(2027, 1, 1, 0, 0, 0, 0.0).expect("valid");
     match utc_to_tdb(&beyond) {
         Err(TimeError::BeyondLeapSecondTable { table_ends }) => {
             assert_eq!(
                 (table_ends.year, table_ends.month, table_ends.day),
-                (2017, 1, 1),
-                "the error must name the last date the table covers"
+                (2026, 12, 31),
+                "the error must name the last announced date"
             );
         }
         other => panic!("expected BeyondLeapSecondTable, got {other:?}"),
     }
 
-    // The table's own last row converts: the bound is inclusive, and an exclusive one would make the module's
+    // The last covered date converts: the bound is inclusive, and an exclusive one would make the module's
     // stated range a lie by one day.
-    let last_day = Civil::new(2017, 1, 1, 0, 0, 0, 0.0).expect("valid");
+    let last_day = Civil::new(2026, 12, 31, 0, 0, 0, 0.0).expect("valid");
     assert!(
         utc_to_tdb(&last_day).is_ok(),
-        "the table's last date must convert"
+        "the last announced date must convert"
     );
 
-    // A date well past it, such as the date this repository was being written, is refused rather than guessed.
-    assert!(matches!(
-        utc_to_tdb(&Civil::new(2026, 11, 22, 0, 0, 0, 0.0).expect("valid")),
-        Err(TimeError::BeyondLeapSecondTable { .. })
-    ));
-
     // The inverse refuses the same region. Without this the module would have a one-way gate: a TDB value in
-    // 2018 would invert to a confident civil reading for a date `utc_to_tdb` says it cannot convert, and the
-    // "provisional after 2017" promise would be false in one direction.
+    // 2027 would invert to a confident civil reading for a date `utc_to_tdb` says it cannot convert, and the
+    // "provisional beyond 2026" promise would be false in one direction.
     //
-    // Derived from the module rather than written as a magic number, because every round figure tried by hand
-    // landed inside the table: 6.0e8 s is 2019 and 6.5e8 s is 2020, both of which invert successfully and would
-    // have made this look like a refusal test that passes for the wrong reason. Two days past the last row is
-    // unambiguously outside.
-    let last_instant = utc_to_tdb(&last_day).expect("the last row converts");
+    // Derived from the module rather than written as a magic number, because a round figure chosen by hand
+    // lands wherever it likes relative to the boundary. Two days past the last covered day is unambiguously
+    // outside.
+    let last_instant = utc_to_tdb(&last_day).expect("the last announced date converts");
     assert!(matches!(
         tdb_to_utc(last_instant + 2.0 * 86_400.0),
         Err(TimeError::BeyondLeapSecondTable { .. })
     ));
+}
+
+/// The whole zero-leap-second span converts, and to *one* offset.
+///
+/// This is the test the old boundary needed and could not have: it pins the property that made the extension
+/// safe — the offset announced on 2017-01-01 is still the offset announced for every date through 2026-12-31 —
+/// rather than merely asserting that some date in 2026 happens to convert. A leap second inserted anywhere in
+/// the span would break it, which is the event the compile-time check also guards.
+#[test]
+fn the_zero_leap_second_span_is_one_offset() {
+    for (year, month, day) in [
+        (2017, 1, 1),
+        (2018, 7, 1),
+        (2020, 2, 29), // a leap day inside the span, which is about the calendar and not the second
+        (2023, 12, 31),
+        (2026, 6, 30), // an insertion date on which nothing was inserted
+        (2026, 12, 31),
+    ] {
+        let civil = Civil::new(year, month, day, 12, 0, 0, 0.0).expect("valid date");
+        let converted = utc_to_tdb(&civil)
+            .unwrap_or_else(|e| panic!("{year}-{month}-{day} must convert inside the span: {e:?}"));
+
+        // 12:00:00 UTC on day N is a whole number of days plus the offset away from 12:00:00 UTC on 2017-01-01,
+        // and the periodic term differs by far less than a millisecond across a decade (it is a sinusoid with a
+        // 1.658 ms amplitude). A one-second slip in the offset anywhere in the span would show up here.
+        let anchor = Civil::new(2017, 1, 1, 12, 0, 0, 0.0).expect("valid");
+        let expected = utc_to_tdb(&anchor).expect("the anchor converts")
+            + (civil.days_since_1970() - anchor.days_since_1970()) as f64 * 86_400.0;
+        assert!(
+            (converted - expected).abs() < 5.0e-3,
+            "offset changed inside the span at {year}-{month}-{day}: off by {:e} s",
+            converted - expected
+        );
+    }
+}
+
+/// The game's own present converts, which is what the old boundary got wrong.
+///
+/// A clock module that refuses every date after 2017 cannot be used by a simulation set in 2026 — and this one
+/// is. Written as an explicit test because the failure was not a subtle numerical one: the module was
+/// answering `BeyondLeapSecondTable` for today, and no test compared its range against the date the project is
+/// actually being worked on.
+#[test]
+fn the_present_converts() {
+    let today = Civil::new(2026, 11, 22, 12, 0, 0, 0.0).expect("valid");
+    assert!(
+        utc_to_tdb(&today).is_ok(),
+        "the date this project is being written on must convert; the module is set in the present"
+    );
 }
 
 /// Out-of-range fields are refused at construction, so no later stage has to re-check them.
@@ -521,7 +589,11 @@ fn the_calendar_anchors_are_right() {
             .days_since_1970(),
         -365
     );
-    assert_eq!(LEAP_TABLE_ENDS.days_since_1970(), 17_167);
+    // The day numbers the converter compares against, checked against the calendar through the public API. Both
+    // span ends are here because they are separate constants that could drift apart independently.
+    assert_eq!(TAI_UTC_PINNED_START.days_since_1970(), 17_167);
+    assert_eq!(TAI_UTC_PINNED_THROUGH.days_since_1970(), 20_818);
+    assert_eq!(TAI_UTC_COVERED_THROUGH.days_since_1970(), 20_818);
 }
 
 /// Consecutive days are consecutive for two centuries, in both directions from the epoch.

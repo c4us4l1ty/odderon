@@ -184,14 +184,18 @@ jobs:
         run: node tools/check-classes-selftest.mjs
 
   # -------------------------------------------------------------------------------------------
-  # ADVISORY during bootstrap. Armed after the first green run — see the decision in
-  # docs/BUILD-PLAN.md §3. They are kept in the same file so arming them is a one-word diff.
+  # STYLE GATES. Armed 2026-11-23, once both were green on `main` — the condition docs/BUILD-PLAN.md
+  # §3 set for arming them. Until then they were `continue-on-error: true`, which meant the gate could
+  # not fail the branch and a red result carried no information.
+  #
+  # Arming them is not a licence to let them rot: if one goes red, fix it in a separate commit so that a
+  # formatting slip is attributable, rather than mixed into a physics change where nobody can tell which
+  # half broke. `docs/BUILD-PLAN.md` §4b records the same rule for measurements.
   # -------------------------------------------------------------------------------------------
 
   fmt:
-    name: rustfmt (advisory)
+    name: rustfmt
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
@@ -199,18 +203,19 @@ jobs:
           toolchain: "1.83.0"
           components: rustfmt
       # NOTE: the annotation is capped at six diffs, so a run showing six is a *truncated list*, not the
-      # whole problem. Clearing six reveals six more; that is how this step behaved on 2026-11-23.
+      # whole problem. That is what made clearing this gate slow on 2026-11-23: each round of six revealed
+      # six more, across eleven files. If it goes red again, clear the file this job names *whole*, at the
+      # width this rustfmt uses, instead of chasing hunks.
       #
-      # This job is advisory because the build sandbox has no Rust toolchain, so a formatter change cannot
-      # be verified before it is pushed -- and a different rustfmt version (`cargo fmt` inside the pinned
-      # 1.83.0 toolchain here) disagrees materially with an older bundled one. If this gate is ever armed,
-      # fix it in one sweep from this job's own diff rather than guessing.
+      # Two traps, both hit for real:
+      #  * the sandbox has no Rust toolchain, so a formatter edit cannot be checked before it is pushed;
+      #  * an older bundled rustfmt disagrees with this pinned one (it splits `Elements { e: 1.5, ..el }`
+      #    where 1.83.0 keeps it on one line), so it is not a safe oracle for a file that is already green.
       - run: bash ci/annotate.sh "rustfmt" cargo fmt --all -- --check
 
   clippy:
-    name: clippy (advisory)
+    name: clippy
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master

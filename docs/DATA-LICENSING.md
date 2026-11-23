@@ -120,17 +120,43 @@ of sync with the data that requires it.
 
 ### 3.3 The catalogue is a *survey backend*, not a table
 
-```
-trait Survey {
-  fn cone_search(&self, ra: Rad, dec: Rad, radius: Rad) -> StarTile;  // carries σ per field
-  fn provenance(&self) -> &Prov;      // every field's uncertainty, as first-class data
+```rust
+pub trait Survey {
+    fn cone_search<'a>(
+        &self,
+        ra_rad: f64,
+        dec_rad: f64,
+        radius_rad: f64,
+        out: &'a mut [Star],
+    ) -> Result<StarTile<'a>, SurveyError>;
+    fn dataset(&self) -> &'static str;   // which catalogue this is, so a backend can be matched to its class
+    fn redistributable(&self) -> bool;   // the §3.2 rule, as data rather than as a comment
 }
 ```
 
 `Survey` is the seam. Tier-0 backends ship; Tier-1 backends are loadable by a player who obtains them
 himself (that is his licence, not ours). The engine never knows which one it is talking to — and because
-every field carries a `Prov` node (`VISION.md` §3, law 2), **a star's distance uncertainty is a game
-quantity, not a hidden metadata field.** Which is the point of §4.
+every field of `Star` carries a `Quantity { value, prov, sigma }` (`VISION.md` §3, law 2), **a star's
+distance uncertainty is a game quantity, not a hidden metadata field.** Which is the point of §4.
+
+Three details of this signature are deliberate, and each replaces something this section used to say:
+
+- **There is no output buffer in the sketch this section previously carried, and there has to be.** The
+  kernel is `#![no_std]`, so it has no allocator, so a backend cannot return a slice it just built. The
+  caller owns the buffer and the tile borrows *it*. The lifetime parameter is what stops a second search
+  overwriting stars the caller is still reading — the borrow checker enforces the rule rather than a
+  comment asking for it.
+- **Uncertainty is per field, not a `provenance()` accessor.** `fn provenance(&self) -> &Prov` forced one
+  answer for a whole tile, when the true answer differs field by field: a star's direction may be
+  measured to the arcsecond while its distance is unknown, and `Quantity::unknown()` says so without
+  pretending the distance is zero. Zero would be a claim that the star does not move.
+- **`redistributable()` makes §3.2 rule 2 testable.** `admits(BuildProfile::Release, backend)` refuses a
+  non-redistributable backend, and because it is a function of an argument rather than of `cfg!`, both
+  branches run in one test suite instead of one branch being dead at build time.
+
+`Rad` is gone from the sketch: no such type exists in the workspace. Angles are `f64` radians, and the
+seam refuses a cone wider than a hemisphere — the caller who wants the whole sky is asking a different
+question, and intersecting a >½π cone would make the answer depend on the direction passed.
 
 ---
 

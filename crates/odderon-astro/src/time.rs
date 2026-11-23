@@ -15,7 +15,7 @@
 //! ```
 //!
 //! * **UTC** is what a clock reads. It has 60-second minutes and, historically, 61-second minutes.
-//! * **TAI** is a uniform atomic count with no leap seconds. `TAI − UTC` is 37 s as of 2017-01-01, and it
+//! * **TAI** is a uniform atomic count with no leap seconds. `TAI − UTC` is 37 s since 2017-01-01, and it
 //!   only ever increases.
 //! * **TT** is TAI + 32.184 s, by definition — the offset is the epoch difference between the atomic and
 //!   dynamical timescales, not an observation.
@@ -39,6 +39,13 @@
 //!   integer steps — it was a rubber-second system with fractional offsets. This module therefore
 //!   **refuses** to convert dates before 1972 rather than extrapolate the table backwards and produce a
 //!   number that looks authoritative.
+//! * **The two ends of that range are different questions**, and conflating them was a real bug. The last
+//!   *row* of [`LEAP_SECONDS`] is 2017-01-01: the instant 37 s became current. How far the offset is known is
+//!   a separate claim, published by the IERS, and it runs to the end of 2026 — a span of nine years in which
+//!   no leap second was inserted, the longest such gap since the system began. A table row cannot express
+//!   "and nothing changed for nine years", so [`TAI_UTC_COVERED_THROUGH`] states the coverage and
+//!   [`TAI_UTC_PINNED_THROUGH`] states the span over which the last row's value still applies. Bounding at
+//!   2017 would have refused every date in the game's own present.
 //! * **TDB − TT: modelled to 1.658 ms** with the leading periodic term. The full expression is a
 //!   Fairhead–Bretagnon series; the leading term captures the amplitude to a few tens of microseconds, and
 //!   the residual is stated rather than implied.
@@ -52,10 +59,15 @@
 //! ## The future, which is the interesting part
 //!
 //! A game clock runs into the future, and leap seconds are not scheduled — they are announced about six
-//! months ahead. So a conversion for a date after the table's end is not a computation, it is a **guess**,
-//! and this module says so in the type: [`TimeError::BeyondLeapSecondTable`]. The caller can then decide
-//! whether to present a time as provisional. A simulation that quietly extrapolated would show a player a
-//! mission scheduled to the second, 40 years out, whose error is unknown and growing.
+//! months ahead. So a conversion for a date beyond the announced range is not a computation, it is a
+//! **guess**, and this module says so in the type: [`TimeError::BeyondLeapSecondTable`]. The caller can then
+//! decide whether to present a time as provisional. A simulation that quietly extrapolated would show a
+//! player a mission scheduled to the second, 40 years out, whose error is unknown and growing.
+//!
+//! The announcement is what makes the covered range a fact rather than a guess, and it is also what makes it
+//! *finite*. Extending it means going back to IERS Bulletin C, not assuming the current offset persists: the
+//! next possible insertion date after 2026-12-31 is 2027-06-30, and continuous UTC takes effect 2027-05-20,
+//! so the question stops being askable in this form almost immediately after the range ends.
 
 use odderon_dmath::sin;
 
@@ -92,7 +104,7 @@ pub struct Civil {
 pub enum Scale {
     /// Coordinated Universal Time: the civil clock, with leap seconds.
     Utc,
-    /// International Atomic Time: uniform, no leap seconds. `TAI − UTC = 37 s` from 2017-01-01.
+    /// International Atomic Time: uniform, no leap seconds. `TAI − UTC = 37 s` from 2017-01-01 to 2026-12-31.
     Tai,
     /// Terrestrial Time: `TAI + 32.184 s`. What geocentric ephemerides are tabulated in.
     Tt,
@@ -112,7 +124,7 @@ pub enum TimeError {
     /// The date is before 1972-01-01, where UTC was a rubber-second system and integer leap seconds are the
     /// wrong model. Refused rather than extrapolated.
     BeforeLeapSecondEra,
-    /// The date is beyond the end of the shipped leap-second table.
+    /// The date is beyond the end of the range whose offset is announced.
     ///
     /// Not an error in the arithmetic: it is the statement that nobody has *announced* the leap seconds for
     /// that date yet. A caller that presents the result must present it as provisional.
@@ -124,7 +136,8 @@ pub enum TimeError {
     BadCivil,
     /// `second == 60` on a day on which the table records no leap second.
     ///
-    /// Accepted on a leap day and refused otherwise. An invented `23:59:60` is not a second of extra time,
+    /// Accepted on a leap day and refused otherwise. (A `:60` at any hour other than 23:59 is not this
+    /// variant — it is malformed input, and [`Civil::new`] refuses it as [`TimeError::BadCivil`].) An invented `23:59:60` is not a second of extra time,
     /// it is a *second name* for an instant that already has one — the following midnight — and converting it
     /// would silently make two civil readings denote the same moment, which is the exact ambiguity the
     /// leap-second table exists to remove. Modelling a leap second that was never inserted is a claim about
@@ -140,7 +153,7 @@ pub enum TimeError {
 ///
 /// Public, because the table is *data the caller may need to present*, not an implementation detail.
 /// Anything that shows a UTC clock has to be able to say "this conversion is authoritative through
-/// 2017-01-01 and provisional after", and it cannot say that if the table is private.
+/// 2026-12-31 and provisional after", and it cannot say that if the table is private.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LeapSecond {
     /// Year the offset took effect, UTC.
@@ -157,12 +170,17 @@ pub struct LeapSecond {
 ///
 /// Each row reads "from this UTC date onwards, `TAI − UTC` is this many seconds". The first row is the 1972
 /// baseline of 10 s, and the last is 2017-01-01, where the offset became 37 s. Twenty-seven leap seconds have
-/// been inserted since the baseline, so there are 28 rows, and the table has been unchanged since 2017 — the
-/// longest gap in its history.
+/// been inserted since the baseline, so there are 28 rows.
 ///
-/// **This is data, not physics.** It ships as a constant because it is short and stable, but it expires: a
-/// table ending in 2017 is correct for every date up to 2017-01-01 and *unknown* after the last announced
-/// leap second. The module treats "after the table" as a distinct answer from "in the table", never as an
+/// **A row marks an instant, not a span.** The last row says 37 s became current on 2017-01-01; it does not
+/// say 37 s stayed current, because a table of changes cannot state an absence of changes. That the value did
+/// stay current to the end of 2026 comes from the IERS announcement and is recorded in
+/// [`TAI_UTC_COVERED_THROUGH`] and [`TAI_UTC_PINNED_THROUGH`]. Reading the last row as the end of the table's
+/// authority — which this file did until it was noticed — makes the module refuse every date after 2017-01-01,
+/// including the present.
+///
+/// **This is data, not physics.** It ships as a constant because it is short and stable, but it expires: the
+/// module treats "beyond the announced range" as a distinct answer from "in the range", never as an
 /// extrapolation.
 // Skipped by rustfmt on purpose: one row per line is the whole point of this table, and the alternative the
 // formatter prefers (a row's fields across four lines) makes 28 dates unreadable and any typo invisible.
@@ -198,14 +216,51 @@ pub const LEAP_SECONDS: [LeapSecond; 28] = [
     LeapSecond { year: 2017, month: 1, day: 1, tai_minus_utc: 37 },
 ];
 
-/// The last date the shipped table covers: 2017-01-01.
+/// The last **date** whose `TAI − UTC` offset is announced: the end of 2026.
 ///
-/// After this, `TAI − UTC` is *known to be at least* 37 s and *not known* to be exactly 37, which is a
-/// different statement from "37". Every date up to and including this one converts; the day after does not.
-pub const LEAP_TABLE_ENDS: Civil = Civil {
-    year: 2017,
-    month: 1,
-    day: 1,
+/// Every date up to and including this one converts; the day after does not. Two different facts used to be
+/// conflated in this constant, and separating them is what lets the clock work in the game's own present:
+///
+/// * [`LEAP_SECONDS`]'s last row is 2017-01-01, and a table row is an **instant** — the moment an offset
+///   took effect — not a span. So the table's last row says nothing about the offset on 2017-01-02, even
+///   though the value happens to be the same.
+/// * That the offset *went on being* 37 s is a separate fact, and it is announced, not assumed: IERS
+///   Bulletin C 72 (2026-07-06) states no leap second at the end of December 2026 and records
+///   `UTC − TAI = −37 s` from 2017-01-01 "until further notice". Nine years elapsed with no leap second,
+///   which is the longest such gap since the system began.
+///
+/// So this constant is bounded by **coverage of the announcement**, not by the last leap second. Bounding it
+/// at 2017 would refuse every date in the present, and this project's own rule forbids passing a number off
+/// as measured when nobody measured it — but it equally forbids calling an announced value a guess.
+///
+/// 2026-12-31 is a *real* boundary rather than a convenient one: the next possible insertion date after it is
+/// 2027-06-30, and continuous UTC takes effect 2027-05-20 (CGPM Resolution 5, 2026), so 2027-01-01 is the day
+/// after which the leap-second question stops being askable in this form. Whoever extends this must re-derive
+/// [`TAI_UTC_PINNED_THROUGH`] rather than assuming the pinning continues.
+pub const TAI_UTC_COVERED_THROUGH: Civil = Civil {
+    year: 2026,
+    month: 12,
+    day: 31,
+    hour: 0,
+    minute: 0,
+    second: 0,
+    fraction: 0.0,
+};
+
+/// The last date of the announced **zero-leap-second span**, 2017-01-01 through 2026-12-31.
+///
+/// At the time of writing the offset is the same on every date in that span (37 s), which is why the entry in
+/// [`LEAP_SECONDS`] for 2017-01-01 serves the whole of it. That is a property someone observed and recorded
+/// here, not one the table encodes: a table row cannot say "and nothing changed for ten years".
+///
+/// Split from [`TAI_UTC_COVERED_THROUGH`] on purpose. If an announcement ever inserts a leap second inside a
+/// pinned span, this constant is the one that is *false*, and it is a compile error two lines below rather
+/// than a wrong second handed to a player. If the span simply ends — as it does after 2026 — the other
+/// constant moves and this one does not.
+pub const TAI_UTC_PINNED_THROUGH: Civil = Civil {
+    year: 2026,
+    month: 12,
+    day: 31,
     hour: 0,
     minute: 0,
     second: 0,
@@ -256,12 +311,35 @@ fn civil_from_days(days: i64) -> (i32, u8, u8) {
     (year as i32, m as u8, d as u8)
 }
 
-/// The day number of the last date the table covers: 2017-01-01 is 17 167 days after 1970-01-01.
+/// The day number of [`TAI_UTC_COVERED_THROUGH`]: 2026-12-31 is 20 818 days after 1970-01-01.
 ///
 /// A literal, not a call to [`days_from_civil`], so that the two can disagree and a check can notice. A
 /// constant that derives its own index cannot be wrong in a way anything detects; this one is cross-checked
 /// against the calendar by the `const _` block below *and* by a test.
-const LEAP_TABLE_END_DAY: i64 = 17_167;
+const TAI_UTC_COVERED_THROUGH_DAY: i64 = 20_818;
+
+// The pinned span's two day numbers are asserted inline in the `const _` block below rather than given named
+// constants, because nothing at run time consults them: `beyond_table` and the inverse both use the *covered*
+// boundary. A named constant with no consumer is dead code, which this crate denies, and the property worth
+// keeping is only that the literals be checked against the calendar — which a literal in an `assert!` does.
+
+/// The first day of the announced zero-leap-second span: the date `LEAP_SECONDS`'s last row takes effect.
+///
+/// Named because the compile-time checks below need it as a *date* rather than as "the table's last row",
+/// and because the distinction is the whole point of this section: a row is an instant, a span is a claim.
+///
+/// Public so a test can assert that the span starts where the table's last row does, and so a UI can describe
+/// the range it is showing. It has no run-time consumer inside the module, which is why the two day-number
+/// literals below it stay literals: a named constant nothing calls is dead code.
+pub const TAI_UTC_PINNED_START: Civil = Civil {
+    year: 2017,
+    month: 1,
+    day: 1,
+    hour: 0,
+    minute: 0,
+    second: 0,
+    fraction: 0.0,
+};
 
 /// A calendar date's day number, at compile time — used only to check the table while the compiler is running.
 const fn day_of(year: i32, month: u8, day: u8) -> i64 {
@@ -285,19 +363,55 @@ const _: () = {
         i += 1;
     }
     let last = LEAP_SECONDS[27];
-    let last_day = day_of(last.year, last.month, last.day);
-    // The declared end of the table is its last row — the claim `LEAP_TABLE_ENDS` makes in prose, made in
-    // code so it cannot drift.
+    let last_row_day = day_of(last.year, last.month, last.day);
+
+    // The table's last row is 2017-01-01, the first day of the pinned span.
+    assert!(last_row_day == day_of(2017, 1, 1));
+
+    // THE STALE-ASSUMPTION CHECK. The pinning below is only true while the table's last row is the *start* of
+    // the span — i.e. while no leap second was inserted inside it. Appending a row dated within the span makes
+    // the last row later than the span's start, and this stops compiling. The fix when that happens is to
+    // shorten `TAI_UTC_PINNED_THROUGH` to the day before the new row, never to delete this assertion: an
+    // inserted second is exactly the event that makes a "nothing changed here" claim false.
     assert!(
-        last_day
+        last_row_day
             == day_of(
-                LEAP_TABLE_ENDS.year,
-                LEAP_TABLE_ENDS.month,
-                LEAP_TABLE_ENDS.day
+                TAI_UTC_PINNED_START.year,
+                TAI_UTC_PINNED_START.month,
+                TAI_UTC_PINNED_START.day
             )
     );
-    // And the hand-written day number the converter uses is that same day.
-    assert!(last_day == LEAP_TABLE_END_DAY);
+
+    // Coverage cannot end before the pinning does, or a date known to be pinned would be refused. Coverage may
+    // end later: an announced no-change extends it without adding a row.
+    assert!(
+        day_of(
+            TAI_UTC_COVERED_THROUGH.year,
+            TAI_UTC_COVERED_THROUGH.month,
+            TAI_UTC_COVERED_THROUGH.day
+        ) >= day_of(
+            TAI_UTC_PINNED_START.year,
+            TAI_UTC_PINNED_START.month,
+            TAI_UTC_PINNED_START.day
+        )
+    );
+
+    // The hand-written day numbers the converter compares against are the documented dates.
+    assert!(
+        day_of(
+            TAI_UTC_COVERED_THROUGH.year,
+            TAI_UTC_COVERED_THROUGH.month,
+            TAI_UTC_COVERED_THROUGH.day
+        ) == TAI_UTC_COVERED_THROUGH_DAY
+    );
+    assert!(last_row_day == 17_167);
+    assert!(
+        day_of(
+            TAI_UTC_PINNED_THROUGH.year,
+            TAI_UTC_PINNED_THROUGH.month,
+            TAI_UTC_PINNED_THROUGH.day
+        ) == 20_818
+    );
 };
 
 impl Civil {
@@ -319,6 +433,14 @@ impl Civil {
             return Err(TimeError::BadCivil);
         }
         if hour > 23 || minute > 59 || second > 60 {
+            return Err(TimeError::BadCivil);
+        }
+        // A `:60` is only ever the last second of the last minute of a day: that is where a leap second is
+        // inserted. Refused here rather than later, because `utc_to_tdb` would answer `NoLeapSecondOnThisDay`
+        // for `13:00:60` — an error about the *day* for a fault in the *time of day*, which sends whoever reads
+        // it looking in the wrong place. Whether this day actually had a leap second is still the table's
+        // question, asked at conversion.
+        if second == 60 && (hour != 23 || minute != 59) {
             return Err(TimeError::BadCivil);
         }
         if !(0.0..1.0).contains(&fraction) {
@@ -418,15 +540,15 @@ fn tai_minus_utc_at(days: i64) -> Result<i32, TimeError> {
     Ok(offset)
 }
 
-/// True when the date is beyond the shipped table's authority.
+/// True when the date is beyond the range whose offset is announced.
 ///
-/// The last date *in* the table is inclusive: at 2017-01-01T00:00:00 the offset that row establishes is in
-/// force, and that is a fact the table states. What is unknown is any date after it, because no later leap
-/// second has been announced. The comparison is therefore `>` and not `>=`; `>=` would make the table's own
-/// last row unconvertible, which is the sort of off-by-one that reads as "the table is stale" rather than as
+/// The last covered date is inclusive: at 2026-12-31T00:00:00 the announced offset is in force, and that is a
+/// fact the IERS states. What is unknown is any date after it, because no later leap second has been
+/// announced. The comparison is therefore `>` and not `>=`; `>=` would make the announced
+/// last date unconvertible, which is the sort of off-by-one that reads as "the table is stale" rather than as
 /// a bug.
 fn beyond_table(days: i64) -> bool {
-    days > LEAP_TABLE_END_DAY
+    days > TAI_UTC_COVERED_THROUGH_DAY
 }
 
 /// The TAI count — seconds since 1970-01-01T00:00:00 TAI — at the start of a UTC day.
@@ -562,10 +684,11 @@ fn floor_div(numerator: f64, denominator: f64) -> f64 {
 /// * [`TimeError::BeforeLeapSecondEra`] — before 1972-01-01. UTC then was a rubber-second system with
 ///   fractional offsets, and the integer table is the wrong model. Refused rather than extrapolated
 ///   backwards, because a plausible number is worse than no number.
-/// * [`TimeError::BeyondLeapSecondTable`] — after 2017-01-01. **Deliberately an error rather than an
-///   extrapolation.** Leap seconds are announced about six months ahead; a date past the table is not a
-///   computation, it is a guess, and a caller has to be able to see that in order to present it as
-///   provisional. The variant carries the table's end so the message can say *when* it stops.
+/// * [`TimeError::BeyondLeapSecondTable`] — after 2026-12-31, the end of the announced range. **Deliberately
+///   an error rather than an extrapolation.** Leap seconds are announced about six months ahead; a date past
+///   the last announcement is not a computation, it is a guess, and a caller has to be able to see that in
+///   order to present it as provisional. The variant carries the range's end so the message can say *when* it
+///   stops.
 /// * [`TimeError::NoLeapSecondOnThisDay`] — a `23:59:60` on a day the table records no leap second.
 ///
 /// ## Why the arithmetic is in this order
@@ -579,7 +702,7 @@ pub fn utc_to_tdb(civil: &Civil) -> Result<f64, TimeError> {
     let days = civil.days_since_1970();
     if beyond_table(days) {
         return Err(TimeError::BeyondLeapSecondTable {
-            table_ends: LEAP_TABLE_ENDS,
+            table_ends: TAI_UTC_COVERED_THROUGH,
         });
     }
     let offset = tai_minus_utc_at(days)?;
@@ -615,7 +738,7 @@ pub fn utc_to_tdb(civil: &Civil) -> Result<f64, TimeError> {
 /// function is a bijection on the instants it can produce, which is the property the tests pin.
 ///
 /// The refusals are the same three the forward conversion makes, and for the same reasons: `BeforeLeapSecondEra`
-/// outside 1972–2017, `BeyondLeapSecondTable` past the last row (carrying its date so a UI can show it), and
+/// outside 1972–2026, `BeyondLeapSecondTable` past the covered range (carrying its end date so a UI can show it), and
 /// `BadCivil` for a non-finite input or an instant that cannot be represented. The directions are symmetric on
 /// purpose — an inverse that could produce a civil reading the forward conversion refuses would let a caller
 /// manufacture a date the module claims not to support.
@@ -637,10 +760,10 @@ pub fn tdb_to_utc(tdb_seconds_since_j2000: f64) -> Result<Civil, TimeError> {
     let guess = floor_div(tai, SECONDS_PER_DAY) as i64;
 
     for day in [guess - 1, guess, guess + 1] {
-        // A day past the table must be skipped, not converted. `tai_minus_utc_at` would happily answer for
-        // 2017-01-02 — the last published offset is still the best guess for it — and the inverse would then
-        // produce a civil reading for exactly the dates the forward conversion refuses, which is how a module
-        // ends up with a gate that only works in one direction.
+        // A day beyond the announced range must be skipped, not converted. `tai_minus_utc_at` would happily
+        // answer for a date past it — the last published offset is the best guess available — and the inverse
+        // would then produce a civil reading for exactly the dates the forward conversion refuses, which is how
+        // a module ends up with a gate that only works in one direction.
         if beyond_table(day) {
             continue;
         }
@@ -680,14 +803,17 @@ pub fn tdb_to_utc(tdb_seconds_since_j2000: f64) -> Result<Civil, TimeError> {
     // flag set during it depends on which of three days happened to be in range, and an instant one second past
     // the end would then be reported as malformed instead of as provisional.
     let first = tai_start_of_day(days_from_civil(1972, 1, 1)).unwrap_or(0.0);
-    let last = tai_start_of_day(LEAP_TABLE_END_DAY).unwrap_or(first)
+    // The end of the *covered* span, not of the pinned one. `leap_seconds_on` answers 0 everywhere inside the
+    // pinning, which is correct here: no leap second was inserted inside it. Using the covered boundary keeps
+    // this consistent with `beyond_table`, so the inverse cannot answer for a date the forward refuses.
+    let last = tai_start_of_day(TAI_UTC_COVERED_THROUGH_DAY).unwrap_or(first)
         + SECONDS_PER_DAY
-        + leap_seconds_on(LEAP_TABLE_END_DAY) as f64;
+        + leap_seconds_on(TAI_UTC_COVERED_THROUGH_DAY) as f64;
     if tai < first {
         Err(TimeError::BeforeLeapSecondEra)
     } else if tai >= last {
         Err(TimeError::BeyondLeapSecondTable {
-            table_ends: LEAP_TABLE_ENDS,
+            table_ends: TAI_UTC_COVERED_THROUGH,
         })
     } else {
         Err(TimeError::BadCivil)
