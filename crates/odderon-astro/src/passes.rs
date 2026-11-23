@@ -467,6 +467,7 @@ impl Elevation<'_> {
 ///
 /// The window bounds *rises*, not passes. Distinguishing "no pass in the next 90 minutes" from "no pass
 /// *starting* in the next 90 minutes" is the difference between a scheduler and a guess.
+#[allow(clippy::too_many_arguments)]
 pub fn next_pass(
     body: &Body,
     site: &Site,

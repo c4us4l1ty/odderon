@@ -940,10 +940,15 @@ fn oblateness_changes_the_beat_between_passes() {
 
     let first_j2 = find(&EARTH, 0.0);
     let first_flat = find(&spherical, 0.0);
-    // At the epoch the perturbation has had no time to act, so the two agree to well under a second.
+
+    // Both models must still identify the *same* pass: the perturbation is a fraction of a beat, not a
+    // different pass. Measured −17.6 s here, on a beat of 5936 s — 0.3 %. (Not zero, and the reason is worth
+    // stating: the first pass is 49 minutes after the epoch, and over 49 minutes the mean longitude has already
+    // advanced by about half a degree, which is ~9 s of pass timing. An assertion of equality would have been
+    // an assertion that the perturbation does nothing, which is the bug this change exists to fix.)
     assert!(
-        (first_j2.rise - first_flat.rise).abs() < 1.0,
-        "the first pass must be the same pass under both models, got {:+.3} s",
+        (first_j2.rise - first_flat.rise).abs() < 60.0,
+        "both models must find the same pass, not a different one; they differ by {:+.2} s",
         first_j2.rise - first_flat.rise
     );
 
@@ -977,13 +982,20 @@ fn oblateness_changes_the_beat_between_passes() {
 /// axis: rotating a position about its own orbit normal leaves it unchanged, so a wrong axis looks like a
 /// working zero.
 #[test]
-fn no_j2_means_no_perturbation() {
-    let site = Site::from_geodetic(&EARTH, 30.0 * DEG, 0.0, 0.0).expect("site");
+fn zero_j2_is_exactly_the_two_body_path() {
+    let site = equatorial_site();
     let state = overhead_state(&site, 400.0, 0.0);
     let (window, step) = guards(&EARTH, RE + 400.0);
 
-    let with_j2 = next_pass(
-        &EARTH,
+    // A body with a *known, zero* J2 — a different code path from `NotKnown`, because the perturbation is
+    // computed and must then be the identity.
+    let mut flat = EARTH;
+    flat.physical.j2 = odderon_astro::provenance::Lookup::Known(
+        odderon_astro::provenance::Quantity::defined(0.0).expect("zero is finite"),
+    );
+
+    let perturbed = next_pass(
+        &flat,
         &site,
         &EARTH_FRAME,
         &state,
@@ -996,14 +1008,7 @@ fn no_j2_means_no_perturbation() {
     )
     .expect("no error")
     .expect("a pass");
-
-    // J2 = 0 in the catalogue: still `Known`, but zero. The perturbation then computes to zero rather than
-    // being skipped, which is a different code path from `NotKnown`.
-    let mut flat = EARTH;
-    flat.physical.j2 = odderon_astro::provenance::Lookup::Known(
-        odderon_astro::provenance::Quantity::defined(0.0).expect("zero is finite"),
-    );
-    let without = next_pass(
+    let exact = next_pass_exact_geometry(
         &flat,
         &site,
         &EARTH_FRAME,
@@ -1018,13 +1023,18 @@ fn no_j2_means_no_perturbation() {
     .expect("no error")
     .expect("a pass");
 
-    // Within a single pass from the epoch the two agree to well under a second, because the perturbation has
-    // had almost no time to act. If it never vanishes, something else is wrong.
-    assert!(
-        (with_j2.rise - without.rise).abs() < 1.0,
-        "at the epoch a J2 perturbed and an unperturbed search must agree, got {:+.3} s",
-        with_j2.rise - without.rise
+    // Exactly equal, not merely close. At `J2 = 0` the rates are zero and a rotation by zero is the identity
+    // in floating point — `v·1 + (k×v)·0 + k(k·v)·0` reproduces `v` bit for bit. So anything other than an
+    // exact match means a rotation is being applied that should not exist, which is the failure mode that
+    // makes this test worth having: a wrong axis with a zero angle passes every tolerance-based check.
+    assert_eq!(
+        perturbed.rise,
+        exact.rise,
+        "J2 = 0 must reproduce the two-body search bit for bit, got {:+.17e} s",
+        perturbed.rise - exact.rise
     );
+    assert_eq!(perturbed.max_elevation_deg, exact.max_elevation_deg);
+    assert_eq!(perturbed.rise_azimuth_deg, exact.rise_azimuth_deg);
 }
 
 /// A body that does not publish `J2` gets the two-body schedule rather than a guess, and says so by working.
