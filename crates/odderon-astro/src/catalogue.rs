@@ -56,6 +56,17 @@ pub struct Physical {
     pub j2: Lookup<Quantity>,
     /// Sidereal rotation rate, rad/s. Positive for prograde spin.
     pub rotation_rate: Lookup<Quantity>,
+    /// Flattening `f = (a − b)/a`, dimensionless.
+    ///
+    /// Needed the moment anything stands on the surface: a ground station's geodetic latitude is defined
+    /// against the *ellipsoid*, and using a sphere instead puts a station at 45° latitude about **11 km**
+    /// from where it belongs. That is large enough to change an elevation angle by a degree, and small
+    /// enough that nothing crashes.
+    ///
+    /// `NotKnown` rather than `0` for a sphere-like body, because a zero flattening is a positive claim
+    /// that the body *is* an oblate spheroid with zero oblateness — a different statement from "we have not
+    /// measured its shape".
+    pub flattening: Lookup<Quantity>,
 }
 
 /// A body the kernel can propagate around.
@@ -153,6 +164,12 @@ pub const EARTH: Body = Body {
             prov: crate::provenance::Prov::Defined,
             sigma: 0.0,
         }),
+        // WGS-84 defines 1/f = 298.257223563 exactly, so this is a defined constant, not an observation.
+        flattening: Lookup::Known(Quantity {
+            value: 1.0 / 298.257_223_563,
+            prov: crate::provenance::Prov::Defined,
+            sigma: 0.0,
+        }),
     },
 };
 
@@ -194,6 +211,14 @@ pub const MOON: Body = Body {
             },
             sigma: 0.0,
         }),
+        // The Moon's polar radius is (very nearly) its equatorial one: f = 0.0012. A ground station on the
+        // Moon is a placeholder for later, and treating it as a sphere costs 4 km, well inside the accuracy
+        // of everything else here.
+        flattening: Lookup::Known(Quantity {
+            value: 0.0012,
+            prov: crate::provenance::Prov::Measured { sigma: 0.0001 },
+            sigma: 0.0001,
+        }),
     },
 };
 
@@ -232,6 +257,13 @@ pub const MARS: Body = Body {
             },
             sigma: 0.0,
         }),
+        // Mars is the most oblate of the inner planets: f ≈ 0.00589, a difference of 40 km between polar
+        // and equatorial radius. Not negligible, and known well enough to state.
+        flattening: Lookup::Known(Quantity {
+            value: 0.005_89,
+            prov: crate::provenance::Prov::Measured { sigma: 0.000_01 },
+            sigma: 0.000_01,
+        }),
     },
 };
 
@@ -258,6 +290,11 @@ pub const SUN: Body = Body {
         },
         rotation_rate: Lookup::NotKnown {
             reason: "differential-rotation",
+        },
+        // The Sun is extremely close to spherical (f ≈ 9e-6) and its shape is not settled. Recorded as
+        // unknown for the same reason as its J2.
+        flattening: Lookup::NotKnown {
+            reason: "solar-oblateness-unsettled",
         },
     },
 };

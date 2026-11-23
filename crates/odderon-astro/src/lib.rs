@@ -68,6 +68,9 @@ pub(crate) fn is_positive_finite(x: f64) -> bool {
     x > 0.0 && x.is_finite()
 }
 
+/// Ground stations and look angles: elevation, azimuth, range, and the geometric horizon.
+pub mod observe;
+
 /// Body-fixed frames: the rotation that turns an inertial position into a place on the surface.
 pub mod frames;
 
