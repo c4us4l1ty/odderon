@@ -48,9 +48,17 @@ function scaffold() {
   cpSync(resolve(root, "tools/check-classes.mjs"), join(work, "tools/check-classes.mjs"));
   mkdirSync(join(work, "src"), { recursive: true });
   mkdirSync(join(work, "crates/odderon-astro/src"), { recursive: true });
-  // The one file a record claims to implement, so the clean case is clean: `body-constants` really is
-  // `catalogue.rs`, and the scaffold has to contain the path it names or R4 would fire on every case.
-  writeFileSync(join(work, "crates/odderon-astro/src/catalogue.rs"), "//! The body catalogue, in miniature.\n");
+  // Every path any record claims to implement, so the clean case is clean: the scaffold has to contain the
+  // files the base list names or R4 would fire on every case. Derived from the list rather than hardcoded,
+  // because a hardcoded `catalogue.rs` made this self-test fail the moment a second record was added that
+  // implemented something else -- a gate that breaks when the thing it guards grows is a gate nobody keeps.
+  for (const record of base.records ?? []) {
+    for (const target of record.implements ?? []) {
+      const file = join(work, target);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, "//! Stated in miniature, for the checker to find.\n");
+    }
+  }
   mkdirSync(join(work, "docs"), { recursive: true });
   writeFileSync(
     join(work, "crates/odderon-astro/src/lib.rs"),

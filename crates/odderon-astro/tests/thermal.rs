@@ -365,7 +365,7 @@ fn the_stability_bound_is_the_bound() {
     // Well outside: must not converge, and specifically must not sit at a plausible temperature.
     let diverged = run(bound * 3.0);
     assert!(
-        !(diverged - expected).abs() < 1.0,
+        (diverged - expected).abs() >= 1.0 || diverged.is_nan(),
         "outside the bound it must not converge: {diverged:.1} K vs {expected:.1} K"
     );
 }

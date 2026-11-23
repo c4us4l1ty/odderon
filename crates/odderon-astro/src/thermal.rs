@@ -384,10 +384,10 @@ pub fn radiative_rejection(
     {
         return None;
     }
-    if !(area_m2 >= 0.0)
+    if area_m2 < 0.0
         || !(0.0..=1.0).contains(&emissivity)
-        || !(surface_k > 0.0)
-        || !(surroundings_k > 0.0)
+        || surface_k <= 0.0
+        || surroundings_k <= 0.0
     {
         return None;
     }
@@ -414,15 +414,15 @@ pub fn radiator_temperature(
     {
         return None;
     }
-    if !(heat_load_w >= 0.0)
-        || !(area_m2 > 0.0)
+    if heat_load_w < 0.0
+        || area_m2 <= 0.0
         || !(0.0..=1.0).contains(&emissivity)
-        || !(surroundings_k > 0.0)
+        || surroundings_k <= 0.0
     {
         return None;
     }
     let base = heat_load_w / (emissivity * STEFAN_BOLTZMANN * area_m2) + pow(surroundings_k, 4.0);
-    if !(base > 0.0) {
+    if base <= 0.0 {
         return None;
     }
     Some(pow(base, 0.25))
@@ -451,4 +451,3 @@ pub fn first_order_fraction_remaining(tau_s: f64, elapsed_s: f64) -> Option<f64>
     }
     Some(exp(-elapsed_s / tau_s))
 }
-
