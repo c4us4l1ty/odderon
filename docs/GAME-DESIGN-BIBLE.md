@@ -669,6 +669,12 @@ physics engine** — and we have shipped one solver instead of two games.
 This is also why the room can be modelled to absurd fidelity without any bespoke content: fidelity is
 a property of the solver, and the solver is the whole game.
 
+*Measured, not quoted.* The numbers above are now produced by `crates/odderon-astro/src/thermal.rs` and
+checked in `tests/thermal.rs`: 1440 W open and 120 W closed exactly, a draw of **464 W falling to 190 W**
+(a 59 % drop), and **5.9 K in the first ten minutes** against a 44.4 min time constant. The 5.9 K chose the
+zone's 120 kJ/K heat capacity — a room's air is ~30 kJ/K and would swing tens of kelvin a minute, so the
+effective capacity of a furnished room is where the "minutes" in this paragraph comes from.
+
 ---
 
 ## 7. Failure design
