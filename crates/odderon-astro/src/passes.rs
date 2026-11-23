@@ -431,7 +431,11 @@ impl Elevation<'_> {
     }
 }
 
-/// Find the first pass above `mask_elevation_deg` that starts in `[search_from, search_from + window_s)`.
+/// Find the first pass above `mask_elevation_deg`, **including the oblateness**.
+///
+/// This is the answer a scheduler wants: the node regresses at −5.0023°/day at 400 km / 51.6°, so a station's
+/// pass geometry is a different sky after a day. [`next_pass_exact_geometry`] is the same search without the
+/// perturbation, for the cases where the closed-form geometry is what is being checked.
 ///
 /// `state` is the target's inertial position and velocity at absolute time `state_epoch`; `search_from` and
 /// the returned window are both absolute times (seconds past J2000), so the caller does no epoch arithmetic.
@@ -463,7 +467,6 @@ impl Elevation<'_> {
 ///
 /// The window bounds *rises*, not passes. Distinguishing "no pass in the next 90 minutes" from "no pass
 /// *starting* in the next 90 minutes" is the difference between a scheduler and a guess.
-#[allow(clippy::too_many_arguments)]
 pub fn next_pass(
     body: &Body,
     site: &Site,
@@ -475,6 +478,78 @@ pub fn next_pass(
     search_from: f64,
     window_s: f64,
     step_s: f64,
+) -> Result<Option<PassWindow>, PassError> {
+    search(
+        body,
+        site,
+        frame,
+        state,
+        state_epoch,
+        mu,
+        mask_elevation_deg,
+        search_from,
+        window_s,
+        step_s,
+        true,
+    )
+}
+
+/// The same search **without** the oblateness — two-body geometry, exactly as this module was before `J2`.
+///
+/// This exists because the two questions are both legitimate and have different answers. "When is the next
+/// pass?" wants the perturbation. "Does the pass duration match `2θ/(n − ω)`?" is a question about closed-form
+/// *geometry*, and the closed form has no `J2` in it — measuring a perturbed search against it would be
+/// comparing two models rather than validating one.
+///
+/// Measured difference between the two, for a 400 km equatorial orbit: passes repeat every **5936.2388 s**
+/// under two-body and **5918.0468 s** with the oblateness, an 18.19 s change in the beat. That is not a
+/// rounding difference, which is why the distinction had to become explicit rather than being absorbed into one
+/// function.
+#[allow(clippy::too_many_arguments)]
+pub fn next_pass_exact_geometry(
+    body: &Body,
+    site: &Site,
+    frame: &BodyFixed,
+    state: &State,
+    state_epoch: f64,
+    mu: f64,
+    mask_elevation_deg: f64,
+    search_from: f64,
+    window_s: f64,
+    step_s: f64,
+) -> Result<Option<PassWindow>, PassError> {
+    search(
+        body,
+        site,
+        frame,
+        state,
+        state_epoch,
+        mu,
+        mask_elevation_deg,
+        search_from,
+        window_s,
+        step_s,
+        false,
+    )
+}
+
+/// The search itself. `with_perturbation` picks the model; everything else is shared.
+///
+/// One function with a flag rather than two functions with a copied body, because a second copy of a search
+/// that took three rounds of validation is a second thing to drift.
+#[allow(clippy::too_many_arguments)]
+fn search(
+    body: &Body,
+    site: &Site,
+    frame: &BodyFixed,
+    state: &State,
+    state_epoch: f64,
+    mu: f64,
+    mask_elevation_deg: f64,
+    search_from: f64,
+    window_s: f64,
+    step_s: f64,
+    with_perturbation: bool,
 ) -> Result<Option<PassWindow>, PassError> {
     if !state_epoch.is_finite() || !search_from.is_finite() {
         return Err(PassError::BadInput);
@@ -532,7 +607,11 @@ pub fn next_pass(
         state,
         state_epoch,
         mu,
-        perturbation: Perturbation::derive(state, mu, body),
+        perturbation: if with_perturbation {
+            Perturbation::derive(state, mu, body)
+        } else {
+            None
+        },
         evaluations: 0,
     };
 
