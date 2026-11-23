@@ -71,6 +71,13 @@ pub(crate) fn is_positive_finite(x: f64) -> bool {
 /// Pass prediction: when the target rises above the observer's mask, how long it stays up, and when it peaks.
 pub mod passes;
 
+/// The `Survey` seam: how a star catalogue enters the game without being compiled into it.
+///
+/// A trait, not a table. The kernel cannot hold a backend — no allocator, no `unsafe` — so gated data
+/// cannot ship inside the binary even by accident. See the module docs for why that is a structural
+/// guarantee rather than a rule someone has to remember.
+pub mod survey;
+
 /// Time systems: UTC, TAI, TT and TDB, with a leap-second table whose range is declared rather than assumed.
 ///
 /// Kept apart from everything else on purpose. The rest of the kernel takes a `dt` and never asks what time it
