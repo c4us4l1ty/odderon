@@ -197,6 +197,30 @@ function normaliseTaps(s) {
   return s;
 }
 
+// Is KHR_parallel_shader_compile available? On a phone with a slow shader compiler this is the difference
+// between a thirteen-minute frozen main thread and a progress bar that moves.
+//
+// The extension lets `getProgramParameter(prog, COMPLETION_STATUS_KHR)` be polled while the driver compiles
+// on another thread. Without it, `linkProgram` blocks and the browser cannot paint at all - which is
+// exactly the failure this page just had: the panel said "compiling" and the canvas never updated because
+// the main thread never got control back.
+const PARALLEL_COMPILE = gl.getExtension('KHR_parallel_shader_compile');
+const COMPLETION_STATUS_KHR = PARALLEL_COMPILE ? PARALLEL_COMPILE.COMPLETION_STATUS_KHR : null;
+
+/// Resolve when the program has finished compiling, using the parallel extension when it exists.
+///
+/// With the extension, the driver compiles off-thread and this polls - so the page stays responsive and the
+/// progress counter actually advances. Without it there is nothing to wait for that would help: the
+/// synchronous `linkProgram` in `build()` already blocked. This function then returns immediately.
+async function awaitProgram(prog) {
+  if (!PARALLEL_COMPILE) return;
+  // Poll rather than spin: a spin would hold the main thread, which is the whole problem.
+  for (let i = 0; i < 4000; i++) {
+    if (gl.getProgramParameter(prog, COMPLETION_STATUS_KHR)) return;
+    await paint();
+  }
+}
+
 function build(fragSrc, vertSrc) {
   const vs = gl.createShader(gl.VERTEX_SHADER);
   gl.shaderSource(vs, vertSrc); gl.compileShader(vs);
@@ -208,9 +232,21 @@ function build(fragSrc, vertSrc) {
 
   const p = gl.createProgram();
   gl.attachShader(p, vs); gl.attachShader(p, fs); gl.linkProgram(p);
-  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error('link: ' + gl.getProgramInfoLog(p));
   gl.deleteShader(vs); gl.deleteShader(fs);
+  // With KHR_parallel_shader_compile the link is queued and LINK_STATUS is meaningless until it completes.
+  // The caller must `await awaitProgram(p)` and then `assertLinked(p)`. Without the extension,
+  // `linkProgram` has already blocked and this checks immediately, so the synchronous path is unchanged.
+  if (!PARALLEL_COMPILE) assertLinked(p);
   return p;
+}
+
+/// Read the link result, throwing the driver's own message on failure.
+///
+/// Separate from `build()` because with the async extension the answer is not known until later, and a
+/// function that sometimes checks and sometimes does not is how the first version of this returned an
+/// unlinked program to the timer.
+function assertLinked(p) {
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error('link: ' + gl.getProgramInfoLog(p));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -229,17 +265,38 @@ function build(fragSrc, vertSrc) {
 // the per-frame sync cost; the repetition lives in `run()`, not here, so that drift is common-mode
 // across all variants rather than baked into whichever row happened to run at the wrong moment.
 
-function measureRound(prog, locs, drawOnce, frames) {
-  frames = Math.max(24, frames);
+// A sample is only as precise as it is long. A 16-frame batch of a 0.75 ms shader is 12 ms of work, and
+// inside that window the browser's own scheduling - a compositor tick, a GC nudge - can be a 50% error.
+// Reference A came back with a 183% spread on the baseline row for exactly that reason: five ablations
+// all read "0.00 ms" because the window was too short to resolve anything at all.
+//
+// So each sample targets ~60 ms of wall time whatever the variant costs. Frames are chosen by a short
+// probe, then clamped: fast variants get many frames, slow ones few, and no variant gets so many on a
+// phone that the run becomes the thirteen-minute wait this page just had.
+const SAMPLE_TARGET_MS = 60;
+const MIN_FRAMES = 8;
+const MAX_FRAMES = 400;
+
+function measureRound(prog, locs, drawOnce) {
   gl.useProgram(prog);
   // first draw pays shader-cache and pipeline setup that is not steady state
   drawOnce(locs);
   gl.finish();
 
-  const t0 = performance.now();
+  // probe: 4 draws
+  let t = performance.now();
+  for (let i = 0; i < 4; i++) drawOnce(locs);
+  gl.finish();
+  const per = (performance.now() - t) / 4;
+
+  // Target 60 ms of work, but never fewer than 8 frames (below that the probe itself is the measurement).
+  let frames = Math.round(SAMPLE_TARGET_MS / Math.max(per, 1e-4));
+  frames = Math.min(MAX_FRAMES, Math.max(MIN_FRAMES, frames));
+
+  t = performance.now();
   for (let i = 0; i < frames; i++) drawOnce(locs);
   gl.finish();
-  return (performance.now() - t0) / frames;
+  return { ms: (performance.now() - t) / frames, frames };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -348,6 +405,27 @@ function resizeFor(scaleOrHalf) {
 
 const ROUNDS = 7;
 
+/// Yield to the browser so the panel actually repaints.
+///
+/// `setTimeout(0)` is clamped to ~4 ms on mobile after nested calls, and `requestAnimationFrame` is exact
+/// but waits for the next vsync. Two rAFs is the reliable "a frame has definitely been presented" idiom
+/// and costs at most ~33 ms per call, which is negligible next to a shader compile.
+function paint() {
+  if (window.__ablateTick) window.__ablateTick();
+  // Race the frame callback against a timer, and take whichever comes first.
+  //
+  // Waiting on `requestAnimationFrame` alone deadlocks on any surface that is not being composited - a
+  // background tab, a headless browser, a page scrolled away. That is not hypothetical: this function
+  // hung the verification harness, and the same class of bug would freeze the matrix on a phone the
+  // moment the user switched apps mid-run. Two rAFs is the good path; the timeout is the guarantee.
+  return new Promise((resolve) => {
+    let done = false;
+    const fin = () => { if (!done) { done = true; resolve(); } };
+    requestAnimationFrame(() => requestAnimationFrame(fin));
+    setTimeout(fin, 50);
+  });
+}
+
 // One full-screen triangle with whatever uniform state the caller set. Module scope because the schedule
 // uses it from outside the run loop, and because the FBO/texture choice must come from the variant rather
 // than from closure state that changes between rounds.
@@ -366,7 +444,7 @@ async function run() {
   const btn = $('run');
   btn.disabled = true;
   $('body').innerHTML = '';
-  $('out').textContent = 'compiling ' + VARIANTS.length + ' programs…';
+  $('out').textContent = 'preparing…';
 
   const vbo = gl.createBuffer();           // unused by design: the full-screen triangle is gl_VertexID
   gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
@@ -391,22 +469,70 @@ async function run() {
 
   // Compile everything ONCE, before any timing. Program compilation happens outside the loop because a
   // compile in the middle of a round would put a multi-millisecond stall inside a 0.29 ms measurement.
+  //
+  // TWO REASONS THIS IS AWAITED, THE SECOND OF WHICH COST 13 MINUTES OF SILENCE.
+  //
+  // 1. A shader compile is synchronous and blocking. Seventeen of them in a row on a Mali-G51 held the
+  //    main thread long enough that the phone never painted the panel - the user saw "compiling" and
+  //    nothing else, for thirteen minutes, with no way to tell whether it was working or dead.
+  // 2. Holding a full-resolution drawing buffer while compiling buys nothing - we are not drawing - and
+  //    it makes the GPU carry the allocation through a compile phase that can last minutes.
+  //
+  // Yielding between compiles lets the browser paint the counter, and holding the canvas at a small fixed
+  const t0 = performance.now();
+
+  // SIX OF THE SEVENTEEN VARIANTS COMPILE IDENTICAL SOURCE. The resolution sweep all uses
+  // `apply: (s) => s`, which is the shipped shader unchanged; it varies only the viewport. Compiling it
+  // six times is six compiles of the same program, and on a phone where seventeen compiles took thirteen
+  // minutes that is roughly four minutes of pure waste.
+  //
+  // Programs are therefore compiled once per unique source and shared by every variant that wants it. A
+  // program holds no viewport state, so sharing is safe; the viewport is set per measurement, not per
+  // program.
+  const compiled = new Map();   // source -> { prog, locs, error }
   const jobs = [];
-  for (const v of VARIANTS) {
+  let unique = 0;
+
+  for (let i = 0; i < VARIANTS.length; i++) {
+    const v = VARIANTS[i];
+    // Keep the drawing buffer small while compiling. We are not drawing, and a full-resolution buffer
+    // makes the GPU carry a large allocation through a phase that can last minutes.
+    resizeFor(0.25);
     let src, size;
     try {
       src = v.floorBlit ? makeBlitSource()
           : v.floorTex ? floorTexSource(SRC.frag)
           : v.apply(normaliseTaps(SRC.frag));
-      const prog = build(src, SRC.vert);
-      const locs = uniformLocs(prog, UNIFORMS);
-      if (v.floorTex || v.floorBlit) locs.uFloorTex = gl.getUniformLocation(prog, 'uFloorTex');
+      let entry = compiled.get(src);
+      if (!entry) {
+        const prog = build(src, SRC.vert);
+        // With the async extension the driver is compiling right now; wait for it so the progress counter
+        // reflects real work rather than queue depth.
+        if (PARALLEL_COMPILE) {
+          $('out').textContent = 'compiling program ' + (unique + 1) + '\u2026  (' +
+            ((performance.now() - t0) / 1000).toFixed(1) + ' s)';
+          await paint();
+          await awaitProgram(prog);
+        }
+        assertLinked(prog);
+        const locs = uniformLocs(prog, UNIFORMS);
+        if (v.floorTex || v.floorBlit) locs.uFloorTex = gl.getUniformLocation(prog, 'uFloorTex');
+        entry = { prog, locs };
+        compiled.set(src, entry);
+        unique++;
+      }
       size = resizeFor(v.resScale ?? !!v.halfRes);
-      jobs.push({ v, prog, locs, size, samples: [], ok: true });
+      jobs.push({ v, prog: entry.prog, locs: entry.locs, size, samples: [], ok: true, shared: true });
     } catch (e) {
       jobs.push({ v, ok: false, err: String(e.message || e) });
     }
+    $('out').textContent = 'compiling ' + (i + 1) + ' of ' + VARIANTS.length + ' variants' +
+      ' (' + unique + ' unique programs)\u2026  (' + ((performance.now() - t0) / 1000).toFixed(1) + ' s)';
+    await paint();
   }
+  // If compilation itself is this slow, every timing in the run is suspect anyway: the GPU is being made
+  // to do a lot of work before it has been asked to draw anything.
+  const compileMs = performance.now() - t0;
 
   // A control is the baseline, measured in a different slot. It is not redundant: its disagreement with
   // `baseline` is the instrument's own error bar, and it is the row that would have caught the 43%.
@@ -427,13 +553,12 @@ async function run() {
       // Resolution changes per variant, so the viewport is restored each time.
       resizeFor(j.v.resScale ?? !!j.v.halfRes);
       const mode = j.v.floorBlit ? 'blit' : 'tex';
-      // Frames per sample scaled so each variant does roughly the same GPU work per round; a variant
-      // 20x faster would otherwise barely move the clock.
-      const frames = 16;
-      const ms = measureRound(j.prog, j.locs, (l) => drawOnce(l, j.size.w, j.size.h, mode), frames);
-      j.samples.push(ms);
+      const r = measureRound(j.prog, j.locs, (l) => drawOnce(l, j.size.w, j.size.h, mode));
+      j.samples.push(r.ms);
+      j.frames = j.frames ?? r.frames;
     }
-    $('out').textContent = 'round ' + (round + 1) + '/' + ROUNDS + '…';
+    $('out').textContent = 'round ' + (round + 1) + ' of ' + ROUNDS + '\u2026  (' +
+      ((performance.now() - t0) / 1000).toFixed(1) + ' s)';
     await new Promise((r) => setTimeout(r, 0));
   }
 
@@ -450,6 +575,7 @@ async function run() {
     const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
     return {
       ...j.v, ...j.size, ok: true,
+      frames: j.frames,
       amortised: median,
       min: sorted[0],
       max: sorted[sorted.length - 1],
@@ -459,7 +585,7 @@ async function run() {
   });
 
   render(rows);
-  $('out').textContent = summarise(rows);
+  $('out').textContent = summarise(rows, compileMs);
   btn.disabled = false;
   btn.textContent = 'run again';
 }
@@ -484,11 +610,19 @@ function render(rows) {
   }).join('');
 }
 
-function summarise(rows) {
+function summarise(rows, compileMs) {
   const g = (id) => rows.find((r) => r.id === id && r.ok);
   const base = g('baseline'), floor = g('floor'), ctl = g('control');
   if (!base || !floor) return 'incomplete';
   const lines = [];
+
+  // Compilation time is evidence about the device, not decoration. A phone that needs a minute to build
+  // 17 variants is a phone whose shader compiler is the bottleneck, and that is worth knowing before
+  // anything is optimised.
+  if (compileMs !== undefined) {
+    lines.push('compiling ' + rows.length + ' variants took ' + (compileMs / 1000).toFixed(1) + ' s');
+    lines.push('');
+  }
 
   // THE ERROR BAR COMES FIRST. `control` is the baseline shader measured again in a different slot of the
   // interleaved schedule. It should agree with `baseline` to within the run-to-run spread. How far apart
@@ -507,6 +641,28 @@ function summarise(rows) {
     } else {
       lines.push('  Good: the instrument agrees with itself to within ' + (errBar * 100).toFixed(1) + '%.');
     }
+    lines.push('');
+  }
+
+  // THE QUANTISATION FLOOR. `performance.now()` is coarsened for security - 0.1 ms in Chrome, more on
+  // some mobile builds. A per-frame figure is a batch total divided by the frame count, so the floor on a
+  // *measured* frame is tick/frames, and frames is now chosen to keep that small. Report the floor
+  // explicitly: on the previous run it was 1 ms / 16 frames = 62 us, which is a fifth of the whole frame
+  // at 0.75 ms, and five ablations that "saved 0.00 ms" were simply under it.
+  const tick = (() => {
+    let best = Infinity;
+    for (let i = 0; i < 40; i++) {
+      const a = performance.now();
+      while (performance.now() === a) { /* spin */ }
+      best = Math.min(best, performance.now() - a);
+    }
+    return best;
+  })();
+  const floors = rows.filter((r) => r.ok && r.frames).map((r) => tick / r.frames);
+  const floorUs = floors.length ? Math.max(...floors) * 1000 : tick * 1000;
+  if (floorUs > 5) {
+    lines.push('resolution floor (timer tick / frames): ' + floorUs.toFixed(0) + ' us per frame');
+    lines.push('  deltas below ' + floorUs.toFixed(0) + ' us are invisible to this instrument, not zero');
     lines.push('');
   }
 
@@ -666,10 +822,31 @@ function summarise(rows) {
   return lines.join('\n');
 }
 
-$('run').addEventListener('click', () => run().catch((e) => {
-  $('out').textContent = 'error: ' + (e.stack || e);
-  $('run').disabled = false;
-}));
+$('run').addEventListener('click', () => {
+  // Watchdog. The failure this guards against is not an exception, it is silence: a run that stalls with
+  // no error and no progress. If no progress tick arrives for WATCHDOG_MS, say so in terms that tell the
+  // user what to do rather than leaving a spinner forever.
+  const WATCHDOG_MS = 45000;
+  let lastTick = performance.now();
+  const beat = setInterval(() => {
+    if (performance.now() - lastTick > WATCHDOG_MS) {
+      clearInterval(beat);
+      $('out').textContent =
+        'STALLED: no progress for ' + Math.round(WATCHDOG_MS / 1000) + ' s.\n\n' +
+        'This is the shader compiler, not the measurement. ' + VARIANTS.length + ' shader variants\n' +
+        'are too many for this device to compile in one go. Close other tabs and reload; if it\n' +
+        'happens again, the matrix needs fewer variants on this phone, which is a real finding.';
+      $('run').disabled = false;
+    }
+  }, 1000);
+  const patched = { n: 0 };
+  window.__ablateTick = () => { lastTick = performance.now(); };
+
+  run().catch((e) => {
+    $('out').textContent = 'error: ' + (e.stack || e);
+    $('run').disabled = false;
+  }).finally(() => clearInterval(beat));
+});
 
 // Draw the baseline once so the panel is not sitting on a blank canvas.
 try {

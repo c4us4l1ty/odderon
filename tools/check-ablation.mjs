@@ -42,7 +42,7 @@ const root = resolve(here, "..");
 
 function loadSummarise() {
   const html = readFileSync(resolve(root, "web/ablate.html"), "utf8");
-  const start = html.indexOf("function summarise(rows) {");
+  const start = html.indexOf("function summarise(rows, compileMs) {");
   if (start < 0) throw new Error("summarise() not found in web/ablate.html - did it get renamed?");
 
   let depth = 0;
@@ -189,7 +189,29 @@ console.log("case 3: deltas that add up to more frame than exists are condemned"
   check("does not fire on a healthy matrix", !ok.includes("DO NOT ADD UP"), ok);
 }
 
-console.log("case 4: a render scale is never printed above 1.0");
+console.log("case 4: rows that read exactly 0.00 ms are not reported as savings");
+{
+  // Shape of the real post-fix phone run: baseline 0.750 ms with a 183% spread, five ablations landing on
+  // 0.00 ms of saving, and a 1 in 16 frames timer floor of 62 us. At 0.75 ms a 62 us floor is 8% of the
+  // frame, and five features cannot all be worth 0.00 ms. The report must not call those measurements.
+  const rows = [
+    row("baseline", 0.750), row("control", 0.750),
+    row("floor", 0.13), row("floor_tex", 0.29), row("floor_blit", 0.29),
+    row("no_shadow", 0.63), row("shadow_4tap", 0.79),
+    row("no_wall_ribs", 0.75), row("no_aerial", 0.75), row("no_sphere", 0.75),
+    row("no_tonemap", 0.75), row("no_sky_glow", 0.75),
+    row("r100", 0.79, { resScale: 1.0 }), row("r050", 0.21, { resScale: 0.5 }),
+    row("r025", 0.08, { resScale: 0.25 }),
+  ];
+  // spread 1.83 on the baseline is itself a red flag: it means the median is not representative
+  rows[0] = { ...rows[0], spread: 1.83 };
+  rows[1] = { ...rows[1], spread: 1.83 };
+  const out = summarise(rows);
+  check("0.00 ms deltas are not listed as measured", !/measured:.*no_aerial/.test(out), out);
+  check("names them as at-or-below threshold", /NOT findings/.test(out), out);
+}
+
+console.log("case 5: a render scale is never printed above 1.0");
 {
   // A screen small enough that the cost model says native already fits. The old code printed
   // "R2 IS reachable at 1.38x", which is a pixel ratio being mistaken for a render scale.
