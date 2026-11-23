@@ -41,7 +41,7 @@
 //!
 //! Each of those is an assertion in `tests/j2.rs`, with the tolerance written before the measurement.
 
-use crate::{State, Vec3};
+use crate::{is_positive_finite, State, Vec3};
 use odderon_dmath::{cos, sin, sqrt};
 
 /// J2, the Earth's dominant oblateness harmonic, as a **positive magnitude**. Dimensionless.
@@ -82,17 +82,6 @@ pub struct SecularRates {
     pub argp: f64,
     /// Rate of the mean anomaly, rad/s. Includes the two-body mean motion, so this is *always* positive.
     pub mean_anomaly: f64,
-}
-
-/// True only for a value that is strictly positive and not NaN or infinite.
-///
-/// Written as its own function because the guard is the whole point: `x > 0.0` is *false* for NaN, which
-/// is the behaviour required here, and `clippy::neg_cmp_op_on_partial_ord` objects to the negation on
-/// the grounds that the intent is unclear. Naming it makes the intent plain and satisfies the lint
-/// without an `#[allow]`.
-#[inline]
-fn is_positive_finite(x: f64) -> bool {
-    x > 0.0 && x.is_finite()
 }
 
 /// First-order J2 secular rates for an orbit described by elements.
