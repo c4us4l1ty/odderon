@@ -67,6 +67,39 @@ pub struct Body {
     pub physical: Physical,
 }
 
+/// Earth's rotation frame: IAU 2015 prime meridian angle at J2000, and the rotation rate.
+///
+/// `W₀ = 190.147°` is the 2015 report's value for Earth. It is **not zero**, and using zero is the bug this
+/// constant exists to prevent: the prime meridian would land somewhere arbitrary in inertial space and every
+/// ground position would be offset by up to half a rotation, with no NaN, no error and no visual cue.
+///
+/// ## The caveat, stated rather than buried
+///
+/// The IAU expression gives `W` measured from the **equinox of date**, not from J2000 ICRF, so strictly it
+/// carries an equation-of-equinoxes term of order 0.0026° — about 0.3 km at the equator. For a game frame
+/// whose ground positions are already good to kilometres that is below the noise, but it is a real
+/// approximation and it is named. When the crate grows a proper precession-nutation model this is where the
+/// correction belongs.
+///
+/// The rate is checked against `EARTH_ROTATION_RATE` in `tests/catalogue.rs`: the two are derived from
+/// different published sources (`7.2921150e-5` rad/s versus `360.9856235°/day`) and agree to 5 ppm, which is
+/// independent confirmation that neither has the solar-vs-sidereal confusion. Note the `0.9856°/day` in the
+/// IAU figure is exactly the sun's annual apparent motion — that is *why* the sidereal rate is larger than
+/// `360°/day`.
+pub const EARTH_FRAME: crate::frames::BodyFixed = crate::frames::BodyFixed {
+    w0: Quantity {
+        // 190.147 deg in radians.
+        value: 3.318_691_212_8,
+        prov: crate::provenance::Prov::Defined,
+        sigma: 0.0,
+    },
+    rate: Quantity {
+        value: EARTH_ROTATION_RATE,
+        prov: crate::provenance::Prov::Defined,
+        sigma: 0.0,
+    },
+};
+
 // ---------------------------------------------------------------------------------------------
 // Earth
 // ---------------------------------------------------------------------------------------------
