@@ -288,7 +288,10 @@ pub fn cone_search<'a>(
     if !ra_rad.is_finite() || !dec_rad.is_finite() {
         return Err(SurveyError::BadDirection);
     }
-    if !(radius_rad > 0.0) || !radius_rad.is_finite() {
+    // Written as two positive tests rather than `!(r > 0.0)` so that NaN is excluded by name: NaN fails
+    // `> 0.0`, and relying on a negated comparison to catch it makes the rejection look accidental.
+    let radius_is_usable = radius_rad.is_finite() && radius_rad > 0.0;
+    if !radius_is_usable {
         return Err(SurveyError::BadRadius);
     }
     // A cone wider than a hemisphere is well-defined and practically always a mistake: the caller wanted

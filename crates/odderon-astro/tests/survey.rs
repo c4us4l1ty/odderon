@@ -32,7 +32,9 @@ struct Fixture {
 fn blank_star() -> Star {
     Star {
         id: 0,
-        direction: Direction { vector: [1.0, 0.0, 0.0] },
+        direction: Direction {
+            vector: [1.0, 0.0, 0.0],
+        },
         distance_parsec: Quantity::unknown(),
         magnitude: Quantity::unknown(),
         proper_motion: Quantity::unknown(),
@@ -91,7 +93,10 @@ impl Survey for Fixture {
         // Borrowing back out of `out` is what makes the lifetime honest: the tile's stars live in the
         // caller's buffer, not in a copy the backend made.
         let filled: &[Star] = &*out;
-        Ok(StarTile { stars: &filled[..n], truncated })
+        Ok(StarTile {
+            stars: &filled[..n],
+            truncated,
+        })
     }
 
     fn dataset(&self) -> &'static str {
@@ -125,7 +130,14 @@ fn a_bad_radius_is_refused_rather_than_answered() {
     }
     // A hemisphere is the limit; past it the caller wanted the whole sky, which is a different request.
     assert_eq!(
-        cone_search(&backend, 0.0, 0.0, core::f64::consts::FRAC_PI_2 + 0.01, &mut buf).err(),
+        cone_search(
+            &backend,
+            0.0,
+            0.0,
+            core::f64::consts::FRAC_PI_2 + 0.01,
+            &mut buf
+        )
+        .err(),
         Some(SurveyError::BadRadius)
     );
     assert!(cone_search(&backend, 0.0, 0.0, 10.0 * deg, &mut buf).is_ok());
@@ -165,16 +177,27 @@ fn the_cone_restricts_the_answer() {
     // One call per scope: the tile borrows `buf`, so holding two at once would not compile — which is the
     // borrow doing its job, since a second call would overwrite the first tile's stars.
     {
-        let tile = cone_search(&backend, 10.0 * deg, 20.0 * deg, 0.3 * deg, &mut buf).expect("valid");
-        assert_eq!(tile.stars.len(), 1, "only star 1 is within 0.3 deg of (10, 20)");
+        let tile =
+            cone_search(&backend, 10.0 * deg, 20.0 * deg, 0.3 * deg, &mut buf).expect("valid");
+        assert_eq!(
+            tile.stars.len(),
+            1,
+            "only star 1 is within 0.3 deg of (10, 20)"
+        );
         assert_eq!(tile.stars[0].id, 1);
     }
     {
-        let tile = cone_search(&backend, 10.0 * deg, 20.0 * deg, 1.0 * deg, &mut buf).expect("valid");
-        assert_eq!(tile.stars.len(), 2, "star 2 at 0.686 deg joins at a 1 deg radius");
+        let tile =
+            cone_search(&backend, 10.0 * deg, 20.0 * deg, 1.0 * deg, &mut buf).expect("valid");
+        assert_eq!(
+            tile.stars.len(),
+            2,
+            "star 2 at 0.686 deg joins at a 1 deg radius"
+        );
     }
     {
-        let tile = cone_search(&backend, 10.0 * deg, 20.0 * deg, 3.0 * deg, &mut buf).expect("valid");
+        let tile =
+            cone_search(&backend, 10.0 * deg, 20.0 * deg, 3.0 * deg, &mut buf).expect("valid");
         assert_eq!(tile.stars.len(), 3, "three stars lie within 3 deg");
         // And nothing in that cone is the antipodal control.
         assert!(tile.stars.iter().all(|s| s.id != 4));
@@ -216,7 +239,10 @@ fn a_non_unit_direction_from_a_backend_is_caught() {
         ) -> Result<StarTile<'a>, SurveyError> {
             out[0] = self.stars[0];
             let filled: &[Star] = &*out;
-            Ok(StarTile { stars: &filled[..1], truncated: false })
+            Ok(StarTile {
+                stars: &filled[..1],
+                truncated: false,
+            })
         }
         fn dataset(&self) -> &'static str {
             "sloppy"
@@ -230,7 +256,9 @@ fn a_non_unit_direction_from_a_backend_is_caught() {
     // it forgets to normalise — and the seam has to catch it. A backend *can* construct an invalid
     // `Direction`; the test is that `cone_search` notices.
     let mut bad = star_at(9, 0.0, 0.0, 10.0, 0.1);
-    bad.direction = Direction { vector: [1.5, 0.0, 0.0] };
+    bad.direction = Direction {
+        vector: [1.5, 0.0, 0.0],
+    };
     let sloppy = Sloppy { stars: [bad] };
     assert_eq!(
         cone_search(&sloppy, 0.0, 0.0, 0.1, &mut buf).err(),
@@ -242,7 +270,10 @@ fn a_non_unit_direction_from_a_backend_is_caught() {
 #[test]
 fn a_non_unit_vector_is_refused_at_construction() {
     assert!(Direction::from_vector([1.0, 0.0, 0.0]).is_some());
-    assert!(Direction::from_vector([1.0, 0.0, 1.0e-12]).is_some(), "1e-12 off unit is fine");
+    assert!(
+        Direction::from_vector([1.0, 0.0, 1.0e-12]).is_some(),
+        "1e-12 off unit is fine"
+    );
     assert!(Direction::from_vector([1.5, 0.0, 0.0]).is_none());
     assert!(Direction::from_vector([0.0, 0.0, 0.0]).is_none());
     assert!(Direction::from_vector([0.5, 0.5, 0.5]).is_none());
@@ -297,7 +328,13 @@ fn separation_is_symmetric_and_zero_against_itself() {
 #[test]
 fn ra_dec_round_trip() {
     let deg = core::f64::consts::PI / 180.0;
-    for (ra, dec) in [(0.0, 0.0), (90.0, 0.0), (180.0, 45.0), (270.0, -60.0), (359.9, 89.9)] {
+    for (ra, dec) in [
+        (0.0, 0.0),
+        (90.0, 0.0),
+        (180.0, 45.0),
+        (270.0, -60.0),
+        (359.9, 89.9),
+    ] {
         let d = Direction::from_ra_dec(ra * deg, dec * deg).expect("valid");
         assert!((d.ra_rad() - ra * deg).abs() < 1.0e-12, "RA {ra}");
         assert!((d.dec_rad() - dec * deg).abs() < 1.0e-12, "Dec {dec}");
@@ -353,7 +390,10 @@ fn absent_proper_motion_is_unknown_not_zero() {
     let deg = core::f64::consts::PI / 180.0;
     let tile = cone_search(&backend, 10.0 * deg, 20.0 * deg, 0.3 * deg, &mut buf).expect("valid");
     let star = tile.stars[0];
-    assert!(star.proper_motion.value.is_nan(), "absent means NaN, not 0.0");
+    assert!(
+        star.proper_motion.value.is_nan(),
+        "absent means NaN, not 0.0"
+    );
     assert!(star.proper_motion.sigma.is_infinite());
 }
 
@@ -371,7 +411,10 @@ fn a_release_build_refuses_non_redistributable_data() {
     let gated = Fixture::new(false);
 
     assert!(admits(BuildProfile::Development, &open));
-    assert!(admits(BuildProfile::Development, &gated), "a dev build may use a player's own data");
+    assert!(
+        admits(BuildProfile::Development, &gated),
+        "a dev build may use a player's own data"
+    );
     assert!(admits(BuildProfile::Release, &open));
     assert!(
         !admits(BuildProfile::Release, &gated),
@@ -468,7 +511,11 @@ fn no_gated_dataset_name_appears_in_the_kernel() {
         "j2.rs",
         "integrate.rs",
     ];
-    assert_eq!(sources.len(), source_names.len(), "every source needs a name");
+    assert_eq!(
+        sources.len(),
+        source_names.len(),
+        "every source needs a name"
+    );
 
     for i in 0..gated_count {
         let name = gated[i];
@@ -496,7 +543,10 @@ fn no_gated_dataset_name_appears_in_the_kernel() {
     // i.e. contain no `const` or `static` declaration mentioning one. A dataset mentioned in a doc comment
     // is an argument; the same string in a `const` is the thing this test exists to catch.
     for name in PROSE_EXCEPTIONS {
-        let idx = source_names.iter().position(|s| *s == name).expect("listed source");
+        let idx = source_names
+            .iter()
+            .position(|s| *s == name)
+            .expect("listed source");
         for i in 0..gated_count {
             let dataset = gated[i];
             let mut in_declaration = false;
