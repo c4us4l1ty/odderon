@@ -13,7 +13,9 @@
       "state": "present",
       "must_exist": true,
       "kernel_const_expressible": true,
-      "implements": ["crates/odderon-astro/src/catalogue.rs"],
+      "implements": [
+        "crates/odderon-astro/src/catalogue.rs"
+      ],
       "publisher": "IAU Working Group on Cartographic Coordinates; JPL/EGM",
       "licence_id": "US-GOVERNMENT-WORK",
       "licence_url": "https://ssd.jpl.nasa.gov/",
@@ -218,6 +220,25 @@
       "attribution": "unknown until read",
       "classifier": "odderon maintainer (session 2026-11-22)",
       "notes": "Assume CC BY-NC until proven otherwise. A record that cannot be classified does not ship."
+    },
+    {
+      "id": "thermal-network",
+      "title": "Lumped thermal network and vapour-compression heat-pump correlation",
+      "class": "OPEN",
+      "state": "present",
+      "must_exist": true,
+      "kernel_const_expressible": true,
+      "implements": [
+        "crates/odderon-astro/src/thermal.rs"
+      ],
+      "publisher": "derived: first-principles energy balance + Copeland COP correlation",
+      "distributor": "none: no data is shipped",
+      "licence_id": "PUBLIC-DOMAIN-PHYSICS",
+      "licence_url": "https://doi.org/10.1088/1681-7575/ab0013",
+      "commercial_ok": "yes",
+      "attribution": "Stefan-Boltzmann constant per the 2019 SI redefinition; Copeland COP correlation as published in the HVAC literature",
+      "classifier": "odderon maintainer (session 2026-11-23)",
+      "notes": "No dataset: the physical constants are exact by definition and the two correlations are equations, not tables. Deliberately ships no standard-atmosphere table (that is the separate `atmosphere-1976` record, which remains absent) and no thermodynamic property data (`thermo-cea`, also absent). The one empirical element is the second-law efficiency range for small window units, which is carried as an Assumed quantity with its source basis, not as a measured value."
     }
   ]
 }

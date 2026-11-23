@@ -105,6 +105,14 @@ pub mod integrate;
 /// ellipse. See [`j2::secular_rates`] and [`j2::propagate_j2_secular`].
 pub mod j2;
 
+/// A lumped thermal network and a vapour-compression heat pump: the Day-1 room, which is the same
+/// solver a habitat runs. See [`thermal::Zone`] and [`thermal::VapourCompression`].
+///
+/// Not astrodynamics. It lives here because this is the crate that already carries `no_std`,
+/// `forbid(unsafe_code)` and the kernel's licence gate, and a second crate would mean a second copy of
+/// those rules to keep in step.
+pub mod thermal;
+
 /// Gravitational parameters, km³/s².
 ///
 /// Values from the IAU/JPL published constants. They are *data*, not physics: a body's `mu` is a

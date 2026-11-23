@@ -144,6 +144,7 @@ The `commercial` column is the verdict a reader is actually looking for; `licenc
 | `optical-stars-tycho2-adc` | OPEN | absent | ESA / NASA ADC | yes |
 | `planetary-surfaces` | OPEN | absent | NASA / USGS Astrogeology | yes |
 | `small-bodies` | OPEN | absent | JPL / JPL SSD | yes |
+| `thermal-network` | OPEN | present | derived: first-principles energy balance + Copeland COP correlation / none: no data is shipped | yes |
 | `thermo-cea` | OPEN | absent | NASA | yes |
 | `vizier-mirrors` | GATED | absent | various / CDS / VizieR | needs-authorisation |
 <!-- END GENERATED: classes -->
