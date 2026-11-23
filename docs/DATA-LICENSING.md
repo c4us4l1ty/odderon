@@ -98,6 +98,12 @@ Three commitments, all cheap, all worth doing before the first byte of catalogue
 
 `commercial_ok` is `yes` | `no` | `needs-authorisation`. `redistributable` is what the build reads.
 
+**This gate is implemented, and the compiler of it is not the one you would guess.** `src/classes.json` is the
+list, `tools/check-classes.mjs` is the checker, and it runs as a hard CI job on every push
+(`docs/CLASSES.md`). It covers the case the manifest cannot: a record compiled into the kernel as a `const`,
+which has no `data/` file for an orphan check to find. The manifest check below covers files the class gate
+does not look at. Two gates, one question each.
+
 ### 3.2 CI enforcement, because a document is not a gate
 
 Two checks, both mechanical:

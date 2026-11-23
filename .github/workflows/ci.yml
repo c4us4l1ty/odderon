@@ -162,6 +162,27 @@ jobs:
       - name: kernel policy
         run: bash ci/kernel-policy.sh
 
+  class-certification:
+    name: class certification lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # The licence gate for the *compiled* kernel, as opposed to the data manifest gate in
+      # docs/DATA-LICENSING.md §3.2. A hard gate, not advisory: "100% commercially legal from Day 1"
+      # is not a claim that can be made by a document nobody runs (docs/CLASSES.md).
+      #
+      # Both steps run even when the first fails, because the useful report names every finding, and a
+      # gate that stops at the first one makes two pushes out of one mistake.
+      - name: class gate
+        run: node tools/check-classes.mjs
+      - name: class gate self-test
+        # Proves the gate can fail. A checker that cannot fail prints `ok` too.
+        if: always()
+        run: node tools/check-classes-selftest.mjs
+
   # -------------------------------------------------------------------------------------------
   # ADVISORY during bootstrap. Armed after the first green run — see the decision in
   # docs/BUILD-PLAN.md §3. They are kept in the same file so arming them is a one-word diff.
