@@ -15,7 +15,8 @@
     "serve": "node tools/serve.mjs",
     "check:shell": "node tools/check-shell.mjs",
     "start": "node tools/serve.mjs",
-    "check:ablation": "node tools/check-ablation.mjs"
+    "check:ablation": "node tools/check-ablation.mjs",
+    "check:classes": "node tools/check-classes.mjs && node tools/check-classes-selftest.mjs"
   },
   "devDependencies": {
     "@sparticuz/chromium": "131.0.0",
