@@ -172,7 +172,10 @@ pub fn geodetic_of(body_fixed: Vec3) -> Geodetic {
     let r = body_fixed.norm();
     let lat = if r > 0.0 {
         // asin(z/r) via atan2, which stays well conditioned near the poles where asin's derivative blows up
-        atan2(body_fixed.z, sqrt(body_fixed.x * body_fixed.x + body_fixed.y * body_fixed.y))
+        atan2(
+            body_fixed.z,
+            sqrt(body_fixed.x * body_fixed.x + body_fixed.y * body_fixed.y),
+        )
     } else {
         0.0
     };
