@@ -188,7 +188,7 @@ Kept current, because a plan that says "P0" forever is not a plan.
 
 | Rung | State | Evidence |
 | --- | --- | --- |
-| CI as the compiler | **done** | Five hard gates run on every push: `cargo test`, wasm32 build, native↔wasm determinism, kernel policy, and class certification. A Rust compile happens on a machine that is not this one, which is also why native-vs-wasm agreement is testable from Day 1. |
+| CI as the compiler | **done, all seven armed** | Seven gates run on every push and **all of them can fail a branch**: `cargo test`, wasm32 build, native↔wasm determinism, kernel policy, class certification, `clippy`, and `rustfmt`. The last two were `continue-on-error` until 2026-11-23 and are armed now that both are green on `main`. A Rust compile happens on a machine that is not this one, which is also why native-vs-wasm agreement is testable from Day 1. |
 | `odderon-dmath` | **done for now** | Own `sin, cos, atan, atan2, exp, ln, sqrt, cosh, sinh, acos, asin, pow, fabs, fmin, fmax`, `no_std`, no host libm symbol. Error measured, not asserted: 1e-16 to 1e-17 typical. Golden hash armed. |
 | `odderon-astro` | **two-body complete, validated** | Universal-variable Kepler propagator. One period returns to 0.17 µm after ten periods; a single jump over 1000 periods conserves specific energy *bit-exactly*; chained steps drift as √N·eps (1.8e-14 over 10000). Hyperbolic, parabolic and circular orbits need no special cases. |
 | `odderon-astro` elements | **done** | State ↔ elements both ways, storing `p` rather than `a` so parabolas and hyperbolas are ordinary cases. The degenerate rows (`i = 0`, `e = 0`, both) are folded rather than left NaN, and round-trip to 1.5e-15 across seven orbit shapes including circular-equatorial and `e = 0.999`. Reproduces Vallado Ex 2-5 against the published vector. |
@@ -221,10 +221,22 @@ Two things this table is deliberately not allowed to hide:
   is larger than 43%: shadow (3.00 → 0.83), tap count (8 → 4 saves 1.67 ms), resolution (linear), and the
   floor share (6% on A versus 45%-equivalent on B). Fixing this means interleaving the variants and
   reporting a spread, not running each once.
-- **The `rustfmt` gate is red and stays red (advisory).** No local toolchain can run a mechanical pass,
-  and hand-formatting against CI diffs is a losing game that has already cost two commits. It becomes a
-  hard gate the day a local `cargo fmt` is possible, and not before. `docs/BUILD-PLAN.md` §2.4 states
-  this in the gate table itself so it cannot be quietly forgotten.
+- **The style gates are armed (2026-11-23), and getting there cost more than it should have.** Both
+  `rustfmt` and `clippy` were `continue-on-error` until they went green on `main`, which is the
+  condition §3 set. `clippy` went green first. `rustfmt` took eleven files and about as many rounds,
+  for two reasons worth keeping:
+  - **The annotation caps at six diffs.** A run showing six is a *truncated list*: clearing them
+    reveals six more. Chasing hunks is the wrong shape; clear the file the job names, whole.
+  - **The sandbox still has no Rust toolchain**, so a formatting edit cannot be checked before it is
+    pushed. What broke the loop was `@scalar/rust-fmt` — rustfmt compiled to wasm, running on plain
+    Node. Its bundled rustfmt is an *older release* and disagrees with the pinned 1.83.0 on at least
+    one construct, so it is a good oracle for a red file and not a safe one for a green file. Every
+    change it proposed was verified as whitespace-only (strip whitespace, normalise trailing commas,
+    require an identical token stream) before being applied.
+
+  The earlier version of this bullet said the gate "stays red until a local `cargo fmt` is possible".
+  That was too pessimistic by one npm package, and the cost of being wrong was a gate that could not
+  fail a branch — a red result carrying no information at all.
 
 ---
 
