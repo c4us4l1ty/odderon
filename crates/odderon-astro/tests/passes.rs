@@ -62,7 +62,9 @@ fn direction_to_inertial(v: Vec3, w: f64) -> Vec3 {
 /// into while writing a test.
 fn overhead_state(site: &Site, altitude: f64, t0: f64) -> State {
     let r = RE + altitude;
-    let w = EARTH_FRAME.angle_at(t0).expect("Earth has a prime meridian");
+    let w = EARTH_FRAME
+        .angle_at(t0)
+        .expect("Earth has a prime meridian");
     let unit_up_inertial = direction_to_inertial(site.fixed.unit(), w);
     let position = unit_up_inertial * r;
     let velocity = direction_to_inertial(site.east, w) * sqrt(MU / r);
@@ -140,12 +142,18 @@ fn a_steeper_mask_shrinks_the_window_monotonically() {
 fn a_zenith_mask_yields_an_instantaneous_window() {
     let r = RE + 400.0;
     let theta = central_half_angle(RE, r, 90.0).expect("still a valid question");
-    assert!(theta >= 0.0, "a clamped acos must not produce a negative angle");
+    assert!(
+        theta >= 0.0,
+        "a clamped acos must not produce a negative angle"
+    );
     // The bound is arithmetic: `cos 90°` is `6.1e-17` rather than zero, `acos` of that is `π/2 − 6.1e-17`, and the
     // subtraction leaves at most a few times `f64::EPSILON`. Demanding exact zero here would be demanding that
     // the kernel's `acos` be correctly rounded at its worst-conditioned argument — the same class of mistake as
     // asking an eight-figure rotation rate for millimetres (`tests/observe.rs`).
-    assert!(theta < 1e-14, "a zenith-only pass has zero width, got {theta}");
+    assert!(
+        theta < 1e-14,
+        "a zenith-only pass has zero width, got {theta}"
+    );
 
     // And the duration that follows is zero to the same standard, which is the input to "no step can find this".
     let duration = minimum_pass_seconds(RE, r, 90.0, r, 0.0, MU, rate()).expect("valid");
@@ -224,9 +232,20 @@ fn passes_repeat_on_the_synodic_period_not_the_orbital_period() {
     let window = ample_window(&state);
     let step = 5.0;
 
-    let first = next_pass(&EARTH, &site, &EARTH_FRAME, &state, 0.0, MU, 0.0, 0.0, window, step)
-        .expect("answerable")
-        .expect("a pass exists");
+    let first = next_pass(
+        &EARTH,
+        &site,
+        &EARTH_FRAME,
+        &state,
+        0.0,
+        MU,
+        0.0,
+        0.0,
+        window,
+        step,
+    )
+    .expect("answerable")
+    .expect("a pass exists");
     let second = next_pass(
         &EARTH,
         &site,
@@ -315,11 +334,23 @@ fn the_promised_window_is_accepted_verbatim() {
     // write, and it is the expression that disagreed with the library by 3e-15.
     let a_caller = RE + 400.0;
     let window = guaranteed_scan_window_seconds(a_caller, 0.0, MU, rate()).expect("valid");
-    let step = minimum_pass_seconds(RE, a_caller, 10.0, a_caller, 0.0, MU, rate()).expect("valid") / 8.0;
+    let step =
+        minimum_pass_seconds(RE, a_caller, 10.0, a_caller, 0.0, MU, rate()).expect("valid") / 8.0;
 
-    let pass = next_pass(&EARTH, &site, &EARTH_FRAME, &state, 0.0, MU, 10.0, 0.0, window, step)
-        .expect("the promised window must be accepted")
-        .expect("an overhead pass must be found inside one synodic period");
+    let pass = next_pass(
+        &EARTH,
+        &site,
+        &EARTH_FRAME,
+        &state,
+        0.0,
+        MU,
+        10.0,
+        0.0,
+        window,
+        step,
+    )
+    .expect("the promised window must be accepted")
+    .expect("an overhead pass must be found inside one synodic period");
     assert!(pass.duration() > 0.0);
 
     // And a window that is genuinely short is still refused, so the slack has not swallowed the guard.
@@ -397,9 +428,20 @@ fn the_permitted_step_actually_finds_the_pass() {
         // A quarter of the permitted step: the point of the test is that a permissible step finds the pass, not
         // that the boundary case does. The exact-boundary case is `the_promised_window_is_accepted_verbatim`.
         let step = minimum_pass_seconds(RE, a, mask, a, 0.0, MU, rate()).expect("valid") / 4.0;
-        let pass = next_pass(&EARTH, &site, &EARTH_FRAME, &state, 0.0, MU, mask, 0.0, window, step)
-            .expect("the permitted step must be permitted")
-            .expect("an overhead pass must be found at any mask the geometry allows");
+        let pass = next_pass(
+            &EARTH,
+            &site,
+            &EARTH_FRAME,
+            &state,
+            0.0,
+            MU,
+            mask,
+            0.0,
+            window,
+            step,
+        )
+        .expect("the permitted step must be permitted")
+        .expect("an overhead pass must be found at any mask the geometry allows");
         assert!(
             pass.duration() > 0.0,
             "mask {mask} deg: a found pass must have positive duration"
@@ -440,12 +482,34 @@ fn degenerate_input_is_refused() {
     let window = ample_window(&state);
 
     for bad in [f64::NAN, f64::INFINITY, 0.0, -5.0] {
-        let err = next_pass(&EARTH, &site, &EARTH_FRAME, &state, 0.0, MU, 10.0, 0.0, bad, 10.0)
-            .expect_err("a non-window is not a window");
+        let err = next_pass(
+            &EARTH,
+            &site,
+            &EARTH_FRAME,
+            &state,
+            0.0,
+            MU,
+            10.0,
+            0.0,
+            bad,
+            10.0,
+        )
+        .expect_err("a non-window is not a window");
         assert_eq!(err, PassError::BadInput, "window {bad}");
 
-        let err = next_pass(&EARTH, &site, &EARTH_FRAME, &state, 0.0, MU, 10.0, 0.0, window, bad)
-            .expect_err("a non-step is not a step");
+        let err = next_pass(
+            &EARTH,
+            &site,
+            &EARTH_FRAME,
+            &state,
+            0.0,
+            MU,
+            10.0,
+            0.0,
+            window,
+            bad,
+        )
+        .expect_err("a non-step is not a step");
         assert_eq!(err, PassError::BadInput, "step {bad}");
     }
 }
@@ -466,9 +530,20 @@ fn an_overhead_westward_rise_and_eastward_set() {
     let window = ample_window(&state);
     let step = 5.0;
 
-    let pass = next_pass(&EARTH, &site, &EARTH_FRAME, &state, 0.0, MU, 0.0, 0.0, window, step)
-        .expect("answerable")
-        .expect("a pass exists");
+    let pass = next_pass(
+        &EARTH,
+        &site,
+        &EARTH_FRAME,
+        &state,
+        0.0,
+        MU,
+        0.0,
+        0.0,
+        window,
+        step,
+    )
+    .expect("answerable")
+    .expect("a pass exists");
 
     assert!(
         (pass.rise_azimuth_deg - 270.0).abs() < 0.5,
@@ -573,7 +648,10 @@ fn a_station_outside_the_ground_track_gets_no_pass() {
         5.0,
     )
     .expect("still an answerable question");
-    assert_eq!(none, None, "a station at 60 deg north never reaches this ground track");
+    assert_eq!(
+        none, None,
+        "a station at 60 deg north never reaches this ground track"
+    );
 }
 
 // =============================================================================================
@@ -590,12 +668,34 @@ fn the_culmination_does_not_depend_on_the_step() {
     let state = overhead_state(&site, 400.0, 0.0);
     let window = ample_window(&state);
 
-    let coarse = next_pass(&EARTH, &site, &EARTH_FRAME, &state, 0.0, MU, 10.0, 0.0, window, 10.0)
-        .expect("answerable")
-        .expect("a pass exists");
-    let fine = next_pass(&EARTH, &site, &EARTH_FRAME, &state, 0.0, MU, 10.0, 0.0, window, 5.0)
-        .expect("answerable")
-        .expect("a pass exists");
+    let coarse = next_pass(
+        &EARTH,
+        &site,
+        &EARTH_FRAME,
+        &state,
+        0.0,
+        MU,
+        10.0,
+        0.0,
+        window,
+        10.0,
+    )
+    .expect("answerable")
+    .expect("a pass exists");
+    let fine = next_pass(
+        &EARTH,
+        &site,
+        &EARTH_FRAME,
+        &state,
+        0.0,
+        MU,
+        10.0,
+        0.0,
+        window,
+        5.0,
+    )
+    .expect("answerable")
+    .expect("a pass exists");
 
     assert!(
         (coarse.max_elevation_deg - fine.max_elevation_deg).abs() < 1e-6,
@@ -633,9 +733,20 @@ fn the_crossings_land_on_the_mask() {
     let window = ample_window(&state);
 
     for mask in [0.0, 10.0, 30.0] {
-        let pass = next_pass(&EARTH, &site, &EARTH_FRAME, &state, 0.0, MU, mask, 0.0, window, 5.0)
-            .expect("answerable")
-            .expect("a pass exists");
+        let pass = next_pass(
+            &EARTH,
+            &site,
+            &EARTH_FRAME,
+            &state,
+            0.0,
+            MU,
+            mask,
+            0.0,
+            window,
+            5.0,
+        )
+        .expect("answerable")
+        .expect("a pass exists");
 
         // The elevation AT the reported rise and set, computed independently through the public look angle.
         let rise_look = elevation_at(&site, &state, pass.rise);
@@ -673,9 +784,20 @@ fn a_frozen_earth_shortens_the_overhead_pass_by_forty_two_seconds() {
     let state = overhead_state(&site, 400.0, 0.0);
     let window = ample_window(&state);
 
-    let correct = next_pass(&EARTH, &site, &EARTH_FRAME, &state, 0.0, MU, 0.0, 0.0, window, 2.0)
-        .expect("answerable")
-        .expect("a pass exists");
+    let correct = next_pass(
+        &EARTH,
+        &site,
+        &EARTH_FRAME,
+        &state,
+        0.0,
+        MU,
+        0.0,
+        0.0,
+        window,
+        2.0,
+    )
+    .expect("answerable")
+    .expect("a pass exists");
 
     // Frozen Earth: rotate the target into the body frame by W0 only, with no rate. Everything else identical.
     let w0 = EARTH_FRAME.w0.value;
@@ -696,7 +818,10 @@ fn a_frozen_earth_shortens_the_overhead_pass_by_forty_two_seconds() {
     while frozen_elevation(t) >= 0.0 {
         previous = t;
         t += 1.0;
-        assert!(t < 5000.0, "the frozen pass never set, which would be a different bug");
+        assert!(
+            t < 5000.0,
+            "the frozen pass never set, which would be a different bug"
+        );
     }
     let (mut lo, mut hi) = (previous, t);
     for _ in 0..64 {
