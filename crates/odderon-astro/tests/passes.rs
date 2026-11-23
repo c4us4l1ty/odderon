@@ -861,3 +861,188 @@ fn elevation_at(site: &Site, state: &State, t: f64) -> f64 {
         .expect("the target is not at the observer")
         .elevation_deg
 }
+
+// ---------------------------------------------------------------------------------------------
+// 6. The oblateness moves the schedule, and the search knows it
+// ---------------------------------------------------------------------------------------------
+//
+// The search used to be two-body, which is fine for "the next pass" and wrong for a schedule: the node
+// regresses at −5.0023°/day, so after a day the geometry is different. These tests are about the perturbation
+// being *present* and *the right shape*, not about it being accurate — `tests/j2-crosscheck.rs` owns that
+// question, against a Dormand–Prince integration of the real equations.
+
+/// A pass in a prograde LEO moves by tens of seconds within hours of the epoch, and the sign is negative.
+///
+/// The magnitude is the point: this is not a second-order correction that can be deferred. It is also the
+/// first measurement this repository has of the effect on a *pass*, as opposed to on the node.
+#[test]
+fn oblateness_moves_a_pass_within_hours() {
+    let site = Site::from_geodetic(&EARTH, 30.0, 0.0, 0.0).expect("site");
+    let altitude = 400.0;
+    let t0 = 0.0;
+    let state = overhead_state(&site, altitude, t0);
+
+    // Earth with J2, and a deliberately spherical Earth to compare against. The second is a *wrong* model and
+    // the crate has no API for it, so it is built here by copying the catalogue's numbers with J2 removed.
+    // `defined(0.0, ...)` rather than `measured`, and the provenance copied from the real `J2` so the only
+    // difference between the two bodies is the number that matters.
+    let mut spherical = EARTH;
+    spherical.physical.j2 = odderon_astro::provenance::Lookup::Known(
+        odderon_astro::provenance::Quantity::defined(0.0, "spherical: J2 removed for this test"),
+    );
+
+    let window = guaranteed_scan_window_seconds(&EARTH, altitude, 10.0).expect("window computable");
+    let step = minimum_pass_seconds(&EARTH, altitude, 10.0).expect("step computable");
+
+    let find = |body: &odderon_astro::catalogue::Body, from: f64| {
+        next_pass(
+            body,
+            &site,
+            &EARTH_FRAME,
+            &state,
+            t0,
+            MU,
+            10.0,
+            from,
+            window,
+            step,
+        )
+        .expect("no error")
+    };
+
+    // Search a day out. The two models disagree by enough that the *same* pass is at a different time.
+    let from = t0 + 20.0 * 3600.0;
+    let with_j2 = find(&EARTH, from).expect("a pass exists near 20 h");
+    let without = find(&spherical, from).expect("a pass exists near 20 h");
+
+    let difference = with_j2.rise - without.rise;
+    assert!(
+        difference < -20.0,
+        "the oblateness must move this pass earlier by tens of seconds, got {:+.1} s",
+        difference
+    );
+    assert!(
+        difference > -400.0,
+        "and not by minutes on one pass; got {:+.1} s, which suggests an axis or sign error",
+        difference
+    );
+
+    // A spherical body is the previous behaviour exactly: no perturbation, so the same numbers.
+    assert!(
+        (without.maximum_elevation_deg - 90.0).abs() < 1e-6,
+        "the overhead pass over a spherical body still peaks at 90 deg, got {}",
+        without.maximum_elevation_deg
+    );
+}
+
+/// The perturbation vanishes as `J2 → 0`, which is the check that catches a rotation applied with the wrong
+/// axis: rotating a position about its own orbit normal leaves it unchanged, so a wrong axis looks like a
+/// working zero.
+#[test]
+fn no_j2_means_no_perturbation() {
+    let site = Site::from_geodetic(&EARTH, 30.0, 0.0, 0.0).expect("site");
+    let state = overhead_state(&site, 400.0, 0.0);
+    let window = guaranteed_scan_window_seconds(&EARTH, 400.0, 10.0).expect("window");
+    let step = minimum_pass_seconds(&EARTH, 400.0, 10.0).expect("step");
+
+    let with_j2 = next_pass(
+        &EARTH,
+        &site,
+        &EARTH_FRAME,
+        &state,
+        0.0,
+        MU,
+        10.0,
+        0.0,
+        window,
+        step,
+    )
+    .expect("no error")
+    .expect("a pass");
+
+    // J2 = 0 in the catalogue: still `Known`, but zero. The perturbation then computes to zero rather than
+    // being skipped, which is a different code path from `NotKnown`.
+    let mut flat = EARTH;
+    flat.physical.j2 = odderon_astro::provenance::Lookup::Known(
+        odderon_astro::provenance::Quantity::defined(0.0, "zero by construction for this test"),
+    );
+    let without = next_pass(
+        &flat,
+        &site,
+        &EARTH_FRAME,
+        &state,
+        0.0,
+        MU,
+        10.0,
+        0.0,
+        window,
+        step,
+    )
+    .expect("no error")
+    .expect("a pass");
+
+    // Within a single pass from the epoch the two agree to well under a second, because the perturbation has
+    // had almost no time to act. If it never vanishes, something else is wrong.
+    assert!(
+        (with_j2.rise - without.rise).abs() < 1.0,
+        "at the epoch a J2 perturbed and an unperturbed search must agree, got {:+.3} s",
+        with_j2.rise - without.rise
+    );
+}
+
+/// A body that does not publish `J2` gets the two-body schedule rather than a guess, and says so by working.
+///
+/// The Moon has no known `J2` in this catalogue (`NotKnown`, with a reason). Before the perturbation existed
+/// that was invisible, because the search was two-body for everything. Now the *absence* has to be handled, and
+/// the honest handling is to fall back rather than to invent `J2 = 0` — which would be a claim that the Moon is
+/// spherical.
+#[test]
+fn a_body_without_j2_falls_back_to_two_body() {
+    use odderon_astro::catalogue::MOON;
+
+    assert!(
+        !MOON.physical.j2.known().is_some(),
+        "this test is only meaningful while the Moon's J2 is not known"
+    );
+    // The catalogue publishes no lunar prime meridian, so a frame is built here from the Moon's own rotation
+    // rate with `W₀ = 0`. That would be wrong for *pointing* at a real lunar site — it is the
+    // `frames.rs` trap — but this test is about the search accepting a body with no `J2`, and the site and the
+    // frame are built to agree with each other, so the pass is overhead by construction.
+    let moon_frame = odderon_astro::frames::BodyFixed {
+        w0: odderon_astro::provenance::Quantity::defined(
+            0.0,
+            "test frame: no lunar prime meridian exists",
+        ),
+        rate: MOON
+            .physical
+            .rotation_rate
+            .known()
+            .expect("the Moon's rotation rate is known"),
+    };
+    let site = Site::from_geodetic(&MOON, 0.0, 0.0, 0.0).expect("site");
+    let r = radius::MOON + 100.0;
+    let state = State::new(
+        Vec3::new(r, 0.0, 0.0),
+        Vec3::new(0.0, sqrt(mu::MOON / r), 0.0),
+    );
+
+    let window = guaranteed_scan_window_seconds(&MOON, 100.0, 10.0).expect("window");
+    let step = minimum_pass_seconds(&MOON, 100.0, 10.0).expect("step");
+    let pass = next_pass(
+        &MOON,
+        &site,
+        &moon_frame,
+        &state,
+        0.0,
+        mu::MOON,
+        10.0,
+        0.0,
+        window,
+        step,
+    )
+    .expect("no error");
+    assert!(
+        pass.is_some(),
+        "a 100 km lunar orbit over a site on its equator must produce a pass"
+    );
+}

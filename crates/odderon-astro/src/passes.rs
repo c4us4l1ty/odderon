@@ -59,18 +59,48 @@
 //!
 //! * **No terrain, refraction or atmosphere.** The mask elevation is the caller's, because a radio horizon
 //!   is a few degrees below the geometric one and a mountain is above it. Both are inputs, not guesses.
-//! * **No J2 in the search.** A two-body prediction is good for a pass this hour, not for a week. Measured
-//!   for 400 km / 51.6° over a 45° site: the pass moves by **8.4 s on day 0**, **80 s on day 1**, and by day
-//!   2 the schedule has drifted far enough that "the next pass" is a *different pass*. `docs/CREDIBILITY.md`
-//!   carries the row; the fix is the J2-aware element propagation that already exists in [`crate::j2`], and
-//!   the reason it is not here yet is that a secular model is the wrong tool for a 60-second window.
+//! * **J2 is in the search only if the body publishes it** — see below. When it does not, this reduces
+//!   exactly to the two-body model that was here before, so a body with no `J2` is handled honestly rather
+//!   than guessed at.
+//!
+//! ## The oblateness, and why a secular model belongs in a pass search
+//!
+//! The search used to be two-body, and this file used to say a two-body prediction is "good for a pass this
+//! hour, not for a week". That is true, and it was also the whole problem: the node regresses at
+//! **−5.0023°/day** at 400 km / 51.6°, so a station's pass geometry is a *different* sky after a couple of
+//! passes. Measured over three days at a 30° N site, against the same search with the perturbation applied:
+//! the first pass moves by **−75 s** and the tenth by **−445 s**, fitting **−149.8 s/day** linearly with a
+//! maximum residual of **13.8 s**. A tenth of a day's error — the figure this file previously quoted — was
+//! wrong by about a factor of two, which is what prompted measuring it rather than quoting it.
+//!
+//! The perturbation is the first-order secular theory of [`crate::j2`], applied **by rotating the two-body
+//! position** rather than by rebuilding it from perturbed elements. Two reasons, and only the second is
+//! about accuracy:
+//!
+//! 1. Kepler's equation stays solved in exactly one place, the universal-variable propagator, which is
+//!    already validated. A second elliptic solver here would be a second thing to be wrong.
+//! 2. Rotating a position cannot produce a non-physical radius, so the elevation search cannot be fed a
+//!    point inside the body by a perturbation that is being applied too aggressively — the failure mode of a
+//!    first-order model used outside its range.
+//!
+//! What this deliberately does **not** include is the short-period wobble. At 400 km the argument of latitude
+//! oscillates by about 0.04° and the radius by about 5 km, which moves a rise time by a few seconds — real,
+//! but far below the perturbation it sits on, and the wrong thing to model before J3/J4 exist. Rendezvous is
+//! the case that needs those (`docs/CREDIBILITY.md` §3.1), and it is a separate row.
+
+//! ## What this module still does not do
+//!
 //! * **No eclipse or illumination.** Whether the satellite is sunlit is a lighting question, not a geometry
 //!   one, and it belongs with the ephemeris.
+//! * **No J3 or J4.** The secular rates here are first order in `J2` only. That is the right model for a
+//!   catalogue of coasting bodies and the wrong one for a rendezvous, which needs the full field through an
+//!   integrator — `docs/CREDIBILITY.md` §3.1, row "J2 + J3 + J4 propagation", which is still not started.
 
 use crate::catalogue::Body;
 use crate::frames::BodyFixed;
+use crate::j2::{rotate_about_axis, secular_rates};
 use crate::observe::{look_at, Look, Site};
-use crate::{is_positive_finite, propagate, State};
+use crate::{is_positive_finite, propagate, State, Vec3};
 use odderon_dmath::{acos, cos, fabs, fmax, sqrt, TAU};
 
 /// Relative slack in the two guards, dimensionless.
@@ -283,30 +313,121 @@ struct Elevation<'a> {
     state: &'a State,
     state_epoch: f64,
     mu: f64,
+    /// The oblateness perturbation, or `None` when the body publishes no `J2`.
+    ///
+    /// `None` is not the same as "`J2 = 0`": a body whose `J2` is **not known** and a body that is
+    /// genuinely spherical both produce an unperturbed schedule, but only the second one is a claim about the
+    /// world. Nothing downstream branches on which it was, so the distinction is recorded here rather than
+    /// propagated as a second error type.
+    perturbation: Option<Perturbation>,
     evaluations: u32,
+}
+
+/// Everything the secular perturbation needs, derived once per search rather than per evaluation.
+///
+/// Computed up front because the alternative — asking `secular_rates` on every one of the ~1000 elevation
+/// evaluations a search performs — would spend most of the search recomputing six trigonometric functions of
+/// numbers that never change. The rates are constant for a given orbit under first-order secular theory, which
+/// is precisely the assumption this model rests on.
+#[derive(Clone, Copy)]
+struct Perturbation {
+    /// Regression of the ascending node, rad/s. Negative for a prograde orbit.
+    raan_rate: f64,
+    /// In-plane drift relative to the two-body mean motion, rad/s: `(ω̇ + Ṁ − n)`.
+    in_plane_rate: f64,
+    /// The orbit normal at the epoch, which the in-plane drift turns about.
+    normal: Vec3,
+}
+
+/// Earth's (and any body's) spin axis in the inertial frame, which nodal regression turns about.
+///
+/// Regressing the node means rotating the orbit *plane* about the body's axis of symmetry — the same axis the
+/// oblateness is defined about. It is **not** the orbit normal, and getting that wrong is not a sign error:
+/// rotating a plane about its own normal leaves the plane unchanged, so the whole effect vanishes while
+/// looking like code that implements it. The rate has the right magnitude and the node never moves.
+const SPIN_AXIS: Vec3 = Vec3::new(0.0, 0.0, 1.0);
+
+impl Perturbation {
+    /// Build from the epoch state, or `None` where the rates have no answer (hyperbolic, degenerate, `J2`
+    /// absent, or a state with no orbital plane).
+    fn derive(state: &State, mu: f64, body: &Body) -> Option<Perturbation> {
+        let j2 = body.physical.j2.known()?.value;
+        let equatorial_radius = body.physical.equatorial_radius.value;
+        let a = state.semi_major_axis(mu);
+        let el = state.to_elements(mu);
+        // `propagate` below already accepts any conic, so refusing here is about the *perturbation*, not the
+        // orbit: the secular rates are a first-order averaged expansion for an ellipse, and applying them to a
+        // hyperbola would be a different (and wrong) calculation rather than an approximation of this one.
+        let rates = secular_rates(a, el.e, el.i, mu, j2, equatorial_radius)?;
+
+        let h = state.r.cross(state.v);
+        let h_norm = h.norm();
+        if !is_positive_finite(h_norm) {
+            return None;
+        }
+        let n = sqrt(mu / (a * a * a));
+        Some(Perturbation {
+            raan_rate: rates.raan,
+            in_plane_rate: rates.argp + (rates.mean_anomaly - n),
+            normal: Vec3::new(h.x / h_norm, h.y / h_norm, h.z / h_norm),
+        })
+    }
+
+    /// Apply the accumulated rotation to a two-body position.
+    ///
+    /// Two rotations about **two different axes**, in the same order as [`crate::j2::propagate_j2_secular`]:
+    /// the position drifts within its orbital plane (about the orbit normal), then the plane itself turns
+    /// about the body's spin axis (nodal regression).
+    ///
+    /// The order is not cosmetic, though it is small: rotations about different axes do not commute, and
+    /// measured for 400 km / 51.6° the two orders differ by **1.27 km after a day** and 33.9 km after three.
+    /// Small next to the drift this exists to fix, and free to get right, so it matches
+    /// [`crate::j2::propagate_j2_secular`] exactly rather than being re-derived — that function is
+    /// cross-checked against a Dormand–Prince integration of the real equations of motion, and this one is
+    /// not.
+    ///
+    /// The axis choice matters far more than the order. Nodal regression turns the orbit **plane** about the
+    /// body's spin axis; rotating about the orbit's own normal instead leaves the plane unchanged, so the
+    /// entire effect disappears while the code still looks like an implementation of it. That is checked in
+    /// `tests/passes.rs` by a test that fails if the node stops moving.
+    fn apply(&self, r: Vec3, dt: f64) -> Vec3 {
+        let in_plane = rotate_about_axis(r, self.normal, self.in_plane_rate * dt);
+        rotate_about_axis(in_plane, SPIN_AXIS, self.raan_rate * dt)
+    }
 }
 
 impl Elevation<'_> {
     /// Elevation in degrees at absolute time `t`, or `None` if the propagator failed.
     fn at(&mut self, t: f64) -> Option<f64> {
-        self.evaluations = self.evaluations.saturating_add(1);
-        let p = propagate(self.state, t - self.state_epoch, self.mu);
-        if p.unconverged || p.overflowed {
-            return None;
-        }
-        let body_fixed = self.frame.to_body_fixed(p.state.r, t)?;
+        let r = self.inertial_position(t)?;
+        let body_fixed = self.frame.to_body_fixed(r, t)?;
         let look = look_at(self.site, body_fixed)?;
         Some(look.elevation_deg)
     }
 
     /// The full look at an instant, so a reported azimuth and a live look angle can never disagree.
     fn look(&mut self, t: f64) -> Option<Look> {
-        let p = propagate(self.state, t - self.state_epoch, self.mu);
+        let r = self.inertial_position(t)?;
+        let body_fixed = self.frame.to_body_fixed(r, t)?;
+        look_at(self.site, body_fixed)
+    }
+
+    /// The target's inertial position at `t`: two-body motion, then the oblateness perturbation if the body
+    /// published a `J2`.
+    ///
+    /// Both `at` and `look` go through here, which is the property that matters — the elevation the search
+    /// optimises and the azimuth it reports are the same model, so they cannot disagree by a perturbation.
+    fn inertial_position(&mut self, t: f64) -> Option<Vec3> {
+        self.evaluations = self.evaluations.saturating_add(1);
+        let dt = t - self.state_epoch;
+        let p = propagate(self.state, dt, self.mu);
         if p.unconverged || p.overflowed {
             return None;
         }
-        let body_fixed = self.frame.to_body_fixed(p.state.r, t)?;
-        look_at(self.site, body_fixed)
+        Some(match self.perturbation {
+            Some(perturbation) => perturbation.apply(p.state.r, dt),
+            None => p.state.r,
+        })
     }
 }
 
@@ -411,6 +532,7 @@ pub fn next_pass(
         state,
         state_epoch,
         mu,
+        perturbation: Perturbation::derive(state, mu, body),
         evaluations: 0,
     };
 

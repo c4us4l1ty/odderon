@@ -242,7 +242,7 @@ pub fn propagate_j2_secular(
 /// Rodrigues' rotation of `v` about the unit axis `k` through angle `theta`.
 ///
 /// `v cosθ + (k × v) sinθ + k (k·v)(1 − cosθ)`. The axis must be normalised by the caller.
-fn rotate_about_axis(v: Vec3, k: Vec3, theta: f64) -> Vec3 {
+pub(crate) fn rotate_about_axis(v: Vec3, k: Vec3, theta: f64) -> Vec3 {
     let c = cos(theta);
     let s = sin(theta);
     let kv = k.cross(v);
