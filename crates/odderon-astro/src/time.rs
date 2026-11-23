@@ -164,6 +164,8 @@ pub struct LeapSecond {
 /// table ending in 2017 is correct for every date up to 2017-01-01 and *unknown* after the last announced
 /// leap second. The module treats "after the table" as a distinct answer from "in the table", never as an
 /// extrapolation.
+// Skipped by rustfmt on purpose: one row per line is the whole point of this table, and the alternative the
+// formatter prefers (a row's fields across four lines) makes 28 dates unreadable and any typo invisible.
 #[rustfmt::skip]
 pub const LEAP_SECONDS: [LeapSecond; 28] = [
     LeapSecond { year: 1972, month: 1, day: 1, tai_minus_utc: 10 },
@@ -487,7 +489,7 @@ pub fn tdb_minus_tt(seconds_since_j2000_tt: f64) -> f64 {
 /// An exact identity for angles already in range, which is the common case (every date within a year of
 /// J2000) and keeps the periodic term bit-for-bit predictable there.
 fn reduce_degrees(degrees: f64) -> f64 {
-    if degrees >= 0.0 && degrees < 360.0 {
+    if (0.0..360.0).contains(&degrees) {
         return degrees;
     }
     let reduced = degrees - floor_div(degrees, 360.0) * 360.0;
@@ -616,7 +618,7 @@ pub fn tdb_to_utc(tdb_seconds_since_j2000: f64) -> Result<Civil, TimeError> {
         };
         let second_of_day = tai - start;
         let limit = SECONDS_PER_DAY + leap_seconds_on(day) as f64;
-        if second_of_day >= 0.0 && second_of_day < limit {
+        if (0.0..limit).contains(&second_of_day) {
             let (year, month, day_of_month) = civil_from_days(day);
             if second_of_day >= SECONDS_PER_DAY {
                 // The leap second: `:60` of the last minute of the day, with its own fraction. This is the
