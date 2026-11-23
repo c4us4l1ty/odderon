@@ -68,6 +68,9 @@ pub(crate) fn is_positive_finite(x: f64) -> bool {
     x > 0.0 && x.is_finite()
 }
 
+/// Pass prediction: when the target rises above the observer's mask, how long it stays up, and when it peaks.
+pub mod passes;
+
 /// Ground stations and look angles: elevation, azimuth, range, and the geometric horizon.
 pub mod observe;
 
