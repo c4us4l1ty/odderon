@@ -149,7 +149,11 @@ pub struct Vec3 {
 
 impl Vec3 {
     /// The zero vector.
-    pub const ZERO: Vec3 = Vec3 { x: 0.0, y: 0.0, z: 0.0 };
+    pub const ZERO: Vec3 = Vec3 {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    };
 
     /// Construct from components.
     #[inline]
@@ -426,10 +430,8 @@ pub fn propagate(state: &State, dt: f64, mu: f64) -> Propagation {
         }
 
         // F(chi) = the universal Kepler equation, expressed in the numerically stable form.
-        let f = rv / sqrt_mu * chi2 * c
-            + (1.0 - r0 * alpha) * chi2 * chi * s
-            + r0 * chi
-            - sqrt_mu * dt;
+        let f =
+            rv / sqrt_mu * chi2 * c + (1.0 - r0 * alpha) * chi2 * chi * s + r0 * chi - sqrt_mu * dt;
         // dF/dchi = r, the current radius.
         let r = chi2 * c + rv / sqrt_mu * chi * (1.0 - psi * s) + r0 * (1.0 - psi * c);
 
@@ -522,10 +524,10 @@ pub fn true_anomaly(state: &State, mu: f64) -> f64 {
     state.to_elements(mu).nu
 }
 
-/// Re-export `sin` so downstream crates need one dependency, not two.
-pub use odderon_dmath::sin as sin_rad;
 /// Re-export `cos` for the same reason.
 pub use odderon_dmath::cos as cos_rad;
+/// Re-export `sin` so downstream crates need one dependency, not two.
+pub use odderon_dmath::sin as sin_rad;
 
 // ---------------------------------------------------------------------------------------------
 // classical orbital elements
