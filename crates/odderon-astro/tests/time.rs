@@ -23,8 +23,8 @@
 //! and then written here, so a failure says which of the two disagreed.
 
 use odderon_astro::time::{
-    convert_constant_offset, tdb_minus_tt, tdb_to_utc, utc_to_tdb, Civil, Scale, TimeError, LEAP_SECONDS,
-    LEAP_TABLE_ENDS,
+    convert_constant_offset, tdb_minus_tt, tdb_to_utc, utc_to_tdb, Civil, Scale, TimeError,
+    LEAP_SECONDS, LEAP_TABLE_ENDS,
 };
 
 /// `2000-01-01T11:58:55.816` UTC is J2000: 12:00:00 TT, minus 32.184 s of TT − TAI, minus 32 s of TAI − UTC.
@@ -64,7 +64,14 @@ fn j2000_in_utc_is_tdb_zero() {
 fn tdb_zero_inverts_to_j2000_utc() {
     let back = tdb_to_utc(0.0).expect("zero is inside the table");
     assert_eq!(
-        (back.year, back.month, back.day, back.hour, back.minute, back.second),
+        (
+            back.year,
+            back.month,
+            back.day,
+            back.hour,
+            back.minute,
+            back.second
+        ),
         (2000, 1, 1, 11, 58, 55),
         "TDB 0 is J2000 in TT, which is 11:58:55.816 UTC; got {back:?}"
     );
@@ -94,8 +101,16 @@ fn the_2016_leap_second_is_a_real_second() {
     let b = utc_to_tdb(&s60).expect("in table");
     let c = utc_to_tdb(&next).expect("in table");
 
-    assert!((b - a - 1.0).abs() < 1.0e-6, "23:59:59 -> 23:59:60 must be 1 s, got {:e}", b - a);
-    assert!((c - b - 1.0).abs() < 1.0e-6, "23:59:60 -> 00:00:00 must be 1 s, got {:e}", c - b);
+    assert!(
+        (b - a - 1.0).abs() < 1.0e-6,
+        "23:59:59 -> 23:59:60 must be 1 s, got {:e}",
+        b - a
+    );
+    assert!(
+        (c - b - 1.0).abs() < 1.0e-6,
+        "23:59:60 -> 00:00:00 must be 1 s, got {:e}",
+        c - b
+    );
 }
 
 /// The inverse gives the leap second back, at its own name, rather than collapsing it into the next midnight.
@@ -113,7 +128,14 @@ fn the_inverse_gives_the_leap_second_back() {
     let one_second_on = utc_to_tdb(&s59).expect("in table") + 1.0;
     let back = tdb_to_utc(one_second_on).expect("invertible");
     assert_eq!(
-        (back.year, back.month, back.day, back.hour, back.minute, back.second),
+        (
+            back.year,
+            back.month,
+            back.day,
+            back.hour,
+            back.minute,
+            back.second
+        ),
         (2016, 12, 31, 23, 59, 60),
         "the instant one second after 23:59:59 is the leap second; got {back:?}"
     );
@@ -144,7 +166,10 @@ fn a_sixty_second_on_a_non_leap_day_is_refused() {
     // The day that did have one is accepted, so this is a test of the table and not a refusal of anything
     // containing a 60.
     let real = Civil::new(1998, 12, 31, 23, 59, 60, 0.0).expect("valid");
-    assert!(utc_to_tdb(&real).is_ok(), "1998-12-31 ended with a leap second");
+    assert!(
+        utc_to_tdb(&real).is_ok(),
+        "1998-12-31 ended with a leap second"
+    );
 
     // Ordinary seconds on ordinary days are untouched.
     assert!(utc_to_tdb(&Civil::new(1999, 12, 31, 23, 59, 59, 0.0).expect("valid")).is_ok());
@@ -171,7 +196,8 @@ fn every_leap_second_boundary_round_trips_exactly() {
             let day = base + day_offset;
             let (year, month, day_of_month) = civil_from_days_for_test(day);
             for (hour, minute, second) in [(0u8, 0u8, 0u8), (6, 30, 15), (12, 0, 0), (23, 59, 59)] {
-                let civil = match Civil::new(year, month, day_of_month, hour, minute, second, 0.25) {
+                let civil = match Civil::new(year, month, day_of_month, hour, minute, second, 0.25)
+                {
                     Ok(c) => c,
                     Err(_) => continue,
                 };
@@ -182,7 +208,14 @@ fn every_leap_second_boundary_round_trips_exactly() {
                 };
                 let back = tdb_to_utc(tdb).expect("a convertible instant must invert");
                 assert_eq!(
-                    (back.year, back.month, back.day, back.hour, back.minute, back.second),
+                    (
+                        back.year,
+                        back.month,
+                        back.day,
+                        back.hour,
+                        back.minute,
+                        back.second
+                    ),
                     (year, month, day_of_month, hour, minute, second),
                     "round trip changed {civil:?} into {back:?} (tdb {tdb})"
                 );
@@ -197,7 +230,10 @@ fn every_leap_second_boundary_round_trips_exactly() {
             }
         }
     }
-    assert!(checked >= 300, "the sweep should cover hundreds of instants, got {checked}");
+    assert!(
+        checked >= 300,
+        "the sweep should cover hundreds of instants, got {checked}"
+    );
 }
 
 /// The leap second itself, at every row, sits exactly one second after `:59` and inverts to `:60`.
@@ -223,7 +259,14 @@ fn every_leap_second_is_representable_and_ordered() {
 
         let back = tdb_to_utc(b).expect("invertible");
         assert_eq!(
-            (back.year, back.month, back.day, back.hour, back.minute, back.second),
+            (
+                back.year,
+                back.month,
+                back.day,
+                back.hour,
+                back.minute,
+                back.second
+            ),
             (year, month, day_of_month, 23, 59, 60),
             "the inverse must report the leap second of {year}-{month}-{day_of_month}"
         );
@@ -243,7 +286,10 @@ fn the_table_is_monotone_and_ends_where_it_says() {
         let day = Civil::new(row.year, row.month, row.day, 0, 0, 0, 0.0)
             .expect("real date")
             .days_since_1970();
-        assert!(day > previous_day, "row {row:?} is not after the previous row");
+        assert!(
+            day > previous_day,
+            "row {row:?} is not after the previous row"
+        );
         assert!(
             row.tai_minus_utc > previous_offset,
             "row {row:?} does not increase the offset; leap seconds are only ever added"
@@ -255,10 +301,17 @@ fn the_table_is_monotone_and_ends_where_it_says() {
     let last = LEAP_SECONDS[27];
     assert_eq!(
         (last.year, last.month, last.day),
-        (LEAP_TABLE_ENDS.year, LEAP_TABLE_ENDS.month, LEAP_TABLE_ENDS.day),
+        (
+            LEAP_TABLE_ENDS.year,
+            LEAP_TABLE_ENDS.month,
+            LEAP_TABLE_ENDS.day
+        ),
         "the declared end of the table must be its last row"
     );
-    assert_eq!(last.tai_minus_utc, 37, "TAI - UTC has been 37 s since 2017-01-01");
+    assert_eq!(
+        last.tai_minus_utc, 37,
+        "TAI - UTC has been 37 s since 2017-01-01"
+    );
     // The literal the converter compares against, cross-checked against the calendar through the public API.
     assert_eq!(LEAP_TABLE_ENDS.days_since_1970(), 17_167);
 }
@@ -279,14 +332,15 @@ fn tai_minus_utc_steps_at_the_published_dates() {
         ((1972, 6, 30), (1972, 7, 1), 1),
         ((2016, 12, 31), (2017, 1, 1), 1),
         ((1998, 12, 31), (1999, 1, 1), 1),
-        ((1983, 7, 1), (1983, 7, 2), 0),     // no leap second: an ordinary midnight
+        ((1983, 7, 1), (1983, 7, 2), 0), // no leap second: an ordinary midnight
     ] {
         let (y0, m0, d0) = before;
         let (y1, m1, d1) = after;
         let last_second_before = Civil::new(y0, m0, d0, 23, 59, 59, 0.0).expect("valid");
         let first_second_after = Civil::new(y1, m1, d1, 0, 0, 0, 0.0).expect("valid");
 
-        let a = utc_to_tdb(&last_second_before).expect("both ends of every row are inside the table");
+        let a =
+            utc_to_tdb(&last_second_before).expect("both ends of every row are inside the table");
         let b = utc_to_tdb(&first_second_after).expect("in table");
         // Ordinary seconds, plus any leap second, plus the drift of the periodic term over 1 s (< 1e-8).
         let elapsed = b - a;
@@ -314,7 +368,10 @@ fn before_the_leap_second_era_is_refused() {
 
     // The first convertible instant is the baseline row itself.
     let first = Civil::new(1972, 1, 1, 0, 0, 0, 0.0).expect("valid");
-    assert!(utc_to_tdb(&first).is_ok(), "1972-01-01T00:00:00 is in the table");
+    assert!(
+        utc_to_tdb(&first).is_ok(),
+        "1972-01-01T00:00:00 is in the table"
+    );
 
     // And the inverse refuses symmetrically rather than inventing a date the forward conversion rejects.
     assert_eq!(tdb_to_utc(-1.0e12), Err(TimeError::BeforeLeapSecondEra));
@@ -342,7 +399,10 @@ fn after_the_table_ends_is_refused_and_says_where_it_ends() {
     // The table's own last row converts: the bound is inclusive, and an exclusive one would make the module's
     // stated range a lie by one day.
     let last_day = Civil::new(2017, 1, 1, 0, 0, 0, 0.0).expect("valid");
-    assert!(utc_to_tdb(&last_day).is_ok(), "the table's last date must convert");
+    assert!(
+        utc_to_tdb(&last_day).is_ok(),
+        "the table's last date must convert"
+    );
 
     // A date well past it, such as the date this repository was being written, is refused rather than guessed.
     assert!(matches!(
@@ -368,20 +428,59 @@ fn after_the_table_ends_is_refused_and_says_where_it_ends() {
 /// Out-of-range fields are refused at construction, so no later stage has to re-check them.
 #[test]
 fn invalid_civil_input_is_refused() {
-    assert_eq!(Civil::new(2026, 13, 1, 0, 0, 0, 0.0), Err(TimeError::BadCivil));
-    assert_eq!(Civil::new(2026, 0, 1, 0, 0, 0, 0.0), Err(TimeError::BadCivil));
-    assert_eq!(Civil::new(2026, 1, 32, 0, 0, 0, 0.0), Err(TimeError::BadCivil));
-    assert_eq!(Civil::new(2026, 1, 1, 24, 0, 0, 0.0), Err(TimeError::BadCivil));
-    assert_eq!(Civil::new(2026, 1, 1, 0, 60, 0, 0.0), Err(TimeError::BadCivil));
-    assert_eq!(Civil::new(2026, 1, 1, 0, 0, 61, 0.0), Err(TimeError::BadCivil));
-    assert_eq!(Civil::new(2026, 1, 1, 0, 0, 0, 1.0), Err(TimeError::BadCivil));
-    assert_eq!(Civil::new(2026, 1, 1, 0, 0, 0, -0.1), Err(TimeError::BadCivil));
+    assert_eq!(
+        Civil::new(2026, 13, 1, 0, 0, 0, 0.0),
+        Err(TimeError::BadCivil)
+    );
+    assert_eq!(
+        Civil::new(2026, 0, 1, 0, 0, 0, 0.0),
+        Err(TimeError::BadCivil)
+    );
+    assert_eq!(
+        Civil::new(2026, 1, 32, 0, 0, 0, 0.0),
+        Err(TimeError::BadCivil)
+    );
+    assert_eq!(
+        Civil::new(2026, 1, 1, 24, 0, 0, 0.0),
+        Err(TimeError::BadCivil)
+    );
+    assert_eq!(
+        Civil::new(2026, 1, 1, 0, 60, 0, 0.0),
+        Err(TimeError::BadCivil)
+    );
+    assert_eq!(
+        Civil::new(2026, 1, 1, 0, 0, 61, 0.0),
+        Err(TimeError::BadCivil)
+    );
+    assert_eq!(
+        Civil::new(2026, 1, 1, 0, 0, 0, 1.0),
+        Err(TimeError::BadCivil)
+    );
+    assert_eq!(
+        Civil::new(2026, 1, 1, 0, 0, 0, -0.1),
+        Err(TimeError::BadCivil)
+    );
     // February, the two cases a naive `% 4` gets wrong, plus the one it gets wrong the other way.
-    assert_eq!(Civil::new(1900, 2, 29, 0, 0, 0, 0.0), Err(TimeError::BadCivil));
-    assert!(Civil::new(2000, 2, 29, 0, 0, 0, 0.0).is_ok(), "2000 is a leap year");
-    assert!(Civil::new(2024, 2, 29, 0, 0, 0, 0.0).is_ok(), "2024 is a leap year");
-    assert_eq!(Civil::new(2026, 2, 29, 0, 0, 0, 0.0), Err(TimeError::BadCivil));
-    assert_eq!(Civil::new(2026, 4, 31, 0, 0, 0, 0.0), Err(TimeError::BadCivil));
+    assert_eq!(
+        Civil::new(1900, 2, 29, 0, 0, 0, 0.0),
+        Err(TimeError::BadCivil)
+    );
+    assert!(
+        Civil::new(2000, 2, 29, 0, 0, 0, 0.0).is_ok(),
+        "2000 is a leap year"
+    );
+    assert!(
+        Civil::new(2024, 2, 29, 0, 0, 0, 0.0).is_ok(),
+        "2024 is a leap year"
+    );
+    assert_eq!(
+        Civil::new(2026, 2, 29, 0, 0, 0, 0.0),
+        Err(TimeError::BadCivil)
+    );
+    assert_eq!(
+        Civil::new(2026, 4, 31, 0, 0, 0, 0.0),
+        Err(TimeError::BadCivil)
+    );
 }
 
 // -------------------------------------------------------------------------------------------
@@ -391,12 +490,37 @@ fn invalid_civil_input_is_refused() {
 /// The three known day numbers, and the table end, are what they should be.
 #[test]
 fn the_calendar_anchors_are_right() {
-    assert_eq!(Civil::new(1970, 1, 1, 0, 0, 0, 0.0).expect("valid").days_since_1970(), 0);
-    assert_eq!(Civil::new(2000, 1, 1, 0, 0, 0, 0.0).expect("valid").days_since_1970(), 10_957);
-    assert_eq!(Civil::new(2026, 11, 22, 0, 0, 0, 0.0).expect("valid").days_since_1970(), 20_779);
+    assert_eq!(
+        Civil::new(1970, 1, 1, 0, 0, 0, 0.0)
+            .expect("valid")
+            .days_since_1970(),
+        0
+    );
+    assert_eq!(
+        Civil::new(2000, 1, 1, 0, 0, 0, 0.0)
+            .expect("valid")
+            .days_since_1970(),
+        10_957
+    );
+    assert_eq!(
+        Civil::new(2026, 11, 22, 0, 0, 0, 0.0)
+            .expect("valid")
+            .days_since_1970(),
+        20_779
+    );
     // Days before 1970 are negative, and the floor direction matters: 1969-12-31 is -1, not 0.
-    assert_eq!(Civil::new(1969, 12, 31, 0, 0, 0, 0.0).expect("valid").days_since_1970(), -1);
-    assert_eq!(Civil::new(1969, 1, 1, 0, 0, 0, 0.0).expect("valid").days_since_1970(), -365);
+    assert_eq!(
+        Civil::new(1969, 12, 31, 0, 0, 0, 0.0)
+            .expect("valid")
+            .days_since_1970(),
+        -1
+    );
+    assert_eq!(
+        Civil::new(1969, 1, 1, 0, 0, 0, 0.0)
+            .expect("valid")
+            .days_since_1970(),
+        -365
+    );
     assert_eq!(LEAP_TABLE_ENDS.days_since_1970(), 17_167);
 }
 
@@ -458,10 +582,22 @@ fn tdb_minus_tt_stays_inside_its_amplitude() {
     // the observed maximum *equals* the amplitude constant. A bound written as `<= 1.6570e-3` passes in node and
     // fails in CI on the one sample that lands on the peak — which is what a `-D warnings` build then reports as
     // a real failure, hours later.
-    assert!(max <= 1.6580e-3, "amplitude must not exceed 1.657 ms plus rounding, got {max:e}");
-    assert!(min >= -1.6580e-3, "amplitude must not exceed 1.657 ms plus rounding, got {min:e}");
-    assert!(max > 1.6500e-3, "the maximum should nearly reach the amplitude, got {max:e}");
-    assert!(min < -1.6500e-3, "the minimum should nearly reach the amplitude, got {min:e}");
+    assert!(
+        max <= 1.6580e-3,
+        "amplitude must not exceed 1.657 ms plus rounding, got {max:e}"
+    );
+    assert!(
+        min >= -1.6580e-3,
+        "amplitude must not exceed 1.657 ms plus rounding, got {min:e}"
+    );
+    assert!(
+        max > 1.6500e-3,
+        "the maximum should nearly reach the amplitude, got {max:e}"
+    );
+    assert!(
+        min < -1.6500e-3,
+        "the minimum should nearly reach the amplitude, got {min:e}"
+    );
 
     // Extrema near the equinoxes, a quarter-orbit from the apsides: days 92.85 and 277.42 in the first year.
     let year = 365.2422;
@@ -517,10 +653,22 @@ fn the_corrections_are_large_compared_with_position_accuracy() {
 /// TAI ↔ TT is an exact 32.184 s, and UTC and TDB are refused rather than treated as TAI.
 #[test]
 fn constant_offsets_are_exact_and_the_datable_scales_are_refused() {
-    assert_eq!(convert_constant_offset(0.0, Scale::Tai, Scale::Tt), Some(32.184));
-    assert_eq!(convert_constant_offset(0.0, Scale::Tt, Scale::Tai), Some(-32.184));
-    assert_eq!(convert_constant_offset(1000.0, Scale::Tai, Scale::Tai), Some(1000.0));
-    assert_eq!(convert_constant_offset(1000.0, Scale::Tt, Scale::Tt), Some(1000.0));
+    assert_eq!(
+        convert_constant_offset(0.0, Scale::Tai, Scale::Tt),
+        Some(32.184)
+    );
+    assert_eq!(
+        convert_constant_offset(0.0, Scale::Tt, Scale::Tai),
+        Some(-32.184)
+    );
+    assert_eq!(
+        convert_constant_offset(1000.0, Scale::Tai, Scale::Tai),
+        Some(1000.0)
+    );
+    assert_eq!(
+        convert_constant_offset(1000.0, Scale::Tt, Scale::Tt),
+        Some(1000.0)
+    );
 
     // UTC's offset changes by whole seconds on announced dates, and TDB's varies continuously: neither is a
     // constant, and returning the input unchanged would be wrong by 69 s and 1.66 ms respectively.
@@ -554,7 +702,11 @@ fn civil_from_days_for_test(days: i64) -> (i32, u8, u8) {
 
 /// Civil → days since 1970-01-01, likewise independent.
 fn days_since_1970_for_test(year: i32, month: u8, day: u8) -> i64 {
-    let y = if month <= 2 { year as i64 - 1 } else { year as i64 };
+    let y = if month <= 2 {
+        year as i64 - 1
+    } else {
+        year as i64
+    };
     let m = month as i64;
     let d = day as i64;
     let era = if y >= 0 { y } else { y - 399 } / 400;
