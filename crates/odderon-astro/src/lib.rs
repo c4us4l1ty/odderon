@@ -71,6 +71,13 @@ pub(crate) fn is_positive_finite(x: f64) -> bool {
 /// Pass prediction: when the target rises above the observer's mask, how long it stays up, and when it peaks.
 pub mod passes;
 
+/// Time systems: UTC, TAI, TT and TDB, with a leap-second table whose range is declared rather than assumed.
+///
+/// Kept apart from everything else on purpose. The rest of the kernel takes a `dt` and never asks what time it
+/// is, which is why it cannot get a date wrong; this is the one module that owns dates, and it refuses the ones
+/// it cannot convert rather than estimating them.
+pub mod time;
+
 /// Ground stations and look angles: elevation, azimuth, range, and the geometric horizon.
 pub mod observe;
 
