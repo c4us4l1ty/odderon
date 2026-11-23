@@ -37,7 +37,12 @@ fn the_pole_is_flattened_by_the_right_amount() {
     let north_pole = Site::from_geodetic(&EARTH, 90.0 * DEG, 0.0, 0.0).expect("pole is placeable");
     let r = north_pole.fixed.norm();
 
-    let f = EARTH.physical.flattening.known().expect("Earth knows its shape").value;
+    let f = EARTH
+        .physical
+        .flattening
+        .known()
+        .expect("Earth knows its shape")
+        .value;
     let polar = RE * (1.0 - f);
 
     assert!(
@@ -45,14 +50,20 @@ fn the_pole_is_flattened_by_the_right_amount() {
         "polar radius should be {polar:.4} km (WGS-84 6356.7523), got {r:.4} km - is flattening ignored?"
     );
     // and it must be distinguishable from the spherical answer
-    assert!(fabs(r - RE) > 20.0, "the pole must not be at the equatorial radius");
+    assert!(
+        fabs(r - RE) > 20.0,
+        "the pole must not be at the equatorial radius"
+    );
 }
 
 /// The equatorial station sits exactly at the equatorial radius.
 #[test]
 fn the_equator_is_not_flattened() {
     let s = equatorial_site();
-    assert!(fabs(s.fixed.norm() - RE) < 1e-9, "equatorial radius should be unchanged by flattening");
+    assert!(
+        fabs(s.fixed.norm() - RE) < 1e-9,
+        "equatorial radius should be unchanged by flattening"
+    );
 }
 
 /// The local up is the **ellipsoid normal**, which is not the normalised position at mid-latitudes.
@@ -65,8 +76,14 @@ fn local_up_is_the_geodetic_normal_not_the_radius_vector() {
     let s = Site::from_geodetic(&EARTH, lat, 0.0, 0.0).expect("valid");
 
     // `up` should be exactly (cos lat, 0, sin lat) for a station on the prime meridian
-    assert!(fabs(s.up.x - lat.cos()) < 1e-12, "up.x should be cos(latitude)");
-    assert!(fabs(s.up.z - lat.sin()) < 1e-12, "up.z should be sin(latitude)");
+    assert!(
+        fabs(s.up.x - lat.cos()) < 1e-12,
+        "up.x should be cos(latitude)"
+    );
+    assert!(
+        fabs(s.up.z - lat.sin()) < 1e-12,
+        "up.z should be sin(latitude)"
+    );
 
     // and the position vector's direction differs from it
     let radial = s.fixed.unit();
@@ -84,11 +101,26 @@ fn the_local_frame_is_orthonormal_everywhere() {
     for lat_deg in [-90.0, -45.0, 0.0, 23.5, 45.0, 89.9, 90.0] {
         let s = Site::from_geodetic(&EARTH, lat_deg * DEG, 37.0 * DEG, 0.0).expect("valid");
         assert!(fabs(s.up.norm() - 1.0) < 1e-12, "up not unit at {lat_deg}");
-        assert!(fabs(s.east.norm() - 1.0) < 1e-12, "east not unit at {lat_deg}");
-        assert!(fabs(s.north.norm() - 1.0) < 1e-12, "north not unit at {lat_deg}");
-        assert!(fabs(s.up.dot(s.east)) < 1e-12, "up not perpendicular to east at {lat_deg}");
-        assert!(fabs(s.up.dot(s.north)) < 1e-12, "up not perpendicular to north at {lat_deg}");
-        assert!(fabs(s.east.dot(s.north)) < 1e-12, "east not perpendicular to north at {lat_deg}");
+        assert!(
+            fabs(s.east.norm() - 1.0) < 1e-12,
+            "east not unit at {lat_deg}"
+        );
+        assert!(
+            fabs(s.north.norm() - 1.0) < 1e-12,
+            "north not unit at {lat_deg}"
+        );
+        assert!(
+            fabs(s.up.dot(s.east)) < 1e-12,
+            "up not perpendicular to east at {lat_deg}"
+        );
+        assert!(
+            fabs(s.up.dot(s.north)) < 1e-12,
+            "up not perpendicular to north at {lat_deg}"
+        );
+        assert!(
+            fabs(s.east.dot(s.north)) < 1e-12,
+            "east not perpendicular to north at {lat_deg}"
+        );
     }
 }
 
@@ -101,11 +133,22 @@ fn the_local_frame_is_orthonormal_everywhere() {
 fn overhead_is_ninety_degrees_of_elevation() {
     let s = equatorial_site();
     // straight up from the station, 400 km up
-    let target = Vec3::new(s.fixed.x + 400.0 * s.up.x, s.fixed.y + 400.0 * s.up.y, s.fixed.z + 400.0 * s.up.z);
+    let target = Vec3::new(
+        s.fixed.x + 400.0 * s.up.x,
+        s.fixed.y + 400.0 * s.up.y,
+        s.fixed.z + 400.0 * s.up.z,
+    );
 
     let look = look_at(&s, target).expect("a target 400 km up has a direction");
-    assert!(fabs(look.elevation_deg - 90.0) < 1e-9, "overhead should be 90 deg, got {}", look.elevation_deg);
-    assert!(look.azimuth_deg.is_finite(), "azimuth at the zenith is arbitrary but must be finite");
+    assert!(
+        fabs(look.elevation_deg - 90.0) < 1e-9,
+        "overhead should be 90 deg, got {}",
+        look.elevation_deg
+    );
+    assert!(
+        look.azimuth_deg.is_finite(),
+        "azimuth at the zenith is arbitrary but must be finite"
+    );
     assert!(fabs(look.range_km - 400.0) < 1e-9, "range should be 400 km");
 }
 
@@ -119,7 +162,11 @@ fn the_horizon_is_exactly_zero_elevation() {
     let target = Vec3::new(r * phi.cos(), r * phi.sin(), 0.0);
 
     let look = look_at(&s, target).expect("valid");
-    assert!(fabs(look.elevation_deg) < 1e-9, "horizon should be 0 deg, got {}", look.elevation_deg);
+    assert!(
+        fabs(look.elevation_deg) < 1e-9,
+        "horizon should be 0 deg, got {}",
+        look.elevation_deg
+    );
     assert!(!above_horizon(&look) || look.elevation_deg >= 0.0);
 }
 
@@ -149,7 +196,11 @@ fn azimuth_is_clockwise_from_north() {
     // and south is 180
     let south_target = Vec3::new(s.fixed.x, s.fixed.y, -1000.0);
     let look_s = look_at(&s, south_target).expect("valid");
-    assert!(fabs(look_s.azimuth_deg - 180.0) < 1e-6, "due south should be 180, got {}", look_s.azimuth_deg);
+    assert!(
+        fabs(look_s.azimuth_deg - 180.0) < 1e-6,
+        "due south should be 180, got {}",
+        look_s.azimuth_deg
+    );
 }
 
 /// A geostationary satellite directly above the station is at 90°; one 90° of longitude away is below the
@@ -161,7 +212,10 @@ fn a_geostationary_satellite_sets_below_the_horizon_at_ninety_degrees_of_longitu
 
     let overhead = look_at(&s, Vec3::new(r_geo, 0.0, 0.0)).expect("valid");
     assert!(fabs(overhead.elevation_deg - 90.0) < 1e-9);
-    assert!(fabs(overhead.range_km - (r_geo - RE)) < 1e-6, "range should be the altitude");
+    assert!(
+        fabs(overhead.range_km - (r_geo - RE)) < 1e-6,
+        "range should be the altitude"
+    );
 
     let far = look_at(&s, Vec3::new(0.0, r_geo, 0.0)).expect("valid");
     assert!(
@@ -185,21 +239,38 @@ fn a_geostationary_satellite_sets_below_the_horizon_at_ninety_degrees_of_longitu
 fn horizon_range_at_leo_is_the_tangent_length() {
     let r_target = RE + 400.0;
     let h = horizon_range(RE, r_target).expect("valid");
-    assert!(fabs(h - 2294.0) < 5.0, "horizon range at 400 km should be ~2294 km, got {h:.1}");
+    assert!(
+        fabs(h - 2294.0) < 5.0,
+        "horizon range at 400 km should be ~2294 km, got {h:.1}"
+    );
 
     // and it must be the tangent, so the line is perpendicular to the radius at the observer
     // (Pythagoras: observer^2 + range^2 == target^2 is exactly the tangency condition when the
     //  observer is the tangent point)
     let lhs = RE * RE + h * h;
-    assert!(fabs(lhs - r_target * r_target) / (r_target * r_target) < 1e-12, "not a tangent");
+    assert!(
+        fabs(lhs - r_target * r_target) / (r_target * r_target) < 1e-12,
+        "not a tangent"
+    );
 }
 
 /// A target inside the observer's radius has no horizon range, and is reported as zero rather than NaN.
 #[test]
 fn horizon_range_is_zero_or_none_for_degenerate_input() {
-    assert_eq!(horizon_range(RE, RE), Some(0.0), "a target on the surface is at zero range");
-    assert_eq!(horizon_range(RE, RE * 0.5), Some(0.0), "a target inside the body is unreachable");
-    assert!(horizon_range(0.0, RE).is_none(), "a zero observer radius is refused");
+    assert_eq!(
+        horizon_range(RE, RE),
+        Some(0.0),
+        "a target on the surface is at zero range"
+    );
+    assert_eq!(
+        horizon_range(RE, RE * 0.5),
+        Some(0.0),
+        "a target inside the body is unreachable"
+    );
+    assert!(
+        horizon_range(0.0, RE).is_none(),
+        "a zero observer radius is refused"
+    );
     assert!(horizon_range(RE, f64::NAN).is_none(), "NaN is refused");
 }
 
@@ -255,11 +326,19 @@ fn mars_hosts_a_station_and_is_more_oblate_than_earth() {
     let mars = &odderon_astro::catalogue::MARS;
     let pole = Site::from_geodetic(mars, 90.0 * DEG, 0.0, 0.0).expect("mars pole");
     let re = mars.physical.equatorial_radius.value;
-    let f = mars.physical.flattening.known().expect("mars knows its shape").value;
+    let f = mars
+        .physical
+        .flattening
+        .known()
+        .expect("mars knows its shape")
+        .value;
 
     // Mars differs from a sphere by about 40 km, five times Earth's 21
     let diff = re - pole.fixed.norm();
-    assert!(diff > 15.0, "Mars's polar flattening should be tens of km, got {diff:.1}");
+    assert!(
+        diff > 15.0,
+        "Mars's polar flattening should be tens of km, got {diff:.1}"
+    );
     assert!(fabs(pole.fixed.norm() - re * (1.0 - f)) < 1e-6);
 }
 
@@ -287,8 +366,12 @@ fn a_station_returns_to_its_inertial_position_after_one_rotation() {
     let rate = EARTH_FRAME.rate.value;
     let period = core::f64::consts::TAU / rate;
 
-    let p0 = s.inertial_position(&EARTH_FRAME, 0.0).expect("frame available");
-    let p1 = s.inertial_position(&EARTH_FRAME, period).expect("frame available");
+    let p0 = s
+        .inertial_position(&EARTH_FRAME, 0.0)
+        .expect("frame available");
+    let p1 = s
+        .inertial_position(&EARTH_FRAME, period)
+        .expect("frame available");
 
     let d = (p1.x - p0.x).abs() + (p1.y - p0.y).abs() + (p1.z - p0.z).abs();
     assert!(
@@ -298,7 +381,9 @@ fn a_station_returns_to_its_inertial_position_after_one_rotation() {
 
     // And state the size of the published-constant discrepancy explicitly, so it is a recorded fact rather
     // than a surprise: one sidereal day of the *published* length leaves the station 4.7 m short.
-    let p_pub = s.inertial_position(&EARTH_FRAME, 86164.0905).expect("frame available");
+    let p_pub = s
+        .inertial_position(&EARTH_FRAME, 86164.0905)
+        .expect("frame available");
     let d_pub = (p_pub.x - p0.x).abs() + (p_pub.y - p0.y).abs() + (p_pub.z - p0.z).abs();
     assert!(
         d_pub > 1e-4 && d_pub < 1e-2,
@@ -319,7 +404,11 @@ fn altitude_is_measured_against_the_ellipsoid() {
         s.fixed.y - flat.fixed.y,
         s.fixed.z - flat.fixed.z,
     );
-    assert!(fabs(d.norm() - h) < 1e-9, "altitude should displace by {h} km, got {}", d.norm());
+    assert!(
+        fabs(d.norm() - h) < 1e-9,
+        "altitude should displace by {h} km, got {}",
+        d.norm()
+    );
     let aligned = d.unit().dot(flat.up);
     assert!(
         fabs(aligned - 1.0) < 1e-12,
