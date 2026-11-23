@@ -241,7 +241,9 @@ pub fn horizon_range(observer_radius: f64, target_radius: f64) -> Option<f64> {
     if target_radius <= observer_radius {
         return Some(0.0);
     }
-    Some(sqrt(target_radius * target_radius - observer_radius * observer_radius))
+    Some(sqrt(
+        target_radius * target_radius - observer_radius * observer_radius,
+    ))
 }
 
 // ---------------------------------------------------------------------------------------------

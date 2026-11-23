@@ -71,6 +71,13 @@ pub(crate) fn is_positive_finite(x: f64) -> bool {
 /// Pass prediction: when the target rises above the observer's mask, how long it stays up, and when it peaks.
 pub mod passes;
 
+/// Time systems: UTC, TAI, TT and TDB, with a leap-second table whose range is declared rather than assumed.
+///
+/// Kept apart from everything else on purpose. The rest of the kernel takes a `dt` and never asks what time it
+/// is, which is why it cannot get a date wrong; this is the one module that owns dates, and it refuses the ones
+/// it cannot convert rather than estimating them.
+pub mod time;
+
 /// Ground stations and look angles: elevation, azimuth, range, and the geometric horizon.
 pub mod observe;
 
@@ -142,7 +149,11 @@ pub struct Vec3 {
 
 impl Vec3 {
     /// The zero vector.
-    pub const ZERO: Vec3 = Vec3 { x: 0.0, y: 0.0, z: 0.0 };
+    pub const ZERO: Vec3 = Vec3 {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    };
 
     /// Construct from components.
     #[inline]
@@ -419,10 +430,8 @@ pub fn propagate(state: &State, dt: f64, mu: f64) -> Propagation {
         }
 
         // F(chi) = the universal Kepler equation, expressed in the numerically stable form.
-        let f = rv / sqrt_mu * chi2 * c
-            + (1.0 - r0 * alpha) * chi2 * chi * s
-            + r0 * chi
-            - sqrt_mu * dt;
+        let f =
+            rv / sqrt_mu * chi2 * c + (1.0 - r0 * alpha) * chi2 * chi * s + r0 * chi - sqrt_mu * dt;
         // dF/dchi = r, the current radius.
         let r = chi2 * c + rv / sqrt_mu * chi * (1.0 - psi * s) + r0 * (1.0 - psi * c);
 
@@ -515,10 +524,10 @@ pub fn true_anomaly(state: &State, mu: f64) -> f64 {
     state.to_elements(mu).nu
 }
 
-/// Re-export `sin` so downstream crates need one dependency, not two.
-pub use odderon_dmath::sin as sin_rad;
 /// Re-export `cos` for the same reason.
 pub use odderon_dmath::cos as cos_rad;
+/// Re-export `sin` so downstream crates need one dependency, not two.
+pub use odderon_dmath::sin as sin_rad;
 
 // ---------------------------------------------------------------------------------------------
 // classical orbital elements

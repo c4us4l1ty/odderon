@@ -201,7 +201,9 @@ pub fn integrate_j2(
         return None;
     }
 
-    let mut s = [state.r.x, state.r.y, state.r.z, state.v.x, state.v.y, state.v.z];
+    let mut s = [
+        state.r.x, state.r.y, state.r.z, state.v.x, state.v.y, state.v.z,
+    ];
 
     // Initial step: a small fraction of the orbital period. Starting too large wastes a rejection cycle;
     // starting too small wastes thousands of steps. A thousandth of a period is a dull, safe compromise.
@@ -328,10 +330,7 @@ pub fn integrate_j2(
     }
 
     Some(Integrated {
-        state: State::new(
-            Vec3::new(s[0], s[1], s[2]),
-            Vec3::new(s[3], s[4], s[5]),
-        ),
+        state: State::new(Vec3::new(s[0], s[1], s[2]), Vec3::new(s[3], s[4], s[5])),
         accepted,
         rejected,
         min_step,

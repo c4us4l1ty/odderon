@@ -22,10 +22,22 @@ const RE: f64 = radius::EARTH;
 #[test]
 fn a_measurement_must_carry_a_positive_uncertainty() {
     assert!(Prov::measured(0.0).is_none(), "zero sigma must be refused");
-    assert!(Prov::measured(-1.0).is_none(), "negative sigma must be refused");
-    assert!(Prov::measured(f64::NAN).is_none(), "NaN sigma must be refused");
-    assert!(Prov::measured(f64::INFINITY).is_none(), "infinite sigma must be refused");
-    assert!(Prov::measured(0.1).is_some(), "an ordinary sigma must be accepted");
+    assert!(
+        Prov::measured(-1.0).is_none(),
+        "negative sigma must be refused"
+    );
+    assert!(
+        Prov::measured(f64::NAN).is_none(),
+        "NaN sigma must be refused"
+    );
+    assert!(
+        Prov::measured(f64::INFINITY).is_none(),
+        "infinite sigma must be refused"
+    );
+    assert!(
+        Prov::measured(0.1).is_some(),
+        "an ordinary sigma must be accepted"
+    );
 }
 
 /// `Unknown` carries NaN, so arithmetic on it fails loudly instead of silently meaning zero.
@@ -37,8 +49,14 @@ fn a_measurement_must_carry_a_positive_uncertainty() {
 fn unknown_poisons_arithmetic_instead_of_reading_as_zero() {
     let q = Quantity::unknown();
     assert!(!q.is_knowledge(), "unknown is not knowledge");
-    assert!(q.value.is_nan(), "an unknown value must be NaN, not a placeholder number");
-    assert!(q.sigma.is_infinite(), "an unknown quantity has unbounded uncertainty");
+    assert!(
+        q.value.is_nan(),
+        "an unknown value must be NaN, not a placeholder number"
+    );
+    assert!(
+        q.sigma.is_infinite(),
+        "an unknown quantity has unbounded uncertainty"
+    );
 }
 
 /// An assumption is explicitly *not* knowledge, even though it has a usable number and uncertainty.
@@ -59,7 +77,9 @@ fn an_assumption_is_not_knowledge_even_though_it_has_a_number() {
 fn derivation_preserves_epistemic_status() {
     let q = Quantity {
         value: 1.0,
-        prov: Prov::Derived { method: "kepler-third-law" },
+        prov: Prov::Derived {
+            method: "kepler-third-law",
+        },
         sigma: 1e-6,
     };
     assert!(q.is_knowledge());
@@ -80,20 +100,31 @@ fn derivation_preserves_epistemic_status() {
 fn the_moon_says_it_does_not_know_its_j2_rather_than_guessing() {
     match MOON.physical.j2 {
         Lookup::NotKnown { reason } => {
-            assert_eq!(reason, "lunar-gravity-dominated-by-c22", "the reason must be machine-readable");
+            assert_eq!(
+                reason, "lunar-gravity-dominated-by-c22",
+                "the reason must be machine-readable"
+            );
         }
-        Lookup::Known(_) => panic!("the Moon's J2 must not be presented as a known basis for J2 theory"),
+        Lookup::Known(_) => {
+            panic!("the Moon's J2 must not be presented as a known basis for J2 theory")
+        }
         Lookup::NoSuchBody => panic!("the Moon exists; only the property is unknown"),
     }
     // and it must still be a real catalogue body
-    assert!(MOON.physical.j2.body_exists(), "the body exists even though the property does not");
+    assert!(
+        MOON.physical.j2.body_exists(),
+        "the body exists even though the property does not"
+    );
 }
 
 /// The Sun's oblateness and rotation are not settled, and are recorded as such.
 #[test]
 fn the_sun_does_not_claim_a_settled_oblateness_or_rotation() {
     assert!(!SUN.physical.j2.body_exists() || SUN.physical.j2.known().is_none());
-    assert!(SUN.physical.rotation_rate.known().is_none(), "the Sun rotates differentially");
+    assert!(
+        SUN.physical.rotation_rate.known().is_none(),
+        "the Sun rotates differentially"
+    );
     // but its mu is solid, and that is what an orbit needs
     assert!(SUN.physical.mu.is_knowledge());
 }
@@ -107,7 +138,11 @@ fn every_catalogued_body_knows_its_gravitational_parameter() {
             "body {} must know mu - without it there is no orbit",
             b.id
         );
-        assert!(b.physical.mu.value > 0.0, "body {} has non-positive mu", b.id);
+        assert!(
+            b.physical.mu.value > 0.0,
+            "body {} has non-positive mu",
+            b.id
+        );
     }
 }
 
@@ -122,9 +157,19 @@ fn every_catalogued_body_knows_its_gravitational_parameter() {
 /// constants are eventually retired, this test is what proves the replacement was faithful.
 #[test]
 fn catalogue_agrees_with_the_kernel_constants() {
-    assert_eq!(EARTH.physical.mu.value, MU, "Earth mu: catalogue vs mu::EARTH");
-    assert_eq!(EARTH.physical.equatorial_radius.value, RE, "Earth radius: catalogue vs radius::EARTH");
-    assert_eq!(EARTH.physical.j2.known().unwrap().value, EARTH_J2, "Earth J2: catalogue vs j2::EARTH_J2");
+    assert_eq!(
+        EARTH.physical.mu.value, MU,
+        "Earth mu: catalogue vs mu::EARTH"
+    );
+    assert_eq!(
+        EARTH.physical.equatorial_radius.value, RE,
+        "Earth radius: catalogue vs radius::EARTH"
+    );
+    assert_eq!(
+        EARTH.physical.j2.known().unwrap().value,
+        EARTH_J2,
+        "Earth J2: catalogue vs j2::EARTH_J2"
+    );
     assert_eq!(MOON.physical.mu.value, mu::MOON, "Moon mu");
     assert_eq!(MARS.physical.mu.value, mu::MARS, "Mars mu");
     assert_eq!(SUN.physical.mu.value, mu::SUN, "Sun mu");
@@ -137,7 +182,9 @@ fn catalogue_agrees_with_the_kernel_constants() {
 /// ISS nodal regression. It proves the wiring, not the arithmetic — the arithmetic has its own tests.
 #[test]
 fn the_catalogue_drives_the_perturbation_machinery() {
-    let earth = catalogue::get("earth").known().expect("earth is catalogued");
+    let earth = catalogue::get("earth")
+        .known()
+        .expect("earth is catalogued");
     let mu = earth.physical.mu.value;
     let re = earth.physical.equatorial_radius.value;
     let j2 = earth.physical.j2.known().expect("earth knows j2").value;
@@ -164,13 +211,19 @@ fn lookup_distinguishes_a_typo_from_an_unknown_property() {
     // a body that is not in the catalogue
     let missing = catalogue::get("pluto");
     assert_eq!(missing, Lookup::NoSuchBody);
-    assert!(!missing.body_exists(), "a body we do not have does not exist to us");
+    assert!(
+        !missing.body_exists(),
+        "a body we do not have does not exist to us"
+    );
     assert!(missing.known().is_none());
 
     // a body that is, with a property that is not
     let moon = catalogue::get("moon").known().expect("moon is catalogued");
     assert!(moon.physical.j2.body_exists(), "the Moon exists");
-    assert!(moon.physical.j2.known().is_none(), "but its J2 is not known");
+    assert!(
+        moon.physical.j2.known().is_none(),
+        "but its J2 is not known"
+    );
 }
 
 /// Lookup is case-sensitive and exact.
@@ -216,7 +269,12 @@ fn ids_are_unique_and_well_formed() {
 /// silent errors in orbit code, so it gets a test with the two candidate values named.
 #[test]
 fn earth_rotation_rate_is_sidereal_not_solar() {
-    let w = EARTH.physical.rotation_rate.known().expect("earth knows its spin").value;
+    let w = EARTH
+        .physical
+        .rotation_rate
+        .known()
+        .expect("earth knows its spin")
+        .value;
 
     let sidereal = core::f64::consts::TAU / 86164.0905;
     let solar = core::f64::consts::TAU / 86_400.0;
@@ -254,10 +312,7 @@ fn earth_rotation_rate_is_sidereal_not_solar() {
 #[test]
 fn every_known_quantity_is_finite_and_plausibly_bounded() {
     for b in catalogue::ALL.iter() {
-        let candidates = [
-            b.physical.mu,
-            b.physical.equatorial_radius,
-        ];
+        let candidates = [b.physical.mu, b.physical.equatorial_radius];
         for q in candidates {
             assert!(q.value.is_finite(), "body {} has a non-finite value", b.id);
             assert!(q.value > 0.0, "body {} has a non-positive value", b.id);
@@ -272,8 +327,17 @@ fn every_known_quantity_is_finite_and_plausibly_bounded() {
         }
         // j2, where known, is a small dimensionless number
         if let Some(j2) = b.physical.j2.known() {
-            assert!(j2.value >= 0.0, "body {}: J2 is a positive magnitude in this crate", b.id);
-            assert!(j2.value < 0.1, "body {}: J2 of {} is not plausible", b.id, j2.value);
+            assert!(
+                j2.value >= 0.0,
+                "body {}: J2 is a positive magnitude in this crate",
+                b.id
+            );
+            assert!(
+                j2.value < 0.1,
+                "body {}: J2 of {} is not plausible",
+                b.id,
+                j2.value
+            );
         }
     }
 }

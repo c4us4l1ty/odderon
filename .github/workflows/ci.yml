@@ -198,6 +198,13 @@ jobs:
         with:
           toolchain: "1.83.0"
           components: rustfmt
+      # NOTE: the annotation is capped at six diffs, so a run showing six is a *truncated list*, not the
+      # whole problem. Clearing six reveals six more; that is how this step behaved on 2026-11-23.
+      #
+      # This job is advisory because the build sandbox has no Rust toolchain, so a formatter change cannot
+      # be verified before it is pushed -- and a different rustfmt version (`cargo fmt` inside the pinned
+      # 1.83.0 toolchain here) disagrees materially with an older bundled one. If this gate is ever armed,
+      # fix it in one sweep from this job's own diff rather than guessing.
       - run: bash ci/annotate.sh "rustfmt" cargo fmt --all -- --check
 
   clippy:

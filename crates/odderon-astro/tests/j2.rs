@@ -107,10 +107,16 @@ fn periapsis_rate_vanishes_at_critical_inclination() {
     // 1/sin²i ≈ 1.25. A tolerance tighter than ~1e-11 would be testing the literal's decimal expansion
     // rather than the identity.
     let check = 5.0 * cos(i_crit) * cos(i_crit) - 1.0;
-    assert!(check.abs() < 1e-11, "the critical inclination should satisfy 5cos^2 i = 1, got {check}");
+    assert!(
+        check.abs() < 1e-11,
+        "the critical inclination should satisfy 5cos^2 i = 1, got {check}"
+    );
     // sanity: the textbook value
     let deg = i_crit * 180.0 / core::f64::consts::PI;
-    assert!((deg - 63.434_948_8).abs() < 1e-5, "critical inclination is {deg} deg");
+    assert!(
+        (deg - 63.434_948_8).abs() < 1e-5,
+        "critical inclination is {deg} deg"
+    );
 
     let a = RE + 400.0;
     let r = secular_rates(a, 0.0, i_crit, MU, EARTH_J2, RE).expect("valid orbit");
@@ -197,10 +203,18 @@ fn node_drift_sign_follows_prograde_retrograde() {
     let a = RE + 700.0;
 
     let prograde = secular_rates(a, 0.001, 0.5, MU, EARTH_J2, RE).unwrap();
-    assert!(prograde.raan < 0.0, "prograde node must walk westward, got {:e}", prograde.raan);
+    assert!(
+        prograde.raan < 0.0,
+        "prograde node must walk westward, got {:e}",
+        prograde.raan
+    );
 
     let retro = secular_rates(a, 0.001, 1.75, MU, EARTH_J2, RE).unwrap();
-    assert!(retro.raan > 0.0, "retrograde node must walk eastward, got {:e}", retro.raan);
+    assert!(
+        retro.raan > 0.0,
+        "retrograde node must walk eastward, got {:e}",
+        retro.raan
+    );
 }
 
 /// A sun-synchronous orbit exists, and it is retrograde.
@@ -253,7 +267,9 @@ fn sun_synchronous_inclination_is_retrograde_and_near_98_degrees() {
     let r = secular_rates(a, 0.0, i, MU, EARTH_J2, RE).unwrap();
     assert!(
         (r.raan - target).abs() <= 1e-9 * target,
-        "node rate at the computed inclination {} should equal {}", r.raan, target
+        "node rate at the computed inclination {} should equal {}",
+        r.raan,
+        target
     );
 }
 
@@ -356,8 +372,15 @@ fn an_hour_of_j2_regresses_the_node_by_the_predicted_rate() {
     let dt = 3600.0;
     let short = propagate_j2_secular(&s, dt, MU, EARTH_J2, RE).expect("elliptic LEO");
     let short_el = short.to_elements(MU);
-    let rate =
-        secular_rates(before.semi_major_axis(), before.e, before.i, MU, EARTH_J2, RE).expect("valid");
+    let rate = secular_rates(
+        before.semi_major_axis(),
+        before.e,
+        before.i,
+        MU,
+        EARTH_J2,
+        RE,
+    )
+    .expect("valid");
     let expected = rate.raan * dt;
 
     // Measure the node line, not the angle between plane normals. The two differ by sin i: rotating a
@@ -393,7 +416,6 @@ fn an_hour_of_j2_regresses_the_node_by_the_predicted_rate() {
         before.i,
         short_el.i
     );
-
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -406,15 +428,36 @@ fn an_hour_of_j2_regresses_the_node_by_the_predicted_rate() {
 /// and the failure mode being prevented is a NaN reaching the catalogue and poisoning a display.
 #[test]
 fn degenerate_input_is_refused_not_propagated() {
-    assert!(secular_rates(0.0, 0.0, 1.0, MU, EARTH_J2, RE).is_none(), "zero a");
-    assert!(secular_rates(-1.0, 0.0, 1.0, MU, EARTH_J2, RE).is_none(), "negative a");
-    assert!(secular_rates(f64::NAN, 0.0, 1.0, MU, EARTH_J2, RE).is_none(), "NaN a");
-    assert!(secular_rates(7000.0, 1.0, 1.0, MU, EARTH_J2, RE).is_none(), "parabolic e");
-    assert!(secular_rates(7000.0, 1.5, 1.0, MU, EARTH_J2, RE).is_none(), "hyperbolic e");
-    assert!(secular_rates(7000.0, 0.0, 1.0, 0.0, EARTH_J2, RE).is_none(), "zero mu");
+    assert!(
+        secular_rates(0.0, 0.0, 1.0, MU, EARTH_J2, RE).is_none(),
+        "zero a"
+    );
+    assert!(
+        secular_rates(-1.0, 0.0, 1.0, MU, EARTH_J2, RE).is_none(),
+        "negative a"
+    );
+    assert!(
+        secular_rates(f64::NAN, 0.0, 1.0, MU, EARTH_J2, RE).is_none(),
+        "NaN a"
+    );
+    assert!(
+        secular_rates(7000.0, 1.0, 1.0, MU, EARTH_J2, RE).is_none(),
+        "parabolic e"
+    );
+    assert!(
+        secular_rates(7000.0, 1.5, 1.0, MU, EARTH_J2, RE).is_none(),
+        "hyperbolic e"
+    );
+    assert!(
+        secular_rates(7000.0, 0.0, 1.0, 0.0, EARTH_J2, RE).is_none(),
+        "zero mu"
+    );
 
     let s = leo();
-    assert!(propagate_j2_secular(&s, f64::NAN, MU, EARTH_J2, RE).is_none(), "NaN dt");
+    assert!(
+        propagate_j2_secular(&s, f64::NAN, MU, EARTH_J2, RE).is_none(),
+        "NaN dt"
+    );
     assert!(
         propagate_j2_secular(&s, 3600.0, MU, EARTH_J2, RE).is_some(),
         "an ordinary hour must work"

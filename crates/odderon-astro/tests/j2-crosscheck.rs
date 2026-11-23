@@ -103,7 +103,8 @@ fn numerical_nodal_rate(state: &State, days: f64, sample_s: f64) -> (f64, Vec<f6
     let mut steps = 0u32;
     let hops = (total / sample_s) as usize;
     for _ in 0..hops {
-        let out = integrate_j2(&cur, sample_s, MU, EARTH_J2, RE, REL_TOL).expect("integrator progress");
+        let out =
+            integrate_j2(&cur, sample_s, MU, EARTH_J2, RE, REL_TOL).expect("integrator progress");
         cur = out.state;
         t += sample_s;
         steps += out.accepted + out.rejected;
@@ -128,10 +129,15 @@ fn secular_nodal_rate_matches_numerical_integration_at_leo() {
     let state = at_periapsis(a, e, inc);
 
     let (numeric, _t, _a, steps) = numerical_nodal_rate(&state, 7.0, 600.0);
-    let analytic = secular_rates(a, e, inc, MU, EARTH_J2, RE).expect("valid").raan;
+    let analytic = secular_rates(a, e, inc, MU, EARTH_J2, RE)
+        .expect("valid")
+        .raan;
 
     // The integrator must have actually done work, or this test is comparing two copies of the formula.
-    assert!(steps > 10_000, "integrator took only {steps} steps; something is wrong");
+    assert!(
+        steps > 10_000,
+        "integrator took only {steps} steps; something is wrong"
+    );
 
     let rel = fabs(numeric - analytic) / fabs(analytic);
     assert!(
@@ -143,7 +149,10 @@ fn secular_nodal_rate_matches_numerical_integration_at_leo() {
     );
 
     // Sign is not optional: a prograde orbit's node walks west, both for the theory and for the motion.
-    assert!(analytic < 0.0 && numeric < 0.0, "both rates must be negative for a prograde orbit");
+    assert!(
+        analytic < 0.0 && numeric < 0.0,
+        "both rates must be negative for a prograde orbit"
+    );
 
     // And the measured residual should be *this* size, not merely under the bound. A residual near zero
     // would mean the numerical run reproduced first-order theory exactly, which is impossible for a real
@@ -191,7 +200,9 @@ fn secular_periapsis_rate_matches_numerical_integration_eccentric() {
     }
 
     let numeric = fitted_rate(&times, &argps);
-    let analytic = secular_rates(a, e, inc, MU, EARTH_J2, RE).expect("valid").argp;
+    let analytic = secular_rates(a, e, inc, MU, EARTH_J2, RE)
+        .expect("valid")
+        .argp;
 
     let rel = fabs(numeric - analytic) / fabs(analytic);
     assert!(
@@ -201,7 +212,10 @@ fn secular_periapsis_rate_matches_numerical_integration_eccentric() {
         analytic,
         numeric
     );
-    assert!(analytic > 0.0, "periapsis should advance below the critical inclination");
+    assert!(
+        analytic > 0.0,
+        "periapsis should advance below the critical inclination"
+    );
     assert!(numeric > 0.0, "and it really does advance when integrated");
 }
 
@@ -220,7 +234,9 @@ fn near_critical_inclination_the_rate_is_too_small_to_fit() {
     let inc = 63.434_948_8 * core::f64::consts::PI / 180.0;
     let state = at_periapsis(a, e, inc);
 
-    let analytic = secular_rates(a, e, inc, MU, EARTH_J2, RE).expect("valid").argp;
+    let analytic = secular_rates(a, e, inc, MU, EARTH_J2, RE)
+        .expect("valid")
+        .argp;
 
     // The absolute rate is negligible: less than a thousandth of a degree per day.
     let deg_per_day = analytic * 86_400.0 * 180.0 / core::f64::consts::PI;
@@ -325,9 +341,18 @@ fn potential_gradient_reproduces_the_acceleration() {
 
     let an = fabs(a.norm());
     let scale = if an > 1e-12 { an } else { 1e-12 };
-    assert!(fabs(dx - oblate_x) < 1e-6 * scale, "dU/dx mismatch: {dx:e} vs {oblate_x:e}");
-    assert!(fabs(dy - oblate_y) < 1e-6 * scale, "dU/dy mismatch: {dy:e} vs {oblate_y:e}");
-    assert!(fabs(dz - oblate_z) < 1e-6 * scale, "dU/dz mismatch: {dz:e} vs {oblate_z:e}");
+    assert!(
+        fabs(dx - oblate_x) < 1e-6 * scale,
+        "dU/dx mismatch: {dx:e} vs {oblate_x:e}"
+    );
+    assert!(
+        fabs(dy - oblate_y) < 1e-6 * scale,
+        "dU/dy mismatch: {dy:e} vs {oblate_y:e}"
+    );
+    assert!(
+        fabs(dz - oblate_z) < 1e-6 * scale,
+        "dU/dz mismatch: {dz:e} vs {oblate_z:e}"
+    );
 }
 
 /// With J2 on, the integrator conserves the **full** energy, potential included.
@@ -372,8 +397,20 @@ fn integrator_conserves_energy_with_j2_on() {
 #[test]
 fn integrator_refuses_degenerate_input() {
     let s = at_periapsis(RE + 400.0, 0.0, 0.5);
-    assert!(integrate_j2(&s, f64::NAN, MU, EARTH_J2, RE, 1e-12).is_none(), "NaN dt");
-    assert!(integrate_j2(&s, -1.0, MU, EARTH_J2, RE, 1e-12).is_none(), "negative dt");
-    assert!(integrate_j2(&s, 600.0, MU, EARTH_J2, RE, 0.0).is_none(), "zero tolerance");
-    assert!(integrate_j2(&s, 0.0, MU, EARTH_J2, RE, 1e-12).is_some(), "zero dt is valid");
+    assert!(
+        integrate_j2(&s, f64::NAN, MU, EARTH_J2, RE, 1e-12).is_none(),
+        "NaN dt"
+    );
+    assert!(
+        integrate_j2(&s, -1.0, MU, EARTH_J2, RE, 1e-12).is_none(),
+        "negative dt"
+    );
+    assert!(
+        integrate_j2(&s, 600.0, MU, EARTH_J2, RE, 0.0).is_none(),
+        "zero tolerance"
+    );
+    assert!(
+        integrate_j2(&s, 0.0, MU, EARTH_J2, RE, 1e-12).is_some(),
+        "zero dt is valid"
+    );
 }

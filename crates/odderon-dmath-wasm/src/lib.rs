@@ -18,7 +18,6 @@
 // below is a thin wrapper over a safe kernel function. `forbid(unsafe_code)` is therefore lifted here
 // deliberately, and only for this reason — the kernel crates keep it.
 
-
 // A `no_std` cdylib must provide its own panic handler. In wasm a panic is unrecoverable anyway, and
 // this one is deliberately tiny: it aborts, which wasm lowers to `unreachable` and the host traps on.
 // Size matters more than message formatting here — the whole engine is a 2.5 MB download target.
