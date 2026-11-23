@@ -57,6 +57,21 @@ fn positive(x: f64) -> bool {
     x > 0.0
 }
 
+/// True only for a value that is strictly positive, finite and not NaN.
+///
+/// Written as its own function because the guard is the whole point: `x > 0.0` is *false* for NaN, which
+/// is the behaviour required at every call site, and `clippy::neg_cmp_op_on_partial_ord` objects to the
+/// negation on the grounds that the intent is unclear. Naming it makes the intent plain and satisfies the
+/// lint without an `#[allow]`, which would also have silenced the *next* negated comparison in the crate.
+#[inline]
+pub(crate) fn is_positive_finite(x: f64) -> bool {
+    x > 0.0 && x.is_finite()
+}
+
+/// A high-precision J2 numerical integrator, used only as the reference the secular theory is checked
+/// against. Never called from a frame.
+pub mod integrate;
+
 /// J2 secular drift — the oblateness perturbation that makes an orbit a schedule rather than an
 /// ellipse. See [`j2::secular_rates`] and [`j2::propagate_j2_secular`].
 pub mod j2;
