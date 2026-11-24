@@ -660,31 +660,6 @@ function summarise(rows, compileMs, minFrames, tickOverride) {
     lines.push('');
   }
 
-  // THE ERROR BAR COMES FIRST. `control` is the baseline shader measured again in a different slot of the
-  // interleaved schedule. It should agree with `baseline` to within the run-to-run spread. How far apart
-  // they actually are is this instrument's noise floor, and nothing smaller than that is a finding.
-  let errBar = null;
-  if (ctl && base.amortised > 0) {
-    errBar = Math.abs(ctl.amortised - base.amortised) / base.amortised;
-    lines.push('INSTRUMENT ERROR BAR (control vs baseline, same shader twice):');
-    lines.push('  baseline ' + base.amortised.toFixed(3) + ' ms   control ' + ctl.amortised.toFixed(3) +
-      ' ms   disagreement ' + (errBar * 100).toFixed(1) + '%');
-    if (errBar > 0.10) {
-      lines.push('  *** OVER 10%: this run is NOT trustworthy. Every row below is suspect,');
-      lines.push('  *** including the big ones. Close other apps, let the device cool, run again.');
-    } else if (errBar > 0.03) {
-      lines.push('  Marginal. Trust only deltas well above ' + (errBar * 100).toFixed(0) + '%.');
-    } else {
-      lines.push('  Good: the instrument agrees with itself to within ' + (errBar * 100).toFixed(1) + '%.');
-    }
-    lines.push('');
-  }
-
-  // THE QUANTISATION FLOOR. `performance.now()` is coarsened for security - 0.1 ms in Chrome, more on
-  // some mobile builds. A per-frame figure is a batch total divided by the frame count, so the floor on a
-  // *measured* frame is tick/frames, and frames is now chosen to keep that small. Report the floor
-  // explicitly: on the previous run it was 1 ms / 16 frames = 62 us, which is a fifth of the whole frame
-  // at 0.75 ms, and five ablations that "saved 0.00 ms" were simply under it.
   // `tickOverride` exists so this function can be tested. The spin below measures the REAL timer, and
   // the real timer differs by environment: Chrome coarsens `performance.now()` to 1 ms, Node does not.
   // So a test running in Node measures a fine tick and can never exercise the coarse-tick path that a
@@ -699,6 +674,50 @@ function summarise(rows, compileMs, minFrames, tickOverride) {
     }
     return best;
   })();
+  // The raw tick, in ms. `tickBase` is the same measurement before it is divided by any frame count:
+  // it is the resolution of a SINGLE reading, which is what "we could not tell these two apart" means.
+  const tickBase = tick;
+
+  // THE ERROR BAR COMES FIRST. `control` is the baseline shader measured again in a different slot of the
+  // interleaved schedule. It should agree with `baseline` to within the run-to-run spread. How far apart
+  // they actually are is this instrument's noise floor, and nothing smaller than that is a finding.
+  let errBar = null;
+  if (ctl && base.amortised > 0) {
+    errBar = Math.abs(ctl.amortised - base.amortised) / base.amortised;
+    lines.push('INSTRUMENT ERROR BAR (control vs baseline, same shader twice):');
+    lines.push('  baseline ' + base.amortised.toFixed(3) + ' ms   control ' + ctl.amortised.toFixed(3) +
+      ' ms   disagreement ' + (errBar * 100).toFixed(1) + '%');
+    // AN ERROR BAR OF 0.0% IS NOT A GOOD RESULT. It means two readings of the same shader landed on
+    // the same 63 us timer tick, so the instrument could not resolve its own disagreement. The correct
+    // claim is "agrees to better than one tick", NOT "agrees to within 0.0%", and the first hardware
+    // run printed the second one next to the word "Good". With a tick of that size the honest error bar
+    // is at least 1/(baseline in ticks).
+    const tickFrac = base.amortised > 0 ? Math.max(errBar, (tickBase / 1000) / base.amortised) : errBar;
+    const oneTickPct = ((tickBase / 1000) / base.amortised) * 100;
+    if (errBar > 0.10) {
+      lines.push('  *** OVER 10%: this run is NOT trustworthy. Every row below is suspect,');
+      lines.push('  *** including the big ones. Close other apps, let the device cool, run again.');
+    } else if (errBar > 0.03) {
+      lines.push('  Marginal. Trust only deltas well above ' + (errBar * 100).toFixed(0) + '%.');
+    } else if (errBar * base.amortised * 1000 < tickBase) {
+      // The two readings are closer together than one tick can express.
+      lines.push('  AGREES TO BETTER THAN ONE TICK, which is all this instrument can claim.');
+      lines.push('  The 0.0% above is not precision: one tick is ' + oneTickPct.toFixed(1) +
+        '% of the baseline, so the');
+      lines.push('  true error bar is somewhere under that. Nothing smaller than ' +
+        oneTickPct.toFixed(1) + '% is resolvable here.');
+    } else {
+      lines.push('  Good: the instrument agrees with itself to within ' + (errBar * 100).toFixed(1) + '%.');
+    }
+    lines.push('');
+  }
+
+  // THE QUANTISATION FLOOR. `performance.now()` is coarsened for security - 0.1 ms in Chrome, more on
+  // some mobile builds. A per-frame figure is a batch total divided by the frame count, so the floor on a
+  // *measured* frame is tick/frames, and frames is now chosen to keep that small. Report the floor
+  // explicitly: on the previous run it was 1 ms / 16 frames = 62 us, which is a fifth of the whole frame
+  // at 0.75 ms, and five ablations that "saved 0.00 ms" were simply under it.
+
   // PER ROW, not the worst row in the table. The old version took `Math.max` over every row, so one
   // slow variant's frame count decided the resolution for all of them -- and then the floor was only
   // PRINTED, never used. Each row's own floor is `tick / its own frame count`, because each row is a
@@ -766,11 +785,24 @@ function summarise(rows, compileMs, minFrames, tickOverride) {
     (d > thr ? real : noisy).push(r.label + ' (' + d.toFixed(2) + ' ms)' + why);
   }
   if (noisy.length || real.length) {
-    const thrMs = Math.max(noise * baseMs, floorUs / 1000);
-    lines.push('FEATURE DELTAS vs the larger of the ' + (noise * 100).toFixed(0) +
-      '% error bar and the timer floor (' + (thrMs * 1000).toFixed(0) + ' us):');
-    if (real.length) lines.push('  larger than the threshold: ' + real.join(', '));
-    if (noisy.length) lines.push('  at or below the threshold - NOT findings: ' + noisy.join(', '));
+    // DO NOT NAME A SINGLE THRESHOLD HERE. The first version printed
+    //   "vs the larger of the 5% error bar and the timer floor (63 us)"
+    // and then listed a 50 us delta as a finding, which reads as a page contradicting itself. It was
+    // not: each row is judged against ITS OWN floor (tick / that row's frame count), and a row that ran
+    // 100 frames has a 10 us floor, not the 63 us the widest row had. The single headline number was a
+    // summary standing in for a per-row rule, which is the kind of sentence that makes a reader stop
+    // trusting the rest.
+    const worstFloorUs = floorUs;
+    const relUs = noise * baseMs * 1000;
+    lines.push('FEATURE DELTAS. Two bars apply, and EACH ROW is judged against its own:');
+    lines.push('  the instrument error bar   ' + relUs.toFixed(0) + ' us (' + (noise * 100).toFixed(0) +
+      '% of the ' + baseMs.toFixed(2) + ' ms baseline)');
+    lines.push('  the row\'s timer floor      tick / that row\'s frame count. The widest floor in this run');
+    lines.push('                             is ' + worstFloorUs.toFixed(0) + ' us; a row that ran more frames');
+    lines.push('                             resolves finer, so a delta under ' + worstFloorUs.toFixed(0) +
+      ' us can still be real.');
+    if (real.length) lines.push('  CLEARS its own bar:        ' + real.join(', '));
+    if (noisy.length) lines.push('  UNDER its own bar - NOT a finding: ' + noisy.join(', '));
     lines.push('');
   }
 

@@ -254,10 +254,45 @@ Two things this table is deliberately not allowed to hide:
      frame, and on a render-on-demand renderer that is the **blit**, not the shade. The verdict now
      names the blit first and labels the sweep explicitly as the full-shade question.
 
-  **Measured on that laptop (1.86 Mpx, error bar 2.8%):** flat fill **0.13 ms**, one texture read
-  **0.25 ms**, FBO→screen blit **0.24 ms**, full shader **0.75 ms**, resolution sweep **0.41 ms/Mpx**.
-  So a cached static frame is **0.24 ms at 1.86 Mpx against a 1.5 ms budget** — R2 is met at native with
-  a wide margin on the number R2 actually names, and the full shader also fits at 1.86 Mpx.
+  **Second run, same laptop, same day — the numbers below supersede the first run's.** The first run's
+  blit figures were two readings of the same shader (see `GRAPHICS.md`), so this run is the one that
+  measured the operations separately:
+
+  | row | ms at 1.86 Mpx | note |
+  | --- | --- | --- |
+  | flat fill, no memory access | **0.13** | 1.0x |
+  | one texture read | **0.26** | 2.1x — **the shipped per-frame path** |
+  | `blitFramebuffer`, no shader | **0.23** | 1.9x — a hardware blit, which the renderer does **not** use |
+  | full shader (as shipped) | **0.77** | only when the world moves |
+  | resolution sweep | **0.41 ms/Mpx** | |
+
+  The two floors are now **3 readings apart at 240-frame batches, i.e. genuinely separate** — and they
+  come out **within 30 us of each other**. That is the answer to the question `GRAPHICS.md` had been
+  answering by assumption: **a hardware blit and a shader that samples the cache cost the same on this
+  device.** So the retracted sentence ("the blit is cheaper because it samples a framebuffer attachment")
+  was not merely unexplained — the effect it claimed does not appear at this resolution.
+
+  A cached static frame is therefore **0.23–0.26 ms at 1.86 Mpx against a 1.5 ms budget**, comfortably
+  met on either number, and the full shader also fits at 1.86 Mpx. **These are laptop numbers, not
+  Reference B**; the Mali-G51 has not been run through this instrument.
+
+  **Two more instrument bugs, both found by this run and both now covered by cases 9 and 10 of
+  `tools/check-ablation.mjs`:**
+
+  3. **It printed a threshold that governed nothing.** The header read *"vs the larger of the 5% error
+     bar and the timer floor (63 us)"* and then listed a **50 us** delta (`− body sphere test`) as a
+     finding. Not a contradiction in the code — each row is judged against **its own** floor, and a row
+     that ran ~100 frames has a 10 us floor, not the 63 us the widest row had — but a single headline
+     number standing in for a per-row rule reads as the page arguing with itself. The header now names
+     both bars, says each row is judged against its own, and gives the widest floor as a bound rather
+     than as the rule.
+  4. **A 0.0% error bar was reported as excellence.** Control and baseline both printed 0.767 ms, so the
+     page said *"Good: the instrument agrees with itself to within 0.0%"*. With a 1 ms timer, two
+     readings less than a tick apart are indistinguishable: 0.0% was the **display hitting the floor**,
+     not the instrument being precise. It now says *"agrees to better than one tick, which is all this
+     instrument can claim"* and states that one tick is 0.1% of the baseline, so nothing finer is
+     resolvable. This is the same species of error as the refresh-period "blit" — a number at the
+     resolution limit presented as a measurement.
 
   **What survives as a finding, and what does not.** Against the larger of the error bar and the timer
   floor: the **solar-disc shadow is real at 0.15 ms** (20% of the frame, and 1.2 ticks — the one row
