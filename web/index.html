@@ -1948,7 +1948,45 @@ const captureReq = { want: false, out: null };
 // dependencies. If that throws (some browsers refuse to rasterise an <img> from foreignObject), the
 // capture is still valid and `hud` is reported as false -- an absent panel is a smaller lie than a
 // panel that says it captured something it did not.
+//
+// THE STYLESHEET HAS TO BE CARRIED IN, and it was not. `XMLSerializer` serialises `#hud` and nothing
+// else, and every rule that makes the panel readable lives in the document's <style> block, which is
+// not inside `#hud`. So the SVG was rasterised with NO CSS at all: the flex rows collapsed into one
+// unstyled run of text, and the saved PNG showed values printed on top of their own labels
+// ("R2 idle < 1.5 m5 ms gpu blit < 1.5"). The live page was always correct, which is exactly why this
+// survived -- every check looked at the page, and the page was fine. The artifact a person actually
+// judges was the broken one. The stylesheet is now inlined into the SVG, so the panel in the picture is
+// the panel on the screen.
 const pictureReq = { want: false, resolve: null };
+
+/**
+ * The document's own CSS, for embedding in the rasterised HUD.
+ *
+ * Read from the live stylesheet rather than restated as a string: a second copy of the panel's styling
+ * would drift from the first, and the drift would be invisible for the same reason the original bug was.
+ *
+ * The `@font-face` / `@import` rules are dropped because an SVG loaded from a `data:` URL cannot fetch
+ * anything -- leaving them in would make the image request fail outright rather than render unstyled.
+ */
+function hudStylesheet() {
+  const escapeXml = (t) =>
+    t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  let css = '';
+  for (const sheet of document.styleSheets) {
+    let rules;
+    try {
+      rules = sheet.cssRules;                 // throws for a cross-origin sheet; ours is inline
+    } catch {
+      continue;
+    }
+    for (const rule of rules) {
+      if (rule.type === CSSRule.STYLE_RULE || rule.type === CSSRule.MEDIA_RULE) {
+        css += rule.cssText + '\n';
+      }
+    }
+  }
+  return css ? '<style>' + escapeXml(css) + '</style>' : '';
+}
 
 async function capturePicture() {
   // Force a draw: render-on-demand means nothing is coming on its own.
@@ -1961,31 +1999,6 @@ async function capturePicture() {
   const ctx = out.getContext('2d');
   ctx.drawImage(raw, 0, 0);
 
-  let hud = false;
-  const panel = $('hud');
-  if (panel) {
-    try {
-      const r = panel.getBoundingClientRect();
-      const html = new XMLSerializer().serializeToString(panel);
-      const svg =
-        '<svg xmlns="http://www.w3.org/2000/svg" width="' + Math.ceil(r.width) + '" height="' +
-        Math.ceil(r.height) + '"><foreignObject x="0" y="0" width="100%" height="100%">' +
-        '<div xmlns="http://www.w3.org/1999/xhtml" style="font:11px/1.45 ui-monospace,Menlo,monospace;' +
-        'color:#cfd6de;background:rgba(10,12,15,.86);padding:8px;box-sizing:border-box">' +
-        html + '</div></foreignObject></svg>';
-      const img = new Image();
-      await new Promise((res, rej) => {
-        img.onload = res;
-        img.onerror = rej;
-        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
-      });
-      ctx.drawImage(img, r.left, r.top);
-      hud = true;
-    } catch {
-      hud = false;                              // the frame is still real; only the overlay is missing
-    }
-  }
-
   // Everything that decides what the image looks like, stamped as text rather than left to memory.
   const stamp = [
     'odderon ' + new Date().toISOString(),
@@ -1997,15 +2010,94 @@ async function capturePicture() {
     'gpu timer ' + (bench.gpuTimerState || '-') +
       (Number.isFinite(bench.gpuBlitMs) ? '  ' + bench.gpuBlitMs.toFixed(3) + ' ms' : ''),
   ];
-  ctx.font = '12px ui-monospace,Menlo,monospace';
+  // The stamp is scaled with the frame for the same reason the panel is: fixed 12 px text in a 729-px-wide
+  // buffer is a caption nobody can read. `stampScale` converts the CSS-pixel sizes below into buffer
+  // pixels, and is clamped at 1 so a capped drawing buffer (which can be SMALLER than the viewport) does
+  // not render the text below its intended size.
+  const stampScale = Math.max(1, raw.width / window.innerWidth);
+  ctx.font = (12 * stampScale) + 'px ui-monospace,Menlo,monospace';
   const lines = stamp.map((t) => t.replace(/\s+/g, ' ').slice(0, 96));
-  const pad = 8;
-  const lineH = 16;
+  const pad = 8 * stampScale;
+  const lineH = 16 * stampScale;
   const boxH = lines.length * lineH + pad * 2;
   ctx.fillStyle = 'rgba(10,12,15,.86)';
   ctx.fillRect(0, out.height - boxH, out.width, boxH);
   ctx.fillStyle = '#9fb0c0';
   lines.forEach((t, i) => ctx.fillText(t, pad, out.height - boxH + pad + lineH * (i + 1) - 4));
+
+  // THE PANEL IS COMPOSITED LAST, because on the page `#hud` carries z-index 10 and therefore sits on
+  // top of everything. This block used to run BEFORE the provenance stamp was painted, so the stamp's
+  // box covered the bottom of the panel -- on a 700 px window, the last four rows outright. Painting
+  // order is now the stacking order a person actually sees.
+  let hud = false;
+  const panel = $('hud');
+  if (panel) {
+    try {
+      const r = panel.getBoundingClientRect();
+      const html = new XMLSerializer().serializeToString(panel);
+      // The wrapper reproduces what `position: fixed; top/left` did on the page, because the SVG is its
+      // own coordinate space: the panel's offsets are meaningless there, and the dropped `fixed`
+      // positioning would otherwise let it lay out at whatever the rasteriser chose.
+      //
+      // THE WIDTH IS PINNED TO THE MEASURED WIDTH, and that is load-bearing. `max-width` is what
+      // constrains the panel on the page; relaxed inside the SVG the panel reflowed into a different,
+      // ultimately TALLER layout, and since the SVG's height was still the height measured on the page,
+      // the bottom of the panel was silently cropped -- `R1` and `orbit source` disappeared. Pinning the
+      // width makes the raster use the layout that was measured, so the picture matches the page.
+      const w = Math.ceil(r.width);
+      const h = Math.ceil(r.height);
+      const svg =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '">' +
+        '<foreignObject x="0" y="0" width="100%" height="100%">' +
+        // The base font, colour and line-height come from `body` on the page and are INHERITED by the
+        // panel. An SVG document has no `body`, so without this the inherited rules are lost and every
+        // element that does not set its own font -- the buttons, which only set colour and background --
+        // falls back to the rasteriser's default: 16 px sans-serif. That is why the buttons in the saved
+        // picture were larger than their own row labels while the live page was correct. `!important`
+        // because the inlined stylesheet's `html, body` rules would otherwise apply to nothing here.
+        '<div xmlns="http://www.w3.org/1999/xhtml" style="margin:0;padding:0;' +
+        'font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#cfd6de;">' +
+        hudStylesheet() +
+        // The panel is drawn OPAQUE in the still, and this is the one place the picture deliberately
+        // differs from the screen. Its background is `rgba(10,12,15,.82)`, so in the capture the
+        // provenance stamp painted underneath showed through it and made the bottom rows unreadable --
+        // a blurrier version of the very defect this change fixes. `backdrop-filter` does not survive
+        // into an SVG raster either, so the panel cannot reproduce its on-screen translucency here
+        // regardless; given that, opaque is the honest choice. What is lost is exactly "you can see the
+        // scene through the panel", and that is stated rather than hidden.
+        '<style>#hud{position:static !important;margin:0 !important;top:auto !important;' +
+        'left:auto !important;width:' + w + 'px !important;max-width:none !important;' +
+        'background:rgb(10,12,15) !important;backdrop-filter:none !important;' +
+        'box-sizing:border-box !important;}</style>' +
+        html + '</div></foreignObject></svg>';
+      const img = new Image();
+      await new Promise((res, rej) => {
+        img.onload = res;
+        img.onerror = rej;
+        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+      });
+      // CSS PIXELS ARE NOT IMAGE PIXELS, and the panel was composited as if they were.
+      //
+      // `getBoundingClientRect()` reports CSS pixels. The canvas being written to is the DRAWING BUFFER,
+      // which on a phone is 729x1578 for a 390x844 viewport. Drawing the panel at `r.left, r.top` with
+      // `w x h` therefore placed a 390-px-wide panel into a 729-px-wide image: the panel appeared at
+      // rather more than half size, in the top-left corner, over a scene scaled to fit the full frame.
+      // The live page was always right, which is again why this survived -- and it only appears above
+      // dpr 1, so the desktop captures that every check used could not see it.
+      //
+      // The scale is derived from the frame that was captured rather than read from `devicePixelRatio`,
+      // because `state.scale` and the MAX_PIXELS cap both alter the drawing buffer independently of the
+      // device's ratio. The frame is what the panel has to fit.
+      const scale = raw.width / window.innerWidth;
+      ctx.save();
+      ctx.scale(scale, scale);
+      ctx.drawImage(img, r.left, r.top);
+      ctx.restore();
+      hud = true;
+    } catch {
+      hud = false;                              // the frame is still real; only the overlay is missing
+    }
+  }
 
   return { canvas: out, hud, stamp: lines };
 }

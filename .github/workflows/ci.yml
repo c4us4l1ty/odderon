@@ -265,6 +265,15 @@ jobs:
         run: node tools/check-cache.mjs
         env:
           LD_LIBRARY_PATH: /tmp/al2023/lib
+      # The saved PNG's instrument panel has to be the panel a person sees. It was not: `capturePicture()`
+      # serialised `#hud` without the document's stylesheet, so the panel was rasterised with no CSS at
+      # all and values printed on top of their own labels -- in the artifact claim 5 is argued from, while
+      # the live page was correct and every other check therefore passed. This captures both and compares
+      # the text.
+      - name: saved picture's panel matches the page
+        run: node tools/check-hud-capture.mjs
+        env:
+          LD_LIBRARY_PATH: /tmp/al2023/lib
       # `tools/check-ablation.mjs` tests the ablation report's *judgement* rather than a measurement: it
       # feeds `summarise()` known matrices and asserts that the page refuses to call a set of deltas
       # findings when its own control disagrees. This is the test for the 43% self-disagreement that
