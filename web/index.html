@@ -1252,31 +1252,50 @@ function blitFrame() {
 // and nothing else.
 function upperBoundBlit(samples = 12) {
   if (!cache.probeFbo) return null;
-  // `gl.finish()` and NOT `readPixels`, and the choice is measured rather than stylistic.
+  // ONE `gl.finish()` FOR K BLITS -- NOT ONE PER BLIT. This is the whole mechanism and it was wrong
+  // twice before it was right.
   //
-  // Both force the GPU to complete the frame before the next is issued, which is what an upper bound
-  // needs. But on ANGLE a 1-pixel readback from the default framebuffer costs about 9.3 ms while
-  // `gl.finish()` costs 0.008 ms -- the readback drags a full pipeline flush along with it, and the
-  // resulting "upper bound" would be a measurement of the readback. Measured on this sandbox:
+  // Version 1 called `readPixels` after every blit. On ANGLE that costs 9.3 ms against `finish()`'s
+  // 0.008 ms, so the "upper bound" was a measurement of the readback. Version 2 changed it to
+  // `gl.finish()` after every blit, which is fine on a desktop driver and useless on a phone: there,
+  // `finish()` waits for the next refresh boundary, so K iterations pay K refresh periods. Reference B
+  // reported `< 4.08 ms` at a 250 Hz display -- 4.00 ms, i.e. the display again, dressed as a bound.
+  // That is the same error this file already documents for the blit measurement, committed inside the
+  // fix for it.
   //
-  //     blit + readPixels   9.308 ms
-  //     blit + finish       0.008 ms
-  //     blit only           0.000 ms
-  //     readPixels only     0.175 ms
+  // The right shape is the one `measureFrame()` uses for its shade loop: issue every unit of work, then
+  // ONE completion. T then pays the presentation stall once, and T/K is amortised over K frames of real
+  // GPU work rather than over one wait.
   //
-  // `finish()` is a synchronous stall too, and that stall is included in the figure below. It is part
-  // of why this is an upper bound.
-  const blitProbe = () => {
+  // `samples` is chosen from the observed blit rate so this finishes in a few milliseconds, and clamped
+  // so that a pathologically slow device still terminates: the ceiling is ~128 frames of work.
+  const blitOnce = () => {
     gl.bindFramebuffer(gl.READ_FRAMEBUFFER, cache.probeFbo);
     gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
     gl.blitFramebuffer(0, 0, cache.w, cache.h, 0, 0, canvas.width, canvas.height,
                        gl.COLOR_BUFFER_BIT, gl.NEAREST);
-    gl.finish();
   };
-  blitProbe();                                  // warm: first use pays deferred driver setup
+
+  // A FIXED batch, not a calibrated one.
+  //
+  // Sizing the batch from a one-blit-plus-finish probe is circular: that probe is dominated by the very
+  // presentation wait the batch exists to amortise, so a phone measuring 4 ms of vsync would ask for
+  // `4/4 = 1` blit and pay the full stall again. The batch size must come from what the figure needs,
+  // which is "large enough that the stall divided by K is negligible", not from what the device did.
+  //
+  // K = 64. On a 250 Hz phone with a 4 ms refresh, the single presentation wait contributes 0.06 ms per
+  // frame to the figure below -- against a 1.5 ms budget, and in the conservative direction. On a device
+  // where one blit costs a full millisecond, sixty-four of them is still under a tenth of a second, so
+  // the button stays responsive.
+  const K = 64;
+  blitOnce();
+  gl.finish();                                  // warm: deferred driver setup, and one paid stall
+
   const t0 = performance.now();
-  for (let i = 0; i < samples; i++) blitProbe();
-  const per = (performance.now() - t0) / samples;
+  for (let i = 0; i < K; i++) blitOnce();
+  gl.finish();                                  // ONE completion for all K
+  const per = (performance.now() - t0) / K;
+  bench.blitBoundBatch = K;
   gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
   gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
   return per;
@@ -1570,7 +1589,10 @@ function updateHud() {
     // cost cannot fail; if it does not, that is inconclusive rather than a failure, and the wording says
     // which. Reporting the 5.00 ms vsync interval instead would be reporting the display.
     const clear = bench.blitUpperMs < 1.5;
-    r2.textContent = '\u2264 ' + fmt(bench.blitUpperMs, 2) + ' ms upper bound ' +
+    // Below 0.01 ms, two decimal places prints "0.00", which reads as "not measured" rather than as
+    // "too fast to resolve". Say the smaller thing instead of a zero.
+    const shown = bench.blitUpperMs < 0.01 ? '< 0.01' : fmt(bench.blitUpperMs, 2);
+    r2.textContent = '\u2264 ' + shown + ' ms upper bound ' +
       (clear ? '< 1.5  (real cost is lower)' : '> 1.5  (inconclusive, not a failure)');
     r2.className = clear ? 'pass' : 'warn';
   } else if (bench.gpuTimerState === 'no-samples') {
