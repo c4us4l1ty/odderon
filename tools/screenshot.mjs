@@ -22,14 +22,22 @@
  * Usage:
  *   node tools/screenshot.mjs                       # 1600x1000, .artifacts/shell.png
  *   node tools/screenshot.mjs --width 2560 --height 1600 --out .artifacts/big.png
- *   node tools/screenshot.mjs --url http://127.0.0.1:8080/ --hide-ui
+ *   node tools/screenshot.mjs --url http://127.0.0.1:8080/ --hide-ui   # use a server you already run
+ *
+ * With no `--url` it starts `tools/serve.mjs` itself and stops it again. That is not a convenience: the
+ * first version assumed a server was already listening on 8080 and passed locally, where a preview server
+ * happened to be up, then failed in CI, where it was not. A tool that is green because of the state of the
+ * machine it ran on is the same class of bug as a test that calls the code under test to build its own
+ * expectation, so the tool now owns its server and cannot be green for the wrong reason.
  *
  * Requires `npm install` and, in a sandbox without a system Chromium, `node tools/unpack-chromium.mjs`
  * with `LD_LIBRARY_PATH=/tmp/al2023/lib` exported.
  */
 
 import { mkdirSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 function flag(name, dflt) {
   const i = process.argv.indexOf(`--${name}`);
@@ -37,12 +45,39 @@ function flag(name, dflt) {
 }
 const has = (name) => process.argv.includes(`--${name}`);
 
-const port = Number(flag("port", 8080));
-const url = flag("url", `http://127.0.0.1:${port}/`);
+const url = flag("url", "");
 const out = resolve(flag("out", ".artifacts/shell.png"));
 const width = Number(flag("width", 1600));
 const height = Number(flag("height", 1000));
 const hideUi = has("hide-ui");
+
+const here = dirname(fileURLToPath(import.meta.url));
+
+/** Start `tools/serve.mjs` on `serverPort` and resolve once it says it is listening. */
+async function startServer(serverPort) {
+  const child = spawn(process.execPath, [resolve(here, "serve.mjs"), String(serverPort)], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  await new Promise((res, rej) => {
+    const timer = setTimeout(() => rej(new Error("serve.mjs did not start within 15 s")), 15000);
+    child.stdout.on("data", (d) => {
+      if (String(d).includes("shell on")) {
+        clearTimeout(timer);
+        res();
+      }
+    });
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      rej(new Error(`serve.mjs exited early with code ${code}`));
+    });
+  });
+  return child;
+}
+
+const ownServer = !has("url");
+const serverPort = Number(flag("port", 8080));
+const server = ownServer ? await startServer(serverPort) : null;
+const target = ownServer ? `http://127.0.0.1:${serverPort}/` : url;
 
 const { default: puppeteer } = await import("puppeteer-core");
 const { default: chromium } = await import("@sparticuz/chromium");
@@ -63,7 +98,7 @@ page.on("console", (m) => {
 });
 page.on("pageerror", (e) => errors.push(String(e)));
 
-await page.goto(url, { waitUntil: "networkidle0", timeout: 90000 });
+await page.goto(target, { waitUntil: "networkidle0", timeout: 90000 });
 
 // Wait for the first frame, then for the instrument to *settle*. A shader that failed to compile leaves
 // a blank canvas and one console line; waiting on framesDrawn > 0 is what distinguishes "rendered" from
@@ -120,6 +155,7 @@ const metrics = await page.evaluate(() => {
 mkdirSync(dirname(out), { recursive: true });
 await page.screenshot({ path: out });
 await browser.close();
+if (server) server.kill();
 
 console.log(
   JSON.stringify(
