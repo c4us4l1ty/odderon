@@ -153,6 +153,14 @@ jobs:
       - name: determinism — native vs wasm32, same job
         run: bash ci/determinism.sh
 
+      # The static gate runs in `shell-claims`; this runs it again WITH the real binary, so the export
+      # list, the reference orbit and the full-period closure are checked against the code the build
+      # actually produced rather than against the source's intentions. This is the only place in the
+      # project where the wasm boundary can be executed at all: the crate is a `cdylib` with a wasm-only
+      # panic handler, so it cannot be built or tested on the host.
+      - name: orbit boundary (exports agree with physics)
+        run: node tools/check-orbit.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
+
       - name: stage wasm artifacts
         run: |
           mkdir -p dist
@@ -211,6 +219,20 @@ jobs:
       # the repository's own git config with status 200. See `tools/static-path.mjs` for the mechanism.
       - name: static path resolver (no traversal out of web/ or dist/)
         run: node tools/check-static-path.mjs
+      # THE ORBIT STUB GATE. `web/index.html` drew its satellite with a local Kepler solver for the whole
+      # life of the file, labelled as a stand-in in three separate comments, and no check noticed -- every
+      # check asked whether the page rendered, and the stand-in rendered perfectly. A comment describing
+      # work still to do is not a guard; this is.
+      #
+      # It fails if the page re-grows a local solver, a local `mu`, a hand-written circular-orbit speed,
+      # or a silent fallback for a missing kernel. Static on purpose: no browser, no wasm, sub-second.
+      - name: orbit comes from the kernel, not from a JS stub
+        run: node tools/check-orbit.mjs
+      # The verifier's rejection path, exercised. The `--wasm` branch only ever runs in `build-wasm`,
+      # so without this the code that is supposed to catch a wrong boundary would first run in the same
+      # job it is guarding. A test whose failing branch has never executed has not been shown to fail.
+      - name: orbit verifier self-test (accepts good exports, rejects bad)
+        run: node tools/check-orbit.mjs --selftest
       # `BUILD-PLAN.md` §4 claim 3 is "idle is nothing scheduled": zero rAF calls, zero timers, zero
       # allocations after 250 ms of no input. The instrument already measured that, but only when a human
       # remembered to run it -- `tools/check-shell.mjs` was never wired into CI, so the claim rested on

@@ -1,8 +1,14 @@
 # tools — the build loop, given no local Rust
 
-This sandbox has Node and a Chromium but **no Rust toolchain and no route to `crates.io`**. So Rust is
-compiled by **GitHub Actions**, and this directory holds the two scripts that close the loop: push to
-get a build, pull the artifact back to *run* it.
+This sandbox has Node and a Chromium, and **no `rustup`** — but since 2026-11-24 it *does* have a
+working Rust toolchain: `@rustbin/*` npm packages carry `rustc`, `cargo`, the `wasm32` std rlibs and
+clippy, and `docs/BUILD-PLAN.md` §2.1 shows how they are assembled. So Rust is compiled **both** here
+(1.85.0, for fast iteration) and by **GitHub Actions** (1.83.0, the pinned authority). This directory
+holds the scripts that close the loop: push to get a build, pull the artifact back to *run* it.
+
+One consequence worth knowing: because a build now exists locally, `tools/check-orbit.mjs --wasm` can be
+run against a real binary without waiting for CI. That is how the orbit boundary was verified before it
+was pushed — and CI still re-runs it against the binary the pinned toolchain produced.
 
 The division of labour is deliberate and worth stating, because it is the architectural point:
 
