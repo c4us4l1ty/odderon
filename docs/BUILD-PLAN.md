@@ -237,14 +237,39 @@ Two things this table is deliberately not allowed to hide:
   is covered by `tools/check-ablation.mjs`, which feeds it matrices with known answers — including the
   exact shape of the 43% failure — and it is now a CI step, so the judgement cannot regress silently.
 
-  **Still unknown, and this is the part to be careful about.** The rewritten instrument has **not been
-  run on Reference A or B**. The only run on record is this sandbox's SwiftShader, where the whole
-  shader lands under the browser timer's resolution and the page correctly declines to report rows at
-  all ("what is meaningful is that the shader is not the cost"). So there is currently **no number from
-  the fixed tool**, for either reference device, and the old numbers must not be read as if there were.
-  Until somebody runs `web/ablate.html` on real silicon, the four "surviving" rows above are
-  unreplicated, and the per-feature costs of corrugation, aerial perspective and the rest are unknown
-  rather than small.
+  **Run on real hardware, 2026-11-24 — and it found two more bugs in itself.** The first laptop run
+  printed an instrument error bar of **2.8%** (control 0.771 ms vs baseline 0.750 ms, same shader
+  twice), which is the rewrite working: the old page could not have told you what its own error was.
+  It then made two mistakes, both now fixed and both now covered by `tools/check-ablation.mjs`:
+
+  1. **It printed a resolution floor and then ignored it.** The page reported *"resolution floor: 63 us
+     per frame — deltas below 63 us are invisible to this instrument, not zero"* and, three lines
+     later, listed a **50 us** delta (`− body sphere test`) as a finding, judged against a 5% error bar
+     of 37.5 us. A delta of 0.8 of one timer tick was being reported as a measurement. Each row is now
+     judged against **its own** floor (`tick / max(MIN_FRAMES, that row's frame count)`) as well as the
+     relative bar, and the rejected row says which bar rejected it.
+  2. **The verdict contradicted the floors.** It said *"A CACHED STATIC FRAME costs 0.24 ms … That
+     PASSES R2 at native"* and then extrapolated the **full shader** sweep and printed *"VERDICT: R2 IS
+     MET … 1.5 ms buys 3.64 Mpx"*. Both were true and only one was about R2. R2 is a budget for a drawn
+     frame, and on a render-on-demand renderer that is the **blit**, not the shade. The verdict now
+     names the blit first and labels the sweep explicitly as the full-shade question.
+
+  **Measured on that laptop (1.86 Mpx, error bar 2.8%):** flat fill **0.13 ms**, one texture read
+  **0.25 ms**, FBO→screen blit **0.24 ms**, full shader **0.75 ms**, resolution sweep **0.41 ms/Mpx**.
+  So a cached static frame is **0.24 ms at 1.86 Mpx against a 1.5 ms budget** — R2 is met at native with
+  a wide margin on the number R2 actually names, and the full shader also fits at 1.86 Mpx.
+
+  **What survives as a finding, and what does not.** Against the larger of the error bar and the timer
+  floor: the **solar-disc shadow is real at 0.15 ms** (20% of the frame, and 1.2 ticks — the one row
+  that clears both bars). The other six are **not findings**: wall corrugation 0.02, aerial perspective
+  0.03, body sphere 0.05, tonemap 0.01, sky glow 0.00, 8→4 taps 0.00 ms. The sphere test's 50 us clears
+  the error bar and dies on the 63 us tick, so it is **unresolved rather than absent** — a finer clock
+  would settle it.
+
+  **Still unknown.** This is one device, one run, and it is not Reference A or B — it is a laptop whose
+  GPU the page does not name in the copy returned. The four rows the old 43% run "survived" are still
+  not replicated on a named reference device. What has changed is that the instrument now agrees with
+  itself to 2.8% and reports its own resolution, so the next run is worth reading.
 - **The style gates are armed (2026-11-23), and getting there cost more than it should have.** Both
   `rustfmt` and `clippy` were `continue-on-error` until they went green on `main`, which is the
   condition §3 set. `clippy` went green first. `rustfmt` took eleven files and about as many rounds,

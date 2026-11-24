@@ -42,7 +42,10 @@ const root = resolve(here, "..");
 
 function loadSummarise() {
   const html = readFileSync(resolve(root, "web/ablate.html"), "utf8");
-  const start = html.indexOf("function summarise(rows, compileMs) {");
+  // Match the NAME, not the argument list. Pinning the full signature meant adding a default parameter
+  // broke the extractor with "did it get renamed?", which is a test failing for a reason that has
+  // nothing to do with the behaviour it tests.
+  const start = html.indexOf("function summarise(");
   if (start < 0) throw new Error("summarise() not found in web/ablate.html - did it get renamed?");
 
   let depth = 0;
@@ -120,10 +123,42 @@ function referenceA(controlScale = 1.01) {
  * the tests can prove the condemnation logic does not fire on good data - a detector that always
  * screams is as useless as one that never does.
  */
+/**
+ * The first real-hardware run of the REWRITTEN instrument — a laptop, 2026-11-24, transcribed from the
+ * page's own output. Not hypothetical, and not a clean run either.
+ *
+ * `frames` is the field that matters here. Each row is a batch total divided by its frame count, so the
+ * timer's quantisation is `tick / frames` for THAT row, and `tick` on this device is 1 ms (Chrome
+ * coarsens `performance.now()`). The page printed a 63 us floor and then judged deltas of 50 us against
+ * a 37.5 us error bar, i.e. it reported a finding smaller than its own resolution.
+ */
+function laptop2026_11_24() {
+  // 8 is MIN_FRAMES in the page, so these are rows that took the clamp's low branch — the case that
+  // produces the coarsest floor and the one the real run hit.
+  const r = (id, ms, frames = 8, extra = {}) => row(id, ms, { frames, ...extra });
+  return [
+    r("baseline", 0.75, 16),
+    r("control", 0.771, 16),
+    r("floor", 0.13, 400),
+    r("floor_tex", 0.25, 240),
+    r("floor_blit", 0.24, 240),
+    r("no_shadow", 0.60),
+    r("shadow_4tap", 0.75),
+    r("no_wall_ribs", 0.73),
+    r("no_aerial", 0.72),
+    r("no_sphere", 0.70),
+    r("no_tonemap", 0.74),
+    r("no_skyglow", 0.75),
+    r("r100", 0.76, 80, { resScale: 1.0 }),
+    r("r050", 0.19, 300, { resScale: 0.5 }),
+    r("r025", 0.06, 400, { resScale: 0.25 }),
+  ];
+}
+
 function healthy() {
   return [
-    row("baseline", 2.00),
-    row("control", 2.02),
+    row("baseline", 2.00, { frames: 100 }),
+    row("control", 2.02, { frames: 100 }),
     row("floor", 0.20),
     row("floor_tex", 0.30),
     row("floor_blit", 0.30),
@@ -223,6 +258,40 @@ console.log("case 5: a render scale is never printed above 1.0");
   check("prints no scale figure", !/scale that fits is/.test(out), out);
   check("says native already fits", /native already fits|MET AT NATIVE/i.test(out), out);
   check("does not report a scale above 1.0", !/reachable at 1\.[1-9]/.test(out), out);
+}
+
+console.log("case 6: a delta under the timer floor is not a finding, however it compares to the error bar");
+{
+  // The real laptop run. `no_sphere` reads 0.70 against a 0.75 baseline: 50 us, which clears the 5%
+  // error bar (37.5 us) and was therefore reported as a finding. It is 0.8 of one 63 us timer tick.
+  //
+  // Both the floor AND the row's frame count matter here, and getting either wrong makes the test
+  // vacuous. The floor has to be coarse enough (minFrames 8 -> 125 us) for the delta to fall under it,
+  // and the row has to be one that actually hit that clamp (frames = 8) rather than a fast row with
+  // hundreds of frames and a fine floor. The first version of this case passed for neither reason: it
+  // gave every row `frames: 8`, and its assertion regex carried an escaped pipe (`no_sphere\|sphere`)
+  // which can never match, so it was a tautology that reported `ok` regardless of the output.
+  // tickMs = 1 reproduces Chrome's coarsened clock, which is what the laptop actually had. Without
+  // it this case runs against Node's fine timer and cannot fail however wrong the page is.
+  const out = summarise(laptop2026_11_24(), 1000, 8, 1);
+  const findings = /larger than the threshold:[^\n]*/.exec(out);
+  check("prints a feature-delta line", !!findings, out);
+  check("counts the shadow as a finding", /no_shadow|solar/.test(findings ? findings[0] : ""), out);
+  check("does NOT count the sphere test as a finding", !/no_sphere|sphere/.test(findings ? findings[0] : "_"), out);
+  check("gives the timer floor as the reason", /timer floor|us timer/.test(out) || /NOT findings/.test(out), out);
+}
+
+console.log("case 7: the verdict names the blit, not the full-shade extrapolation");
+{
+  // On this run the full shader cost 0.41 ms/Mpx and the screen was 1.86 Mpx, so the sweep said "native
+  // fits with room to spare" — while the FBO blit, which is what a settled frame actually pays, cost
+  // 0.24 ms. Both are true and only the second is what R2 asks about. The page used to print both in
+  // the same breath without saying they answered different questions.
+  const out = summarise(laptop2026_11_24());
+  check("says R2 is about the blit", /R2 ASKS ABOUT THE BLIT/.test(out), out);
+  check("quotes the cached frame against 1.5 ms", /cached static frame: 0\.24 ms/.test(out), out);
+  check("labels the sweep as the full shader", /VERDICT \(full shade\)/.test(out), out);
+  check("does not print two unqualified verdicts", (out.match(/VERDICT:/g) || []).length <= 1, out);
 }
 
 console.log("");
