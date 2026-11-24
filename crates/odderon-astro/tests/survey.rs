@@ -423,10 +423,7 @@ fn the_pole_returns_ra_zero_rather_than_nan() {
     for dec in [FRAC_PI_2, -FRAC_PI_2] {
         let d = Direction::from_ra_dec(0.0, dec).expect("a pole is a valid direction");
         let ra = d.ra_rad();
-        assert!(
-            ra.is_finite(),
-            "RA at dec {dec} must be finite, got {ra}"
-        );
+        assert!(ra.is_finite(), "RA at dec {dec} must be finite, got {ra}");
         assert_eq!(ra, 0.0, "the documented convention at the poles is RA = 0");
         // And the direction really is the pole, not merely something with a zero RA.
         assert!((d.vector[2] - dec.sin()).abs() < 1e-15, "z must be ±1");
