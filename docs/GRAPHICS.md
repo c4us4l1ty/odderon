@@ -360,6 +360,25 @@ and the ablator's own texture-read row, run on the same device in the same sessi
 33% is not yet explained and is not being explained away; what is settled is that **R2 fails at native on
 the shipped path**, on every number either run produced above 1.5 ms.
 
+**Reference B cannot report a frame time at all, and that is now stated rather than worked around.**
+The phone's own run (2026-11-24) printed `5.00 ms vsync-bound, no GPU timer`: `EXT_disjoint_timer_query_webgl2`
+is **absent** on that device, so `gl.finish()` there returns **one refresh period** — 5.00 ms at 200 Hz —
+whatever the renderer did. Two instrument faults were found underneath that message and both are fixed:
+the timer-query read happened **before the result existed** (`QUERY_RESULT_AVAILABLE` is false immediately
+after `gl.finish()`; it becomes true two frames later), and a batch of twelve outstanding queries is less
+reliable than twelve serial ones — this sandbox left some permanently unready and reported one blit at
+**6 673 632 ns** for an operation that times at **1 395 ns** alone.
+
+Neither fix helps Reference B, because on Reference B there is no extension to poll. So the panel now
+measures an **upper bound** when no timer exists: K completed blits over T ms, each forced to finish, so
+one frame costs at most T/K. It is an upper bound and not a measurement because the per-frame `gl.finish()`
+stall is included — which is also what makes it useful: **if the bound clears 1.5 ms, the true cost cannot
+fail it.** If it does not clear, the panel says *inconclusive, not a failure*, because a stall-dominated
+number overstating a pipelined frame is the expected failure mode. The bound blits from a texture written
+by a shader and never sampled, so it cannot be served from cache; and it uses `finish()` rather than
+`readPixels`, because a 1-pixel readback measured **9.3 ms** against `finish()`'s **0.008 ms** on ANGLE —
+a bound built on readbacks would have been a measurement of the readback.
+
 **Route 1 has been taken: the renderer now performs a real `blitFramebuffer`.** `web/index.html`'s
 per-frame pass crosses from the cache framebuffer to the default framebuffer instead of sampling the
 cache in a full-screen triangle. The cache remains a texture, so the capture path and the fallback still
