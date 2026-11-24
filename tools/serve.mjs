@@ -9,13 +9,9 @@
  */
 
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
-import { dirname, extname, join, resolve, normalize } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const here = dirname(fileURLToPath(import.meta.url));
-const root = resolve(here, "..");
-const webRoot = join(root, "web");
+import { readFile, stat } from "node:fs/promises";
+import { extname } from "node:path";
+import { resolveStaticPath, WEB_ROOT } from "./static-path.mjs";
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -30,16 +26,22 @@ const MIME = {
 const port = Number(process.argv[2] ?? process.env.PORT ?? 8080);
 
 const server = createServer(async (req, res) => {
-  const url = (req.url ?? "/").split("?")[0];
-  const rel = url === "/" ? "/index.html" : url;
+  // One resolver, shared with `tools/check-shell.mjs`, so the two servers cannot disagree about which
+  // root a path belongs to. They used to, and the disagreement was an arbitrary-file-read: this file
+  // tested `startsWith("/dist/")` on the RAW path and only then resolved and contained it, so
+  // `/dist/../.git/config` was served. `tools/check-static-path.mjs` is the regression test.
+  const file = resolveStaticPath(req.url);
 
-  // `/dist/*` serves build output (the wasm module, when it exists); everything else comes from web/.
-  const base = rel.startsWith("/dist/") ? root : webRoot;
-  const path = normalize(rel.startsWith("/dist/") ? rel : join("/", rel));
+  if (file === null) {
+    res.writeHead(403, { "content-type": "text/plain" }).end("forbidden");
+    return;
+  }
 
   try {
-    const file = join(base, path);
-    if (!file.startsWith(base)) throw new Error("traversal");
+    // stat first: readFile on a directory reports EISDIR on Linux but the message differs by platform,
+    // and a directory is a 404 here either way.
+    const s = await stat(file);
+    if (!s.isFile()) throw new Error("not a file");
     const body = await readFile(file);
     res.writeHead(200, {
       "content-type": MIME[extname(file)] ?? "application/octet-stream",
@@ -50,10 +52,10 @@ const server = createServer(async (req, res) => {
     });
     res.end(body);
   } catch {
-    res.writeHead(404, { "content-type": "text/plain" }).end("not found: " + rel);
+    res.writeHead(404, { "content-type": "text/plain" }).end("not found");
   }
 });
 
 server.listen(port, "0.0.0.0", () => {
-  console.log(`shell on http://0.0.0.0:${port}/  (web root: ${webRoot})`);
+  console.log(`shell on http://0.0.0.0:${port}/  (web root: ${WEB_ROOT})`);
 });

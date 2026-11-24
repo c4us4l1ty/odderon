@@ -192,6 +192,12 @@ jobs:
         with:
           node-version: "20"
       - run: npm install --no-audit --no-fund
+      # The static path resolver shared by `tools/serve.mjs` and `tools/check-shell.mjs`. No browser and
+      # no npm needed -- it is pure Node -- so it runs here rather than after a 20 s Chromium unpack.
+      # This exists because the resolver had a real arbitrary-file-read: `/dist/../.git/config` returned
+      # the repository's own git config with status 200. See `tools/static-path.mjs` for the mechanism.
+      - name: static path resolver (no traversal out of web/ or dist/)
+        run: node tools/check-static-path.mjs
       # `BUILD-PLAN.md` §4 claim 3 is "idle is nothing scheduled": zero rAF calls, zero timers, zero
       # allocations after 250 ms of no input. The instrument already measured that, but only when a human
       # remembered to run it -- `tools/check-shell.mjs` was never wired into CI, so the claim rested on
