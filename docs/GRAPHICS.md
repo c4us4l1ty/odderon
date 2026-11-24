@@ -275,7 +275,7 @@ Measured on Reference B at 1.04 Mpx:
 | pass | measured | ratio to a flat fill |
 | --- | --- | --- |
 | flat fill, no memory traffic | **0.67 ms** | 1.0x |
-| **FBO to screen blit (the cached frame)** | **1.25 ms** | 1.9x |
+| **"blit" — actually a texture read of the cache** | **1.25 ms** | 1.9x |
 | one texture read into the same target | 1.58 ms | 2.4x |
 
 So a **cached static frame costs 1.25 ms at native resolution, which passes R2 with 17% to spare.**
@@ -289,12 +289,51 @@ this section claimed R2 and R3 were incompatible, based on a 2.29 ms texture-rea
 to be measuring a different operation from the one the renderer actually performs. The correction is
 recorded rather than quietly deleted.*
 
-**Three floors, and they are not interchangeable.** A flat fill, a texture read into the same target,
-and a framebuffer-to-screen blit are three different operations costing 0.67, 1.58 and 1.25 ms. An
-earlier note treated "one texture read" as the cost of the blit and concluded the cache was insufficient.
-The blit is in fact *cheaper* than an ordinary texture read, because the HUD samples a framebuffer's
-colour attachment rather than a general texture. Any future measurement of the per-frame path must
-measure that path.
+**Three floors, and they are not interchangeable.** A flat fill, a texture read, and a hardware
+framebuffer copy are three different operations. An earlier note treated "one texture read" as the cost
+of the blit and concluded the cache was insufficient. **That correction was itself wrong in its
+explanation, and the error is corrected here rather than deleted.**
+
+This section previously said the cached pass is *cheaper* than an ordinary texture read "because the HUD
+samples a framebuffer's colour attachment rather than a general texture." That sentence describes a
+mechanism the renderer does not use and a cost difference that was never measured as such:
+
+- **There is no `blitFramebuffer` in `web/index.html`.** The per-frame path is
+  `gl.bindTexture(TEXTURE_2D, cache.tex)` followed by a fragment shader whose entire body is
+  `texture(uShaded, uv)`. The word "blit" in this document has always been a nickname for *a shader that
+  samples the cache*. It is not a blit.
+- **The reason given does not exist.** Once a colour attachment is bound as a `sampler2D` it *is* a
+  texture; there is no cheaper sampling path being taken. The two "floors" in `web/ablate.html` were
+  byte-identical GLSL differing only in which texture object they sampled — so any cost difference
+  between them was memory placement, not mechanism.
+- **The measured gap is below the instrument.** The first real-hardware run of the fixed ablation page
+  (a laptop, 2026-11-24, timer tick 63 µs, instrument error bar 2.8%) read **0.25 ms** for the texture
+  read and **0.24 ms** for the "FBO→screen blit" at 1.86 Mpx. That is **10 µs — 0.16 of one tick** —
+  against spreads of 49% and 17%. It is not a finding, and the old paragraph explained it anyway.
+
+**What changed in the instrument.** `web/ablate.html` now has a row that performs an actual
+`blitFramebuffer`, which runs no fragment shader at all, and it says so if the browser refuses. That
+makes "texture read vs blit" a question that can be answered instead of one that was assumed.
+
+**The two Reference B numbers, and why the derivation no longer stands.** The table above quotes
+**1.25 ms** for "the cached frame" and **1.58 ms** for one texture read at 1.04 Mpx. Those are now known
+to be the same operation measured two ways, 33% apart, and the document cannot say which is the shipped
+path's cost. That matters, because the bandwidth ceiling was derived *from* 1.25 ms:
+
+| floor used | ms above flat fill per 8 B/px | 32 B/px would cost | R2 ceiling |
+| --- | --- | --- | --- |
+| 1.25 ms (as previously used) | 0.0725 | 2.99 ms | **~11 B/px** |
+| 1.58 ms (a texture read) | 0.1138 | 4.31 ms | **~7 B/px** |
+
+The conclusion *"R3 is not the binding constraint at native resolution"* holds under both, and holds
+more strongly under the second. But **the specific figure ~11 B/px is not supported** and is withdrawn
+until the shipped per-frame path is measured as itself, by `web/index.html`'s own timer query rather than
+by a microbenchmark. Note also that 1.58 ms **exceeds the 1.5 ms budget**, so if the texture read is the
+true cached cost at 1.04 Mpx then R2 does *not* pass on Reference B with 17% to spare — it fails. That
+question is the one the next hardware run should settle, and it is open.
+
+Any future measurement of the per-frame path must measure that path — with the shader the renderer
+actually runs, on the buffer the renderer actually reads.
 
 **What 1.5 ms at 0.68 Mpx is for.** It is the *idle* budget — what a settled frame costs, which on a
 render-on-demand renderer is zero because nothing is drawn. The cost of a frame that is actually drawn
