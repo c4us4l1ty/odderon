@@ -610,7 +610,7 @@ function render(rows) {
   }).join('');
 }
 
-function summarise(rows, compileMs) {
+function summarise(rows, compileMs, minFrames, tickOverride) {
   const g = (id) => rows.find((r) => r.id === id && r.ok);
   const base = g('baseline'), floor = g('floor'), ctl = g('control');
   if (!base || !floor) return 'incomplete';
@@ -649,7 +649,12 @@ function summarise(rows, compileMs) {
   // *measured* frame is tick/frames, and frames is now chosen to keep that small. Report the floor
   // explicitly: on the previous run it was 1 ms / 16 frames = 62 us, which is a fifth of the whole frame
   // at 0.75 ms, and five ablations that "saved 0.00 ms" were simply under it.
-  const tick = (() => {
+  // `tickOverride` exists so this function can be tested. The spin below measures the REAL timer, and
+  // the real timer differs by environment: Chrome coarsens `performance.now()` to 1 ms, Node does not.
+  // So a test running in Node measures a fine tick and can never exercise the coarse-tick path that a
+  // browser takes -- which is exactly the path the first hardware run exposed. Injecting the tick lets
+  // the test say "this device quantises to 1 ms" instead of hoping to be run on one.
+  const tick = tickOverride ?? (() => {
     let best = Infinity;
     for (let i = 0; i < 40; i++) {
       const a = performance.now();
@@ -658,7 +663,25 @@ function summarise(rows, compileMs) {
     }
     return best;
   })();
-  const floors = rows.filter((r) => r.ok && r.frames).map((r) => tick / r.frames);
+  // PER ROW, not the worst row in the table. The old version took `Math.max` over every row, so one
+  // slow variant's frame count decided the resolution for all of them -- and then the floor was only
+  // PRINTED, never used. Each row's own floor is `tick / its own frame count`, because each row is a
+  // batch total divided by its own frame count and nothing else.
+  //
+  // The denominator is `Math.max(clamp, ...)` for the same reason `measureRound` clamps it: a row
+  // that ran fewer than MIN_FRAMES frames took the low branch of the clamp, and dividing by its
+  // unclamped count invents precision it did not have.
+  //
+  // `minFrames` has no default IN THE SIGNATURE, and that is not style: `tools/check-ablation.mjs`
+  // extracts this function by brace matching and evaluates it outside the module, so `= MIN_FRAMES` in
+  // the parameter list is a ReferenceError the moment the test calls it -- which is how this surfaced.
+  // The constant is resolved in the body instead, where it is only evaluated on a real page.
+  // 8 is MIN_FRAMES. Spelled as a literal, not the constant, because this function has to be
+  // evaluable outside the module (see `tools/check-ablation.mjs`) and a closure over module
+  // scope is a ReferenceError there. If MIN_FRAMES ever changes, `check-ablation` case 6 fails.
+  const clamp = minFrames ?? 8;
+  const rowFloorMs = (r) => (r.frames ? tick / Math.max(clamp, r.frames) : 0);
+  const floors = rows.filter((r) => r.ok && r.frames).map(rowFloorMs);
   const floorUs = floors.length ? Math.max(...floors) * 1000 : tick * 1000;
   if (floorUs > 5) {
     lines.push('resolution floor (timer tick / frames): ' + floorUs.toFixed(0) + ' us per frame');
@@ -668,6 +691,12 @@ function summarise(rows, compileMs) {
 
   // A delta smaller than the error bar is not a measurement. Say which rows those are, by name, rather
   // than leaving the reader to do the comparison against a number printed three lines up.
+  //
+  // `noise` is the RELATIVE threshold (a fraction of the frame). It is not sufficient on its own: the
+  // timer's quantisation is an ABSOLUTE floor, and on a fast device it is the bigger of the two. The
+  // first real-hardware run of this page printed both numbers and used neither -- a 63 us resolution
+  // against a 37.5 us threshold -- and then reported a 50 us delta as a finding, which is 0.8 of one
+  // tick. Each row is now judged against its own floor as well.
   const noise = errBar === null ? 0 : Math.max(errBar, 0.05);
 
   // On a real device these are the numbers that decide the architecture. Below ~0.5 ms the timer
@@ -692,12 +721,18 @@ function summarise(rows, compileMs) {
   const ablated = rows.filter((r) => r.ok && !r.resScale && r.id !== 'baseline' && r.id !== 'control' &&
     !r.id.startsWith('floor'));
   const noisy = [], real = [];
+  // Each delta has to clear BOTH bars: the relative error bar, and the row's own timer floor.
   for (const r of ablated) {
     const d = baseMs - r.amortised;
-    (d > noise * baseMs ? real : noisy).push(r.label + ' (' + d.toFixed(2) + ' ms)');
+    const thr = Math.max(noise * baseMs, rowFloorMs(r));
+    const why = d <= noise * baseMs ? '' : d <= rowFloorMs(r) ? ' [under the ' +
+      (rowFloorMs(r) * 1000).toFixed(0) + ' us timer floor]' : '';
+    (d > thr ? real : noisy).push(r.label + ' (' + d.toFixed(2) + ' ms)' + why);
   }
   if (noisy.length || real.length) {
-    lines.push('FEATURE DELTAS vs the ' + (noise * 100).toFixed(0) + '% threshold:');
+    const thrMs = Math.max(noise * baseMs, floorUs / 1000);
+    lines.push('FEATURE DELTAS vs the larger of the ' + (noise * 100).toFixed(0) +
+      '% error bar and the timer floor (' + (thrMs * 1000).toFixed(0) + ' us):');
     if (real.length) lines.push('  larger than the threshold: ' + real.join(', '));
     if (noisy.length) lines.push('  at or below the threshold - NOT findings: ' + noisy.join(', '));
     lines.push('');
@@ -748,13 +783,16 @@ function summarise(rows, compileMs) {
   // the mistake that made a blit look free: a flat fill is not a texture read is not an FBO blit.
   const ft = rows.find((r) => r.id === 'floor_tex' && r.ok);
   const fb = rows.find((r) => r.id === 'floor_blit' && r.ok);
+  // Hoisted out of the `if` below so the verdict can name the same row the floors paragraph quoted.
+  // Two lookups would be two chances to disagree, which is what this fix is about.
+  const cachedStatic = fb || ft;
   if (ft || fb) {
     lines.push('');
     lines.push('THE FLOORS, separated (same resolution, so these are directly comparable):');
     lines.push('  flat fill, no memory access   ' + floor.amortised.toFixed(2) + ' ms');
     if (ft) lines.push('  one texture read              ' + ft.amortised.toFixed(2) + ' ms   (' + (ft.amortised / floor.amortised).toFixed(1) + 'x the flat fill)');
     if (fb) lines.push('  FBO -> screen blit            ' + fb.amortised.toFixed(2) + ' ms   (' + (fb.amortised / floor.amortised).toFixed(1) + 'x the flat fill)');
-    const cached = (fb || ft);
+    const cached = cachedStatic;
     if (cached) {
       lines.push('');
       lines.push('A CACHED STATIC FRAME costs ' + cached.amortised.toFixed(2) + ' ms at native resolution.');
@@ -806,11 +844,46 @@ function summarise(rows, compileMs) {
         Math.sqrt(fitsMpx / native).toFixed(2) + 'x.');
     }
     lines.push('');
+    // WHAT R2 ACTUALLY ASKS. R2 is a budget for a frame that is DRAWN, and on a render-on-demand
+    // renderer a settled frame costs the BLIT, not the shade -- the shade only runs when something
+    // changes. So the number R2 is measured against is the FBO-to-screen blit, and the resolution sweep
+    // above (which sweeps the full shader) answers a different question.
+    //
+    // This paragraph did not exist, and its absence produced a report that contradicted itself: the page
+    // said "A CACHED STATIC FRAME costs 0.24 ms ... That PASSES R2 at native resolution" and then, four
+    // lines later, extrapolated the full shader, found it fit, and printed "R2 IS MET ... 1.5 ms buys
+    // 3.64 Mpx". Both statements were about this device and only one was about R2. The blit is the one
+    // that is about R2.
+    if (cachedStatic) {
+      const blitMs = cachedStatic.amortised;
+      const blitMpx = cachedStatic.w * cachedStatic.h / 1e6;
+      const blitPerMpx = blitMs / blitMpx;
+      lines.push('R2 ASKS ABOUT THE BLIT, NOT THE SHADE. A settled frame is a cached blit; the shade');
+      lines.push('only runs when something changes. On this device that blit is ' + blitMs.toFixed(2) +
+        ' ms at ' + blitMpx.toFixed(2) + ' Mpx');
+      lines.push('(' + blitPerMpx.toFixed(2) + ' ms/Mpx), so 1.5 ms buys ' +
+        (1.5 / blitPerMpx).toFixed(2) + ' Mpx -- ' +
+        (1.5 / blitPerMpx >= blitMpx ? 'this screen fits.' : 'less than this screen.'));
+      lines.push('');
+      if (blitMs < 1.5) {
+        lines.push('VERDICT: R2 IS MET AT NATIVE RESOLUTION on this device, on the number R2 names.');
+        lines.push('  a cached static frame: ' + blitMs.toFixed(2) + ' ms at ' + blitMpx.toFixed(2) +
+          ' Mpx, against 1.5 ms.');
+      } else {
+        lines.push('VERDICT: R2 IS NOT MET at native on the blit. 1.5 ms of this blit needs ' +
+          (1.5 / blitPerMpx).toFixed(2) + ' Mpx, i.e. a render');
+        lines.push('scale of ' + Math.min(1, Math.sqrt((1.5 / blitPerMpx) / blitMpx)).toFixed(2) + 'x.');
+      }
+      lines.push('');
+      lines.push('The sweep below is the FULL SHADER, which is a different and much harder question.');
+      lines.push('It is what the frame costs when the world moves, not what a settled frame costs.');
+      lines.push('');
+    }
     if (fitsMpx < 0.5) {
-      lines.push('VERDICT: under 0.5 Mpx. R2 as written is not reachable by this shader on this');
-      lines.push('device at any sane resolution. The response is a scene budget change, not tuning.');
+      lines.push('VERDICT (full shade): under 0.5 Mpx. R2 as written is not reachable by this shader on');
+      lines.push('this device at any sane resolution. The response is a scene budget change, not tuning.');
     } else if (scale >= 1) {
-      lines.push('VERDICT: R2 IS MET AT NATIVE RESOLUTION on this device.');
+      lines.push('VERDICT (full shade): the full shader also fits at native on this device.');
       lines.push('1.5 ms buys ' + fitsMpx.toFixed(2) + ' Mpx and this screen is ' + native.toFixed(2) + ' Mpx.');
     } else {
       lines.push('VERDICT: R2 IS reachable at ' + Math.sqrt(fitsMpx / native).toFixed(2) + 'x on this device.');
