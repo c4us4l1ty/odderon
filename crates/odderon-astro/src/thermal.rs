@@ -85,9 +85,15 @@ pub const ZERO_CELSIUS: f64 = 273.15;
 pub struct Zone {
     /// Heat capacity of everything that responds on the fast timescale, J/K.
     ///
-    /// The air alone is ~30 kJ/K for a 25 m² room, which would swing several kelvin per minute. The effective
-    /// figure for a furnished room is several times that, and the difference is exactly what `Assumed` is for:
-    /// the air number is measurable, the effective number is a modelling choice.
+    /// The air alone is ~75 kJ/K for a 25 m² room at 2.5 m (75 kg × 1005 J/kg·K), which would swing several
+    /// kelvin per minute. The effective figure for a furnished room is more than that, and the difference is
+    /// exactly what `Assumed` is for: the air number is measurable, the effective number is a modelling choice.
+    ///
+    /// The number here was once given as "~30 kJ/K", with `25 × 2.5 × 1.2 × 1005` written out beside it in
+    /// justification — a product that is 75 375, not 30 000. The stated ratio "~4x the air" was wrong for the
+    /// same reason; the real ratio is 1.59x. The *choice* of 120 kJ/K survives (it is still what puts the
+    /// ten-minute drop at 5.9 K), but the argument attached to it did not, which is the failure mode this
+    /// project keeps having: a number asserted next to its own disproof.
     pub heat_capacity: Quantity,
     /// Conductance from the zone to outdoor air, W/K. Includes envelope conduction and the inner surface
     /// convection coefficient, lumped. **This is the least well-founded number in the module**: it depends on
@@ -140,7 +146,7 @@ impl Zone {
             heat_capacity: Quantity {
                 value: 120_000.0,
                 prov: Prov::Assumed {
-                    basis: "furnished 25 m2 room, ~4x the air alone",
+                    basis: "furnished 25 m2 room, 1.59x its 75 kJ/K air mass",
                 },
                 sigma: 40_000.0,
             },

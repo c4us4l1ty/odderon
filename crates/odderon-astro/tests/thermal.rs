@@ -346,10 +346,12 @@ fn the_room_cools_by_several_kelvin_over_minutes() {
     );
 }
 
-/// Energy is conserved across a step, to the arithmetic's precision.
+/// Energy is conserved across a step — against an independently computed heat balance.
 ///
-/// The one invariant that a sign error in any term breaks, and the reason it is checked as a residual rather than
-/// by re-reading the formula: `C·ΔT` must equal the net heat over the interval, whatever the individual terms did.
+/// **This test used to be a tautology.** It computed `expected` by calling the same `net_gain` the code under test
+/// calls, so it only proved that `C·(net·dt/C) == net·dt`, which is true by rearrangement and would have passed
+/// with every term in `net_gain` carrying the wrong sign. The coefficients are now inlined here from the physics,
+/// so the test can disagree with the implementation.
 #[test]
 fn a_step_conserves_energy() {
     let zone = room();
@@ -362,13 +364,39 @@ fn a_step_conserves_energy() {
 
     let after = zone.step(&state, &outdoors, &occupant(), cooling, dt);
 
-    let stored = zone.heat_capacity.value * (after.temperature_k - state.temperature_k);
-    let supplied = zone.net_gain(&state, &outdoors, &occupant()) - cooling;
+    // Written out: Q_solar + Q_internal − UA(T_zone − T_out) − Q_cooling, over the interval.
+    let solar = 3.0 * 800.0 * 0.60;
+    let internal = 300.0;
+    let ua = 45.0;
+    let loss = ua * (state.temperature_k - outdoors.temperature_k);
+    let supplied = solar + internal - loss - cooling;
     let expected = supplied * dt;
 
+    let stored = 120_000.0 * (after.temperature_k - state.temperature_k);
     assert!(
         (stored - expected).abs() < 1e-9 * expected.abs().max(1.0),
-        "stored {stored:.6} J vs supplied {expected:.6} J"
+        "stored {stored:.6} J vs an independent balance of {expected:.6} J"
+    );
+
+    // A single explicit step with no cooling must warm a room that is below its free-float temperature, and this
+    // is the sign check that the inlined balance above cannot make on its own.
+    let cold = ZoneState {
+        temperature_k: 20.0 + ZERO_CELSIUS,
+    };
+    assert!(
+        zone.step(&cold, &outdoors, &occupant(), 0.0, dt)
+            .temperature_k
+            > cold.temperature_k,
+        "a room below its equilibrium must warm"
+    );
+    let hot = ZoneState {
+        temperature_k: 60.0 + ZERO_CELSIUS,
+    };
+    assert!(
+        zone.step(&hot, &outdoors, &occupant(), 0.0, dt)
+            .temperature_k
+            < hot.temperature_k,
+        "a room above its equilibrium must cool"
     );
 }
 
@@ -418,11 +446,46 @@ fn free_float_temperature_is_the_balance_point() {
     let state = ZoneState {
         temperature_k: settled,
     };
-    // At the resting temperature the net gain is zero -- that is what "resting" means.
+    // Against the closed form, computed independently: T_out + Q/UA.
+    let expected = outdoors.temperature_k + (3.0 * 800.0 * 0.60 + 300.0) / 45.0;
+    assert!(
+        (settled - expected).abs() < 1e-9,
+        "free float should be T_out + Q/UA = {expected:.4} K, got {settled:.4}"
+    );
+
+    // And the fixed point is real: the net gain there is zero, and it is a stable point (a room displaced from it
+    // moves back), which the equilibrium identity alone does not demonstrate.
     let net = zone.net_gain(&state, &outdoors, &occupant());
     assert!(
         net.abs() < 1e-9,
         "a settled room has no net gain, got {net:.9} W"
+    );
+    let dt = 600.0;
+    let above = zone.step(
+        &ZoneState {
+            temperature_k: settled + 5.0,
+        },
+        &outdoors,
+        &occupant(),
+        0.0,
+        dt,
+    );
+    let below = zone.step(
+        &ZoneState {
+            temperature_k: settled - 5.0,
+        },
+        &outdoors,
+        &occupant(),
+        0.0,
+        dt,
+    );
+    assert!(above.temperature_k < settled + 5.0, "stable from above");
+    assert!(below.temperature_k > settled - 5.0, "stable from below");
+    assert!(
+        (above.temperature_k - settled).abs() < (below.temperature_k - settled).abs() * 1.01 + 1e-9,
+        "symmetric approach: {:.4} K from above vs {:.4} K from below",
+        (above.temperature_k - settled).abs(),
+        (below.temperature_k - settled).abs()
     );
 }
 
@@ -584,6 +647,15 @@ fn radiative_rejection_inverts_to_a_radiator_temperature() {
     let surroundings = 4.0 + ZERO_CELSIUS;
 
     let t = radiator_temperature(load, area, emissivity, surroundings).expect("computable");
+
+    // The round trip alone proves only that the two functions invert each other -- they could both be wrong. The
+    // absolute temperature is therefore pinned too: 500 W over 2 m² at ε 0.9 against 4 °C is 49.21 °C.
+    assert!(
+        (t - ZERO_CELSIUS - 49.21).abs() < 0.01,
+        "the sized radiator runs at 49.21 C, got {:.2} C",
+        t - ZERO_CELSIUS
+    );
+
     let rejected = radiative_rejection(area, emissivity, t, surroundings).expect("computable");
     assert!(
         (rejected - load).abs() < 1e-9,
