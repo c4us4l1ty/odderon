@@ -204,6 +204,72 @@ fn the_cone_restricts_the_answer() {
     }
 }
 
+/// A cone with more stars than the buffer holds reports `truncated`, and says so rather than thinning.
+///
+/// **This was the one documented behaviour with no test at all.** `StarTile::truncated` exists to make the
+/// difference between "a sparse field" and "a cluster this instrument cannot resolve" visible to the player,
+/// and nothing asserted on it — the fixture set the flag and no test ever read it. A field that is only ever
+/// written is a field that can silently stop being written.
+///
+/// The distinction matters for the game rather than for tidiness: a truncated tile is a *lossy observation*,
+/// not an error, so a caller must be able to tell it apart from an empty one and from a failure. Three
+/// different states, three different responses, and this pins all three.
+#[test]
+fn a_full_buffer_is_reported_as_truncated_rather_than_silently_thinned() {
+    let backend = Fixture::new(true);
+    let deg = core::f64::consts::PI / 180.0;
+    // A 3 deg cone at (10, 20) contains three stars; give the buffer room for one.
+    let mut tight = [blank_star(); 1];
+    {
+        let tile = cone_search(&backend, 10.0 * deg, 20.0 * deg, 3.0 * deg, &mut tight)
+            .expect("a full buffer is a lossy answer, not an error");
+        assert_eq!(tile.stars.len(), 1, "the buffer holds exactly one star");
+        assert!(
+            tile.truncated,
+            "three stars matched and one fitted, so the tile must say it was truncated"
+        );
+    }
+
+    // The same cone with room for all three is complete, and says so. Without this half, a backend that
+    // hard-coded `truncated: true` would pass the assertion above.
+    let mut roomy = [blank_star(); 8];
+    let tile = cone_search(&backend, 10.0 * deg, 20.0 * deg, 3.0 * deg, &mut roomy).expect("valid");
+    assert_eq!(tile.stars.len(), 3);
+    assert!(
+        !tile.truncated,
+        "with room for every match, the tile is not truncated"
+    );
+
+    // And truncation is not the same as emptiness: an empty cone reports zero stars and is NOT truncated,
+    // which is the third state. A caller that tested only `stars.is_empty()` could not tell these apart.
+    let mut empty_buf = [blank_star(); 8];
+    let empty = cone_search(&backend, 190.0 * deg, 20.0 * deg, 0.1 * deg, &mut empty_buf)
+        .expect("an empty patch of sky is an answer");
+    assert_eq!(empty.stars.len(), 0, "nothing in this cone");
+    assert!(
+        !empty.truncated,
+        "empty is not truncated; conflating them turns 'nothing here' into 'unresolvable cluster'"
+    );
+}
+
+/// A zero-length buffer is legal and reports truncation when the cone is not empty.
+///
+/// The edge case a caller hits when sizing a buffer from a previous query and getting `0` back. It must not
+/// panic, and it must not report a complete empty sky when three stars were there.
+#[test]
+fn a_zero_length_buffer_does_not_panic_and_reports_truncation() {
+    let backend = Fixture::new(true);
+    let deg = core::f64::consts::PI / 180.0;
+    let mut nothing: [Star; 0] = [];
+    let tile = cone_search(&backend, 10.0 * deg, 20.0 * deg, 3.0 * deg, &mut nothing)
+        .expect("an empty output buffer is a valid request");
+    assert_eq!(tile.stars.len(), 0);
+    assert!(
+        tile.truncated,
+        "three stars matched a zero-length buffer, so the answer is truncated"
+    );
+}
+
 /// A cone centred on the control star finds only it, so the answer genuinely depends on the direction.
 #[test]
 fn a_different_direction_gives_a_different_answer() {
@@ -342,6 +408,33 @@ fn ra_dec_round_trip() {
     // An impossible declination is refused rather than projected.
     assert!(Direction::from_ra_dec(0.0, 100.0 * deg).is_none());
     assert!(Direction::from_ra_dec(f64::NAN, 0.0).is_none());
+}
+
+/// At the poles RA is undefined and the doc promises `0`; the promise is kept, and it is not a NaN.
+///
+/// `ra_rad` is `atan2(y, x)`, which at the exact pole receives `atan2(0, 0)`. That is defined as 0 in this
+/// crate's `atan2`, but it is the kind of value that becomes NaN if the dmath implementation is ever
+/// swapped for one that propagates the singularity — and a NaN RA reaching a UI or a coordinate transform is
+/// the sort of bug that shows up as a star that cannot be pointed at. The 89.9° case in the loop above does
+/// not reach the pole, so nothing was checking the limit.
+#[test]
+fn the_pole_returns_ra_zero_rather_than_nan() {
+    use core::f64::consts::FRAC_PI_2;
+    for dec in [FRAC_PI_2, -FRAC_PI_2] {
+        let d = Direction::from_ra_dec(0.0, dec).expect("a pole is a valid direction");
+        let ra = d.ra_rad();
+        assert!(
+            ra.is_finite(),
+            "RA at dec {dec} must be finite, got {ra}"
+        );
+        assert_eq!(ra, 0.0, "the documented convention at the poles is RA = 0");
+        // And the direction really is the pole, not merely something with a zero RA.
+        assert!((d.vector[2] - dec.sin()).abs() < 1e-15, "z must be ±1");
+        assert!(
+            (d.dec_rad() - dec).abs() < 1e-15,
+            "declination must survive the round trip at the pole"
+        );
+    }
 }
 
 // -------------------------------------------------------------------------------------------
