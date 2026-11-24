@@ -288,10 +288,55 @@ console.log("case 7: the verdict names the blit, not the full-shade extrapolatio
   // 0.24 ms. Both are true and only the second is what R2 asks about. The page used to print both in
   // the same breath without saying they answered different questions.
   const out = summarise(laptop2026_11_24());
-  check("says R2 is about the blit", /R2 ASKS ABOUT THE BLIT/.test(out), out);
+  check("says R2 is about the drawn frame, not the shade",
+    /R2 ASKS ABOUT THE DRAWN FRAME, NOT THE SHADE/.test(out), out);
   check("quotes the cached frame against 1.5 ms", /cached static frame: 0\.24 ms/.test(out), out);
   check("labels the sweep as the full shader", /VERDICT \(full shade\)/.test(out), out);
   check("does not print two unqualified verdicts", (out.match(/VERDICT:/g) || []).length <= 1, out);
+}
+
+console.log("case 8: the floor rows measure different OPERATIONS, not the same shader twice");
+{
+  // The defect this replaces: `floor_blit` and `floor_tex` compiled byte-identical GLSL and differed
+  // only in which texture object they sampled, so the page reported a 0.01 ms "difference in mechanism"
+  // between two runs of the same code. On real hardware that gap was 10 us against a 63 us tick.
+  //
+  // The check is structural because the bug was structural: if two floor variants produce the same
+  // program source, the report must not attribute a cost difference to a mechanism. The page now
+  // dispatches a real `blitFramebuffer` for the blit row, which runs no fragment shader at all.
+  const src = readFileSync(new URL("../web/ablate.html", import.meta.url), "utf8");
+  check("the blit row performs a real blitFramebuffer", /gl\.blitFramebuffer\(/.test(src),
+    "no blitFramebuffer call in the page — the row is a texture read wearing a blit label");
+  check("the blit row is dispatched to its own mode", /'blitfb'/.test(src),
+    "no distinct dispatch mode — blit and texture-read share a code path");
+  // Extracted and inspected rather than regex-matched across a window: a character budget is a magic
+  // number, and the first version of this assertion failed on correct code because the comment was
+  // longer than the budget. The property is "the blitfb branch returns before any draw call".
+  {
+    const fnStart = src.indexOf("function drawOnce(");
+    const braceAt = src.indexOf("{", fnStart);
+    let d = 0, end = -1;
+    for (let k = braceAt; k < src.length; k++) {
+      if (src[k] === "{") d++;
+      else if (src[k] === "}") { d--; if (!d) { end = k + 1; break; } }
+    }
+    const body = src.slice(fnStart, end);
+    const blitAt = body.indexOf("mode === 'blitfb'");
+    const drawAt = body.indexOf("drawArrays");
+    check("drawOnce has a blitfb branch", blitAt >= 0, body.slice(0, 80));
+    check("the blitfb branch returns before the drawArrays", blitAt >= 0 && blitAt < drawAt,
+      "the blit mode falls through to a drawArrays");
+    const branch = blitAt >= 0 ? body.slice(blitAt, body.indexOf("return;", blitAt) + 7) : "";
+    check("the blitfb branch contains no draw call", !/drawArrays|drawElements/.test(branch), branch);
+  }
+  check("summary says when the blit could not be measured", /not measured, not zero/.test(src),
+    "a refused blitFramebuffer would be silently absent from the floors paragraph");
+  // And the doc must not still claim the renderer blits.
+  const doc = readFileSync(new URL("../docs/GRAPHICS.md", import.meta.url), "utf8");
+  check("GRAPHICS.md does not claim the cached path is a blit",
+    !/The blit is in fact \*cheaper\*/.test(doc), "the retracted mechanism is still in the document");
+  check("GRAPHICS.md withdraws the 11 B/px figure", /withdrawn/.test(doc),
+    "the ceiling is still quoted without qualification");
 }
 
 console.log("");

@@ -133,12 +133,20 @@ const VARIANTS = [
     pointSample: true,
   },
   {
-    // THE ONE THAT MATTERS. The HUD's blit draws a texture from a framebuffer's colour attachment to
-    // the DEFAULT framebuffer, which is a different and more expensive thing than sampling a texture
-    // into the same kind of target - it crosses memory domains. This row measures exactly that.
-    id: 'floor_blit', label: 'FLOOR · FBO→screen blit (the HUD path)',
+    // THIS ROW MEASURED NOTHING FOR A YEAR, and the comment on it described a mechanism that was never
+    // executed. It compiled `texture(uFloorTex, ...)` -- byte-identical GLSL to the row above -- took a
+    // different *texture object* as input (a 1024x1024 attachment vs the uploaded image), and drew into
+    // whatever framebuffer happened to be bound, which is the default one. So it measured "sample a
+    // texture" twice, and the 0.25 vs 0.24 ms difference the first hardware run reported was 4% off two
+    // readings whose spreads were 49% and 17%, i.e. 10 us against a 63 us timer tick.
+    //
+    // The hardware blit is `blitFramebuffer`, which crosses framebuffer objects rather than running a
+    // fragment shader at all. `makeBlitSource()` still returns a shader because WebGL2 has no way to
+    // express blitFramebuffer as one; the dispatch is what differs (`blit: true` below).
+    id: 'floor_blit', label: 'FLOOR · blitFramebuffer (no shader at all)',
     apply: (s) => s,
     floorBlit: true,
+    blit: true,
   },
   {
     id: 'no_shadow', label: '− solar-disc shadow (6 taps)',
@@ -430,11 +438,27 @@ function paint() {
 // uses it from outside the run loop, and because the FBO/texture choice must come from the variant rather
 // than from closure state that changes between rounds.
 function drawOnce(locs, w, h, mode) {
+  if (mode === 'blitfb') {
+    // A REAL blit: copy the colour attachment into the default framebuffer, no fragment shader runs.
+    // This is the operation the docs called "the FBO blit" and the row above did not perform.
+    //
+    // The SOURCE rectangle is clamped to the attachment's own size. The attachment is 1024x1024 and a
+    // resolved row can be larger than that; an out-of-range source rect leaves the read undefined, and
+    // on this sandbox's GL it stalled the run past the page's own watchdog. A cache is the same size as
+    // the framebuffer in `web/index.html`, so clamping is what the real thing does too.
+    const edge = Math.min(w, h, window.__blitSize);
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, window.__blitFbo);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+    gl.blitFramebuffer(0, 0, edge, edge, 0, 0, edge, edge, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return;
+  }
   setUniforms(locs, w, h, 0.0);
   if (locs.uFloorTex) {
     gl.activeTexture(gl.TEXTURE0);
-    // mode 'blit': sample the FBO attachment (the HUD's real path).
-    // mode 'tex' : sample a plain uploaded texture into the same kind of target.
+    // mode 'blit': sample the FBO's colour attachment, as the HUD's shader does.
+    // mode 'tex' : sample a plain uploaded texture. Both run the SAME fragment shader, so any
+    //              difference between them is which memory the sampler reads, not what the shader does.
     gl.bindTexture(gl.TEXTURE_2D, mode === 'blit' ? window.__blitTex : tex);
   }
   gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -452,9 +476,12 @@ async function run() {
   gl.disable(gl.DEPTH_TEST);
 
   // an FBO + texture to stand in for the HUD's cached image
+  // `texImage2D` with null data rather than `texStorage2D`: texStorage2D creates an immutable texture
+  // whose levels are not guaranteed renderable until something is drawn into them, and blitFramebuffer
+  // needs a complete attachment. A zero-filled 1024x1024 is cheap and unambiguous.
   const blitTex = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, blitTex);
-  gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, 1024, 1024);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1024, 1024, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -466,6 +493,8 @@ async function run() {
   // `drawOnce` lives at module scope and needs to reach the blit attachment; a module-level binding is
   // clearer than threading it through every call site.
   window.__blitTex = blitTex;
+  window.__blitFbo = blitFbo;
+  window.__blitSize = 1024;      // the attachment's own edge, so the blit can clamp to it
 
   // Compile everything ONCE, before any timing. Program compilation happens outside the loop because a
   // compile in the middle of a round would put a multi-millisecond stall inside a 0.29 ms measurement.
@@ -552,13 +581,20 @@ async function run() {
     for (const j of order) {
       // Resolution changes per variant, so the viewport is restored each time.
       resizeFor(j.v.resScale ?? !!j.v.halfRes);
-      const mode = j.v.floorBlit ? 'blit' : 'tex';
+      // `blit` and `blitfb` were the same mode string until 2026-11-24, which is why the "blit" row
+      // and the "texture read" row read within noise of each other: they were the same code path.
+      const mode = j.v.blit ? 'blitfb' : j.v.floorBlit ? 'blit' : 'tex';
       const r = measureRound(j.prog, j.locs, (l) => drawOnce(l, j.size.w, j.size.h, mode));
       j.samples.push(r.ms);
       j.frames = j.frames ?? r.frames;
     }
     $('out').textContent = 'round ' + (round + 1) + ' of ' + ROUNDS + '\u2026  (' +
       ((performance.now() - t0) / 1000).toFixed(1) + ' s)';
+    // Tell the watchdog this is progress. Without it the stall detector only beat during COMPILING, so
+    // a run that got through compiling and then spent minutes measuring read as a hang. It is not: a
+    // batch is sized to ~60 ms of work per row, and on a software rasteriser one draw can exceed that,
+    // so a row takes MIN_FRAMES draws and 18 rows x 7 rounds is minutes of a blocked main thread.
+    if (window.__ablateTick) window.__ablateTick();
     await new Promise((r) => setTimeout(r, 0));
   }
 
@@ -790,8 +826,26 @@ function summarise(rows, compileMs, minFrames, tickOverride) {
     lines.push('');
     lines.push('THE FLOORS, separated (same resolution, so these are directly comparable):');
     lines.push('  flat fill, no memory access   ' + floor.amortised.toFixed(2) + ' ms');
-    if (ft) lines.push('  one texture read              ' + ft.amortised.toFixed(2) + ' ms   (' + (ft.amortised / floor.amortised).toFixed(1) + 'x the flat fill)');
-    if (fb) lines.push('  FBO -> screen blit            ' + fb.amortised.toFixed(2) + ' ms   (' + (fb.amortised / floor.amortised).toFixed(1) + 'x the flat fill)');
+    if (ft) lines.push('  one texture read              ' + ft.amortised.toFixed(2) + ' ms   (' +
+      (ft.amortised / floor.amortised).toFixed(1) + 'x the flat fill)');
+    if (fb) lines.push('  blitFramebuffer, no shader    ' + fb.amortised.toFixed(2) + ' ms   (' +
+      (fb.amortised / floor.amortised).toFixed(1) + 'x the flat fill)');
+    else {
+      lines.push('  blitFramebuffer, no shader    FAILED on this device -- not measured, not zero.');
+      lines.push('                                The cached-frame cost below is therefore the texture read,');
+      lines.push('                                which is the right number for the shader this renderer');
+      lines.push('                                actually runs and the wrong number for a hardware blit.');
+    }
+    // The two rows were the same GLSL and a different texture object until 2026-11-24, so the
+    // difference between them was never a difference in mechanism. Now that one of them is
+    // blitFramebuffer, the comparison means something -- and it is worth stating which is which
+    // rather than leaving the reader to infer it from a 0.01 ms gap.
+    if (ft && fb && Math.abs(ft.amortised - fb.amortised) < 0.02) {
+      lines.push('');
+      lines.push('  NOTE: these two agree to within 20 us. A fragment-shader texture read and a');
+      lines.push('  blitFramebuffer cost the same on this device at this resolution. That is a result,');
+      lines.push('  not a failure to measure -- but check the two spreads before quoting it.');
+    }
     const cached = cachedStatic;
     if (cached) {
       lines.push('');
@@ -858,9 +912,17 @@ function summarise(rows, compileMs, minFrames, tickOverride) {
       const blitMs = cachedStatic.amortised;
       const blitMpx = cachedStatic.w * cachedStatic.h / 1e6;
       const blitPerMpx = blitMs / blitMpx;
-      lines.push('R2 ASKS ABOUT THE BLIT, NOT THE SHADE. A settled frame is a cached blit; the shade');
-      lines.push('only runs when something changes. On this device that blit is ' + blitMs.toFixed(2) +
+      lines.push('R2 ASKS ABOUT THE DRAWN FRAME, NOT THE SHADE. A settled frame is the cheap pass; the');
+      lines.push('shade only runs when something changes. On this device that pass is ' + blitMs.toFixed(2) +
         ' ms at ' + blitMpx.toFixed(2) + ' Mpx');
+      if (fb) {
+        lines.push('(the blitFramebuffer row -- a hardware blit, which this renderer does NOT use:');
+        lines.push(' `web/index.html` samples the cache as a texture, so the honest floor for the shipped');
+        lines.push(' path is the texture-read row, ' + ft.amortised.toFixed(2) + ' ms.)');
+      } else {
+        lines.push('(a texture read -- the operation `web/index.html` actually performs, because there is');
+        lines.push(' no blitFramebuffer in the shipped renderer.)');
+      }
       lines.push('(' + blitPerMpx.toFixed(2) + ' ms/Mpx), so 1.5 ms buys ' +
         (1.5 / blitPerMpx).toFixed(2) + ' Mpx -- ' +
         (1.5 / blitPerMpx >= blitMpx ? 'this screen fits.' : 'less than this screen.'));
@@ -905,10 +967,15 @@ $('run').addEventListener('click', () => {
     if (performance.now() - lastTick > WATCHDOG_MS) {
       clearInterval(beat);
       $('out').textContent =
-        'STALLED: no progress for ' + Math.round(WATCHDOG_MS / 1000) + ' s.\n\n' +
-        'This is the shader compiler, not the measurement. ' + VARIANTS.length + ' shader variants\n' +
-        'are too many for this device to compile in one go. Close other tabs and reload; if it\n' +
-        'happens again, the matrix needs fewer variants on this phone, which is a real finding.';
+        'NO PROGRESS FOR ' + Math.round(WATCHDOG_MS / 1000) + ' s.\n\n' +
+        'Two different things produce this, and the message used to name only the first:\n\n' +
+        '  the COMPILER  ' + VARIANTS.length + ' shader variants at once can exceed a phone\'s patience.\n' +
+        '  the MEASUREMENT  a batch is sized to ~60 ms of work per row. On a software rasteriser\n' +
+        '    (SwiftShader, a VM, this sandbox) one draw can exceed 60 ms, so each row drops to the\n' +
+        '    8-frame minimum and 18 rows x 7 rounds becomes minutes of blocked main thread.\n\n' +
+        'A blocked main thread cannot run this watchdog either, so this fires when the thread is\n' +
+        'ALIVE but producing no rows -- which is the compiler. If the tab is simply slow, wait: the\n' +
+        'round counter above is the authority on whether anything is still happening.';
       $('run').disabled = false;
     }
   }, 1000);
