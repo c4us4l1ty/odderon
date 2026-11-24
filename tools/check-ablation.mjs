@@ -183,6 +183,34 @@ function laptop2026_11_24_run2() {
   ];
 }
 
+/**
+ * The THIRD hardware run, same laptop, transcribed with its real spreads.
+ *
+ * This is the run where `baseline` (205% spread) and `control` (5% spread) disagreed by only 2.1%, which
+ * the page reported as "Good". The spread column was computed, printed, coloured red -- and used in no
+ * decision at all.
+ */
+function laptop2026_11_24_run3() {
+  const r = (id, ms, frames, spread, extra = {}) => row(id, ms, { frames, spread, ...extra });
+  return [
+    r("baseline", 0.784, 16, 2.05),
+    r("control", 0.767, 16, 0.05),
+    r("floor", 0.13, 153, 0.70),
+    r("floor_tex", 0.25, 240, 0.58),
+    r("floor_blit", 0.23, 240, 0.20),
+    r("no_shadow", 0.63, 150, 0.12),
+    r("shadow_4tap", 0.77, 90, 0.03),
+    r("no_wall_ribs", 0.75, 100, 0.02),
+    r("no_aerial", 0.73, 100, 0.02),
+    r("no_sphere", 0.72, 100, 0.02),
+    r("no_tonemap", 0.75, 100, 0.04),
+    r("no_skyglow", 0.75, 100, 0.03),
+    r("r100", 0.77, 80, 0.05, { resScale: 1.0 }),
+    r("r050", 0.19, 300, 0.07, { resScale: 0.5 }),
+    r("r025", 0.06, 400, 0.14, { resScale: 0.25 }),
+  ];
+}
+
 function healthy() {
   return [
     row("baseline", 2.00, { frames: 100 }),
@@ -391,6 +419,46 @@ console.log("case 10: no single threshold is printed as if it governed every row
     !/vs the larger of the 5% error bar and the timer floor \(\d+ us\)/.test(out), out);
   check("says each row is judged against its own bar", /EACH ROW is judged against its own/.test(out), out);
   check("still separates findings from non-findings", /CLEARS its own bar/.test(out) && /UNDER its own bar/.test(out), out);
+}
+
+console.log("case 11: a row's own spread participates in the decision, not just the display");
+{
+  // Third hardware run: `baseline` spread 205%, `control` 5%, same program, same code path, different
+  // slots of the round. The page computed every spread, printed it, coloured anything over 10% red --
+  // and used it in ZERO decisions. The source comment claimed "a delta smaller than the spread is
+  // printed as indistinguishable", which the code did not do. A computed column that decides nothing is
+  // the same failure as the refresh-period blit: a number presented as if it were doing work.
+
+  // Structural: `spread` must appear in summarise()'s executable code, not only in a comment.
+  const html = readFileSync(new URL("../web/ablate.html", import.meta.url), "utf8");
+  const start = html.indexOf("function summarise(");
+  let i = html.indexOf("{", start), depth = 0, end = -1;
+  for (let k = i; k < html.length; k++) {
+    if (html[k] === "{") depth++;
+    else if (html[k] === "}") { depth--; if (!depth) { end = k + 1; break; } }
+  }
+  const body = html.slice(start, end).replace(/\/\/[^\n]*/g, "");
+  // Two independent uses: the per-row bar, and the positional-effect check.
+  const uses = (body.match(/spread/g) || []).length;
+  check("summarise() consults spread in real code (not only a comment)", uses >= 3,
+    "executable mentions of `spread`: " + uses);
+
+  // Behavioural: a row whose spread swamps its delta must not be a finding.
+  const rows = laptop2026_11_24_run3();
+  const out = summarise(rows, 500, 8, 1);
+  check("a delta under its own spread is named as such",
+    /under its own \d+% spread/.test(out) || /UNDER its own bar/.test(out), out);
+}
+
+console.log("case 12: agreeing medians with an unsteady row is not called simply 'good'");
+{
+  // The sentence printed above the red 205% read "Good: the instrument agrees with itself to within
+  // 2.1%". True of the medians, misleading about the rows. Both must be said.
+  const out = summarise(laptop2026_11_24_run3(), 500, 8, 1);
+  check("names the positional effect", /POSITIONAL effect/.test(out), out);
+  check("does not print a bare 'Good' when a row is unsteady",
+    !/^ *Good: the instrument agrees/m.test(out), out);
+  check("still reports the median agreement", /MEDIANS agree to within/.test(out), out);
 }
 
 console.log("");

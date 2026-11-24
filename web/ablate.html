@@ -694,6 +694,27 @@ function summarise(rows, compileMs, minFrames, tickOverride) {
     // is at least 1/(baseline in ticks).
     const tickFrac = base.amortised > 0 ? Math.max(errBar, (tickBase / 1000) / base.amortised) : errBar;
     const oneTickPct = ((tickBase / 1000) / base.amortised) * 100;
+    // THE ERROR BAR COMPARES TWO MEDIANS, so it says nothing about either row's stability. Third
+    // hardware run: `baseline` spread 205%, `control` spread 5%, and the page announced "Good: the
+    // instrument agrees with itself to within 2.1%" -- a sentence about medians, printed directly above
+    // a red 205%. Both rows are the same program through the same code path in different slots of the
+    // round, so the difference is POSITION IN THE SCHEDULE, not the shader.
+    //
+    // The median survives that (0.783 vs 0.767 is 2.1% while the samples span 205%), which is exactly
+    // why the median was chosen. But a reader looking at 205% is owed the explanation, and the
+    // "good" verdict must not be printed as if the row were steady.
+    const baseSpread = base.spread ?? 0, ctlSpread = ctl.spread ?? 0;
+    const worstSpread = Math.max(baseSpread, ctlSpread);
+    const positional = worstSpread > 0.10 && errBar <= 0.03;
+    if (positional) {
+      lines.push('  *** THE TWO ROWS AGREE BUT ONE OF THEM IS UNSTEADY. Their spreads are ' +
+        (baseSpread * 100).toFixed(0) + '%');
+      lines.push('  *** (baseline) and ' + (ctlSpread * 100).toFixed(0) +
+        '% (control) -- the same program, different slots of the');
+      lines.push('  *** round. The MEDIANS still agree, which is why they are the reported statistic,');
+      lines.push('  *** but this run has a POSITIONAL effect: whichever row goes first is stalled on');
+      lines.push('  *** something the others are not. Deltas near the bar deserve suspicion this run.');
+    }
     if (errBar > 0.10) {
       lines.push('  *** OVER 10%: this run is NOT trustworthy. Every row below is suspect,');
       lines.push('  *** including the big ones. Close other apps, let the device cool, run again.');
@@ -706,6 +727,10 @@ function summarise(rows, compileMs, minFrames, tickOverride) {
         '% of the baseline, so the');
       lines.push('  true error bar is somewhere under that. Nothing smaller than ' +
         oneTickPct.toFixed(1) + '% is resolvable here.');
+    } else if (positional) {
+      // "Good" alone was the misleading sentence. Say what is good: the MEDIANS agree.
+      lines.push('  The MEDIANS agree to within ' + (errBar * 100).toFixed(1) + '%. That is why the');
+      lines.push('  median is the statistic here, and it is the one thing this run supports.');
     } else {
       lines.push('  Good: the instrument agrees with itself to within ' + (errBar * 100).toFixed(1) + '%.');
     }
@@ -736,6 +761,10 @@ function summarise(rows, compileMs, minFrames, tickOverride) {
   // scope is a ReferenceError there. If MIN_FRAMES ever changes, `check-ablation` case 6 fails.
   const clamp = minFrames ?? 8;
   const rowFloorMs = (r) => (r.frames ? tick / Math.max(clamp, r.frames) : 0);
+  // A row's own min-to-max width, in ms. `spread` is stored as a FRACTION of the median, so this is
+  // `median * spread` -- a width, not a bracket: (max-min)/median. A delta smaller than that width is a
+  // delta the row could not have resolved against itself, whatever the error bar says.
+  const rowSpreadMs = (r) => (r.spread !== undefined ? r.amortised * r.spread : 0);
   const floors = rows.filter((r) => r.ok && r.frames).map(rowFloorMs);
   const floorUs = floors.length ? Math.max(...floors) * 1000 : tick * 1000;
   if (floorUs > 5) {
@@ -776,12 +805,26 @@ function summarise(rows, compileMs, minFrames, tickOverride) {
   const ablated = rows.filter((r) => r.ok && !r.resScale && r.id !== 'baseline' && r.id !== 'control' &&
     !r.id.startsWith('floor'));
   const noisy = [], real = [];
-  // Each delta has to clear BOTH bars: the relative error bar, and the row's own timer floor.
+  // Each delta has to clear THREE bars: the relative error bar, the row's own timer floor, and the row's
+  // own min-to-max spread.
+  //
+  // THE THIRD BAR WAS COMPUTED AND NEVER USED. Until this run the page calculated each row's spread,
+  // printed it, coloured anything over 10% red -- and then judged every delta against the other two bars
+  // alone. The source comment above still claimed "a delta smaller than the spread is printed as
+  // 'indistinguishable' instead of as a number", which the code did not do. That is the same species of
+  // error as the retracted refresh-period blit: a measurement printed but not used is decoration.
+  //
+  // It matters here. Third hardware run, same laptop: `baseline` spread 205%, `control` spread 5%, and
+  // those are the SAME program through the SAME code path in different slots of the round. The control
+  // therefore proves the 205% is not a property of the shader; it is position in the schedule. And
+  // `baseline` is the reference every delta on the page is subtracted from, so its noise is inherited by
+  // every number in this paragraph.
   for (const r of ablated) {
     const d = baseMs - r.amortised;
-    const thr = Math.max(noise * baseMs, rowFloorMs(r));
-    const why = d <= noise * baseMs ? '' : d <= rowFloorMs(r) ? ' [under the ' +
-      (rowFloorMs(r) * 1000).toFixed(0) + ' us timer floor]' : '';
+    const thr = Math.max(noise * baseMs, rowFloorMs(r), rowSpreadMs(r));
+    const why = d <= noise * baseMs ? ' [under the ' + (noise * baseMs * 1000).toFixed(0) + ' us error bar]'
+      : d <= rowFloorMs(r) ? ' [under the ' + (rowFloorMs(r) * 1000).toFixed(0) + ' us timer floor]'
+      : d <= rowSpreadMs(r) ? ' [under its own ' + (r.spread * 100).toFixed(0) + '% spread]' : '';
     (d > thr ? real : noisy).push(r.label + ' (' + d.toFixed(2) + ' ms)' + why);
   }
   if (noisy.length || real.length) {

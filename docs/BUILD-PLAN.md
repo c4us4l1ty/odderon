@@ -265,6 +265,12 @@ Two things this table is deliberately not allowed to hide:
   | `blitFramebuffer`, no shader | **0.23** | 1.9x — a hardware blit, which the renderer does **not** use |
   | full shader (as shipped) | **0.77** | only when the world moves |
   | resolution sweep | **0.41 ms/Mpx** | |
+  | *run 3, same device* | | |
+  | flat fill | 0.13 | |
+  | one texture read | 0.25 | |
+  | `blitFramebuffer` | 0.23 | again within 20 us of the texture read |
+  | full shader | 0.78 | spread **205%**, positional |
+  | control | 0.77 | spread **5%**, same program |
 
   The two floors are now **3 readings apart at 240-frame batches, i.e. genuinely separate** — and they
   come out **within 30 us of each other**. That is the answer to the question `GRAPHICS.md` had been
@@ -293,6 +299,26 @@ Two things this table is deliberately not allowed to hide:
      instrument can claim"* and states that one tick is 0.1% of the baseline, so nothing finer is
      resolvable. This is the same species of error as the refresh-period "blit" — a number at the
      resolution limit presented as a measurement.
+
+  **Third run, same laptop — the `spread` column was decoration.** The page computed every row's
+  min-to-max spread, printed it, **coloured anything over 10% red**, and then used it in **zero
+  decisions**; `summarise()` mentioned it once, in a sentence telling the *reader* to check it. The
+  source comment still claimed *"a delta smaller than the spread is printed as 'indistinguishable'"* —
+  which the code did not do. A computed column that decides nothing is the same failure as the
+  refresh-period blit: a number presented as if it were doing work. (`check-ablation` case 11 now
+  asserts `spread` appears in executable code, and verifies the case fails against the old page.)
+
+  **What that run actually showed, and it is more interesting than a bug.** `baseline` had a **205%**
+  spread and `control` **5%** — the *same program, same code path, different slots of the round*. The
+  page announced *"Good: the instrument agrees with itself to within 2.1%"*, a true sentence about the
+  medians printed directly above a red 205%. The difference is **position in the schedule**, not the
+  shader: whichever row goes first each round is stalled on something the others are not. The median
+  survives it (0.783 vs 0.767 while the samples span 205%), which is exactly why the median is the
+  reported statistic — but the page now says both things, and says **POSITIONAL effect** by name when
+  the medians agree while one row is unsteady (case 12).
+
+  The spread is now a **third bar** on every delta, alongside the relative error bar and the row's own
+  timer floor, and a rejected row names which of the three rejected it.
 
   **What survives as a finding, and what does not.** Against the larger of the error bar and the timer
   floor: the **solar-disc shadow is real at 0.15 ms** (20% of the frame, and 1.2 ticks — the one row
