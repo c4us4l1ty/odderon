@@ -140,10 +140,14 @@ impl Zone {
     /// The §6.7 room: 25 m² of floor, 3 m² of glazing, reasonably insulated.
     ///
     /// Every number here is `Assumed` and says so. The heat capacity is the one worth arguing about: the air
-    /// alone is ~30 kJ/K (25 m² × 2.5 m × 1.2 kg/m³ × 1005 J/kg·K), which would swing several kelvin a minute.
-    /// A furnished room's *effective* capacity is several times that, and 120 kJ/K is what makes the bible's
-    /// "several kelvin over minutes" come out as measured: **5.9 K in the first ten minutes** after the curtain
-    /// closes, against a 44.4 min time constant.
+    /// alone is ~75 kJ/K for this room at 2.5 m (75 kg × 1005 J/kg·K), and 120 kJ/K is 1.59× that, which is what
+    /// makes the bible's "several kelvin over minutes" come out as measured: **5.9 K in the first ten minutes**
+    /// after the curtain closes, against a 44.4 min time constant.
+    ///
+    /// This paragraph carried "~30 kJ/K (25 × 2.5 × 1.2 × 1005)" and "several times that" for two rounds. The
+    /// product is 75 375; the ratio is 1.59. It was fixed once in the struct field's doc and missed here, which is
+    /// the failure mode a second copy of a claim always produces: the correction looks done because one copy of it
+    /// changed. `docs/BUILD-PLAN.md` §4b records the same lesson for the ladder.
     pub fn small_apartment_room() -> Zone {
         Zone {
             heat_capacity: Quantity {
