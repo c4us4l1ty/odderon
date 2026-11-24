@@ -81,3 +81,72 @@ What it deliberately does not do is in `docs/CLASSES.md` §3, and the first item
 cannot verify a licence. It enforces that every record *has* a classification, and that the
 classification was made by a named person. The reading of the terms page is still a human act, recorded
 with a URL and a date.
+
+---
+
+## 5. Seeing the view — including from a phone
+
+Claim 5 ("the window view is the best-looking thing on your laptop") is a judgement, and the only way to
+put a judgement in front of somebody is to put the **pixels** in front of them. There are two capture
+paths because there are two very different places the picture can come from.
+
+### 5a. From this sandbox (desktop, headless)
+
+```sh
+node tools/screenshot.mjs                      # -> .artifacts/shell.png, 1600x1000
+node tools/screenshot.mjs --out .artifacts/big.png --width 2560 --height 1600
+node tools/screenshot.mjs --url http://127.0.0.1:8080/ --hide-ui
+```
+
+It starts and stops its own server. It refuses to hand you a picture that is not settled: exit 1 on any
+console error, exit 2 if frames never stop arriving, exit 3 if it drew while idle. **The renderer here is
+SwiftShader**, so this is the right *picture* and the wrong *timing* — never quote a frame time from it.
+
+### 5b. From the phone
+
+The page captures **itself**, because the device whose picture matters has no debugging cable:
+
+1. Open the page (`python -m http.server 8080 -d web` in Termux, then `http://127.0.0.1:8080`).
+2. Set the quality you want to show: render scale, shadow taps, full/simple geometry.
+3. Press **`capture this frame as a PNG`**. It measures first, then saves a PNG to Downloads.
+
+The saved file is the **scene** with a provenance strip burned into the bottom edge:
+
+```
+odderon 2026-11-24T08:42:42.577Z
+canvas 420 x 760 (0.32 Mpx)
+scale 1.00 taps 4 full geometry
+renderer ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device ...
+R2 GPU timer returned no samples R3 12.0 / 32
+gpu timer no-samples
+```
+
+That strip is not decoration. A frame at 0.50x render scale is a quarter of the pixels of the same frame
+at 1.00x, and the two look identical in a PNG — so a picture without its scale is a picture that cannot
+be argued with. Hide the panel first (`hide`) if you want to judge the art rather than the instrument;
+the strip is added either way.
+
+Why it is captured in-page rather than with `page.screenshot()`: `preserveDrawingBuffer` is `false` (it
+costs bandwidth, and this renderer is about bandwidth), so the drawing buffer is cleared as soon as the
+frame is composited. A readback from outside a draw returns an empty buffer. The only honest way to
+sample the image is from inside the frame that drew it — the same rule the pixel probe has always
+followed.
+
+### 5c. Reading a PNG that came back
+
+```sh
+node tools/capture-page.mjs ~/Downloads/odderon-1764000000000.png --stamp "scale 0.50 taps 4 simple"
+```
+
+Prints the real dimensions read out of the PNG header, the shaded megapixels at that scale, and echoes the
+provenance stamp. `--json` for machine-readable output. It **does not** score the image: claim 5 is a
+human verdict, and a tool that produced a number for it would be inventing a metric to stand in for a
+judgement.
+
+### Why no screenshot is ever committed
+
+`ci/kernel-policy.sh` R5 forbids binary assets in `git ls-files`, and `GRAPHICS.md` R1 gives the reason:
+every surface must be a function S(u,v,t), not a stored bitmap. A screenshot *is* a stored bitmap. The
+rule has no documentation exception — an exception is how a rule stops being a rule — so captures go to
+`.artifacts/`, which `.gitignore` covers. What gets committed is the **numbers and the stamp**, quoted as
+text, which is why the strip is burned into the image in the first place.

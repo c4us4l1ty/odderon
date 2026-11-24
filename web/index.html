@@ -42,6 +42,13 @@
     background: #1d2733; border: 1px solid #30404f; color: #cfe3f5; font: inherit;
   }
   #measure:active { background: #27384a; }
+  #snap {
+    margin-top: 6px; width: 100%; padding: 7px 8px; border-radius: 5px; cursor: pointer;
+    background: #1d2733; border: 1px solid #30404f; color: #cfe3f5; font: inherit;
+  }
+  #snap:active { background: #27384a; }
+  #snap-note { margin-top: 5px; font-size: 11px; }
+  #snap-note a { color: #8fc4f0; }
   #measure-note { margin-top: 5px; font-size: 11px; }
   .scales { display: flex; gap: 4px; margin-top: 6px; }
   .scales button {
@@ -99,6 +106,8 @@
   <div class="row"><span>R1 zero bitmaps</span><span id="m-r1">—</span></div>
 
   <button id="measure">measure frame time</button>
+  <button id="snap">capture this frame as a PNG</button>
+  <div id="snap-note" class="muted"></div>
   <div id="measure-note" class="muted"></div>
 
   <div id="note"></div>
@@ -1015,6 +1024,15 @@ function drawFrame(nowMs) {
   pollGpuTimer(steady);
 
   if (captureReq.want) captureNow();
+  if (pictureReq.want) {
+    // Copy out here, inside the draw, while the drawing buffer is still guaranteed non-empty.
+    pictureReq.want = false;
+    const c = document.createElement('canvas');
+    c.width = canvas.width;
+    c.height = canvas.height;
+    c.getContext('2d').drawImage(canvas, 0, 0);
+    pictureReq.resolve(c);
+  }
 }
 
 function renderLoop(nowMs) {
@@ -1075,11 +1093,74 @@ function measureFrame(samples = 12) {
   gl.bindTexture(gl.TEXTURE_2D, cache.tex);
   gl.uniform1i(UQ.shaded, 0);
   gl.uniform2f(UQ.res, canvas.width, canvas.height);
-  for (let i = 0; i < samples; i++) {
-    const a = performance.now();
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+  // -------------------------------------------------------------------------------------------
+  // The blit is timed two ways, and the difference between them is not a detail.
+  //
+  // `gl.finish()` on a phone does NOT report how long the GPU took. It reports when the driver had
+  // nothing left to hand over, which for the per-frame blit is *the next vsync*: the frame is queued,
+  // the compositor presents it at the refresh boundary, and finish() returns at that boundary. What
+  // gets measured is therefore one refresh period, whatever the renderer did.
+  //
+  // This is not a theory. On a 143 Hz phone this loop reported a blit median of 7.00 ms. 1000/143 is
+  // 6.993 ms. The number was the display, to within 0.007 ms, wearing a frame-time label.
+  //
+  // So when EXT_disjoint_timer_query_webgl2 is available, use it: it timestamps inside the GPU and
+  // is immune to presentation. When it is not, still collect the finish() number, but label it as a
+  // vsync interval so that nothing downstream can mistake it for renderer cost.
+  // -------------------------------------------------------------------------------------------
+  const gpuBlits = [];
+  if (disjointExt) {
+    // Issue every query first, then finish ONCE, then read.
+    //
+    // The obvious version of this loops per sample: begin, draw, end, spin on QUERY_RESULT_AVAILABLE.
+    // That deadlocks. JavaScript is single-threaded here, so a busy-wait never yields, the GPU never
+    // gets to make progress, and the result never becomes available — the page hangs on the click.
+    //
+    // `gl.finish()` after all the queries does not reintroduce the vsync problem, because what is read
+    // back is the timestamp the GPU recorded *between* beginQuery and endQuery. finish() only assures
+    // that the results are ready; it does not become part of the measurement.
+    const queries = [];
+    for (let i = 0; i < samples; i++) {
+      const q = gl.createQuery();
+      gl.beginQuery(disjointExt.TIME_ELAPSED_EXT, q);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.endQuery(disjointExt.TIME_ELAPSED_EXT);
+      queries.push(q);
+    }
     gl.finish();
-    blitTimes.push(performance.now() - a);
+    // The first two are discarded: a cold pipeline reads milliseconds on hardware that does the work
+    // in microseconds, and this file already carries that lesson from the boot burst.
+    //
+    // `diag` is kept because a silently empty result is worse than a wrong one: when the GPU timer
+    // exists but yields nothing, the HUD can say WHICH gate rejected the samples instead of showing a
+    // dash to somebody who then cannot tell "not supported" from "not measured".
+    const diag = { issued: queries.length, ready: 0, disjoint: 0, kept: 0 };
+    queries.forEach((q, i) => {
+      const ready = gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE);
+      const disjoint = gl.getParameter(disjointExt.GPU_DISJOINT_EXT);
+      if (ready) diag.ready += 1;
+      if (disjoint) diag.disjoint += 1;
+      if (ready && !disjoint && i >= 2) {
+        gpuBlits.push(gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6);
+        diag.kept += 1;
+      }
+      gl.deleteQuery(q);
+    });
+    bench.gpuQueryDiag = diag;
+  }
+
+  // Fall back to the finish() path when there is no timer query *or* when one exists but produced no
+  // usable sample. The second case is real: a browser can expose the extension and still return
+  // unready or disjoint results, and an empty sample set must not become a NaN on the panel -- a blank
+  // reads as "not measured", which is exactly the ambiguity this instrument exists to remove.
+  if (gpuBlits.length === 0) {
+    for (let i = 0; i < samples; i++) {
+      const a = performance.now();
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.finish();
+      blitTimes.push(performance.now() - a);
+    }
   }
 
   const med = (xs) => { const s = xs.slice().sort((p, q) => p - q); return quantile(s, 0.5); };
@@ -1090,9 +1171,27 @@ function measureFrame(samples = 12) {
   bench.blitMs = med(blitTimes);
   bench.blitP95 = p95f(blitTimes);
   bench.measuredMs = bench.blitMs;
+  // The number R2 must be judged on: GPU-side blit cost when the timer query exists.
+  bench.gpuBlitMs = gpuBlits.length ? med(gpuBlits) : NaN;
+  bench.gpuBlitP95 = gpuBlits.length ? p95f(gpuBlits) : NaN;
+  // Two different reasons can leave us without a GPU number, and they are not the same finding:
+  //   'absent'      - the extension does not exist, so the finish() interval is all there is.
+  //   'no-samples'  - the extension exists but returned nothing usable. That is a bug in this
+  //                   instrument or a driver quirk, NOT a licence to call the number vsync.
+  // Collapsing them would let a broken query masquerade as a perfectly normal software renderer.
+  bench.gpuTimerState = gpuBlits.length ? 'ok' : disjointExt ? 'no-samples' : 'absent';
+  bench.blitIsVsyncBound = bench.gpuTimerState === 'absent';
 
   cache.valid = false;                             // the loop above left the cache in an unknown state
-  return { shade: bench.shadeMs, shadeP95: bench.shadeP95, blit: bench.blitMs, blitP95: bench.blitP95, samples };
+  return {
+    shade: bench.shadeMs,
+    shadeP95: bench.shadeP95,
+    blit: bench.blitMs,
+    blitP95: bench.blitP95,
+    gpuBlit: bench.gpuBlitMs,
+    blitIsVsyncBound: bench.blitIsVsyncBound,
+    samples,
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1185,18 +1284,29 @@ function updateHud() {
     // Zero draws. The strictest possible pass: nothing is spent at all.
     r2.textContent = '0 draws when idle';
     r2.className = 'pass';
-  } else if (!Number.isFinite(staticCost)) {
-    // Frames are being drawn but the per-frame cost has not been measured on the GPU. Saying
-    // "drawing" here is honest; saying a number would not be.
-    r2.textContent = bench.blitSamples?.length >= 4 && Number.isFinite(bench.gpuBlitMs)
-      ? fmt(bench.gpuBlitMs, 2) + ' ms gpu blit'
-      : 'press measure';
+  } else if (Number.isFinite(bench.gpuBlitMs)) {
+    // The real number: GPU-side blit cost, immune to presentation.
+    const ok = bench.gpuBlitMs < 1.5;
+    r2.textContent = fmt(bench.gpuBlitMs, 2) + ' ms gpu blit ' + (ok ? '< 1.5' : '> 1.5');
+    r2.className = ok ? 'pass' : 'fail';
+  } else if (bench.gpuTimerState === 'no-samples') {
+    // The timer exists but handed back nothing. Say so plainly: this is an instrument problem, and
+    // calling the finish() number below "vsync-bound" would be inventing a cause for it.
+    r2.textContent = 'GPU timer returned no samples';
+    r2.className = 'warn';
+  } else if (Number.isFinite(staticCost) && staticCost > 0) {
+    // No timer query, so all we have is a finish() interval — which on a phone is the refresh
+    // period. Reporting it as a pass or a fail would be answering a different question, so it is
+    // reported as what it is and neither colour is claimed. A zero here means the backend did not
+    // wait at all, which is not a refresh period either, hence the > 0 guard.
+    r2.textContent = fmt(staticCost, 2) + ' ms vsync-bound, no GPU timer';
+    r2.className = 'warn';
+  } else if (Number.isFinite(staticCost)) {
+    r2.textContent = fmt(staticCost, 2) + ' ms with no GPU timer (not a measurement)';
     r2.className = 'warn';
   } else {
-    // Frames are being drawn, so the question is what a static frame costs. That is the blit.
-    const ok = staticCost < 1.5;
-    r2.textContent = fmt(staticCost, 2) + ' ms static ' + (ok ? '< 1.5' : '> 1.5');
-    r2.className = ok ? 'pass' : 'fail';
+    r2.textContent = 'press measure';
+    r2.className = 'warn';
   }
 
   const r3 = $('m-r3');
@@ -1274,15 +1384,62 @@ document.querySelectorAll('#scales button').forEach((btn) => {
   });
 });
 
-$('measure').addEventListener('click', () => {
-  const r = measureFrame(12);
+// Named rather than inlined in the click handler, because a capture needs the same work done before it
+// photographs the panel. Two copies of this would drift, and the copy that drifts is always the one
+// nobody is looking at.
+function applyMeasurement(r) {
   const note = $('measure-note');
+  // The old text claimed every sample included a gl.finish(). That is true only of the fallback path:
+  // when the timer query works, the numbers are GPU-side intervals with no stall in them at all. The
+  // note now says which, because a note that misdescribes its own instrument is worse than no note.
+  const how =
+    bench.gpuTimerState === 'ok'
+      ? 'median of ' + r.samples + ', timed on the GPU. The frame loop never stalls.'
+      : bench.gpuTimerState === 'no-samples'
+        ? 'GPU timer returned nothing; these are gl.finish() intervals, not GPU cost.'
+        : 'no GPU timer in this browser; these are gl.finish() intervals, which on a phone are the ' +
+          'refresh period rather than GPU cost.';
   note.textContent =
     'SHADE ' + r.shade.toFixed(2) + ' ms (p95 ' + r.shadeP95.toFixed(2) + ')  -  only when something changes\n' +
     'BLIT  ' + r.blit.toFixed(2) + ' ms (p95 ' + r.blitP95.toFixed(2) + ')  -  the per-frame cost of a static scene\n' +
-    'median of ' + r.samples + ', each including one gl.finish(). The frame loop never stalls.';
+    how;
   note.style.whiteSpace = 'pre-wrap';
+  updateHud();                        // so a capture taken right now shows the new numbers, not the old
   requestFrame();
+}
+
+$('measure').addEventListener('click', () => {
+  applyMeasurement(measureFrame(12));
+});
+
+// The phone half of the capture path. There is no cable and no remote debugger on the device whose
+// picture actually matters, so the page has to hand the frame over itself. A data URL in an <a download>
+// works in Firefox for Android and Chrome without a permission prompt, and the file lands in Downloads
+// where it can be attached to a message.
+$('snap').addEventListener('click', async () => {
+  const note = $('snap-note');
+  note.textContent = 'capturing...';
+  try {
+    const r = await window.__odderon.capturePicture();
+    const a = document.createElement('a');
+    a.href = r.png;
+    a.download = 'odderon-' + Date.now() + '.png';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    note.textContent =
+      r.width + ' x ' + r.height + ' saved' + (r.hud ? ' with panel' : ' (panel overlay failed, scene only)') +
+      '. If nothing was saved, long-press the image link below.';
+    if (!r.hud) {
+      // The fallback that still gets the picture to a person when the download is blocked.
+      const img = new Image();
+      img.src = r.png;
+      img.style.cssText = 'max-width:100%;margin-top:6px;border:1px solid #30404f';
+      note.appendChild(img);
+    }
+  } catch (e) {
+    note.textContent = 'capture failed: ' + String(e && e.message ? e.message : e);
+  }
 });
 
 $('toggle').addEventListener('click', () => {
@@ -1299,6 +1456,10 @@ const renderer = (() => {
   const ext = gl.getExtension('WEBGL_debug_renderer_info');
   return ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : 'unknown';
 })();
+// Also on `bench`, because the picture is only worth something if the GPU behind it is named. A capture
+// from a software rasteriser and one from a phone GPU are different evidence, and the stamp has to say
+// which it is or the number beside it is unattributable.
+bench.renderer = renderer;
 
 note.innerHTML =
   'renderer: <span style="color:#8fa0b3">' + renderer + '</span><br>' +
@@ -1332,6 +1493,84 @@ requestAnimationFrame(burst);
 // The only honest way to sample the image is from inside the frame that drew it, so a request sets a
 // flag and the next draw fills it. This changes nothing when nobody asks.
 const captureReq = { want: false, out: null };
+
+// A *picture* request, as distinct from the pixel probe above. `page.screenshot()` cannot be used for
+// this: `preserveDrawingBuffer` is false, so the canvas is cleared as soon as the frame is composited,
+// and what a headless capture returns is whatever the compositor happened to hold -- often blank, and
+// never something this code can promise is the frame it drew. So the same in-frame rule applies:
+// ask, then read the buffer from inside the next draw.
+//
+// The HUD is composited in deliberately. The whole point is that a person looking at the image can see
+// WHICH settings produced it -- render scale, taps, geometry. A picture of the scene with no
+// provenance is a picture that cannot be argued with, and this project does not get to show numbers
+// next to a frame that might not correspond to them.
+//
+// The HUD is HTML, not WebGL, so it cannot be read back by gl.readPixels. It is rasterised instead
+// through an SVG <foreignObject>, which is the one way to draw live DOM into a canvas with no
+// dependencies. If that throws (some browsers refuse to rasterise an <img> from foreignObject), the
+// capture is still valid and `hud` is reported as false -- an absent panel is a smaller lie than a
+// panel that says it captured something it did not.
+const pictureReq = { want: false, resolve: null };
+
+async function capturePicture() {
+  // Force a draw: render-on-demand means nothing is coming on its own.
+  requestFrame();
+  const raw = await new Promise((res) => { pictureReq.want = true; pictureReq.resolve = res; });
+
+  const out = document.createElement('canvas');
+  out.width = raw.width;
+  out.height = raw.height;
+  const ctx = out.getContext('2d');
+  ctx.drawImage(raw, 0, 0);
+
+  let hud = false;
+  const panel = $('hud');
+  if (panel) {
+    try {
+      const r = panel.getBoundingClientRect();
+      const html = new XMLSerializer().serializeToString(panel);
+      const svg =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="' + Math.ceil(r.width) + '" height="' +
+        Math.ceil(r.height) + '"><foreignObject x="0" y="0" width="100%" height="100%">' +
+        '<div xmlns="http://www.w3.org/1999/xhtml" style="font:11px/1.45 ui-monospace,Menlo,monospace;' +
+        'color:#cfd6de;background:rgba(10,12,15,.86);padding:8px;box-sizing:border-box">' +
+        html + '</div></foreignObject></svg>';
+      const img = new Image();
+      await new Promise((res, rej) => {
+        img.onload = res;
+        img.onerror = rej;
+        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+      });
+      ctx.drawImage(img, r.left, r.top);
+      hud = true;
+    } catch {
+      hud = false;                              // the frame is still real; only the overlay is missing
+    }
+  }
+
+  // Everything that decides what the image looks like, stamped as text rather than left to memory.
+  const stamp = [
+    'odderon ' + new Date().toISOString(),
+    'canvas ' + raw.width + ' x ' + raw.height + ' (' + (raw.width * raw.height / 1e6).toFixed(2) + ' Mpx)',
+    'scale ' + state.scale.toFixed(2) + '  taps ' + state.shadowTaps + '  ' +
+      (state.simpleGeometry ? 'simple' : 'full') + ' geometry',
+    'renderer ' + (bench.renderer || 'unknown'),
+    'R2 ' + ($('m-r2')?.textContent ?? '-') + '   R3 ' + ($('m-r3')?.textContent ?? '-'),
+    'gpu timer ' + (bench.gpuTimerState || '-') +
+      (Number.isFinite(bench.gpuBlitMs) ? '  ' + bench.gpuBlitMs.toFixed(3) + ' ms' : ''),
+  ];
+  ctx.font = '12px ui-monospace,Menlo,monospace';
+  const lines = stamp.map((t) => t.replace(/\s+/g, ' ').slice(0, 96));
+  const pad = 8;
+  const lineH = 16;
+  const boxH = lines.length * lineH + pad * 2;
+  ctx.fillStyle = 'rgba(10,12,15,.86)';
+  ctx.fillRect(0, out.height - boxH, out.width, boxH);
+  ctx.fillStyle = '#9fb0c0';
+  lines.forEach((t, i) => ctx.fillText(t, pad, out.height - boxH + pad + lineH * (i + 1) - 4));
+
+  return { canvas: out, hud, stamp: lines };
+}
 // The debug surface. `cache` is exported because the cache is now the thing that can be WRONG in a
 // way that looks perfect: a stale cache renders a beautiful, plausible, frozen image. Anything that
 // must be checked from outside - was a full shade taken, did the contents change - has to be visible
@@ -1340,6 +1579,21 @@ window.__odderon = {
   state, bench, gl, cache,
   renderer: () => renderer,
   requestFrame,
+  /**
+   * Ask for a PNG data URL of the current frame, HUD and provenance stamp included.
+   *
+   * It measures first, unless told not to. A capture is the artifact somebody looks at to judge claim
+   * 5, and shipping one whose panel reads "press measure" means the numbers are missing exactly when
+   * they are wanted. Measuring costs one burst of frames and changes nothing about what is on screen.
+   */
+  capturePicture: async ({ measure = true } = {}) => {
+    if (measure && typeof measureFrame === 'function') {
+      const r = measureFrame(12);
+      applyMeasurement(r);
+    }
+    const { canvas: c, hud, stamp } = await capturePicture();
+    return { png: c.toDataURL('image/png'), hud, stamp, width: c.width, height: c.height };
+  },
   requestCapture(size = 48) {
     captureReq.want = true;
     captureReq.size = size;
