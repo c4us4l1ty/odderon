@@ -21,9 +21,13 @@
     user-select: none;
   }
   #hud h1 { margin: 0 0 8px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: #7d8b9c; font-weight: 600; }
-  .row { display: flex; justify-content: space-between; gap: 12px; }
-  .row span:first-child { color: #7d8b9c; }
-  .row span:last-child { font-variant-numeric: tabular-nums; }
+  /* A row is label left, value right. The value had no width of its own and no wrap rule, so a long
+     one -- "unavailable: Failed to fetch" -- overran straight into its own label and printed as
+     "unavailable: Failed to fetch". The alignment matters because this panel is the instrument: a
+     value that collides with its label is a value nobody can read off a phone screenshot. */
+  .row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .row span:first-child { color: #7d8b9c; flex: 0 0 auto; }
+  .row span:last-child { font-variant-numeric: tabular-nums; min-width: 0; text-align: right; overflow-wrap: anywhere; }
   .big { font-size: 15px; font-variant-numeric: tabular-nums; }
   .pass { color: #6ee7a8; } .fail { color: #ff8a80; } .warn { color: #ffd166; }
   .muted { color: #59646f; }
@@ -104,13 +108,14 @@
   <div class="row"><span>R2 idle &lt; 1.5 ms</span><span id="m-r2">—</span></div>
   <div class="row"><span>R3 &lt; 32 B/px</span><span id="m-r3">—</span></div>
   <div class="row"><span>R1 zero bitmaps</span><span id="m-r1">—</span></div>
+  <div class="row"><span>orbit source</span><span id="m-orbit">—</span></div>
 
   <button id="measure">measure frame time</button>
   <button id="snap">capture this frame as a PNG</button>
   <div id="snap-note" class="muted"></div>
   <div id="measure-note" class="muted"></div>
 
-  <div id="note"></div>
+  <div id="note" class="muted"></div>
 </div>
 
 <button id="toggle" aria-label="Toggle instrument">hide</button>
@@ -841,11 +846,9 @@ function pollGpuTimer(steady) {
   if (done) { gl2.deleteQuery(pendingQuery); pendingQuery = null; }
 }
 
-// The kernel's job, simulated here at the API boundary the wasm module will expose:
-//   orbit_state(t) -> [x, y, z]
-// Replace this function body with `kernel.orbit_state(t)` once the wasm transport is solved; nothing
-// else in this file changes. That is the point of the boundary.
-const MU = 398600.4418;
+// The orbit itself is no longer computed here -- see the kernel boundary further down, which calls
+// `odderon-astro` through wasm. What remains in this file is presentation: the sun, the camera, the
+// shading. Anything that describes *where the satellite is* comes from the kernel.
 // ---------------------------------------------------------------------------------------------
 // The sun, as an actual direction rather than a hand-picked vector
 // ---------------------------------------------------------------------------------------------
@@ -875,53 +878,128 @@ function sunDirection(declRad) {
   return [-Math.cos(az) * Math.cos(el), Math.sin(el), -Math.sin(az) * Math.cos(el)];
 }
 
-// An eccentric orbit, not a circular one: eccentricity is what makes Kepler's equation transcendental
-// and therefore what makes the solver worth writing. a = 9000 km, e = 0.35 keeps the perigee above
-// the surface (9000 * (1 - 0.35) = 5850 km < 6378 km, so pull a out until it clears).
-const SATELLITE = { a: 9800.0, e: 0.30, r: 6778.137, v: Math.sqrt(398600.4418 / 6778.137) };
-function orbitPosition(tSeconds) {
-  // ---------------------------------------------------------------------------------------------
-  // The boundary where the real kernel will be called.
-  //
-  // Until the wasm module can reach the page, this solves the honest elliptic case in JS: a body on
-  // an eccentric orbit, with Kepler's equation solved by Newton rather than faked with a scaled
-  // sine. Kepler's equation is transcendental - there is no closed form - so the structure of the
-  // cost is "iterate to a tolerance", and that is worth having right in the stand-in, because the
-  // kernel will have exactly the same shape.
-  //
-  // Scene units: 1 unit = 1000 km. The camera is 1.6 units up, so the orbit is deliberately large
-  // and placed to stay visible.
-  // ---------------------------------------------------------------------------------------------
-  const a = SATELLITE.a;                    // semi-major axis, km
-  const e = SATELLITE.e;
-  const n = Math.sqrt(MU / (a * a * a));    // mean motion, rad/s
-  const M = wrapTwoPi(n * tSeconds);        // mean anomaly
+// ---------------------------------------------------------------------------------------------
+// THE KERNEL BOUNDARY — this is the real thing now, not a stand-in
+// ---------------------------------------------------------------------------------------------
+//
+// This function used to solve Kepler's equation in JavaScript and return a position. That stand-in was
+// honest about being one, but it had a structural limitation that no amount of care could fix: **it
+// returned a position and no velocity.** The page therefore had no state it could advance, which is the
+// one thing a render-on-demand renderer needs — wake after an idle gap, ask where the satellite is now,
+// and get the same answer the kernels' tests agree on.
+//
+// It now calls `odderon-astro` through wasm: universal-variable Kepler on a real `(r, v)` state, with
+// the reference orbit built inside the kernel from `Elements::to_state` so the page and the native tests
+// propagate the same orbit from the same numbers.
+//
+// THREE DESIGN DECISIONS, each because the alternative is a specific failure this project has had:
+//
+//  1. **No substitute orbit.** If the module is missing, no position is computed and the body is hidden;
+//     the page does not quietly draw a different orbit. A silent fallback is how a page ends up
+//     describing behaviour the code does not implement, which is the defect this project keeps having to
+//     withdraw claims over. (Note what this deliberately does NOT do: it does not stop rendering. The
+//     scene, the shading and the R2 measurement have nothing to do with the orbit, and refusing to draw
+//     would break the instrument on any machine — including the sandboxed preview — that has no build.
+//     The body is placed far outside the frame instead, and the HUD names the reason.)
+//  2. **The module's constants are required, and verified where they can be.** `orbit_mu()`,
+//     `orbit_semi_major_axis()` and `orbit_eccentricity()` must exist before the page will draw, so a
+//     module that does not carry the kernel's own constants is rejected at load rather than drawn. The
+//     page does not itself re-derive anything from them — `SCENE_KM` below is the one display constant —
+//     and `tools/check-orbit.mjs` is what actually calls them and checks them against physics. Saying
+//     "the page reads mu from the kernel" would have been the kind of claim this file keeps having to
+//     withdraw, so it is not made.
+//  3. **Convergence is surfaced, not assumed.** `propagate` reports iterations and an `unconverged`
+//     flag; both cross the boundary and both are read every frame. A caller that ignores a failed solve
+//     is taking a number on trust.
+const kernelState = { module: null, status: 'not loaded', attempted: false, lastError: null };
 
-  // Newton on Kepler: M = E - e sin E. For e < 0.8 and a good start this converges in a few steps;
-  // the guard is there because a solver that can loop forever is not a solver.
-  let E = e < 0.8 ? M : Math.PI;
-  for (let i = 0; i < 12; i++) {
-    const f = E - e * Math.sin(E) - M;
-    const fp = 1 - e * Math.cos(E);
-    const d = f / fp;
-    E -= d;
-    if (Math.abs(d) < 1e-12) break;
+/// Load the kernel module, once, returning the instantiated exports or null.
+///
+/// The module is standalone — no imports — so instantiation needs no import object. That is the property
+/// `crates/odderon-dmath-wasm` was built for, and it is what lets both Node and the browser load it.
+async function loadKernel() {
+  if (kernelState.attempted) return kernelState.module;
+  kernelState.attempted = true;
+  // `/dist/` is the served build output: `npm run fetch:wasm` (and the CI artifact) put the module there.
+  const url = '/dist/odderon_dmath_wasm.wasm';
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const bytes = await res.arrayBuffer();
+    const { instance } = await WebAssembly.instantiate(bytes, {});
+    const ex = instance.exports;
+    // Every export the page depends on, named. A partially-built module must fail here rather than at
+    // the first draw, where the symptom would be a stale orbit rather than a missing function.
+    const needed = ['orbit_state_x', 'orbit_state_y', 'orbit_state_z',
+                    'orbit_velocity_x', 'orbit_velocity_y', 'orbit_velocity_z',
+                    'orbit_iterations', 'orbit_unconverged',
+                    'orbit_mu', 'orbit_semi_major_axis', 'orbit_eccentricity'];
+    const missing = needed.filter((n) => typeof ex[n] !== 'function');
+    if (missing.length) throw new Error('module missing exports: ' + missing.join(', '));
+    kernelState.module = ex;
+    kernelState.status = 'wasm';
+    return ex;
+  } catch (e) {
+    kernelState.module = null;
+    kernelState.status = 'unavailable: ' + (e && e.message ? e.message : String(e));
+    kernelState.lastError = e && e.message ? e.message : String(e);
+    return null;
   }
+}
 
-  // Perifocal state, then a fixed rotation so the orbit is not edge-on to a fixed camera.
-  const cE = Math.cos(E), sE = Math.sin(E);
-  const b = a * Math.sqrt(1 - e * e);
-  const xp = a * (cE - e);
-  const yp = b * sE;
+/// Scene units per kilometre. The camera sits 1.6 units up and the orbit is deliberately large, so this
+/// is a display choice, not a physical one — but it is the *only* one, applied in one place.
+const SCENE_KM = 0.00055;
 
-  // Inclination about x, then a yaw: enough to read the ellipse as an ellipse.
+/// The satellite's scene-space position at `tSeconds`, from the kernel.
+///
+/// Returns `NO_ORBIT_POSITION` — a point outside the frame — when the kernel is unavailable or the solve
+/// did not converge. There is no numeric substitute orbit: see decision 1 above.
+///
+/// BUT A NULL POSITION MUST NOT STOP THE FRAME. The first version of this returned `null` and had
+/// `drawFrame` bail out entirely, which broke the instrument on every machine without a built wasm
+/// artifact -- including the in-app preview, which is sandboxed with no network. That is a bad trade: the
+/// scene, the shading and the whole R2 measurement have nothing to do with the orbit. So the body is
+/// drawn at a position far outside the scene, which removes it from the image
+/// (`uOrbitPos` = (0, -1e4, 4) is below the ground plane where nothing is visible), while every other
+/// pixel is shaded exactly as before. The HUD says `orbit source: unavailable: <reason>`, so the missing
+/// body is diagnosed rather than mysterious, and nothing claims the orbit was computed when it was not.
+const NO_ORBIT_POSITION = [0.0, -1e4, 4.0];
+
+/// Diagnostics from the last propagation: how hard the solve was, and whether it failed.
+///
+/// Read from the kernel rather than assumed. A solver that gives up and returns its last iterate
+/// produces a position that looks like every other position, so "converged" has to be asked for.
+const orbitDiag = { iterations: 0, unconverged: false };
+
+function orbitPosition(tSeconds) {
+  const k = kernelState.module;
+  if (!k) return NO_ORBIT_POSITION;
+  const dt = tSeconds;
+
+  // Ask whether the solve succeeded BEFORE believing the numbers. A non-converged universal-variable
+  // solve still returns a finite triple, so checking `Number.isFinite` would happily accept it.
+  orbitDiag.unconverged = k.orbit_unconverged(dt) !== 0;
+  orbitDiag.iterations = k.orbit_iterations(dt);
+  if (orbitDiag.unconverged) return NO_ORBIT_POSITION;
+
+  const x = k.orbit_state_x(dt), y = k.orbit_state_y(dt), z = k.orbit_state_z(dt);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return NO_ORBIT_POSITION;
+  // The kernel's frame is the orbit plane; the page wants it tilted so the ellipse reads as an ellipse.
+  // This rotation is presentation and stays here — the kernel has no opinion about cameras.
   const inc = 0.55, yaw = 0.9;
-  const xi = xp, yi = yp * Math.cos(inc), zi = yp * Math.sin(inc);
-  const x = xi * Math.cos(yaw) - yi * Math.sin(yaw);
-  const y = xi * Math.sin(yaw) + yi * Math.cos(yaw);
+  const xi = x, yi = y * Math.cos(inc), zi = z + y * Math.sin(inc);
+  const xr = xi * Math.cos(yaw) - yi * Math.sin(yaw);
+  const yr = xi * Math.sin(yaw) + yi * Math.cos(yaw);
+  return [xr * SCENE_KM, 2.9 + yr * SCENE_KM, 9.0 + zi * SCENE_KM];
+}
 
-  const SCALE = 0.00055;                    // km -> scene units, chosen to fit the frame
-  return [x * SCALE, 2.9 + y * SCALE, 9.0 + zi * SCALE];
+/// Velocity in km/s at `tSeconds`, from the kernel. Exposed so the page can report a real speed rather
+/// than a constant it invented, and so a test can check the two agree.
+function orbitVelocity(tSeconds) {
+  const k = kernelState.module;
+  if (!k) return null;
+  return [k.orbit_velocity_x(tSeconds), k.orbit_velocity_y(tSeconds), k.orbit_velocity_z(tSeconds)];
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1056,6 +1134,10 @@ function captureNow() {
 function drawFrame(nowMs) {
   const t0 = performance.now();
 
+  // When the kernel is missing this is a position far outside the scene rather than a substitute orbit:
+  // the body disappears and the HUD says why, while the rest of the frame is shaded honestly.
+  const satPos = orbitPosition(nowMs / 1000);
+
   gl.viewport(0, 0, canvas.width, canvas.height);
   cacheResize(canvas.width, canvas.height);
 
@@ -1078,7 +1160,7 @@ function drawFrame(nowMs) {
     gl.uniform2f(U.res, cache.w, cache.h);
     gl.uniform1f(U.time, nowMs / 1000);
     gl.uniform1f(U.quality, state.scale);
-    gl.uniform3fv(U.orbitPos, orbitPosition(nowMs / 1000));
+    gl.uniform3fv(U.orbitPos, satPos);
     gl.uniform3fv(U.sunDir, sun);
     gl.uniform1f(U.frame, bench.framesDrawn % 1024);
     gl.uniform1f(U.exposure, state.exposure);
@@ -1813,6 +1895,37 @@ function burst() {
 }
 requestAnimationFrame(burst);
 
+// Load the propagation kernel before the first burst, so the first frame has a real orbit. The burst
+// above is harmless without it -- `drawFrame` returns early -- but starting the fetch here means the page
+// is drawing the real orbit as soon as the bytes arrive rather than on the first interaction.
+loadKernel().then(() => {
+  // Say which orbit is on screen. "wasm" means the kernel's own numbers; anything else is a named
+  // failure rather than an orbit drawn by something else. A page that draws an ellipse without saying
+  // where the ellipse came from is the defect this whole change exists to remove.
+  // The row shows a SHORT value, and the reason goes on the note line underneath. That split is not
+  // cosmetic: the HUD is rasterised into the saved PNG through an SVG <foreignObject>, which lays text
+  // out without honouring the flex row's wrapping, so a long value collides with its own label in the
+  // picture even though the live DOM renders it correctly. A screenshot is the artifact a person judges,
+  // so the picture is what this has to survive -- `unavailable: Failed to fetch` printed straight through
+  // "orbit source".
+  const el = document.getElementById('m-orbit');
+  if (el) {
+    el.textContent = kernelState.module ? 'wasm kernel' : 'unavailable';
+    el.classList.toggle('fail', !kernelState.module);
+  }
+  if (!kernelState.module && kernelState.lastError) {
+    const note = document.getElementById('note');
+    // Set the `muted` class explicitly rather than relying on it: before the kernel resolves this
+    // element is empty AND unstyled, so the SVG rasteriser used for the saved PNG lays it out as
+    // full-size text and it overlaps the provenance stamp line. An empty styled element collapses.
+    if (note) {
+      note.className = 'muted';
+      note.textContent = 'orbit source ' + kernelState.status;
+    }
+  }
+  requestFrame();
+});
+
 // A capture hook for tools/check-shell.mjs. `preserveDrawingBuffer` is false (it costs bandwidth and
 // this renderer is about bandwidth), so a canvas readback *outside* a draw returns an empty buffer.
 // The only honest way to sample the image is from inside the frame that drew it, so a request sets a
@@ -1902,6 +2015,13 @@ async function capturePicture() {
 // here, or the only way to find out is to look at the picture and guess.
 window.__odderon = {
   state, bench, gl, cache,
+  // The orbit boundary, exposed so `tools/check-orbit.mjs` can run the real module in a real page and
+  // so a person with a phone can ask the page what it thinks the orbit is. Reading `kernelState.status`
+  // is the honest answer to "is this the kernel or is it nothing".
+  kernel: kernelState,
+  orbitPosition,
+  orbitVelocity,
+  orbitDiag,
   renderer: () => renderer,
   requestFrame,
   /**

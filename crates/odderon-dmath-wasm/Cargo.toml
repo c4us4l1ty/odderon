@@ -12,3 +12,7 @@ path = "src/lib.rs"
 
 [dependencies]
 odderon-dmath = { path = "../odderon-dmath" }
+# The astro kernel, so the page can propagate a real state vector instead of drawing an ellipse from
+# elements in JavaScript. `odderon-astro` is `no_std` with no allocator, so it drops into this cdylib
+# without changing its shape.
+odderon-astro = { path = "../odderon-astro" }
