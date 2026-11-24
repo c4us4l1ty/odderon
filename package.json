@@ -18,6 +18,7 @@
     "capture:page": "node tools/capture-page.mjs",
     "start": "node tools/serve.mjs",
     "check:ablation": "node tools/check-ablation.mjs",
+    "check:cache": "node tools/check-cache.mjs",
     "check:classes": "node tools/check-classes.mjs && node tools/check-classes-selftest.mjs"
   },
   "devDependencies": {

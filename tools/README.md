@@ -26,6 +26,27 @@ npm run fetch:wasm          # pull the latest `wasm` artifact into ./dist
 
 `fetch:wasm` uses `gh run download`, so it needs the `gh` CLI authenticated (it is, in this sandbox).
 
+### Which of these actually run on every push
+
+A check that only runs when somebody remembers is a claim, not a check — and that is not hypothetical
+here: `check-cache.mjs` and `check-ablation.mjs` were both written, both passing, and both **absent from
+CI** until 2026-11-24. The table below is the answer to "is this enforced, or is it a ritual?".
+
+| tool | gate | runs in CI |
+| --- | --- | --- |
+| `check-static-path.mjs` | no traversal out of `web/` or `dist/` | `shell-claims` |
+| `check-shell.mjs` | render-on-demand, claim 1, claim 3 | `shell-claims` |
+| `check-cache.mjs` | temporal cache: blit-only when unchanged, full shade on change | `shell-claims` |
+| `check-ablation.mjs` | the ablation report's judgement, not its measurement | `shell-claims` |
+| `screenshot.mjs` | claim 5 artifact (uploaded, never committed) | `shell-claims` |
+| `check-classes.mjs` + `-selftest` | licence classification | `class-certification` |
+| `determinism.mjs` | native↔wasm agreement | step inside `test (native)` |
+
+Not in CI, deliberately: `serve.mjs` (a dev server), `capture-page.mjs` (needs a human to press a
+button), `gl-info.mjs` (prints the renderer), `verify-math.mjs` (a pre-compile scratchpad — the same
+numerics are gated by the real Rust tests), and `unpack-chromium.mjs` (a setup step the browser jobs
+call themselves).
+
 ### The static server, and a real bug it had
 
 `tools/serve.mjs` is the preview server; `tools/check-shell.mjs` and `tools/check-cache.mjs` each start
