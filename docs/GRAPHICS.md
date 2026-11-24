@@ -371,10 +371,20 @@ reliable than twelve serial ones — this sandbox left some permanently unready 
 
 Neither fix helps Reference B, because on Reference B there is no extension to poll. So the panel now
 measures an **upper bound** when no timer exists: K completed blits over T ms, each forced to finish, so
-one frame costs at most T/K. It is an upper bound and not a measurement because the per-frame `gl.finish()`
+one frame costs at most T/K. It is an upper bound and not a measurement because a `gl.finish()`
 stall is included — which is also what makes it useful: **if the bound clears 1.5 ms, the true cost cannot
 fail it.** If it does not clear, the panel says *inconclusive, not a failure*, because a stall-dominated
-number overstating a pipelined frame is the expected failure mode. The bound blits from a texture written
+number overstating a pipelined frame is the expected failure mode.
+
+**And it was wrong once, in the most instructive way available.** The first version called `gl.finish()`
+after *every* blit. On a desktop driver that is cheap; on a phone `finish()` waits for the next refresh
+boundary, so K iterations pay **K refresh periods**. Reference B reported **`< 4.08 ms`** against a 250 Hz
+display — **4.00 ms, the display again, wearing an upper-bound label**, which is the precise fault this
+file has documented since the first 7.00 ms blit. The fix is structural: issue K blits, then **one**
+`finish()`, so the presentation stall is amortised over sixty-four frames and contributes 0.06 ms per
+frame rather than 4 ms. `tools/check-cache.mjs` now asserts that the per-iteration unit contains **no**
+`finish()` and **no** `readPixels`, because a per-iteration stall is how a bound silently becomes a
+measurement of vsync — and it was checked against the old code, where both assertions fail. The bound blits from a texture written
 by a shader and never sampled, so it cannot be served from cache; and it uses `finish()` rather than
 `readPixels`, because a 1-pixel readback measured **9.3 ms** against `finish()`'s **0.008 ms** on ANGLE —
 a bound built on readbacks would have been a measurement of the readback.

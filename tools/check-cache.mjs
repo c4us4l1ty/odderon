@@ -190,6 +190,30 @@ check(
     const body = strip(src.slice(start, end));
     check("the bound forces completion with finish(), not a readback",
       /gl\.finish\s*\(/.test(body) && !/readPixels/.test(body));
+
+    // THE COMPLETION MUST BE OUTSIDE THE LOOP. This is the third time this exact fault has appeared in
+    // this file: `gl.finish()` waits for the next refresh boundary on a phone, so a per-iteration finish
+    // makes K iterations cost K refresh periods. Reference B reported "< 4.08 ms" at 250 Hz -- 4.00 ms,
+    // the display, dressed as a bound. The per-iteration unit is the `blitOnce` closure, so that closure
+    // is where the assertion goes: it must issue work and force nothing.
+    const boStart = src.indexOf("const blitOnce = () =>");
+    check("the per-iteration unit is a named closure", boStart > 0);
+    if (boStart > 0) {
+      let i = src.indexOf("{", boStart), depth = 0, end = -1;
+      for (let k = i; k < src.length; k++) {
+        if (src[k] === "{") depth++;
+        else if (src[k] === "}") { depth--; if (!depth) { end = k + 1; break; } }
+      }
+      const unit = strip(src.slice(boStart, end));
+      check("the per-iteration unit contains the blit", /blitFramebuffer\s*\(/.test(unit));
+      check("the per-iteration unit does NOT force completion",
+        !/finish\s*\(/.test(unit) && !/readPixels/.test(unit),
+        "a per-iteration stall is how a bound becomes a measurement of vsync");
+    }
+    // ...and the batch must be large enough that one stall amortises to well under the budget.
+    const km = /const K = (\d+);/.exec(body);
+    check("the batch is large enough to amortise one stall", km !== null && Number(km[1]) >= 32,
+      km ? `K = ${km[1]}` : "K not found as a literal");
     check("the bound blits from the never-sampled probe target, not the live cache",
       /cache\.probeFbo/.test(body) && !/cache\.fbo\b/.test(body));
   }
