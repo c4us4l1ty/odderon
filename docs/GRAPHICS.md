@@ -278,13 +278,33 @@ Measured on Reference B at 1.04 Mpx:
 | **"blit" — actually a texture read of the cache** | **1.25 ms** | 1.9x |
 | one texture read into the same target | 1.58 ms | 2.4x |
 
-So a **cached static frame costs 1.25 ms at native resolution, which passes R2 with 17% to spare.**
-The temporal cache is the mechanism, and it is now measured rather than argued.
+**This table is retracted.** A reference-device run on 2026-11-24 (Mali-G51, 1.04 Mpx) measured the
+shipped texture-read pass at **1.65 ms**, and repeated the earlier **1.27 ms blit** and **0.67 ms flat
+fill**. The shipped pass does **not** pass R2: 1.65 ms exceeds the 1.5 ms budget at native resolution,
+before any shading, interpolation or input. `1.25 ms` is **withdrawn** — it is not reproducible on the
+device and path it claims to describe, and the row it came from ("blit — actually a texture read") was
+one of the two *identical* operations the next section describes.
 
-Subtracting the flat fill leaves 0.58 ms for 8 bytes/pixel, i.e. **~0.073 ms per byte/pixel per Mpx**.
-At R3's ceiling of 32 B/px that would be 2.99 ms, which R2 does not permit. The effective bandwidth
-ceiling at native resolution under R2 is **~11 B/px**, not 32. R3 is therefore not a binding constraint
-at native resolution — it only binds if R2's pixel budget is met some other way. *An earlier revision of
+What the same run measured instead:
+
+| pass at 1.04 Mpx | measured | ratio to flat fill |
+| --- | --- | --- |
+| flat fill, no memory traffic | **0.67 ms** | 1.0x |
+| `blitFramebuffer`, no shader | **1.27 ms** | 1.9x |
+| **texture read — the pass `web/index.html` actually runs** | **1.65 ms** | 2.4x |
+
+So the shipped per-frame pass costs **1.59 ms per megapixel**, and 1.5 ms buys **0.94 Mpx**, a render
+scale of **0.95x** on this screen. A hardware blit would pass at 1.27 ms; the renderer does not perform
+one. **The gap between 1.27 and 1.65 ms is the whole of R2's margin on this device**, which is why
+`blitFramebuffer` versus texture read stopped being a detail and became the decision.
+
+**The bandwidth ceiling derived from 1.25 ms goes with it.** Subtracting the flat fill from 1.25 ms left
+0.58 ms for 8 bytes/pixel and gave **~11 B/px**; from the measured 1.65 ms it is 0.98 ms and **~6.5
+B/px** at native resolution. Neither figure is quoted as a result: the whole calculation is a
+difference between two microbenchmark rows on a device whose timer resolves 125 us, and it is being
+re-derived from a number (`1.25 ms`) that does not reproduce. What survives is the shape of the
+argument — **R3 is not the binding constraint at native resolution; R2 is**, and it binds on the
+texture read rather than on bandwidth. *An earlier revision of
 this section claimed R2 and R3 were incompatible, based on a 2.29 ms texture-read figure that turned out
 to be measuring a different operation from the one the renderer actually performs. The correction is
 recorded rather than quietly deleted.*
@@ -329,8 +349,29 @@ The conclusion *"R3 is not the binding constraint at native resolution"* holds u
 more strongly under the second. But **the specific figure ~11 B/px is not supported** and is withdrawn
 until the shipped per-frame path is measured as itself, by `web/index.html`'s own timer query rather than
 by a microbenchmark. Note also that 1.58 ms **exceeds the 1.5 ms budget**, so if the texture read is the
-true cached cost at 1.04 Mpx then R2 does *not* pass on Reference B with 17% to spare — it fails. That
-question is the one the next hardware run should settle, and it is open.
+true cached cost at 1.04 Mpx then R2 does *not* pass on Reference B with 17% to spare — it fails.
+
+**Answered, 2026-11-24.** That question was: is the cached cost the 1.25 ms or the 1.58 ms figure? The
+answer is **the larger one, and it is worse than 1.58 ms.** A reference-device run measured the shipped
+texture-read pass at **1.65 ms** at 1.04 Mpx — against 1.27 ms for a `blitFramebuffer` the renderer does
+not perform. The two "identical operations" in this section turn out to have been *not* identical in cost
+after all: the blunt floor row (`outColor = vec4(texture(...).rgb, 1.0)`, no other work) reads 1.25 ms,
+and the ablator's own texture-read row, run on the same device in the same session, reads 1.65 ms. That
+33% is not yet explained and is not being explained away; what is settled is that **R2 fails at native on
+the shipped path**, on every number either run produced above 1.5 ms.
+
+**Two things would restore it,** and they are different projects:
+
+1. **Make the blit a real `blitFramebuffer`.** 1.27 ms at native, which passes. `web/index.html` would
+   have to cross framebuffer objects instead of sampling the cache as a texture. Both ablator rows now
+   measure a genuinely different mechanism, so the before/after would be checkable.
+2. **Move R2's resolution clause from 1.15 Mpx to ~0.94 Mpx.** The clause is `MAX_PIXELS = 1_150_000` in
+   `web/index.html` and its own comment says it enforces the documented fallback — but the documented
+   fallback is **0.68 Mpx**, and the number most defensible from this measurement is **0.94 Mpx**. The
+   code and the doc have been disagreeing on this for some time; the measurement picks a side, and it is
+   not the one in the code.
+
+`BUILD-PLAN.md`'s "R2 passes at 1.25 ms with 17% margin" is withdrawn for the same reason.
 
 Any future measurement of the per-frame path must measure that path — with the shader the renderer
 actually runs, on the buffer the renderer actually reads.
