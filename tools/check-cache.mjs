@@ -127,6 +127,121 @@ check(
 );
 
 // ---------------------------------------------------------------------------------------------
+// THE LIVE PASS AND THE MEASURED PASS MUST BE THE SAME CODE.
+//
+// `measure frame time` is what R2 is judged on. If it measured a different operation from the one the
+// loop draws, the panel would report a number for a mechanism that is not running -- which is exactly
+// the error that cost this project its R2 claim once already: an ablation row and a renderer that had
+// drifted apart, reported as if they were the same measurement.
+//
+// `blitFrame()` is the single primitive both call. This asserts that structurally, because a comment
+// saying "these are the same" is not a check.
+{
+  const src = await readFile(new URL("../web/index.html", import.meta.url), "utf8");
+  const strip = (t) => t.replace(/\/\/[^\n]*/g, "");
+  const fnStart = src.indexOf("function blitFrame()");
+  check("blitFrame() exists as the single per-frame primitive", fnStart > 0);
+  if (fnStart > 0) {
+    let i = src.indexOf("{", fnStart), depth = 0, end = -1;
+    for (let k = i; k < src.length; k++) {
+      if (src[k] === "{") depth++;
+      else if (src[k] === "}") { depth--; if (!depth) { end = k + 1; break; } }
+    }
+    const body = strip(src.slice(fnStart, end));
+    check("blitFrame() contains the blitFramebuffer call", /blitFramebuffer\s*\(/.test(body));
+    check("blitFrame() falls back to a draw", /drawArrays\s*\(/.test(body));
+    // No raw per-frame draw left in the measurement function.
+    const mStart = src.indexOf("function measureFrame(");
+    let j = src.indexOf("{", mStart), d2 = 0, mEnd = -1;
+    for (let k = j; k < src.length; k++) {
+      if (src[k] === "{") d2++;
+      else if (src[k] === "}") { d2--; if (!d2) { mEnd = k + 1; break; } }
+    }
+    const measured = strip(src.slice(mStart, mEnd));
+    check("measureFrame() calls blitFrame()", /blitFrame\s*\(\)/.test(measured));
+    // The only drawArrays allowed in measureFrame is the SHADE, which is a different pass.
+    const draws = (measured.match(/drawArrays\s*\(/g) || []).length;
+    check("measureFrame() has no second copy of the blit", draws === 1, `drawArrays calls: ${draws}`);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// THE BLIT MUST RENDER THE SAME IMAGE AS THE FALLBACK.
+//
+// web/index.html's per-frame pass is now `blitFramebuffer` because Reference B measured it at 1.27 ms
+// against 1.65 ms for the texture-read triangle, and R2's budget is 1.5 ms -- so the mechanism IS the
+// margin, and it is load-bearing. A blit that copies nothing, copies the wrong rect, or is silently
+// refused by the driver would show as a fast frame time and a black screen, which is precisely the
+// failure a timing test cannot see. `?blit=0` forces the fallback so the two can be compared.
+//
+// The comparison deliberately ignores the HUD: it is expected to differ, because it names which
+// mechanism is live. It requires ZERO differing pixels outside that panel, allowing only differences of
+// one level, because `NEAREST` is exact and anything larger is a real rendering difference.
+{
+  const shotOf = async (query) => {
+    const pg = await browser.newPage();
+    // Freeze the clock: two loads seconds apart render different sun positions, which would make the
+    // comparison measure elapsed time. The date is arbitrary; what matters is that both see the same.
+    await pg.evaluateOnNewDocument((t) => {
+      const RealDate = Date;
+      class FakeDate extends RealDate {
+        constructor(...a) { return a.length ? new RealDate(...a) : new RealDate(t); }
+        static now() { return t; }
+      }
+      window.Date = FakeDate;
+    }, new Date("2026-06-21T12:00:00Z").getTime());
+    await pg.setViewport({ width: 900, height: 560 });
+    await pg.goto(`http://127.0.0.1:${port}/${query}`, { waitUntil: "networkidle0" });
+    await new Promise((r) => setTimeout(r, 3000));
+    const label = await pg.evaluate(() => document.getElementById("m-path")?.textContent ?? "");
+    const png = await pg.screenshot({ encoding: "base64" });
+    await pg.close();
+    return { label, png };
+  };
+
+  const on = await shotOf("");
+  const off = await shotOf("?blit=0");
+  check("the live renderer takes the blit path", /blitFramebuffer/.test(on.label), on.label);
+  check("?blit=0 really falls back", /tex read/.test(off.label), off.label);
+
+  // Compare in the browser: decoding PNGs in node would mean a dependency, and the page already has
+  // a canvas. Both screenshots are pushed through 2D contexts and differenced there.
+  const diff = await page.evaluate(async (a, b) => {
+    const load = (b64) => new Promise((res) => {
+      const img = new Image();
+      img.onload = () => res(img);
+      img.src = "data:image/png;base64," + b64;
+    });
+    const [ia, ib] = await Promise.all([load(a), load(b)]);
+    const w = ia.width, h = ia.height;
+    if (ib.width !== w || ib.height !== h) return { error: "size mismatch" };
+    const ctx = (img) => {
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      c.getContext("2d").drawImage(img, 0, 0);
+      return c.getContext("2d").getImageData(0, 0, w, h).data;
+    };
+    const pa = ctx(ia), pb = ctx(ib);
+    // The HUD occupies the left column; its text differs by design.
+    const HUD = 340;
+    let differing = 0, worst = 0, compared = 0;
+    for (let y = 0; y < h; y++) {
+      for (let x = HUD; x < w; x++) {
+        const o = (y * w + x) * 4;
+        compared++;
+        const d = Math.max(
+          Math.abs(pa[o] - pb[o]), Math.abs(pa[o + 1] - pb[o + 1]), Math.abs(pa[o + 2] - pb[o + 2]));
+        if (d > 1) { differing++; if (d > worst) worst = d; }
+      }
+    }
+    return { differing, worst, compared };
+  }, on.png, off.png);
+
+  check("blit and fallback render the same scene", !diff.error && diff.differing === 0,
+    diff.error ?? `${diff.differing} pixels differ by >1 (worst ${diff.worst}) of ${diff.compared}`);
+}
+
+// ---------------------------------------------------------------------------------------------
 await browser.close();
 server.close();
 

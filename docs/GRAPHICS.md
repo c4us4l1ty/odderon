@@ -360,18 +360,39 @@ and the ablator's own texture-read row, run on the same device in the same sessi
 33% is not yet explained and is not being explained away; what is settled is that **R2 fails at native on
 the shipped path**, on every number either run produced above 1.5 ms.
 
-**Two things would restore it,** and they are different projects:
+**Route 1 has been taken: the renderer now performs a real `blitFramebuffer`.** `web/index.html`'s
+per-frame pass crosses from the cache framebuffer to the default framebuffer instead of sampling the
+cache in a full-screen triangle. The cache remains a texture, so the capture path and the fallback still
+work.
 
-1. **Make the blit a real `blitFramebuffer`.** 1.27 ms at native, which passes. `web/index.html` would
-   have to cross framebuffer objects instead of sampling the cache as a texture. Both ablator rows now
-   measure a genuinely different mechanism, so the before/after would be checkable.
-2. **Move R2's resolution clause from 1.15 Mpx to ~0.94 Mpx.** The clause is `MAX_PIXELS = 1_150_000` in
-   `web/index.html` and its own comment says it enforces the documented fallback — but the documented
-   fallback is **0.68 Mpx**, and the number most defensible from this measurement is **0.94 Mpx**. The
-   code and the doc have been disagreeing on this for some time; the measurement picks a side, and it is
-   not the one in the code.
+*What this does and does not establish.* It is a **code change whose image has been verified and whose
+timing has not.** Verified: the blit is pixel-identical to the texture-read fallback outside the HUD
+(0 of 313,600 sampled pixels differ by more than one level, `tools/check-cache.mjs`), and the fallback
+path still renders when the blit is unavailable. **Not verified: that the shipped renderer now costs
+1.27 ms on Reference B.** That figure came from the ablation matrix, which uses its own FBO and its own
+shader; the renderer's pass is a different call site with a different cache. The honest statement is
+that the mechanism with the better measured cost is now the one in the code, and the renderer's own
+number must come from its own GPU timer — `measure frame time`, which reports `gpuBlitMs` from
+`EXT_disjoint_timer_query_webgl2` rather than from `gl.finish()`. **R2 is not claimed to pass.** The
+previous claim was withdrawn for resting on a mechanism the code did not run; replacing it with a claim
+that rests on a measurement taken at a different call site would repeat the error in the other
+direction.
 
-`BUILD-PLAN.md`'s "R2 passes at 1.25 ms with 17% margin" is withdrawn for the same reason.
+**A precondition that is easy to lose.** `blitFramebuffer` from a single-sample attachment into a
+MULTISAMPLE default framebuffer is `INVALID_OPERATION` (0x0502): no pixels, no exception, no console
+message. `antialias: false` is what prevents it, and a device may hand out a multisampled framebuffer
+regardless. The renderer therefore **tests the operation at startup** rather than trusting the
+attribute, records the result in `bench.blitSupported`, falls back to the texture-read triangle when it
+is false, and **names the live mechanism in the HUD**, because a silent fallback would put 1.65 ms on the
+clock while the page claimed 1.27.
+
+Route 2 — **moving R2's resolution clause from 1.15 Mpx to ~0.94 Mpx** — remains available and remains
+the cheaper option: it needs no rendering change at all. The clause is `MAX_PIXELS = 1_150_000` in
+`web/index.html`, and its comment says it enforces the documented fallback, which is **0.68 Mpx**. The
+code and the doc have been disagreeing for some time; that disagreement is **still open**, and the blit
+does not resolve it.
+
+`BUILD-PLAN.md`'s "R2 passes at 1.25 ms with 17% margin" stays withdrawn.
 
 Any future measurement of the per-frame path must measure that path — with the shader the renderer
 actually runs, on the buffer the renderer actually reads.
