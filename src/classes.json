@@ -238,7 +238,7 @@
       "commercial_ok": "yes",
       "attribution": "Stefan-Boltzmann constant per the 2019 SI redefinition; Copeland COP correlation as published in the HVAC literature",
       "classifier": "odderon maintainer (session 2026-11-23)",
-      "notes": "No dataset: the physical constants are exact by definition and the two correlations are equations, not tables. Deliberately ships no standard-atmosphere table (that is the separate `atmosphere-1976` record, which remains absent) and no thermodynamic property data (`thermo-cea`, also absent). The one empirical element is the second-law efficiency range for small window units, which is carried as an Assumed quantity with its source basis, not as a measured value."
+      "notes": "No dataset: the physical constants are exact by definition and the correlations are equations, not tables. Deliberately ships no standard-atmosphere table (that is the separate `atmosphere-1976` record, which remains absent) and no thermodynamic property data (`thermo-cea`, also absent). The empirical inputs are one calibration (the second-law efficiency, chosen to reproduce a nameplate) and one published coefficient (ASHRAE's cyclic degradation C_d, 0.04-0.25). Both are carried as `Assumed` quantities with their basis, not as measured values; the two `Measured` quantities are the nameplate pair, and they are appliance data, not a licensed dataset."
     }
   ]
 }

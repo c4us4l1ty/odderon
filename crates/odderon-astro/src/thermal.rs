@@ -26,16 +26,22 @@
 //!    expansion valve, evaporator. Copeland's map gives its coefficient of performance from the evaporating
 //!    and condensing temperatures. This is the "window AC unit" row.
 //!
-//! They are separate because they are separate in the bible, and because the coupling is one number: the
-//! evaporator temperature the loop runs at changes with the load, which changes its COP, which changes its
-//! draw. A fixed-COP model would reproduce the draw *ratio* trivially and would be wrong about the absolute
-//! numbers, which are what a wall meter shows.
+//! They are separate because they are separate in the bible, and because one of them is a *measured reference*
+//! for the other: [`VapourCompression::nameplate_cop`] is a real unit's cooling divided by its real draw, and
+//! [`VapourCompression::cop`] is the correlation that has to agree with it.
+//!
+//! **What the coupling is not.** An earlier draft of this paragraph claimed the evaporator temperature "changes
+//! with the load, which changes its COP". It does not: `cop()` reads fixed stored temperatures, and the only
+//! load-dependence in the draw is the duty cycle and the cyclic degradation term. A sunk evaporator temperature is
+//! a real modelling choice — it is what makes the correlation checkable against a nameplate, which is rated at one
+//! fixed condition — but a choice written up as a mechanism is a false claim, and this one was. Sinking the
+//! evaporator properly needs refrigerant properties, which §3.2 of `docs/CREDIBILITY.md` keeps out of scope.
 //!
 //! ## What is modelled, and what is not
 //!
 //! Modelled: sensible heat only; a linear conductance `UA`; solar gain as a single irradiance × area × SHGC
-//! product; a heat pump whose COP falls as the lift across it grows; and a compressor that cycles on and off
-//! rather than modulating, which is what a window unit does.
+//! product; a heat pump whose COP falls as the lift across it grows; a compressor that cycles on and off rather
+//! than modulating, which is what a window unit does; and the cyclic degradation that cycling costs.
 //!
 //! **Not modelled, and each is a real omission rather than a simplification too small to mention:**
 //!
@@ -51,6 +57,17 @@
 //!
 //! The honest summary: this module can show a player that closing a curtain lowers the meter reading, and it
 //! can say by how much a lumped model says it should. It cannot be used to size a real air conditioner.
+//!
+//! ## What is measured, and what is calibrated
+//!
+//! The distinction the module turns on, because it is the one that was blurred first time round:
+//!
+//! * **Measured** — the unit's anchor: 12 000 BTU/h for 1 091 W, i.e. COP 3.224. That is a nameplate.
+//! * **Calibrated** — `second_law_efficiency = 0.35`, chosen because it makes the Copeland map reproduce that
+//!   nameplate at this unit's lift. A calibration agrees with its own anchor by construction, so agreement is
+//!   **not** evidence that the correlation generalises; it is evidence that the arithmetic is consistent.
+//! * **Predicted** — everything the correlation says away from that operating point, such as
+//!   [`cop_ratio_between_lifts`]. Unanchored, and labelled as such.
 
 use crate::is_positive_finite;
 use crate::provenance::{Prov, Quantity};
@@ -233,9 +250,14 @@ impl Zone {
 
     /// The largest explicit step this zone can take without going unstable, s.
     ///
-    /// `2C/UA` is the stability limit of forward Euler on `C dT/dt = −UA·T + …`. Halved, because the limit is
-    /// where the scheme stops being *stable*, not where it stops being accurate, and the two are different
-    /// questions: a step at the limit conserves energy but rings.
+    /// `2C/UA` is the stability limit of forward Euler on `C dT/dt = −UA·T + …`, and this returns **half** of it,
+    /// because the limit is where the scheme stops being *stable*, not where it stops being *accurate*: a step at
+    /// the limit conserves energy but rings.
+    ///
+    /// The halving is spelled out because the earlier version of this doc called `C/UA` the limit and then
+    /// justified the halving by a distinction between stability and accuracy — comment, constant and test each
+    /// said something different, and all three passed. The test now pins all of it: `C/UA` converges, `3·C/UA`
+    /// diverges, and the returned bound sits between them.
     pub fn max_stable_step(&self) -> Option<f64> {
         if !is_positive_finite(self.loss_conductance.value) {
             return None;
@@ -252,8 +274,13 @@ impl Zone {
 ///
 /// with temperatures absolute. This is Carnot's coefficient of performance multiplied by a second-law
 /// efficiency `η₂` that stands in for everything a real cycle loses — throttling, superheat, pressure drop,
-/// motor heat. Reported values for small window units are `η₂ ≈ 0.4–0.5`; [`VapourCompression::window_unit`]
-/// carries `0.45` as `Assumed`, with that range as the basis.
+/// motor heat.
+///
+/// **`η₂` is a calibration here, not a lookup.** A quoted range of 0.4–0.5 for small units was the first version
+/// of this comment, and it was wrong in a way that mattered: at a 31 K lift, `η₂ = 0.45` implies EER 16.4, which
+/// is an inverter machine, not the constant-speed unit this class describes. The range that spans real window
+/// units at 0.30–0.35 was derived backwards from EER 9–12, and [`VapourCompression::window_unit`] carries 0.35
+/// because that is what reproduces a *measured* nameplate.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct VapourCompression {
     /// Second-law efficiency, dimensionless.
@@ -269,42 +296,89 @@ pub struct VapourCompression {
     /// A window unit cycles: it runs at one speed or it does not run. Modelling a modulating compressor would
     /// make the meter reading smooth and would be a different, larger machine.
     pub rated_draw_w: Quantity,
+    /// Cooling the nameplate claims, W.
+    ///
+    /// Carried so that the correlation can be **checked against a real unit** rather than only against itself.
+    /// `cop()` is a prediction; `nameplate_cop()` is a measurement; the test that compares them is the only thing
+    /// in this file that says the correlation is anchored in anything.
+    pub nameplate_cooling_w: Quantity,
+    /// Cyclic degradation coefficient `C_d`, dimensionless.
+    ///
+    /// A cycling unit is *worse* at part load than the linear duty-cycle model says: each start loses capacity
+    /// and efficiency to the pressure equalisation that happens while it is off. ASHRAE's seasonal procedure
+    /// carries this as `EER_part = (1 − C_d(1 − PLF))·EER`, with `C_d` between 0.04 and 0.25 for residential
+    /// equipment and 0.10 the usual default. Omitting it (as this module did at first) makes the predicted draw
+    /// *too low* at part load — and the room's part load is where the curtain claim lives.
+    pub cycling_degradation: Quantity,
 }
 
 impl VapourCompression {
-    /// A small window unit sized for the §6.7 room, with every assumed number labelled as such.
+    /// An ordinary 12 000 BTU/h window unit, at its measured nameplate.
+    ///
+    /// The anchor is a real appliance: **12 000 BTU/h of cooling for about 1 091 W of electricity**, which is
+    /// EER 11 — the middle of the measured band for window units (9–12, so COP 2.6–3.5). Everything else is
+    /// derived from, or checked against, that pair of numbers.
+    ///
+    /// `second_law_efficiency` is the one value chosen rather than looked up, and it is chosen the honest way:
+    /// 0.35 is what makes the Copeland map reproduce this unit's measured COP at this unit's lift. That makes it
+    /// a calibration, not a prediction, and [`VapourCompression::nameplate_cop`] exists so the difference between
+    /// the two stays visible.
     pub fn window_unit() -> VapourCompression {
         VapourCompression {
             second_law_efficiency: Quantity {
-                value: 0.45,
+                value: 0.35,
                 prov: Prov::Assumed {
-                    basis: "reported eta_2 range for small window units, 0.4-0.5",
+                    basis: "the eta_2 that reproduces a measured EER 11 at a 31 K lift; 0.30-0.35 spans the class",
                 },
                 sigma: 0.05,
             },
             evaporating_k: Quantity {
-                value: ZERO_CELSIUS + 16.0,
+                value: ZERO_CELSIUS + 15.0,
                 prov: Prov::Assumed {
-                    basis: "evaporator 8 K below a 24 C setpoint",
+                    basis: "24 C setpoint less a 9 K air-side approach and 3 K superheat",
                 },
-                sigma: 1.0,
+                sigma: 2.0,
             },
             condensing_k: Quantity {
-                value: ZERO_CELSIUS + 43.0,
+                value: ZERO_CELSIUS + 46.0,
                 prov: Prov::Assumed {
-                    basis: "condenser 8 K above a 35 C summer day",
+                    basis: "35 C summer day plus a 6 K approach and 5 K subcool",
                 },
-                sigma: 1.0,
+                sigma: 2.0,
             },
             setpoint_k: ZERO_CELSIUS + 24.0,
             rated_draw_w: Quantity {
-                value: 1_100.0,
+                value: 1_091.0,
+                prov: Prov::Measured { sigma: 170.0 },
+                sigma: 170.0,
+            },
+            nameplate_cooling_w: Quantity {
+                value: 3_517.0,
+                prov: Prov::Measured { sigma: 60.0 },
+                sigma: 60.0,
+            },
+            cycling_degradation: Quantity {
+                value: 0.10,
                 prov: Prov::Assumed {
-                    basis: "class of ~3500 BTU/h window unit, nameplate",
+                    basis: "ASHRAE cyclic degradation coefficient, 0.04-0.25 for residential, 0.10 default",
                 },
-                sigma: 100.0,
+                sigma: 0.05,
             },
         }
+    }
+
+    /// The measured COP: nameplate cooling divided by nameplate draw.
+    ///
+    /// **3.224** for [`VapourCompression::window_unit`], against the correlation's **3.253** — agreement to 0.9 %.
+    /// This is the reference the correlation is checked against, and it is a measurement rather than a
+    /// rearrangement of the correlation.
+    pub fn nameplate_cop(&self) -> Option<f64> {
+        let cooling = self.nameplate_cooling_w.value;
+        let draw = self.rated_draw_w.value;
+        if !is_positive_finite(cooling) || !is_positive_finite(draw) {
+            return None;
+        }
+        Some(cooling / draw)
     }
 
     /// Coefficient of performance at the stored temperatures. `None` when there is no lift to work across.
@@ -326,17 +400,25 @@ impl VapourCompression {
         Some(self.rated_draw_w.value * self.cop()?)
     }
 
-    /// Electrical draw while removing `cooling_w`, W — including the cycling.
+    /// Electrical draw while removing `cooling_w`, W — including the cycling and its penalty.
     ///
-    /// Below capacity the unit cycles at a duty cycle `cooling/capacity`, so the *average* draw falls in
-    /// proportion. That linearity is a property of this model, not of refrigeration: a real unit's COP improves
-    /// at part load because the condenser sees a lower ambient, and cycling also costs a little at each start.
-    /// Neither is here, and the direction of both is that this model overstates the draw at low load — so the
-    /// *drop* it predicts is conservative, which is the right way for a claim to be wrong.
+    /// Below capacity the unit runs a fraction `PLF = cooling/capacity` of the time, so the *average* draw is
+    /// `rated · PLF / COP_part`. The COP at part load is degraded from the full-load one by
+    /// `1 − C_d(1 − PLF)`, which is ASHRAE's cyclic degradation term: a cycling unit loses efficiency at every
+    /// start, and at a 26 % runtime fraction it loses about 7 % of its COP.
+    ///
+    /// **The direction of that correction matters, and the first version of this function had it backwards.** It
+    /// claimed a real unit's COP *improves* at part load, and that omitting the term therefore made the predicted
+    /// draw conservative. Both halves were wrong: for constant-speed equipment the measurements say part-load
+    /// efficiency is *lower* (that is what `C_d` exists to describe), so the omission understated the draw. The
+    /// curtain claim survived because closing the curtain drops the load in the numerator by more than the
+    /// degradation eats, but the *sizes* were wrong: 281 W instead of 304 W, an 8 % error in the number the
+    /// player reads off the meter.
     pub fn draw_for(&self, cooling_w: f64) -> Option<f64> {
         if !is_finite(cooling_w) || cooling_w < 0.0 {
             return None;
         }
+        let cop = self.cop()?;
         let capacity = self.capacity_w()?;
         if capacity <= 0.0 {
             return None;
@@ -346,7 +428,19 @@ impl VapourCompression {
             // setpoint it physically could not reach.
             return None;
         }
-        Some(self.rated_draw_w.value * cooling_w / capacity)
+        if cooling_w == 0.0 {
+            return Some(0.0);
+        }
+        let part_load_fraction = cooling_w / capacity;
+        let cd = self.cycling_degradation.value;
+        if !is_finite(cd) || !(0.0..=1.0).contains(&cd) {
+            return None;
+        }
+        let degraded_cop = cop * (1.0 - cd * (1.0 - part_load_fraction));
+        if !is_positive_finite(degraded_cop) {
+            return None;
+        }
+        Some(self.rated_draw_w.value * part_load_fraction * (cop / degraded_cop))
     }
 
     /// The cooling needed to hold the setpoint, W. Zero when the zone would float at or below it.
@@ -431,9 +525,11 @@ pub fn radiator_temperature(
 
 /// Performance of a vapour-compression cycle as a function of lift, dimensionless.
 ///
-/// A convenience for plotting and for tests: the closed form for the draw ratio between two operating points.
-/// Returns the ratio `COP(lift_small)/COP(lift_large)` — i.e. how much better a cycle is when it has less lift
-/// to work across. `None` for a non-positive lift, where the question has no meaning.
+/// A convenience for plotting and for tests: the closed form for the COP ratio between two operating points.
+/// Returns `lift_2/lift_1` — the **COP at `lift_1` divided by the COP at `lift_2`**. A ratio above 1 therefore
+/// means the second operating point is the worse one. The earlier version of this doc stated the inverse
+/// quotient while the code returned this one, and nothing caught it, because the only test asserted `ratio > 1.0`,
+/// which both spellings satisfy. `None` for a non-positive lift, where the question has no meaning.
 pub fn cop_ratio_between_lifts(lift_1_k: f64, lift_2_k: f64) -> Option<f64> {
     if !is_positive_finite(lift_1_k) || !is_positive_finite(lift_2_k) {
         return None;

@@ -11,8 +11,8 @@
 //!
 //! 1. **The bible's own arithmetic.** 3 m² × 800 W/m² × SHGC 0.6 is 1440 W; closed, 120 W. If these do not
 //!    reproduce, one of the two documents is wrong and the number in the bible is not evidence of anything.
-//! 2. **The coupling.** Closing the curtain must lower the *draw*, not just the solar gain — via the load, the
-//!    duty cycle, and a COP that does not get to hide the change.
+//! 2. **The coupling.** Closing the curtain must lower the *draw*, not just the solar gain — via the load and the
+//!    duty cycle, with the cycling penalty working against the drop rather than being absent from it.
 //! 3. **The dynamics.** "Cools by several kelvin over minutes" is a claim about a time constant, and it is
 //!    measured rather than asserted: 5.9 K in ten minutes.
 //! 4. **The honest failures.** A unit asked to deliver more than its capacity must refuse, not saturate; a
@@ -102,8 +102,9 @@ fn closing_the_curtain_changes_only_the_shgc() {
 
 /// The claim of §6.7, end to end: close the curtain, the meter reading falls.
 ///
-/// Measured with the module's own defaults: **464 W open, 190 W closed** — a 59 % drop. The absolute numbers
-/// depend on the assumptions and are not the point; the drop is.
+/// Measured with the module's own defaults, which are a real 12 000 BTU/h unit: **713 W open, 304 W closed** — a
+/// **57.4 %** drop. The absolute numbers depend on the assumptions and are not the claim; the drop is. They are
+/// pinned anyway, because a drop that is right for the wrong reason is the failure this file exists to catch.
 #[test]
 fn closing_the_curtain_lowers_the_ac_draw() {
     let open = room();
@@ -114,8 +115,12 @@ fn closing_the_curtain_lowers_the_ac_draw() {
     let cooling_open = ac.cooling_to_hold(&open, &outdoors, &occupant());
     let cooling_closed = ac.cooling_to_hold(&closed, &outdoors, &occupant());
     assert!(
-        cooling_closed < cooling_open,
-        "the closed room needs less cooling: {cooling_closed:.0} W vs {cooling_open:.0} W"
+        (cooling_open - 2_235.0).abs() < 1.0,
+        "the open-curtain load is 1440 W solar + 300 W internal less 45 K/W x 11 K, got {cooling_open:.1} W"
+    );
+    assert!(
+        (cooling_closed - 915.0).abs() < 1.0,
+        "the closed-curtain load is 120 W + 300 W less the same loss, got {cooling_closed:.1} W"
     );
 
     let draw_open = ac
@@ -126,25 +131,125 @@ fn closing_the_curtain_lowers_the_ac_draw() {
         .expect("the smaller load is also within capacity");
 
     assert!(
-        draw_closed < draw_open,
-        "the meter must fall when the curtain closes: {draw_closed:.0} W vs {draw_open:.0} W"
+        (draw_open - 713.0).abs() < 2.0,
+        "measured draw with the curtain open is 713 W, got {draw_open:.1}"
+    );
+    assert!(
+        (draw_closed - 304.0).abs() < 2.0,
+        "measured draw with the curtain closed is 304 W, got {draw_closed:.1}"
     );
 
-    // "Visibly drops" is not a tolerance question: the drop must be large enough to see on a meter, which for a
-    // 1100 W appliance means hundreds of watts, not a few.
     let drop = draw_open - draw_closed;
     assert!(
         drop > 200.0,
         "a 92 % solar reduction must drop the draw by hundreds of watts, got {drop:.0} W"
     );
+    let fraction = drop / draw_open;
+    assert!(
+        (fraction - 0.574).abs() < 0.005,
+        "the drop is 57.4 %, got {:.1} %",
+        100.0 * fraction
+    );
 
-    // And the drop is the load ratio, because this model's COP is fixed. Stated as a test rather than left
-    // implicit, because it is the model's main simplification and somebody should be able to find it.
-    let draw_ratio = draw_closed / draw_open;
+    // The drop is NOT the load ratio, because the cycling penalty bites harder at low load. Asserting equality
+    // here is how the first version of this test hid that the model had no part-load behaviour at all.
     let load_ratio = cooling_closed / cooling_open;
     assert!(
-        (draw_ratio - load_ratio).abs() < 1e-12,
-        "with a fixed COP the draw is proportional to the load, got {draw_ratio} vs {load_ratio}"
+        fraction < 1.0 - load_ratio,
+        "cycling degradation must make the draw drop LESS than the load does: {:.1} % vs {:.1} %",
+        100.0 * fraction,
+        100.0 * (1.0 - load_ratio)
+    );
+}
+
+/// The correlation is anchored to a real appliance, and it says so.
+///
+/// This is the test that would have caught the first version's unit: it computed COP 4.82 (EER 16.4) from an
+/// `eta_2` of 0.45, while its own `rated_draw_w` basis claimed a 3 500 BTU/h appliance. A window unit at
+/// EER 16.4 is an inverter model, and the capacity implied by the two numbers disagreed with the basis by 5x.
+#[test]
+fn the_cop_agrees_with_a_real_nameplate() {
+    let ac = VapourCompression::window_unit();
+    let predicted = ac.cop().expect("computable");
+    let measured = ac.nameplate_cop().expect("computable");
+
+    // 12 000 BTU/h at EER 11 is COP 3.224. The correlation must land on it to better than 1 %.
+    assert!(
+        (measured - 3.224).abs() < 0.002,
+        "12000 BTU/h / 1091 W is COP 3.224, got {measured:.4}"
+    );
+    assert!(
+        (predicted - measured).abs() / measured < 0.01,
+        "the correlation ({predicted:.4}) must reproduce the nameplate ({measured:.4}) to 1 %"
+    );
+
+    // And the result must be in the band a window unit occupies: EER 9-12 is COP 2.6-3.5.
+    let eer = 3.412 * predicted;
+    assert!(
+        (9.0..=12.0).contains(&eer),
+        "EER {eer:.1} is outside the measured window-unit band of 9-12"
+    );
+
+    // The capacity that falls out must match the nameplate capacity, which is the check the old unit failed.
+    let capacity = ac.capacity_w().expect("computable");
+    assert!(
+        (capacity - ac.nameplate_cooling_w.value).abs() / ac.nameplate_cooling_w.value < 0.02,
+        "capacity {capacity:.0} W should be the nameplate's {:.0} W",
+        ac.nameplate_cooling_w.value
+    );
+}
+
+/// The cycling penalty raises the draw at part load, and vanishes at full load.
+///
+/// Direction and endpoints both. An earlier version of `draw_for` argued the opposite direction in a comment, so
+/// the sign is now measured rather than described.
+#[test]
+fn cycling_degrades_efficiency_at_part_load_only() {
+    let ac = VapourCompression::window_unit();
+    let capacity = ac.capacity_w().expect("computable");
+
+    // At full load the runtime fraction is 1, so there is nothing to degrade to.
+    let at_capacity = ac.draw_for(capacity).expect("at capacity");
+    assert!(
+        (at_capacity - ac.rated_draw_w.value).abs() < 1e-9,
+        "at full load the draw is exactly the nameplate draw, got {at_capacity:.3}"
+    );
+
+    // At part load the penalty makes the draw strictly greater than the linear duty-cycle model predicts.
+    let quarter = capacity / 4.0;
+    let actual = ac.draw_for(quarter).expect("inside capacity");
+    let linear = ac.rated_draw_w.value * quarter / capacity;
+    assert!(
+        actual > linear,
+        "cycling must cost something: {actual:.1} W vs the linear {linear:.1} W"
+    );
+
+    // And the size of the penalty is the ASHRAE factor: draw_actual/draw_linear = 1/(1 - Cd(1-PLF)).
+    let plf = quarter / capacity;
+    let expected_ratio = 1.0 / (1.0 - ac.cycling_degradation.value * (1.0 - plf));
+    assert!(
+        (actual / linear - expected_ratio).abs() < 1e-12,
+        "the penalty is 1/(1 - Cd(1-PLF)), got a ratio of {:.6}",
+        actual / linear
+    );
+}
+
+/// A unit with a nonsensical degradation coefficient is refused rather than quietly believed.
+#[test]
+fn an_invalid_degradation_coefficient_is_refused() {
+    let mut ac = VapourCompression::window_unit();
+    let capacity = ac.capacity_w().expect("computable");
+    ac.cycling_degradation.value = 1.5;
+    assert_eq!(
+        ac.draw_for(capacity / 2.0),
+        None,
+        "Cd above 1 is not physical"
+    );
+    ac.cycling_degradation.value = -0.1;
+    assert_eq!(
+        ac.draw_for(capacity / 2.0),
+        None,
+        "a negative penalty is not physical"
     );
 }
 
@@ -389,17 +494,25 @@ fn the_cop_is_carnot_times_second_law_and_falls_with_lift() {
         (cop - carnot * ac.second_law_efficiency.value).abs() < 1e-12,
         "COP must be eta_2 x Carnot exactly"
     );
-    // A real window unit sits around 3-6; outside that band one of the assumed temperatures is wrong.
+    // A window unit sits at COP 2.6-3.5 (EER 9-12). The earlier band here was "3-6", which is why an EER of
+    // 16.4 passed: the band was wide enough to admit a machine that does not exist in this class.
     assert!(
-        (3.0..6.0).contains(&cop),
-        "COP {cop:.2} is outside the band a window unit actually achieves"
+        (2.6..=3.5).contains(&cop),
+        "COP {cop:.2} is outside the EER 9-12 band a window unit actually achieves"
     );
 
-    // Less lift, better COP.
+    // Less lift, better COP -- and the *value* is pinned, not just its sign. `cop_ratio_between_lifts` returns
+    // lift_2/lift_1, which equals the COP ratio only because Copeland's COP is inversely proportional to lift.
     let ratio = cop_ratio_between_lifts(20.0, 40.0).expect("computable");
     assert!(
-        ratio > 1.0,
-        "halving the lift must improve the COP, got a ratio of {ratio}"
+        (ratio - 2.0).abs() < 1e-12,
+        "halving the lift doubles the COP exactly in this map, got {ratio}"
+    );
+    // The inverse calls must be reciprocal, which pins the direction the doc got wrong.
+    let back = cop_ratio_between_lifts(40.0, 20.0).expect("computable");
+    assert!(
+        (ratio * back - 1.0).abs() < 1e-12,
+        "the two directions must be reciprocal, got {ratio} and {back}"
     );
 }
 
@@ -426,19 +539,36 @@ fn an_impossible_cycle_is_refused() {
     );
 }
 
-/// The draw is linear in the load up to capacity, and zero at zero.
+/// The draw is *not* linear in the load, and the deviation is the cycling penalty and nothing else.
+///
+/// The first version of this test asserted exact linearity, which pinned the model's absence of part-load
+/// behaviour as if it were a feature. What is true: at full load the draw is the nameplate, at zero load it is
+/// zero, and in between it exceeds the straight line by exactly `1/(1 − C_d(1 − PLF))`.
 #[test]
-fn draw_is_proportional_to_load_up_to_capacity() {
+fn draw_is_zero_at_zero_and_the_nameplate_at_full_load() {
     let ac = VapourCompression::window_unit();
     let capacity = ac.capacity_w().expect("capacity");
 
-    let quarter = ac.draw_for(capacity / 4.0).expect("inside capacity");
-    let half = ac.draw_for(capacity / 2.0).expect("inside capacity");
+    assert_eq!(ac.draw_for(0.0), Some(0.0), "an idle unit draws nothing");
     assert!(
-        (half - 2.0 * quarter).abs() < 1e-9,
-        "the duty cycle is linear: {half:.3} should be twice {quarter:.3}"
+        (ac.draw_for(capacity).expect("at capacity") - ac.rated_draw_w.value).abs() < 1e-9,
+        "at capacity the draw is the nameplate"
     );
-    assert!((ac.draw_for(capacity).expect("at capacity") - ac.rated_draw_w.value).abs() < 1e-9);
+
+    // Every part load is above the straight line from (0, 0) to (capacity, rated_draw).
+    for fraction in [0.1, 0.25, 0.5, 0.75, 0.9, 0.99] {
+        let actual = ac.draw_for(capacity * fraction).expect("inside capacity");
+        let linear = ac.rated_draw_w.value * fraction;
+        assert!(
+            actual > linear,
+            "at {fraction:.0} % load the cycling penalty must raise the draw: {actual:.1} vs {linear:.1}"
+        );
+        // ...but never by more than the ASHRAE maximum at zero runtime fraction.
+        assert!(
+            actual < linear / (1.0 - ac.cycling_degradation.value),
+            "the penalty cannot exceed the Cd bound at {fraction:.0} % load"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
