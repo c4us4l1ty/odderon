@@ -137,8 +137,8 @@ fn unknown_poisons_arithmetic_instead_of_lying() {
     let poisoned = u.value * 5.0 + 1.0;
     assert!(poisoned.is_nan(), "arithmetic on unknown must stay NaN");
     assert!(
-        !(u.value > 0.0) && !(u.value < 0.0),
-        "an unknown compares false in both directions, so `if mass > 0` is unreachable rather than wrong"
+        u.value.partial_cmp(&0.0).is_none(),
+        "an unknown is unordered against zero, so `if mass > 0` takes neither branch rather than a wrong one"
     );
 }
 
