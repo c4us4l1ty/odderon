@@ -15,13 +15,16 @@
     "serve": "node tools/serve.mjs",
     "check:shell": "node tools/check-shell.mjs",
     "check:paths": "node tools/check-static-path.mjs",
+    "check:workflows": "node tools/check-workflows.mjs",
     "capture:page": "node tools/capture-page.mjs",
     "start": "node tools/serve.mjs",
     "check:ablation": "node tools/check-ablation.mjs",
+    "check:cache": "node tools/check-cache.mjs",
     "check:classes": "node tools/check-classes.mjs && node tools/check-classes-selftest.mjs"
   },
   "devDependencies": {
     "@sparticuz/chromium": "131.0.0",
+    "js-yaml": "4.1.0",
     "puppeteer-core": "23.11.1"
   }
 }

@@ -26,6 +26,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # A workflow that does not parse fails SILENTLY: no job, no log, no annotation, and no checks on
+      # the PR -- just "This run likely failed because of a workflow file issue". On 2026-11-24 a step
+      # name containing `(before: blit only)` cost a push that way. Validating the file first turns a
+      # silent non-run into a red step with a line number.
+      #
+      # It runs on a checkout of the branch under test, so the file being validated is the one that
+      # would run rather than the one on main.
+      - run: npm install --no-audit --no-fund
+      - name: workflows parse
+        run: node tools/check-workflows.mjs
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.83.0"
@@ -212,6 +225,28 @@ jobs:
         run: node tools/unpack-chromium.mjs && node tools/check-shell.mjs
         env:
           LD_LIBRARY_PATH: /tmp/al2023/lib
+      # `tools/check-cache.mjs` is the standing test for the temporal cache, and it was not in CI. It
+      # was run when somebody remembered, on one machine, and that is the stored-assumption failure
+      # this project keeps finding: a test nobody runs is a claim, not a check. It shares the Chromium
+      # unpack above, so it costs ~6 s here rather than a second job.
+      #
+      # It is also purely behavioural -- 0 shades vs 1 shade, does the cache follow a resize -- so it is
+      # safe on a CPU rasteriser. Nothing in it reads a timing number.
+      - name: temporal cache (blit when unchanged, shade on change)
+        run: node tools/check-cache.mjs
+        env:
+          LD_LIBRARY_PATH: /tmp/al2023/lib
+      # `tools/check-ablation.mjs` tests the ablation report's *judgement* rather than a measurement: it
+      # feeds `summarise()` known matrices and asserts that the page refuses to call a set of deltas
+      # findings when its own control disagrees. This is the test for the 43% self-disagreement that
+      # `BUILD-PLAN.md` records -- and the reason it needs to run every push is that the failure it
+      # catches is a page that prints plausible numbers with no error, which no human reading a report
+      # will notice.
+      #
+      # It needs no Chromium and no network: it extracts `summarise()` from the page by brace matching
+      # and runs it in Node. So it runs here, cheaply, before the browser steps.
+      - name: ablation report judgement (no verdict without a control)
+        run: node tools/check-ablation.mjs
       - name: screenshot the frame
         # Claim 5 is a judgement, and the only way to put a judgement in front of a reviewer is pixels.
         # The capture is uploaded rather than committed: R5 forbids binary assets in the tree, and
