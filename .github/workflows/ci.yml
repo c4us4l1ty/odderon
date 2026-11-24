@@ -26,6 +26,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # A workflow that does not parse fails SILENTLY: no job, no log, no annotation, and no checks on
+      # the PR -- just "This run likely failed because of a workflow file issue". On 2026-11-24 a step
+      # name containing `(before: blit only)` cost a push that way. Validating the file first turns a
+      # silent non-run into a red step with a line number.
+      #
+      # It runs on a checkout of the branch under test, so the file being validated is the one that
+      # would run rather than the one on main.
+      - run: npm install --no-audit --no-fund
+      - name: workflows parse
+        run: node tools/check-workflows.mjs
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.83.0"
@@ -219,7 +232,7 @@ jobs:
       #
       # It is also purely behavioural -- 0 shades vs 1 shade, does the cache follow a resize -- so it is
       # safe on a CPU rasteriser. Nothing in it reads a timing number.
-      - name: temporal cache (before: blit only, after: full shade)
+      - name: temporal cache (blit when unchanged, shade on change)
         run: node tools/check-cache.mjs
         env:
           LD_LIBRARY_PATH: /tmp/al2023/lib

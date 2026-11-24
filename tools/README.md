@@ -34,6 +34,7 @@ CI** until 2026-11-24. The table below is the answer to "is this enforced, or is
 
 | tool | gate | runs in CI |
 | --- | --- | --- |
+| `check-workflows.mjs` | every workflow file parses (a bad one fails silently) | `test (native)` |
 | `check-static-path.mjs` | no traversal out of `web/` or `dist/` | `shell-claims` |
 | `check-shell.mjs` | render-on-demand, claim 1, claim 3 | `shell-claims` |
 | `check-cache.mjs` | temporal cache: blit-only when unchanged, full shade on change | `shell-claims` |
@@ -41,6 +42,22 @@ CI** until 2026-11-24. The table below is the answer to "is this enforced, or is
 | `screenshot.mjs` | claim 5 artifact (uploaded, never committed) | `shell-claims` |
 | `check-classes.mjs` + `-selftest` | licence classification | `class-certification` |
 | `determinism.mjs` | native↔wasm agreement | step inside `test (native)` |
+
+### The failure that is silent
+
+A workflow file that does not parse is the worst kind of CI failure: GitHub runs **nothing**, reports
+**no** red job, annotates **nothing**, and `gh pr checks` says *"no checks reported"* — which looks
+exactly like "CI has not started yet". On 2026-11-24 a step name containing `(before: blit only)` did
+this, because an unquoted `: ` is invalid YAML inside a plain scalar, and the cost was a push that
+appeared to do nothing at all.
+
+`node tools/check-workflows.mjs` (`npm run check:workflows`) loads every file in `.github/workflows`,
+prints the parser's line and column when one fails, and is the **first step of `test (native)`** — so
+the file being validated is the branch under test, not the one on `main`. It also names the colon case
+specifically, because the generic parser message does not say "quote it".
+
+It deliberately does not check action versions, step inputs, or whether a step needs `npm install`.
+Claiming to validate more than YAML would be the same overreach as a test that cannot fail.
 
 Not in CI, deliberately: `serve.mjs` (a dev server), `capture-page.mjs` (needs a human to press a
 button), `gl-info.mjs` (prints the renderer), `verify-math.mjs` (a pre-compile scratchpad — the same
