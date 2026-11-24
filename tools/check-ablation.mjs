@@ -211,6 +211,34 @@ function laptop2026_11_24_run3() {
   ];
 }
 
+/**
+ * Reference B, 2026-11-24: the Mali-G51 phone, 1.04 Mpx, tick 1 ms, 16-frame batches.
+ *
+ * The run that made the headline claim unsupportable. `floor_blit` PASSES the 1.5 ms budget at 1.27 ms;
+ * `floor_tex`, the pass web/index.html actually runs, is 1.65 ms and fails it.
+ */
+function phone2026_11_24() {
+  const r = (id, ms, frames, spread, extra = {}) => row(id, ms, { frames, spread, w: 1400, h: 740, ...extra });
+  return [
+    r("baseline", 26.625, 16, 0.09),
+    r("control", 26.50, 16, 0.08),
+    r("floor", 0.68, 88, 0.28),
+    r("floor_tex", 1.65, 36, 0.20),
+    r("floor_tex_sample", 1.64, 37, 0.08),
+    r("floor_blit", 1.27, 47, 0.30),
+    r("no_shadow", 17.00, 8, 0.04),
+    r("shadow_4tap", 26.00, 8, 0.02),
+    r("no_wall_ribs", 24.75, 8, 0.03),
+    r("no_aerial", 25.63, 8, 0.02),
+    r("no_sphere", 24.75, 8, 0.03),
+    r("no_tonemap", 23.88, 8, 0.02),
+    r("no_skyglow", 26.13, 8, 0.05),
+    r("r100", 26.25, 8, 0.02, { resScale: 1.0 }),
+    r("r071", 13.50, 8, 0.03, { resScale: 0.71, w: 995, h: 526 }),
+    r("r050", 1.94, 8, 0.21, { resScale: 0.25, w: 700, h: 370 }),
+  ];
+}
+
 function healthy() {
   return [
     row("baseline", 2.00, { frames: 100 }),
@@ -312,7 +340,11 @@ console.log("case 5: a render scale is never printed above 1.0");
   const out = summarise(rows);
   // No "reachable at Nx" line at all, and no scale figure that exceeds 1.
   check("prints no scale figure", !/scale that fits is/.test(out), out);
-  check("says native already fits", /native already fits|MET AT NATIVE/i.test(out), out);
+  // The wording moved when the verdict was pinned to the shipped path (case 13): "MET AT NATIVE" no
+  // longer appears, because that sentence was a verdict about the blit. What must still be true is that
+  // a small screen is told it fits and is not handed a scale above 1.
+  check("says native already fits",
+    /native already fits|this screen fits|MET on the shipped path/i.test(out), out);
   check("does not report a scale above 1.0", !/reachable at 1\.[1-9]/.test(out), out);
 }
 
@@ -346,7 +378,9 @@ console.log("case 7: the verdict names the blit, not the full-shade extrapolatio
   const out = summarise(laptop2026_11_24());
   check("says R2 is about the drawn frame, not the shade",
     /R2 ASKS ABOUT THE DRAWN FRAME, NOT THE SHADE/.test(out), out);
-  check("quotes the cached frame against 1.5 ms", /cached static frame: 0\.24 ms/.test(out), out);
+  // The quoted number changed when the verdict moved to the shipped path (case 13). This assertion
+  // pins the PRESENCE of a figure against the 1.5 ms budget, not a particular row's cost.
+  check("quotes the cached frame against 1.5 ms", /cached static frame: 0\.\d+ ms/.test(out), out);
   check("labels the sweep as the full shader", /VERDICT \(full shade\)/.test(out), out);
   check("does not print two unqualified verdicts", (out.match(/VERDICT:/g) || []).length <= 1, out);
 }
@@ -459,6 +493,32 @@ console.log("case 12: agreeing medians with an unsteady row is not called simply
   check("does not print a bare 'Good' when a row is unsteady",
     !/^ *Good: the instrument agrees/m.test(out), out);
   check("still reports the median agreement", /MEDIANS agree to within/.test(out), out);
+}
+
+console.log("case 13: R2 is ruled on the shipped path, never on a cheaper operation it does not run");
+{
+  // Reference B (Mali-G51), 2026-11-24, 1.04 Mpx: blitFramebuffer 1.27 ms, texture read 1.65 ms.
+  //
+  // The page printed "VERDICT: R2 IS MET AT NATIVE RESOLUTION on this device, on the number R2 names",
+  // having defined that number as the blit -- and admitted two lines earlier that web/index.html has no
+  // blitFramebuffer and samples the cache as a texture. So the project's headline performance claim was
+  // being carried by an operation the renderer does not perform. The texture-read row is not an
+  // approximation of the shipped path: floorTexSource() emits `vec4(texture(uFloorTex, uv).rgb, 1.0)`
+  // and index.html's cheap program is `texture(uShaded, uv)` over the same uv.
+  const out = summarise(phone2026_11_24(), 700, 8, 1);
+  check("rules on the shipped path by name", /R2 IS JUDGED ON THE SHIPPED PATH/.test(out), out);
+  check("says R2 FAILS when the texture read is over budget", /R2 FAILS ON THE SHIPPED PATH/.test(out), out);
+  check("quotes the texture read, not the blit, as the cached cost",
+    /A CACHED STATIC FRAME costs 1\.65 ms/.test(out), out);
+  // The deleted sentence. It must not come back in any form.
+  check("prints no verdict that R2 is MET on the blit",
+    !/R2 IS MET AT NATIVE RESOLUTION/.test(out), out);
+  check("does not claim the failing run passes",
+    !/That PASSES R2 at native/.test(out), out);
+
+  // And the opposite case must still work: when the shipped pass fits, say so plainly.
+  const ok = summarise(laptop2026_11_24_run3(), 500, 8, 1);
+  check("still passes when the shipped pass fits", /R2 IS MET on the shipped path/.test(ok), ok);
 }
 
 console.log("");

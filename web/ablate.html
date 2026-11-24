@@ -921,17 +921,23 @@ function summarise(rows, compileMs, minFrames, tickOverride) {
       lines.push('  blitFramebuffer cost the same on this device at this resolution. That is a result,');
       lines.push('  not a failure to measure -- but check the two spreads before quoting it.');
     }
-    const cached = cachedStatic;
+    // THE CACHED-FRAME FIGURE MUST BE THE SHIPPED PATH, NOT A FLOOR THAT HAPPENS TO BE CHEAPER.
+    //
+    // This paragraph used to quote `cachedStatic`, which prefers the blitFramebuffer row -- and on
+    // Reference B (2026-11-24) that printed "A CACHED STATIC FRAME costs 1.27 ms ... That PASSES R2"
+    // while the run's own texture-read row, which is the operation the renderer performs, cost 1.65 ms
+    // and failed. A run-on-demand renderer's per-frame cost is the pass it actually runs.
+    const cached = ft || fb;      // the texture read when it exists: that IS the shipped blit
     if (cached) {
       lines.push('');
       lines.push('A CACHED STATIC FRAME costs ' + cached.amortised.toFixed(2) + ' ms at native resolution.');
       lines.push(cached.amortised < 1.5
         ? 'That PASSES R2 at native resolution, and the temporal cache is the answer.'
-        : 'That FAILS R2 at native. A cache removes the shade but not the blit, so the blit itself must shrink:');
+        : 'That FAILS R2 at native. A cache removes the shade but not the per-frame pass, so that pass');
       if (cached.amortised >= 1.5) {
         const fits = 1.5 / (cached.amortised / (cached.w * cached.h / 1e6));
-        lines.push('  1.5 ms of this blit needs ' + fits.toFixed(3) + ' Mpx, a render scale of ' +
-          Math.sqrt(fits / (cached.w * cached.h / 1e6)).toFixed(2) + 'x.');
+        lines.push('itself must shrink: 1.5 ms of it needs ' + fits.toFixed(2) + ' Mpx, a render scale of ' +
+          Math.min(1, Math.sqrt(fits / (cached.w * cached.h / 1e6))).toFixed(2) + 'x.');
       }
     }
   }
@@ -1002,15 +1008,54 @@ function summarise(rows, compileMs, minFrames, tickOverride) {
         (1.5 / blitPerMpx).toFixed(2) + ' Mpx -- ' +
         (1.5 / blitPerMpx >= blitMpx ? 'this screen fits.' : 'less than this screen.'));
       lines.push('');
-      if (blitMs < 1.5) {
-        lines.push('VERDICT: R2 IS MET AT NATIVE RESOLUTION on this device, on the number R2 names.');
-        lines.push('  a cached static frame: ' + blitMs.toFixed(2) + ' ms at ' + blitMpx.toFixed(2) +
-          ' Mpx, against 1.5 ms.');
-      } else {
-        lines.push('VERDICT: R2 IS NOT MET at native on the blit. 1.5 ms of this blit needs ' +
-          (1.5 / blitPerMpx).toFixed(2) + ' Mpx, i.e. a render');
-        lines.push('scale of ' + Math.min(1, Math.sqrt((1.5 / blitPerMpx) / blitMpx)).toFixed(2) + 'x.');
+      // THE VERDICT MUST BE PRONOUNCED ON THE SHADER THE RENDERER RUNS.
+      //
+      // Reference B, 2026-11-24: blitFramebuffer 1.27 ms, texture read 1.65 ms. The page above printed
+      // "R2 IS MET AT NATIVE RESOLUTION on the number R2 names", having defined that number as the blit
+      // -- while admitting two lines earlier that `web/index.html` contains no blitFramebuffer and
+      // samples the cache as a texture instead. Both sentences were true; only the second one describes
+      // the shipped renderer. The first is a verdict about an operation this project does not perform.
+      //
+      // The texture-read row is not an approximation of the shipped path. `floorTexSource()` emits
+      // exactly `outColor = vec4(texture(uFloorTex, uv).rgb, 1.0)` against a uRes of the same size, and
+      // `web/index.html`'s cheap program is `outColor = texture(uShaded, uv)` over the same uv. Same
+      // one-read-one-write pass. So the shipped path costs what that row says, and R2 is judged there.
+      const shipped = fb ? ft : ft;   // the texture read, whether or not the blit could be measured
+      if (shipped && fb) {
+        const verdictMet = shipped.amortised < 1.5;
+        lines.push('R2 IS JUDGED ON THE SHIPPED PATH. This renderer samples the cache as a texture,');
+        lines.push('so the honest cached-frame cost here is ' + shipped.amortised.toFixed(2) + ' ms at ' +
+          (shipped.w * shipped.h / 1e6).toFixed(2) + ' Mpx,');
+        lines.push('not the ' + fb.amortised.toFixed(2) + ' ms blit. On that number:');
+        lines.push('');
+        if (verdictMet) {
+          lines.push('VERDICT: R2 IS MET on the shipped path, with ' +
+            ((1.5 - shipped.amortised) / 1.5 * 100).toFixed(0) + '% of the budget left.');
+          lines.push('  a cached static frame: ' + shipped.amortised.toFixed(2) + ' ms at ' +
+            (shipped.w * shipped.h / 1e6).toFixed(2) + ' Mpx, against 1.5 ms.');
+        } else {
+          lines.push('VERDICT: R2 FAILS ON THE SHIPPED PATH. The texture read alone costs ' +
+            shipped.amortised.toFixed(2) + ' ms');
+          lines.push('at native, against a 1.5 ms budget -- before any shading, any interpolation and any');
+          lines.push('input. The blit row passing is not a defence: it is a different operation from the');
+          lines.push('one this renderer performs.');
+          const fitsOnShipped = 1.5 / (shipped.amortised / (shipped.w * shipped.h / 1e6));
+          lines.push('  1.5 ms of the shipped pass needs ' + fitsOnShipped.toFixed(2) + ' Mpx, a render scale of ' +
+            Math.min(1, Math.sqrt(fitsOnShipped / (shipped.w * shipped.h / 1e6))).toFixed(2) + 'x.');
+          lines.push('  Either that resolution clause moves, or the blit becomes a real blitFramebuffer.');
+        }
+        lines.push('');
       }
+      // THE BLIT VERDICT THAT USED TO LIVE HERE IS DELETED, NOT RE-WORDED.
+      //
+      // It read "VERDICT: R2 IS MET AT NATIVE RESOLUTION on this device, on the number R2 names", and
+      // after the shipped-path verdict was added it printed that sentence directly beneath "VERDICT: R2
+      // FAILS ON THE SHIPPED PATH" -- two unqualified verdicts, opposite, three lines apart. The
+      // reference-B run of 2026-11-24 is why: blit 1.27 ms (passes), texture read 1.65 ms (fails).
+      //
+      // Keeping it as context would still be a verdict about an operation `web/index.html` does not
+      // perform, printed in the same voice as one it does. The number stays in THE FLOORS table above,
+      // labelled for what it is. A number can be reported without being ruled on.
       lines.push('');
       lines.push('The sweep below is the FULL SHADER, which is a different and much harder question.');
       lines.push('It is what the frame costs when the world moves, not what a settled frame costs.');
