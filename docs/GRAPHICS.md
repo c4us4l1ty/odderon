@@ -415,6 +415,35 @@ attribute, records the result in `bench.blitSupported`, falls back to the textur
 is false, and **names the live mechanism in the HUD**, because a silent fallback would put 1.65 ms on the
 clock while the page claimed 1.27.
 
+**Reference B, 2026-11-24: two independent instruments, 5.5% apart.** The renderer's own bound read
+**`≤ 1.20 ms`** at 1.04 Mpx on the shipped `blitFramebuffer` pass. The ablation matrix's separate
+`blitFramebuffer` floor row read **1.27 ms** at the same resolution, measured in a different page with a
+different framebuffer and a different source texture. On the budget the two bracket it:
+
+| | ms at 1.04 Mpx |
+| --- | --- |
+| renderer's bound (upper estimate) | **≤ 1.20** |
+| ablator's blit floor row (median) | **1.27** |
+| R2 budget | **1.5** |
+| margin on the larger of the two | **15%** |
+
+The panel's other fields agree with its own geometry — 756×1382 is 1.04 Mpx, and 12 B/px is 12.54 MB —
+so this is not a resolution that got quietly scaled.
+
+**The two are not the same call, and the 5.5% is expected rather than suspicious.** The renderer blits
+from its live cache texture (`756×1382`, written by the shade, so it lives in framebuffer memory); the
+ablator blits from a 1024×1024 attachment clamped to `min(w,h,1024)` that was initialised by upload and
+never shaded into. A 5.5% spread between those two is well inside what the ablator's own run-to-run
+spreads (2–30% per row) would produce.
+
+**What this changes and what it does not.** It is the first time a number from the renderer and a number
+from the ablator have agreed on the same device, and that agreement is the most convincing evidence yet
+that the cached-frame cost on Reference B is around **1.2–1.3 ms against a 1.5 ms budget**. It is still
+not a single direct measurement of one frame: one side is an amortised upper estimate and the other is a
+median of an emulated call. **R2 moves from "open, previously failing" to "supported by two agreeing
+estimates with a ~15% margin, awaiting one direct measurement."** That last step needs a GPU timer, which
+Reference B does not have.
+
 Route 2 — **moving R2's resolution clause from 1.15 Mpx to ~0.94 Mpx** — remains available and remains
 the cheaper option: it needs no rendering change at all. The clause is `MAX_PIXELS = 1_150_000` in
 `web/index.html`, and its comment says it enforces the documented fallback, which is **0.68 Mpx**. The
