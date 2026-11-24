@@ -166,6 +166,71 @@ check(
 }
 
 // ---------------------------------------------------------------------------------------------
+// A DEVICE WITH NO GPU TIMER MUST STILL GET A USABLE STATEMENT, AND AN HONEST ONE.
+//
+// Reference B has no EXT_disjoint_timer_query_webgl2, so `gl.finish()` there returns one refresh period
+// (5.00 ms at 200 Hz) regardless of what the renderer did. The panel used to report exactly that as
+// "vsync-bound", which is truthful but useless: it is the display's number, not the renderer's.
+//
+// The replacement is an UPPER BOUND -- K completed frames over T ms gives T/K -- and the whole value of
+// it is that it cannot overstate the renderer's speed. So this asserts the bound is measured with
+// `finish()` and NOT with a pixel readback (which measured 9.3 ms against `finish()`'s 0.008 ms on
+// ANGLE, i.e. it would have measured the readback), and that the panel calls it a bound.
+{
+  const src = await readFile(new URL("../web/index.html", import.meta.url), "utf8");
+  const strip = (t) => t.replace(/\/\/[^\n]*/g, "");
+  const start = src.indexOf("function upperBoundBlit(");
+  check("upperBoundBlit() exists for devices without a GPU timer", start > 0);
+  if (start > 0) {
+    let i = src.indexOf("{", start), depth = 0, end = -1;
+    for (let k = i; k < src.length; k++) {
+      if (src[k] === "{") depth++;
+      else if (src[k] === "}") { depth--; if (!depth) { end = k + 1; break; } }
+    }
+    const body = strip(src.slice(start, end));
+    check("the bound forces completion with finish(), not a readback",
+      /gl\.finish\s*\(/.test(body) && !/readPixels/.test(body));
+    check("the bound blits from the never-sampled probe target, not the live cache",
+      /cache\.probeFbo/.test(body) && !/cache\.fbo\b/.test(body));
+  }
+
+  // Simulate the phone: no timer extension at all.
+  const pg = await browser.newPage();
+  await pg.evaluateOnNewDocument(() => {
+    const orig = WebGL2RenderingContext.prototype.getExtension;
+    WebGL2RenderingContext.prototype.getExtension = function (n) {
+      if (n === "EXT_disjoint_timer_query_webgl2") return null;
+      return orig.call(this, n);
+    };
+  });
+  await pg.setViewport({ width: 900, height: 560 });
+  await pg.goto(`http://127.0.0.1:${port}/`, { waitUntil: "networkidle0" });
+  await new Promise((r) => setTimeout(r, 2500));
+  const r = await pg.evaluate(async () => {
+    const t0 = performance.now();
+    await window.__odderon.measureFrame(12);
+    const wall = performance.now() - t0;
+    document.getElementById("m-r2").textContent = document.getElementById("m-r2").textContent;
+    return {
+      wall,
+      upper: window.__odderon.bench.blitUpperMs,
+      timer: window.__odderon.bench.gpuTimerState,
+      applyRun: (() => { document.getElementById("measure").click(); return true; })(),
+    };
+  });
+  await new Promise((r) => setTimeout(r, 1200));
+  const r2 = await pg.evaluate(() => document.getElementById("m-r2").textContent);
+  check("no timer on this device, as on Reference B", r.timer === "absent", r.timer);
+  check("the upper bound is measured rather than NaN", Number.isFinite(r.upper), String(r.upper));
+  check("the panel calls it an upper bound", /upper bound/.test(r2 || ""), r2 || "");
+  check("an inconclusive bound is NOT reported as a pass",
+    !/^\s*\d.*< 1\.5\s*$/.test(r2 || "") || /real cost is lower/.test(r2 || ""), r2 || "");
+  // The button must stay responsive: 12 samples with a wall-clock cap, not 12 x 30 frames.
+  check("measuring stays responsive without a GPU timer", r.wall < 600, `${r.wall.toFixed(0)} ms`);
+  await pg.close();
+}
+
+// ---------------------------------------------------------------------------------------------
 // THE BLIT MUST RENDER THE SAME IMAGE AS THE FALLBACK.
 //
 // web/index.html's per-frame pass is now `blitFramebuffer` because Reference B measured it at 1.27 ms

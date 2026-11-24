@@ -793,6 +793,21 @@ const bench = {
 
 const gl2 = gl;
 const disjointExt = gl2.getExtension('EXT_disjoint_timer_query_webgl2');
+// How many frames to wait for a timer query to report. Two frames is what was measured to be enough on
+// ANGLE (one for the command to retire, one for the bookkeeping); 30 is a generous ceiling that still
+// finishes in half a second at 60 Hz, so a driver that never reports is reported as such rather than
+// hanging the button. See the note in `measureFrame()` for why one synchronous read was not enough.
+const GPU_QUERY_WAIT_FRAMES = 30;
+// ...and a wall-clock ceiling, because frames are not time. Two frames was measured to be enough on
+// ANGLE for a query issued to a warm timing pipeline; 120 ms per sample is generous for hardware and
+// keeps twelve samples under a second and a half even when a driver never reports at all.
+//
+// KNOWN LIMITATION, measured on this sandbox rather than assumed: ANGLE/SwiftShader keeps its timing
+// pipeline cold for the first ~1.5 s, so queries issued in that window never report and only the last
+// few samples survive. That is a property of a software rasteriser, not of the phone the claim is about,
+// which is why it is reported rather than worked around -- see the sample-count line in the panel, which
+// says how many of the twelve the driver actually returned.
+const GPU_QUERY_WAIT_MS = 120;
 let pendingQuery = null;   // an issued query awaiting its result
 let queryActive = false;   // a query that has been begun and not yet ended
 let gpuMs = NaN;
@@ -941,6 +956,11 @@ const cache = {
   // measured at runtime, not asserted
   lastFullShadeMs: NaN,
   lastBlitMs: NaN,
+  // A textbook cache texture, used only by the R2 upper bound. Same size and format as `tex`, but it is
+  // written by a shader and never sampled, so reading it cannot be met by a cache hit the way re-reading
+  // `tex` can. See `upperBoundBlit()`.
+  probeTex: null,
+  probeFbo: null,
   fullShades: 0,
   blits: 0,
 };
@@ -949,6 +969,22 @@ function cacheResize(w, h) {
   if (cache.w === w && cache.h === h && cache.tex) return;
   if (cache.tex) gl.deleteTexture(cache.tex);
   if (cache.fbo) gl.deleteFramebuffer(cache.fbo);
+  if (cache.probeTex) gl.deleteTexture(cache.probeTex);
+  if (cache.probeFbo) gl.deleteFramebuffer(cache.probeFbo);
+
+  // The probe target for the R2 upper bound. Never sampled, so it cannot be served from cache the way
+  // the real cache texture is on the second and later reads.
+  cache.probeTex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, cache.probeTex);
+  gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, w, h);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  cache.probeFbo = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, cache.probeFbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, cache.probeTex, 0);
+  const pst = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  if (pst !== gl.FRAMEBUFFER_COMPLETE) { cache.probeFbo = null; }
 
   cache.tex = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, cache.tex);
@@ -1188,6 +1224,65 @@ function blitFrame() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// an UPPER BOUND on the frame cost, for devices with no GPU timer
+// ---------------------------------------------------------------------------------------------
+//
+// Reference B has no EXT_disjoint_timer_query_webgl2, and `gl.finish()` there measures one refresh
+// period (5.00 ms at 200 Hz) whatever the renderer did. So the one device R2 is written about cannot
+// report a frame time at all, and no amount of polling changes that.
+//
+// This loop answers the only question that device can answer: is one frame's work geometrically
+// incapable of being the bottleneck? It issues K blits, each reading a texture that was never sampled
+// by anything else, and forces completion with readPixels. If K frames of real work take T ms, then one
+// frame costs at most T/K.
+//
+// WHY THIS IS AN UPPER BOUND AND NOT A MEASUREMENT, stated plainly because the distinction is the whole
+// point:
+//
+//   * readPixels is a synchronous stall, so the CPU waits for the GPU each iteration. The figure
+//     therefore includes per-frame submission overhead that a pipeline would amortise.
+//   * The first iteration pays whatever lazy setup the driver deferred; the per-frame figure inherits it.
+//
+// Both effects make the number LARGER than a pipelined frame, so an upper bound is the honest claim. It
+// is also the useful direction: if the upper bound clears 1.5 ms, the true cost cannot fail it. If the
+// upper bound exceeds 1.5 ms, the test is INCONCLUSIVE rather than a failure, and it says so.
+//
+// It cannot be done on the real cache texture: re-reading `tex` on the second and later iterations may
+// be met by a cache hit, which would measure the cache rather than the read. `probeTex` exists for this
+// and nothing else.
+function upperBoundBlit(samples = 12) {
+  if (!cache.probeFbo) return null;
+  // `gl.finish()` and NOT `readPixels`, and the choice is measured rather than stylistic.
+  //
+  // Both force the GPU to complete the frame before the next is issued, which is what an upper bound
+  // needs. But on ANGLE a 1-pixel readback from the default framebuffer costs about 9.3 ms while
+  // `gl.finish()` costs 0.008 ms -- the readback drags a full pipeline flush along with it, and the
+  // resulting "upper bound" would be a measurement of the readback. Measured on this sandbox:
+  //
+  //     blit + readPixels   9.308 ms
+  //     blit + finish       0.008 ms
+  //     blit only           0.000 ms
+  //     readPixels only     0.175 ms
+  //
+  // `finish()` is a synchronous stall too, and that stall is included in the figure below. It is part
+  // of why this is an upper bound.
+  const blitProbe = () => {
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, cache.probeFbo);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+    gl.blitFramebuffer(0, 0, cache.w, cache.h, 0, 0, canvas.width, canvas.height,
+                       gl.COLOR_BUFFER_BIT, gl.NEAREST);
+    gl.finish();
+  };
+  blitProbe();                                  // warm: first use pays deferred driver setup
+  const t0 = performance.now();
+  for (let i = 0; i < samples; i++) blitProbe();
+  const per = (performance.now() - t0) / samples;
+  gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+  gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+  return per;
+}
+
+// ---------------------------------------------------------------------------------------------
 // an explicit measurement, for browsers that will not expose GPU timers
 // ---------------------------------------------------------------------------------------------
 //
@@ -1195,7 +1290,7 @@ function blitFrame() {
 // the loop: it is here, behind a button, once, and the result is labelled as having used a stall. That
 // is the difference between measuring and cheating — the loop stays clean, and the number is honest
 // about how it was obtained.
-function measureFrame(samples = 12) {
+async function measureFrame(samples = 12) {
   // There are now TWO costs, and reporting one number for both would be the same class of error this
   // instrument has already been fixed for twice. So they are measured and labelled separately:
   //
@@ -1249,42 +1344,66 @@ function measureFrame(samples = 12) {
   // -------------------------------------------------------------------------------------------
   const gpuBlits = [];
   if (disjointExt) {
-    // Issue every query first, then finish ONCE, then read.
+    // ---------------------------------------------------------------------------------------------
+    // ONE QUERY AT A TIME, EACH POLLED TO COMPLETION BEFORE THE NEXT IS ISSUED.
     //
-    // The obvious version of this loops per sample: begin, draw, end, spin on QUERY_RESULT_AVAILABLE.
-    // That deadlocks. JavaScript is single-threaded here, so a busy-wait never yields, the GPU never
-    // gets to make progress, and the result never becomes available — the page hangs on the click.
+    // The version this replaces issued all twelve queries up front, `gl.finish()`ed once, and read them
+    // back after a single fixed number of frames. Two separate faults, both found on real devices:
     //
-    // `gl.finish()` after all the queries does not reintroduce the vsync problem, because what is read
-    // back is the timestamp the GPU recorded *between* beginQuery and endQuery. finish() only assures
-    // that the results are ready; it does not become part of the measurement.
-    const queries = [];
+    //  1. IT READ TOO EARLY. A reference-device run reported "5.00 ms vsync-bound, no GPU timer" — the
+    //     extension was present and every sample was discarded as unready. Measured here: immediately
+    //     after `gl.finish()` QUERY_RESULT_AVAILABLE is FALSE, and it becomes TRUE two frames later.
+    //     finish() drains the command queue; it does not wait for the driver's timing bookkeeping.
+    //
+    //  2. A BATCH OF QUERIES IS NOT AS RELIABLE AS ONE. With twelve queries outstanding around real
+    //     work, this sandbox left some permanently unready and reported one blit at 6 673 632 ns — 6.7 ms
+    //     for an operation that times at 1 395 ns measured on its own. Nothing was wrong with the blit;
+    //     the batch was.
+    //
+    // Serial measurement costs a few extra frames per sample and removes both. It also makes each
+    // sample's provenance checkable: it is ready, it is not disjoint, and it is the one that was just
+    // issued.
+    //
+    // The busy-wait trap this file already documents is avoided rather than re-learned: polling always
+    // yields through rAF, never spins.
+    const diag = { issued: 0, ready: 0, disjoint: 0, kept: 0, waitedFrames: 0 };
     for (let i = 0; i < samples; i++) {
       const q = gl.createQuery();
       gl.beginQuery(disjointExt.TIME_ELAPSED_EXT, q);
       blitFrame();
       gl.endQuery(disjointExt.TIME_ELAPSED_EXT);
-      queries.push(q);
-    }
-    gl.finish();
-    // The first two are discarded: a cold pipeline reads milliseconds on hardware that does the work
-    // in microseconds, and this file already carries that lesson from the boot burst.
-    //
-    // `diag` is kept because a silently empty result is worse than a wrong one: when the GPU timer
-    // exists but yields nothing, the HUD can say WHICH gate rejected the samples instead of showing a
-    // dash to somebody who then cannot tell "not supported" from "not measured".
-    const diag = { issued: queries.length, ready: 0, disjoint: 0, kept: 0 };
-    queries.forEach((q, i) => {
+      gl.finish();
+      diag.issued += 1;
+
+      // Bounded by TIME as well as frames. A frame cap alone is not a latency bound: at 30 Hz, thirty
+      // frames is a second, and one unready query out of twelve would spend the whole budget waiting
+      // for a sample that is already lost. Measured consequence of getting this wrong: 1.9 s to press a
+      // button that should feel instant.
+      const waitStart = performance.now();
+      diag.totalWaitMs = diag.totalWaitMs || 0;
+      let f = 0;
+      while (f < GPU_QUERY_WAIT_FRAMES &&
+             performance.now() - waitStart < GPU_QUERY_WAIT_MS &&
+             !gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE)) {
+        await new Promise((r) => requestAnimationFrame(r));
+        f += 1;
+      }
+      diag.waitedFrames = Math.max(diag.waitedFrames, f);
+      diag.waitedMs = Math.max(diag.waitedMs || 0, Math.round(performance.now() - waitStart));
+      diag.totalWaitMs += Math.round(performance.now() - waitStart);
+
       const ready = gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE);
       const disjoint = gl.getParameter(disjointExt.GPU_DISJOINT_EXT);
       if (ready) diag.ready += 1;
       if (disjoint) diag.disjoint += 1;
+      // The first two are discarded: a cold pipeline reads milliseconds on hardware that does the work
+      // in microseconds, and this file already carries that lesson from the boot burst.
       if (ready && !disjoint && i >= 2) {
         gpuBlits.push(gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6);
         diag.kept += 1;
       }
       gl.deleteQuery(q);
-    });
+    }
     bench.gpuQueryDiag = diag;
   }
 
@@ -1306,11 +1425,22 @@ function measureFrame(samples = 12) {
 
   bench.shadeMs = med(shadeTimes);
   bench.shadeP95 = p95f(shadeTimes);
-  bench.blitMs = med(blitTimes);
-  bench.blitP95 = p95f(blitTimes);
-  bench.measuredMs = bench.blitMs;
-  // The number R2 must be judged on: GPU-side blit cost when the timer query exists.
+  // THE REPORTED BLIT IS THE GPU NUMBER WHENEVER THERE IS ONE.
+  //
+  // `blitTimes` is the `gl.finish()` interval, which on a phone is one refresh period and is collected
+  // only as a last resort. Reporting it as "BLIT" when the GPU timer produced ten real samples put
+  // `NaN ms` on the panel next to a populated `R2 0.00 ms` -- two fields describing the same quantity
+  // and disagreeing, because the fallback loop had not run and the fields were filled from different
+  // sources. One source, one number.
   bench.gpuBlitMs = gpuBlits.length ? med(gpuBlits) : NaN;
+  // When there is no GPU timer AND no usable sample set, the finish() interval is a refresh period and
+  // says nothing about the renderer. That is exactly Reference B's situation, so the upper bound is
+  // measured there and reported as an upper bound, never as a frame time.
+  bench.blitUpperMs = (!Number.isFinite(bench.gpuBlitMs) && bench.gpuTimerState !== 'ok')
+    ? (upperBoundBlit(12) ?? NaN) : NaN;
+  bench.blitMs = gpuBlits.length ? bench.gpuBlitMs : med(blitTimes);
+  bench.blitP95 = gpuBlits.length ? p95f(gpuBlits) : p95f(blitTimes);
+  bench.measuredMs = bench.blitMs;
   bench.gpuBlitP95 = gpuBlits.length ? p95f(gpuBlits) : NaN;
   // Two different reasons can leave us without a GPU number, and they are not the same finding:
   //   'absent'      - the extension does not exist, so the finish() interval is all there is.
@@ -1435,6 +1565,14 @@ function updateHud() {
     r2.textContent = fmt(bench.gpuBlitMs, 2) + ' ms gpu ' +
       (blitSupported ? 'blit ' : 'texture read ') + (ok ? '< 1.5' : '> 1.5');
     r2.className = ok ? 'pass' : 'fail';
+  } else if (Number.isFinite(bench.blitUpperMs)) {
+    // An upper bound is the strongest statement this device supports. If it clears the budget, the real
+    // cost cannot fail; if it does not, that is inconclusive rather than a failure, and the wording says
+    // which. Reporting the 5.00 ms vsync interval instead would be reporting the display.
+    const clear = bench.blitUpperMs < 1.5;
+    r2.textContent = '\u2264 ' + fmt(bench.blitUpperMs, 2) + ' ms upper bound ' +
+      (clear ? '< 1.5  (real cost is lower)' : '> 1.5  (inconclusive, not a failure)');
+    r2.className = clear ? 'pass' : 'warn';
   } else if (bench.gpuTimerState === 'no-samples') {
     // The timer exists but handed back nothing. Say so plainly: this is an instrument problem, and
     // calling the finish() number below "vsync-bound" would be inventing a cause for it.
@@ -1538,11 +1676,20 @@ function applyMeasurement(r) {
   // The old text claimed every sample included a gl.finish(). That is true only of the fallback path:
   // when the timer query works, the numbers are GPU-side intervals with no stall in them at all. The
   // note now says which, because a note that misdescribes its own instrument is worse than no note.
+  // HOW MANY OF THE SAMPLES THE DRIVER ACTUALLY REPORTED. Twelve are asked for; a driver that warms up
+  // its timing pipeline late may return only the last few, and a median of three is a different claim
+  // from a median of twelve. Measured here: queries issued in the first ~1.5 s of the timing pipeline's
+  // life stay ``unavailable forever, so this is a real and recurring outcome rather than a corner case.
+  const d = bench.gpuQueryDiag || {};
+  const got = d.kept ?? r.samples;
   const how =
     bench.gpuTimerState === 'ok'
-      ? 'median of ' + r.samples + ', timed on the GPU. The frame loop never stalls.'
+      ? 'median of ' + got + ' of ' + (d.issued ?? r.samples) + ' samples the GPU timer reported' +
+        (got < 6 ? ' -- FEW, so treat this as indicative rather than settled' :
+                   '; timed on the GPU, so the frame loop never stalls')
       : bench.gpuTimerState === 'no-samples'
-        ? 'GPU timer returned nothing; these are gl.finish() intervals, not GPU cost.'
+        ? 'GPU timer returned nothing (' + (d.issued ?? 0) + ' issued, ' + (d.ready ?? 0) +
+          ' ready); these are gl.finish() intervals, not GPU cost.'
         : 'no GPU timer in this browser; these are gl.finish() intervals, which on a phone are the ' +
           'refresh period rather than GPU cost.';
   note.textContent =
@@ -1554,8 +1701,18 @@ function applyMeasurement(r) {
   requestFrame();
 }
 
-$('measure').addEventListener('click', () => {
-  applyMeasurement(measureFrame(12));
+$('measure').addEventListener('click', async () => {
+  // `measureFrame` is async now: it yields frames waiting for the timer queries to report. Handing its
+  // Promise straight to `applyMeasurement` would have put `undefined` into every HUD field, which reads
+  // as "not measured" and would have been blamed on the device.
+  const btn = $('measure');
+  btn.disabled = true;
+  $('measure-note').textContent = 'measuring\u2026';
+  try {
+    applyMeasurement(await measureFrame(12));
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 // The phone half of the capture path. There is no cable and no remote debugger on the device whose
@@ -1734,8 +1891,7 @@ window.__odderon = {
    */
   capturePicture: async ({ measure = true } = {}) => {
     if (measure && typeof measureFrame === 'function') {
-      const r = measureFrame(12);
-      applyMeasurement(r);
+      applyMeasurement(await measureFrame(12));   // async: waits for the GPU timer to report
     }
     const { canvas: c, hud, stamp } = await capturePicture();
     return { png: c.toDataURL('image/png'), hud, stamp, width: c.width, height: c.height };
@@ -1752,6 +1908,11 @@ window.__odderon = {
     return p;
   },
   async capturePixels(size = 48) { return this.requestCapture(size); },
+  // Exposed so a test can run the REAL measurement rather than a copy of it. A copy is what this
+  // project keeps catching itself testing.
+  measureFrame,
+  blitFrame,      // the per-frame primitive, so a test measures the real one rather than a copy
+  upperBoundBlit, // the no-GPU-timer bound, so its honesty can be tested rather than trusted
   // Force the next frame down the expensive path, so a test can compare cached vs freshly shaded.
   invalidate() { cache.valid = false; },
 };
