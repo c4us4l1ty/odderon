@@ -233,6 +233,13 @@ jobs:
       # job it is guarding. A test whose failing branch has never executed has not been shown to fail.
       - name: orbit verifier self-test (accepts good exports, rejects bad)
         run: node tools/check-orbit.mjs --selftest
+      # On 2026-11-24 this job failed on a condition the page handles correctly: the optional wasm
+      # artifact is absent on a clean checkout, the browser logs a 404, and `tools/screenshot.mjs` treats
+      # any console error as an untrustworthy frame. The capture now exempts that one error -- but only
+      # when the page itself declares the kernel unavailable. This asserts the exemption is narrow: the
+      # same 404 with no declaration, or with a page claiming the kernel loaded, still fails.
+      - name: screenshot error classification (exemption is narrow)
+        run: node tools/check-screenshot-errors.mjs
       # `BUILD-PLAN.md` §4 claim 3 is "idle is nothing scheduled": zero rAF calls, zero timers, zero
       # allocations after 250 ms of no input. The instrument already measured that, but only when a human
       # remembered to run it -- `tools/check-shell.mjs` was never wired into CI, so the claim rested on

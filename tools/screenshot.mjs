@@ -93,12 +93,70 @@ const browser = await puppeteer.launch({
 
 const page = await browser.newPage();
 const errors = [];
+
+// ONE CATEGORY OF CONSOLE ERROR IS EXPECTED, and only when the page says so.
+//
+// `web/index.html` fetches `/dist/odderon_dmath_wasm.wasm` for the orbit kernel. That artifact is build
+// output -- gitignored, and absent on a clean checkout including this CI job, which never builds wasm.
+// The browser logs the 404 as a console error, and this script treats any console error as "the frame is
+// not trustworthy". So on 2026-11-24 this job went red for a condition the page handles correctly:
+// it hid the body and reported `orbit source unavailable`.
+//
+// The trade this makes: a missing OPTIONAL ASSET is not a rendering fault, but a page that fails
+// silently very much is. So the exemption is applied only when the page *declares* the absence through
+// `__odderon.kernel.status` (which it sets only after the fetch has failed). Any other console error --
+// a shader that will not compile, a WebGL warning promoted to error, an uncaught exception -- still
+// fails the capture. Suppressing console errors wholesale would have hidden exactly the class of defect
+// this script exists to catch.
+const OPTIONAL_ASSET_404 = /Failed to load resource.*404|odderon_dmath_wasm\.wasm/;
+const pageErrors = [];
+const exempt = [];
 page.on("console", (m) => {
-  if (m.type() === "error") errors.push(m.text());
+  if (m.type() !== "error") return;
+  if (OPTIONAL_ASSET_404.test(m.text())) exempt.push(m.text());
+  else pageErrors.push(m.text());
 });
-page.on("pageerror", (e) => errors.push(String(e)));
+page.on("pageerror", (e) => pageErrors.push(String(e)));
+
+/**
+ * Was the exemption legitimate?
+ *
+ * `--selftest` drives this with no browser, so the rejection path is exercised somewhere rather than
+ * being first run on a red CI job.
+ *
+ * @param {string[]} exemptTexts console errors that matched the optional-asset pattern
+ * @param {string|null} kernelStatus what the page said about the kernel
+ * @returns {{note: string|null, failures: string[]}}
+ */
+export function classifyExemption(exemptTexts, kernelStatus) {
+  if (!exemptTexts.length) return { note: null, failures: [] };
+  if (kernelStatus && String(kernelStatus).startsWith("unavailable")) {
+    return {
+      note:
+        `${exemptTexts.length} console error(s) for the optional wasm artifact, and the page declares ` +
+        `"${kernelStatus}". The body is hidden and the HUD says so; this is not a rendering fault.`,
+      failures: [],
+    };
+  }
+  return {
+    note: null,
+    failures: exemptTexts.map(
+      (t) => `${t} (page did not declare the kernel unavailable: ${JSON.stringify(kernelStatus)})`,
+    ),
+  };
+}
 
 await page.goto(target, { waitUntil: "networkidle0", timeout: 90000 });
+
+// The exemption is only honoured if the page confirms it expected the asset to be missing. A page that
+// reports the kernel as loaded while logging a 404 for it is lying, and that stays a failure.
+if (exempt.length) {
+  const kernelStatus = await page.evaluate(() => window.__odderon?.kernel?.status ?? null).catch(() => null);
+  const verdict = classifyExemption(exempt, kernelStatus);
+  if (verdict.note) console.log(`\nnote: ${verdict.note}`);
+  pageErrors.push(...verdict.failures);
+}
+errors.push(...pageErrors);
 
 // Wait for the first frame, then for the instrument to *settle*. A shader that failed to compile leaves
 // a blank canvas and one console line; waiting on framesDrawn > 0 is what distinguishes "rendered" from
