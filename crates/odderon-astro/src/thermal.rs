@@ -152,9 +152,14 @@ impl Zone {
                 sigma: 15.0,
             },
             glazing_area: Quantity {
+                // `Assumed`, not `Defined`: 3 m² is the bible's number for a room the bible invented. It is exact
+                // *in the bible*, which is a different kind of fact from exact in the SI, and the first version of
+                // this struct marked it `Defined` — the exactness of a fiction.
                 value: 3.0,
-                prov: Prov::Defined,
-                sigma: 0.0,
+                prov: Prov::Assumed {
+                    basis: "GAME-DESIGN-BIBLE 6.7, the room this module exists to model",
+                },
+                sigma: 0.5,
             },
             shgc: Quantity {
                 value: 0.60,
@@ -464,8 +469,13 @@ impl VapourCompression {
 
 /// Radiative heat a surface rejects, W, by Stefan–Boltzmann.
 ///
-/// `ε σ A (T⁴ − T_surround⁴)`. Both temperatures absolute — a Celsius temperature here makes the answer wrong by
-/// about a factor of 300 and, worse, makes it *look* like a plausible number of watts.
+/// `ε σ A (T⁴ − T_surround⁴)`. Both temperatures absolute.
+///
+/// Passing Celsius makes the answer **smaller**, not larger, and by a factor that grows as the temperature falls:
+/// a 300 K surface rejecting against 273 K gives 143.6 W, while the same surface passed as Celsius (26.85 against
+/// 0) gives 0.0295 W — a factor of 4 874. The earlier version of this doc said "about a factor of 300", which was
+/// an unmeasured guess in a comment whose whole subject was the danger of unmeasured numbers. `tests/thermal.rs`
+/// pins the measured ratio.
 pub fn radiative_rejection(
     area_m2: f64,
     emissivity: f64,
