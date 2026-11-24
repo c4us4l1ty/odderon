@@ -155,6 +155,34 @@ function laptop2026_11_24() {
   ];
 }
 
+/**
+ * The SECOND hardware run, same day, transcribed: control and baseline both 0.767 ms.
+ *
+ * This is the run that printed "disagreement 0.0%" next to the word "Good". With a 1 ms timer, two
+ * readings that differ by less than a tick are indistinguishable, so 0.0% is the display hitting the
+ * floor. The row frame counts are the page's own (`frames` drives each row's floor).
+ */
+function laptop2026_11_24_run2() {
+  const r = (id, ms, frames = 8, extra = {}) => row(id, ms, { frames, ...extra });
+  return [
+    r("baseline", 0.767, 16),
+    r("control", 0.767, 16),
+    r("floor", 0.13, 153),
+    r("floor_tex", 0.26, 240),
+    r("floor_blit", 0.23, 240),
+    r("no_shadow", 0.61, 150),
+    r("shadow_4tap", 0.76, 90),
+    r("no_wall_ribs", 0.73, 100),
+    r("no_aerial", 0.73, 100),
+    r("no_sphere", 0.72, 100),
+    r("no_tonemap", 0.75, 100),
+    r("no_skyglow", 0.75, 100),
+    r("r100", 0.77, 80, { resScale: 1.0 }),
+    r("r050", 0.20, 300, { resScale: 0.5 }),
+    r("r025", 0.06, 400, { resScale: 0.25 }),
+  ];
+}
+
 function healthy() {
   return [
     row("baseline", 2.00, { frames: 100 }),
@@ -243,7 +271,7 @@ console.log("case 4: rows that read exactly 0.00 ms are not reported as savings"
   rows[1] = { ...rows[1], spread: 1.83 };
   const out = summarise(rows);
   check("0.00 ms deltas are not listed as measured", !/measured:.*no_aerial/.test(out), out);
-  check("names them as at-or-below threshold", /NOT findings/.test(out), out);
+  check("names them as at-or-below the bar", /UNDER its own bar|NOT findings/.test(out), out);
 }
 
 console.log("case 5: a render scale is never printed above 1.0");
@@ -274,7 +302,7 @@ console.log("case 6: a delta under the timer floor is not a finding, however it 
   // tickMs = 1 reproduces Chrome's coarsened clock, which is what the laptop actually had. Without
   // it this case runs against Node's fine timer and cannot fail however wrong the page is.
   const out = summarise(laptop2026_11_24(), 1000, 8, 1);
-  const findings = /larger than the threshold:[^\n]*/.exec(out);
+  const findings = /CLEARS its own bar:[^\n]*/.exec(out);
   check("prints a feature-delta line", !!findings, out);
   check("counts the shadow as a finding", /no_shadow|solar/.test(findings ? findings[0] : ""), out);
   check("does NOT count the sphere test as a finding", !/no_sphere|sphere/.test(findings ? findings[0] : "_"), out);
@@ -337,6 +365,32 @@ console.log("case 8: the floor rows measure different OPERATIONS, not the same s
     !/The blit is in fact \*cheaper\*/.test(doc), "the retracted mechanism is still in the document");
   check("GRAPHICS.md withdraws the 11 B/px figure", /withdrawn/.test(doc),
     "the ceiling is still quoted without qualification");
+}
+
+console.log("case 9: a 0.0% error bar is reported as 'better than one tick', not as precision");
+{
+  // Second hardware run, 2026-11-24: control and baseline both printed 0.767 ms, so the page announced
+  // "Good: the instrument agrees with itself to within 0.0%". With a 1 ms timer and 16-frame batches the
+  // 0.1 ms tick cannot resolve any difference below ~0.1% of the baseline, so 0.0% was the DISPLAY
+  // hitting the floor, not the instrument being precise. Claiming precision you cannot resolve is the
+  // same species of error as the refresh-period "blit".
+  const out = summarise(laptop2026_11_24_run2(), 1000, 8, 1);
+  check("does not call an exact tie 'Good'", !/Good: the instrument agrees/.test(out), out);
+  check("names the one-tick limit instead", /BETTER THAN ONE TICK/.test(out), out);
+  check("says 0.0% is not precision", /not precision/.test(out), out);
+}
+
+console.log("case 10: no single threshold is printed as if it governed every row");
+{
+  // The same run printed "vs the larger of the 5% error bar and the timer floor (63 us)" and then listed
+  // a 50 us delta as a finding. Each row is judged against ITS OWN floor, so the headline number was a
+  // summary standing in for a per-row rule -- a self-contradiction in adjacent lines.
+  const out = summarise(laptop2026_11_24_run2(), 1000, 8, 1);
+  const head = /FEATURE DELTAS[^\n]*\n([^\n]*\n)?([^\n]*\n)?([^\n]*\n)?/.exec(out);
+  check("does not print one threshold for all rows",
+    !/vs the larger of the 5% error bar and the timer floor \(\d+ us\)/.test(out), out);
+  check("says each row is judged against its own bar", /EACH ROW is judged against its own/.test(out), out);
+  check("still separates findings from non-findings", /CLEARS its own bar/.test(out) && /UNDER its own bar/.test(out), out);
 }
 
 console.log("");
