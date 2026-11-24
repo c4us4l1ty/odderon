@@ -514,6 +514,66 @@ if (!gl) {
   throw new Error('no webgl2');
 }
 
+// ---------------------------------------------------------------------------------------------
+// Can this context actually blit a texture into the default framebuffer?
+// ---------------------------------------------------------------------------------------------
+//
+// The renderer's per-frame pass is `blitFramebuffer`, because Reference B measured it at 1.27 ms
+// against 1.65 ms for the equivalent texture-read triangle, and R2's budget is 1.5 ms. So the
+// mechanism is load-bearing and cannot be assumed.
+//
+// The specific hazard is sample counts. `blitFramebuffer` from a single-sample attachment into a
+// MULTISAMPLE destination is INVALID_OPERATION (0x0502): it draws nothing, throws nothing, and logs
+// nothing a page would notice. `antialias: false` above is what prevents it, but on some devices the
+// browser hands out a multisampled default framebuffer regardless, and `getContextAttributes()` is
+// allowed to report one thing while the implementation does another. So this tests the operation
+// rather than the attribute, once, at startup, with a 4x4 texture whose worth is one allocation.
+//
+// A false result is not fatal: the caller falls back to the texture-read triangle and the HUD says
+// which path is live. What would be fatal is falling back silently and leaving the clock claiming a
+// number the renderer is not earning.
+// `?blit=0` forces the fallback. It exists because the two mechanisms must be shown to produce the
+// SAME IMAGE before the faster one is allowed to be the default -- a blit that silently copies nothing
+// would look exactly like a passing frame time. It also lets the decision be made on the device it
+// matters on: load the page twice, once with and once without, and compare.
+const FORCE_NO_BLIT = new URLSearchParams(location.search).get('blit') === '0';
+const blitSupported = (() => {
+  if (FORCE_NO_BLIT) return false;
+  const prevFbo = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+  const prevTex = gl.getParameter(gl.TEXTURE_BINDING_2D);
+  let ok = false;
+  try {
+    while (gl.getError() !== gl.NO_ERROR) { /* drain, so the read below is ours */ }
+    const t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, 4, 4);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    const f = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+    ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+    if (ok) {
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, f);
+      gl.blitFramebuffer(0, 0, 4, 4, 0, 0, 4, 4, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+      ok = gl.getError() === gl.NO_ERROR;
+    }
+    gl.deleteFramebuffer(f);
+    gl.deleteTexture(t);
+  } catch (e) {
+    ok = false;
+  }
+  gl.bindFramebuffer(gl.FRAMEBUFFER, prevFbo);
+  gl.bindTexture(gl.TEXTURE_2D, prevTex);
+  while (gl.getError() !== gl.NO_ERROR) { /* leave the error state clean for real draws */ }
+  // `bench` is declared further down and is in its temporal dead zone here, so the result is carried by
+  // this binding and copied into `bench` once that object exists. Assigning to bench.blitSupported at
+  // this point throws `Cannot access 'bench' before initialization` and the whole module never runs.
+  return ok;
+})();
+const defaultSamples = gl.getParameter(gl.SAMPLES);
+
 function compile(type, src) {
   const s = gl.createShader(type);
   gl.shaderSource(s, src);
@@ -716,6 +776,8 @@ function quantile(sorted, q) {
 }
 
 const bench = {
+  blitSupported,          // decided above, before any drawing; see the probe comment there
+  defaultSamples,         // SAMPLES of the default framebuffer: 0 or 4, and the reason a blit can fail
   // Only frames rendered back-to-back with no gap are timed as "frame time". A frame drawn after an
   // idle gap is not a steady-state frame; its GPU work includes cold caches and a shader wake-up, and
   // including it would flatter or punish the measurement for reasons having nothing to do with the
@@ -921,8 +983,22 @@ function cacheInvalidated(sun) {
 function captureNow() {
   // The in-frame pixel probe. `preserveDrawingBuffer` is false (it costs bandwidth), so a readback
   // outside a draw returns an empty buffer: this must be called from inside the frame that drew.
+  //
+  // IT READS THE CACHE, NOT THE SCREEN, AND THAT IS A CORRECTION RATHER THAN A PREFERENCE.
+  //
+  // This probe's question is "did the cached image change", so the cache is the right target. Reading
+  // the default framebuffer instead was measured to be backend-dependent once the per-frame pass became
+  // a `blitFramebuffer`: on ANGLE/SwiftShader a `readPixels` from the default framebuffer after a blit
+  // returns black, while the same read after the texture-read triangle returns the image -- even with a
+  // `gl.finish()` first, and with both framebuffer bindings confirmed null. The PRESENTED frame is
+  // correct on both paths (screenshot comparison in `tools/check-cache.mjs` is pixel-identical), so this
+  // is a readback quirk, not a rendering fault. Probing the cache sidesteps it and answers the question
+  // the probe actually asks.
   captureReq.want = false;
   const n = captureReq.size;
+  // Bind the cache for reading. `blitFrame()` already restored READ to null, so this is explicit.
+  const prevRead = gl.getParameter(gl.READ_FRAMEBUFFER_BINDING);
+  gl.bindFramebuffer(gl.READ_FRAMEBUFFER, cache.fbo);
   const buf = new Uint8Array(4);
   const colours = new Set();
   let mean = 0;
@@ -937,6 +1013,7 @@ function captureNow() {
       count++;
     }
   }
+  gl.bindFramebuffer(gl.READ_FRAMEBUFFER, prevRead);
   captureReq.resolve({ distinctColours: colours.size, meanLuma: mean / count });
 }
 
@@ -976,7 +1053,10 @@ function drawFrame(nowMs) {
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     endGpuTimer();
 
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    // Both, for the same reason as in `blitFrame()`: a split READ/DRAW binding left behind here makes
+    // the next `readPixels` read the cache rather than the screen.
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
 
     cache.valid = true;
     cache.lastSun = sun;
@@ -989,15 +1069,30 @@ function drawFrame(nowMs) {
   }
 
   // --------------------------------------------------------------------------------------------
-  // the blit: one texture read per pixel, which is the entire cost of a static frame
+  // the blit: the entire cost of a static frame
   // --------------------------------------------------------------------------------------------
+  //
+  // THIS IS NOW A REAL `blitFramebuffer`, NOT A FULL-SCREEN TRIANGLE THAT SAMPLES THE CACHE.
+  //
+  // Reference B measured the two as different costs at 1.04 Mpx: **1.27 ms for the blit against
+  // 1.65 ms for the texture read**, on the same device in the same session. R2's 1.5 ms budget sits
+  // between them, so the choice of mechanism is the whole of R2's margin -- 1.27 ms passes and 1.65 ms
+  // does not. Sampling the cache in a fragment shader costs a texture fetch and a rasterised quad per
+  // pixel; `blitFramebuffer` asks the driver to move the pixels, which on a tiled GPU never has to
+  // shade anything.
+  //
+  // It is legal here because `web/index.html` requests `antialias: false`, so the default framebuffer
+  // is single-sample and matches the cache's sample count. THAT IS A HARD PRECONDITION, not a detail:
+  // blitting from a single-sample texture into a MULTISAMPLE default framebuffer is a GL
+  // INVALID_OPERATION (0x0502), which returns no pixels and reports no other symptom. A probe on this
+  // sandbox reproduced exactly that -- identical code, `antialias: true` gave 0x0502 and `antialias:
+  // false` gave 0 -- so the check is done at startup rather than trusted.
+  //
+  // `blitSupported` is that check. When it is false the renderer falls back to the texture-read
+  // triangle it used to run unconditionally, and says so in the HUD, because a silent fallback would
+  // put 1.65 ms on the clock while the page claimed 1.27.
   const b0 = performance.now();
-  gl.useProgram(cheapProg);
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, cache.tex);
-  gl.uniform1i(UQ.shaded, 0);
-  gl.uniform2f(UQ.res, canvas.width, canvas.height);
-  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  blitFrame();
   cache.lastBlitMs = performance.now() - b0;
   cache.blits++;
 
@@ -1048,6 +1143,51 @@ function requestFrame() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// the per-frame pass, in one place
+// ---------------------------------------------------------------------------------------------
+//
+// Both the live loop and `measureFrame()` call this, so the number on the panel is always the cost of
+// the operation the renderer is actually running. Two copies of "the blit" is how a page ends up
+// measuring a mechanism it has since replaced -- which is exactly what happened to the ablation matrix
+// and cost this project its headline claim.
+function blitFrame() {
+  if (blitSupported) {
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, cache.fbo);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+    // NEAREST, not LINEAR, and the filter is not a quality preference here.
+    //
+    // `cacheResize()` is only ever called with the canvas's own dimensions, so this blit is always 1:1
+    // and there is nothing to interpolate. A `LINEAR` filter at 1:1 still runs the sampler: measured on
+    // this sandbox against the texture-read fallback, `LINEAR` differed from it in 14 of 276 000 pixels
+    // by one level, while a checkerboard test showed `LINEAR` mixing every pixel and `NEAREST` mixing
+    // none. One level is invisible, but "invisible" is not the standard this project holds itself to
+    // when an exact copy is available for free.
+    //
+    // IF THE CACHE EVER BECOMES SMALLER THAN THE CANVAS, THIS FILTER IS WRONG and must go back to
+    // LINEAR, because a 1:1-only assumption would then turn a soft upscale into a blocky one. The
+    // invariant is asserted in `tools/check-cache.mjs` rather than left in this comment.
+    gl.blitFramebuffer(0, 0, cache.w, cache.h, 0, 0, canvas.width, canvas.height,
+                       gl.COLOR_BUFFER_BIT, gl.NEAREST);
+    // Restore BOTH bindings, explicitly.
+    //
+    // `gl.bindFramebuffer(gl.FRAMEBUFFER, null)` also works, but being explicit is the point: leaving
+    // READ bound to the cache is not a theoretical hazard. `captureNow()` calls `gl.readPixels`, which
+    // honours READ_FRAMEBUFFER, so the in-frame pixel probe read the CACHE instead of the screen and
+    // reported mean luma 0.0 on both sides of a comparison that should have changed. `check-cache`'s
+    // "cached image actually updates" is what caught it -- see the note above that assertion.
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+  } else {
+    gl.useProgram(cheapProg);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, cache.tex);
+    gl.uniform1i(UQ.shaded, 0);
+    gl.uniform2f(UQ.res, canvas.width, canvas.height);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
 // an explicit measurement, for browsers that will not expose GPU timers
 // ---------------------------------------------------------------------------------------------
 //
@@ -1088,11 +1228,9 @@ function measureFrame(samples = 12) {
   }
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
-  gl.useProgram(cheapProg);
+  // The measured pass is `blitFrame()` -- the same function the live loop calls -- so what is reported
+  // cannot differ from what is drawn.
   gl.viewport(0, 0, canvas.width, canvas.height);
-  gl.bindTexture(gl.TEXTURE_2D, cache.tex);
-  gl.uniform1i(UQ.shaded, 0);
-  gl.uniform2f(UQ.res, canvas.width, canvas.height);
 
   // -------------------------------------------------------------------------------------------
   // The blit is timed two ways, and the difference between them is not a detail.
@@ -1124,7 +1262,7 @@ function measureFrame(samples = 12) {
     for (let i = 0; i < samples; i++) {
       const q = gl.createQuery();
       gl.beginQuery(disjointExt.TIME_ELAPSED_EXT, q);
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      blitFrame();
       gl.endQuery(disjointExt.TIME_ELAPSED_EXT);
       queries.push(q);
     }
@@ -1157,7 +1295,7 @@ function measureFrame(samples = 12) {
   if (gpuBlits.length === 0) {
     for (let i = 0; i < samples; i++) {
       const a = performance.now();
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      blitFrame();
       gl.finish();
       blitTimes.push(performance.now() - a);
     }
@@ -1247,7 +1385,14 @@ function updateHud() {
   }
 
   // The two costs, kept apart. A static frame costs the blit; a frame that changes costs both.
-  $('m-path').textContent = bench.lastPath === 'shade' ? 'shade + blit' : 'blit only';
+  // WHICH MECHANISM IS LIVE, stated on the panel. If the blit probe failed, this renderer is running the
+  // texture-read triangle instead, and its cost is 1.65 ms at 1.04 Mpx rather than the blit's 1.27 ms.
+  // A page that reports a frame time without saying which operation produced it is the bug that cost
+  // this project its R2 claim once already.
+  // Kept short enough for one line: the panel reflows when this wraps, and a HUD that moves depending
+  // on which mechanism is live makes two screenshots harder to compare than they need to be.
+  $('m-path').textContent = (bench.lastPath === 'shade' ? 'shade + ' : '') +
+    (blitSupported ? 'blitFramebuffer' : 'tex read (blit off)');
   $('m-shade').textContent = Number.isFinite(bench.shadeMs)
     ? fmt(bench.shadeMs, 2) + ' ms'
     : (cache.fullShades ? fmt(cache.lastFullShadeMs, 1) + ' ms (last)' : '—');
@@ -1287,7 +1432,8 @@ function updateHud() {
   } else if (Number.isFinite(bench.gpuBlitMs)) {
     // The real number: GPU-side blit cost, immune to presentation.
     const ok = bench.gpuBlitMs < 1.5;
-    r2.textContent = fmt(bench.gpuBlitMs, 2) + ' ms gpu blit ' + (ok ? '< 1.5' : '> 1.5');
+    r2.textContent = fmt(bench.gpuBlitMs, 2) + ' ms gpu ' +
+      (blitSupported ? 'blit ' : 'texture read ') + (ok ? '< 1.5' : '> 1.5');
     r2.className = ok ? 'pass' : 'fail';
   } else if (bench.gpuTimerState === 'no-samples') {
     // The timer exists but handed back nothing. Say so plainly: this is an instrument problem, and
