@@ -183,6 +183,44 @@ jobs:
         if: always()
         run: node tools/check-classes-selftest.mjs
 
+  shell-claims:
+    name: shell claims (1, 3, 5-artifact)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install --no-audit --no-fund
+      # `BUILD-PLAN.md` §4 claim 3 is "idle is nothing scheduled": zero rAF calls, zero timers, zero
+      # allocations after 250 ms of no input. The instrument already measured that, but only when a human
+      # remembered to run it -- `tools/check-shell.mjs` was never wired into CI, so the claim rested on
+      # somebody having looked at one point. That is the stored-assumption failure this project keeps
+      # finding, so the check now runs on every push and can fail the branch.
+      #
+      # What this job CANNOT do: measure frame time. The runner has SwiftShader, a CPU rasteriser, so a
+      # timing number from here is meaningless -- `tools/check-shell.mjs` says so in its own output and
+      # claims 4's 1.25 ms comes from real hardware (Reference B). What is gated here is the *behaviour*:
+      # that the shader compiles, that the page renders, and that it stops drawing when idle.
+      - name: shell instrument (render-on-demand + claim 1 + claim 3)
+        run: node tools/unpack-chromium.mjs && node tools/check-shell.mjs
+        env:
+          LD_LIBRARY_PATH: /tmp/al2023/lib
+      - name: screenshot the frame
+        # Claim 5 is a judgement, and the only way to put a judgement in front of a reviewer is pixels.
+        # The capture is uploaded rather than committed: R5 forbids binary assets in the tree, and
+        # `.artifacts/` is gitignored for exactly this purpose.
+        if: always()
+        run: node tools/screenshot.mjs --width 1600 --height 1000 --out .artifacts/shell.png
+        env:
+          LD_LIBRARY_PATH: /tmp/al2023/lib
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shell-frame
+          path: .artifacts/shell.png
+          if-no-files-found: warn
+
   # -------------------------------------------------------------------------------------------
   # STYLE GATES. Armed 2026-11-23, once both were green on `main` — the condition docs/BUILD-PLAN.md
   # §3 set for arming them. Until then they were `continue-on-error: true`, which meant the gate could
