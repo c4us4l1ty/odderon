@@ -85,9 +85,12 @@ pub const ZERO_CELSIUS: f64 = 273.15;
 pub struct Zone {
     /// Heat capacity of everything that responds on the fast timescale, J/K.
     ///
-    /// The air alone is ~75 kJ/K for a 25 m² room at 2.5 m (75 kg × 1005 J/kg·K), which would swing several
-    /// kelvin per minute. The effective figure for a furnished room is more than that, and the difference is
+    /// The air alone is ~75 kJ/K for a 25 m² room at 2.5 m (75 kg × 1005 J/kg·K), which would swing very much
+    /// faster than "minutes". The effective figure for a furnished room is 1.59× that, and the difference is
     /// exactly what `Assumed` is for: the air number is measurable, the effective number is a modelling choice.
+    /// Measured against the three plausible capacities, the ten-minute drop is 17.7 K at 30 kJ/K, 8.9 K at the
+    /// air alone, and 5.9 K at 120 kJ/K — so "several kelvin over minutes" holds across the range and the 120 kJ/K
+    /// is choosing where in it to sit, not making the claim true.
     ///
     /// The number here was once given as "~30 kJ/K", with `25 × 2.5 × 1.2 × 1005` written out beside it in
     /// justification — a product that is 75 375, not 30 000. The stated ratio "~4x the air" was wrong for the
