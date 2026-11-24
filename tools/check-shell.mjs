@@ -16,13 +16,13 @@
  */
 
 import { createServer } from "node:http";
+import { resolveStaticPath, DIST_ROOT } from "./static-path.mjs";
 import { readFile, stat } from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
-const webRoot = join(root, "web");
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -35,11 +35,14 @@ const MIME = {
 
 const server = createServer(async (req, res) => {
   try {
-    const url = new URL(req.url, "http://x");
-    let path = url.pathname === "/" ? "/index.html" : url.pathname;
-    if (path.startsWith("/dist/")) {
+    // Same resolver as `tools/serve.mjs`. This file was already safe because it normalised with
+    // `new URL()` before testing the `/dist/` prefix, but it was safe by accident -- the URL parser
+    // was there for convenience, not containment -- so it was one refactor away from the bug that
+    // actually landed in serve.mjs. Sharing the implementation is what stops that.
+    const f = resolveStaticPath(req.url);
+    if (f === null) throw new Error("forbidden");
+    if (f === DIST_ROOT || f.startsWith(DIST_ROOT + "/")) {
       // wasm, when it exists
-      const f = join(root, path);
       const body = await readFile(f);
       res.writeHead(200, {
         "content-type": MIME[extname(f)] ?? "application/octet-stream",
@@ -48,7 +51,6 @@ const server = createServer(async (req, res) => {
       res.end(body);
       return;
     }
-    const f = join(webRoot, path);
     const s = await stat(f);
     if (!s.isFile()) throw new Error("not a file");
     const body = await readFile(f);

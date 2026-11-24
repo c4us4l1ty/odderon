@@ -26,6 +26,32 @@ npm run fetch:wasm          # pull the latest `wasm` artifact into ./dist
 
 `fetch:wasm` uses `gh run download`, so it needs the `gh` CLI authenticated (it is, in this sandbox).
 
+### The static server, and a real bug it had
+
+`tools/serve.mjs` is the preview server; `tools/check-shell.mjs` and `tools/check-cache.mjs` each start
+one too, so their browser runs are self-contained. That is **three** static servers, and on 2026-11-22 a
+bug hunt found that all three handled paths differently, and **two leaked files**:
+
+| file | behaviour before the fix |
+| --- | --- |
+| `serve.mjs` | `GET /dist/../.git/config` returned **the repository's own git config, status 200, 435 bytes**. The `/dist/` prefix was tested on the *raw* request path, before normalising, and the containment check that followed was a bare `startsWith`. |
+| `check-cache.mjs` | `GET /../.git/config` returned the same file. It had **no containment check at all** — just `readFile(join(webRoot, req.url))`. |
+| `check-shell.mjs` | Correct, but only by accident: it happened to use `new URL()` first, which collapsed the `..`. Nothing in that file said the URL parser was load-bearing for security. |
+
+All three now call one resolver, `tools/static-path.mjs`, and `node tools/check-static-path.mjs` (also a
+CI step, and `npm run check:paths`) asserts the property that actually matters — **containment**: every
+resolved path lies inside `web/` or `dist/`, or the request is refused. It also greps every file that
+imports `node:http` and fails if any of them hand-rolls `join(root, req.url)` again, because the bug was
+a copy-paste problem rather than a typo.
+
+Two notes on how the test is written, both learned the hard way while writing it:
+
+- It asserts *containment*, not "returns null". A traversal that normalises to `web/.git/config` is
+  **safe** — the file does not exist — so asserting null would fail on correct code and would push the
+  resolver toward conflating "forbidden" with "absent".
+- It strips comments before scanning source. The first version flagged the comments that *explain* the
+  bug, and a checker that fails on prose is one people learn to ignore.
+
 ---
 
 ## 2. Cross-platform determinism check

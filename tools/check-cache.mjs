@@ -18,20 +18,23 @@
 
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { dirname, extname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { extname } from "node:path";
 import puppeteer from "puppeteer-core";
 import chromium from "@sparticuz/chromium";
+import { resolveStaticPath } from "./static-path.mjs";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const webRoot = resolve(here, "..", "web");
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".mjs": "text/javascript" };
 
 const server = createServer(async (req, res) => {
   try {
-    const p = req.url === "/" ? "/index.html" : req.url.split("?")[0];
-    const b = await readFile(join(webRoot, p));
-    res.writeHead(200, { "content-type": MIME[extname(p)] ?? "text/plain" }).end(b);
+    // This used to be `readFile(join(webRoot, req.url))` with no containment check at all, so
+    // `/../.git/config` was served from `<repo>/.git/config`. It was the third copy of the same
+    // hand-rolled static server, and the only one with no check -- which is the argument for having
+    // one implementation rather than three that are each almost right.
+    const f = resolveStaticPath(req.url);
+    if (f === null) throw new Error("forbidden");
+    const b = await readFile(f);
+    res.writeHead(200, { "content-type": MIME[extname(f)] ?? "text/plain" }).end(b);
   } catch {
     res.writeHead(404).end("not found");
   }

@@ -14,6 +14,8 @@
     "install:chromium": "node -e \"require('@sparticuz/chromium').executablePath().then(p=>console.log('chromium:',p))\"",
     "serve": "node tools/serve.mjs",
     "check:shell": "node tools/check-shell.mjs",
+    "check:paths": "node tools/check-static-path.mjs",
+    "capture:page": "node tools/capture-page.mjs",
     "start": "node tools/serve.mjs",
     "check:ablation": "node tools/check-ablation.mjs",
     "check:classes": "node tools/check-classes.mjs && node tools/check-classes-selftest.mjs"
