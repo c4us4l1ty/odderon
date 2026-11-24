@@ -378,24 +378,32 @@ fn a_step_conserves_energy() {
         "stored {stored:.6} J vs an independent balance of {expected:.6} J"
     );
 
-    // A single explicit step with no cooling must warm a room that is below its free-float temperature, and this
-    // is the sign check that the inlined balance above cannot make on its own.
-    let cold = ZoneState {
-        temperature_k: 20.0 + ZERO_CELSIUS,
+    // Sign checks either side of the free-float point -- taken *from* that point rather than from numbers guessed
+    // to be either side of it. The first version used 60 C for "above", which is below this room's 73.67 C
+    // equilibrium: the room correctly warmed, and the test failed. Guessing a temperature and hoping it lands on
+    // the right side of an unstated equilibrium is the same error as guessing the equilibrium.
+    let equilibrium = outdoors.temperature_k + (solar + internal) / ua;
+    assert!(
+        (equilibrium - ZERO_CELSIUS - 73.67).abs() < 0.01,
+        "this room's free-float point is 73.67 C, got {:.2} C",
+        equilibrium - ZERO_CELSIUS
+    );
+    let below = ZoneState {
+        temperature_k: equilibrium - 5.0,
+    };
+    let above = ZoneState {
+        temperature_k: equilibrium + 5.0,
     };
     assert!(
-        zone.step(&cold, &outdoors, &occupant(), 0.0, dt)
+        zone.step(&below, &outdoors, &occupant(), 0.0, dt)
             .temperature_k
-            > cold.temperature_k,
+            > below.temperature_k,
         "a room below its equilibrium must warm"
     );
-    let hot = ZoneState {
-        temperature_k: 60.0 + ZERO_CELSIUS,
-    };
     assert!(
-        zone.step(&hot, &outdoors, &occupant(), 0.0, dt)
+        zone.step(&above, &outdoors, &occupant(), 0.0, dt)
             .temperature_k
-            < hot.temperature_k,
+            < above.temperature_k,
         "a room above its equilibrium must cool"
     );
 }
