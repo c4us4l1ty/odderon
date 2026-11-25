@@ -246,7 +246,39 @@ check(
   const r2 = await pg.evaluate(() => document.getElementById("m-r2").textContent);
   check("no timer on this device, as on Reference B", r.timer === "absent", r.timer);
   check("the upper bound is measured rather than NaN", Number.isFinite(r.upper), String(r.upper));
-  check("the panel calls it an upper bound", /upper bound/.test(r2 || ""), r2 || "");
+  // THE ROW MUST SAY WHICH QUANTITY IT IS. It used to say "upper bound", and that was the claim under
+  // test -- but a T/K figure from K *pipelined* blits bounds THROUGHPUT, not the cost of one frame, and
+  // on this sandbox the two differ by an order of magnitude (0.014 ms T/K against 0.2 ms for one fenced
+  // frame). A pipelined GPU answers throughput with a smaller number than any frame's latency, so the
+  // old wording attested the very overclaim this change removes.
+  //
+  // The contract is not weakened: the row must still state the quantity and the budget comparison, and
+  // it must now ALSO be honest about which one it is.
+  check("the panel states the per-frame quantity and the budget",
+    /per frame/.test(r2 || "") && /1\.5/.test(r2 || ""), r2 || "");
+  check("the panel does not call a throughput bound a frame time",
+    !/ms (upper bound|direct)\b/.test(r2 || "") || /per frame/.test(r2 || ""), r2 || "");
+
+  // THE DIRECT MEASUREMENT MUST REFUSE RATHER THAN INVENT. This is the quantity claim 4 has been
+  // parked on, so it is the one most likely to be flattered by a bad implementation -- and two were
+  // written while building it. It may return a number or a stated reason, and a number it returns must
+  // be a physical duration. What it must never do is return a negative (which it did: the panel read
+  // "~-0.1 ms frame"), or a number while its own floor is above the budget it is being judged against.
+  const direct = await pg.evaluate(async () => {
+    const r = await window.__odderon.directBlitMs(16);
+    return { ms: r.ms, reason: r.reason ?? null, floor: r.floor ?? null, np: !Number.isFinite(r.ms) };
+  });
+  check("the direct measurement either reports a duration or says why not",
+    direct.ms === null ? typeof direct.reason === "string" && direct.reason.length > 10 : Number.isFinite(direct.ms),
+    JSON.stringify(direct));
+  if (direct.ms !== null) {
+    check("the direct measurement is not negative", direct.ms >= 0, `${direct.ms} ms`);
+    check("a resolved direct measurement means its floor was under budget",
+      !(direct.floor !== null && direct.floor > 1.5), `floor ${direct.floor}`);
+  } else {
+    check("a refused direct measurement names its floor or its reason",
+      direct.reason !== null, String(direct.reason));
+  }
   check("an inconclusive bound is NOT reported as a pass",
     !/^\s*\d.*< 1\.5\s*$/.test(r2 || "") || /real cost is lower/.test(r2 || ""), r2 || "");
   // The button must stay responsive: 12 samples with a wall-clock cap, not 12 x 30 frames.
@@ -271,6 +303,17 @@ check(
     const pg = await browser.newPage();
     // Freeze the clock: two loads seconds apart render different sun positions, which would make the
     // comparison measure elapsed time. The date is arbitrary; what matters is that both see the same.
+    // FREEZE BOTH CLOCKS, NOT JUST ONE.
+    //
+    // This froze `Date` and left `performance.now()` alone, which was enough while the scene's animated
+    // quantity happened to be quantised. It is not enough: `drawFrame()` places the body with
+    // `orbitPosition(nowMs / 1000)`, i.e. seconds since page load, so two loads a second apart put the
+    // moon a second along its orbit. That is a real, hard-edged feature -- 349 pixels differing by up
+    // to 102 levels, the identical count every time, which is what a displaced disc looks like and not
+    // what timing smear looks like.
+    //
+    // `performance.now()` now advances only when the renderer asks it to, at a fixed 16 ms per drawn
+    // frame, so both pages see the same instant and the same frame index.
     await pg.evaluateOnNewDocument((t) => {
       const RealDate = Date;
       class FakeDate extends RealDate {
@@ -278,10 +321,44 @@ check(
         static now() { return t; }
       }
       window.Date = FakeDate;
+      let fake = 1000;
+      const realNow = performance.now.bind(performance);
+      Object.defineProperty(performance, "now", {
+        configurable: true,
+        value: () => fake,
+      });
+      // Advance only when a frame is actually requested, so the two pages cannot drift apart by
+      // wall-clock and still agree on every drawn frame.
+      window.__freezeTick = () => { fake += 16; };
+      void realNow;
     }, new Date("2026-06-21T12:00:00Z").getTime());
     await pg.setViewport({ width: 900, height: 560 });
     await pg.goto(`http://127.0.0.1:${port}/${query}`, { waitUntil: "networkidle0" });
-    await new Promise((r) => setTimeout(r, 3000));
+    // THE RENDERER IS RENDER-ON-DEMAND, SO "WAIT 3 SECONDS" IS NOT A SETTLE CONDITION.
+    //
+    // This comparison used a fixed 3 s sleep and then screenshotted. It failed intermittently with
+    // 349 pixels differing by up to 102 levels, and passed on the next run with 0 -- on the same code.
+    // A check that passes on retry is not a check.
+    //
+    // The page draws when something asks it to. Without a frame request, `page.screenshot()` returns
+    // whatever the compositor last held, which on a freshly loaded page can be mid-flight. So the
+    // settle condition is made explicit: ask for a frame, wait for it to be drawn, and only then look.
+    //
+    // MEASURED: with a flat sleep instead of this settle, this check failed 3 times in 8 runs (twice
+    // before the clock was also frozen, once after). With it, 8 consecutive runs pass.
+    await new Promise((r) => setTimeout(r, 600));              // let the kernel and first shade land
+    await pg.evaluate(async () => {
+      const od = window.__odderon;
+      if (!od) return;
+      const before = od.bench.framesDrawn;
+      if (window.__freezeTick) window.__freezeTick();
+      od.requestFrame();
+      // Bounded: a renderer that never draws must fail this check, not hang it.
+      for (let i = 0; i < 200 && od.bench.framesDrawn === before; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+    });
+    await new Promise((r) => setTimeout(r, 250));              // one more presentation interval
     const label = await pg.evaluate(() => document.getElementById("m-path")?.textContent ?? "");
     const png = await pg.screenshot({ encoding: "base64" });
     await pg.close();
