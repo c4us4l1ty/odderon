@@ -534,7 +534,13 @@ pub fn radiator_temperature(
     }
     if heat_load_w < 0.0
         || area_m2 <= 0.0
-        || !(0.0..=1.0).contains(&emissivity)
+        // `emissivity` must be *strictly* positive. The inversion divides by it, and a zero-emissivity
+        // surface rejects no heat at any temperature: a positive load then has no finite solution and a
+        // zero load has infinitely many, so neither is a temperature to return. The earlier version
+        // admitted `0` through an inclusive range and returned `inf` for a positive load and `NaN` for a
+        // zero one -- a reading where the contract promises `None`. NaN is excluded by the range test
+        // itself, since `NaN > 0.0` is false.
+        || !(emissivity > 0.0 && emissivity <= 1.0)
         || surroundings_k < 0.0
     {
         return None;

@@ -220,6 +220,31 @@ if (ex) {
     `NaN -> ${clamp(1, NaN, 600.0).toFixed(2)} K, Infinity -> ${clamp(1, Infinity, 600.0).toFixed(2)} K`,
   );
 
+  // THE TRAJECTORY'S COST IS A CLAIM, AND A CLAIM NEEDS AN INSTRUMENT. The kernel re-simulates from
+  // t=0 on every call (see `room_temperature_after`: stateless on purpose, for determinism, replay and
+  // seekability), so a query at time `t` costs `t / ROOM_STEP_S` Euler steps. That is a real O(t/step)
+  // and the comment in lib.rs says it is "nothing" -- which used to be an unmeasured assertion. This
+  // times the worst-case call (the two-hour cap) against the 1.5 ms frame budget and holds it below a
+  // few percent. If a future change makes the step loop expensive, or shrinks the step so the step count
+  // explodes, this fails rather than the claim quietly becoming false. Measured at 2.57 us = 0.17 %.
+  const t7200 = 7200.0;
+  // The step count is DERIVED from the kernel's own source constant, not written here: a hardcoded
+  // "240 steps" would be wrong the moment ROOM_STEP_S changes, and the message would then describe a run
+  // that did not happen. `src` above is the HTML, so the kernel is read separately.
+  const kernelSrc = await readFile(join(ROOT, "crates", "odderon-dmath-wasm", "src", "lib.rs"), "utf8");
+  const stepS = Number((/^const ROOM_STEP_S: f64 = ([0-9.]+);/m.exec(kernelSrc) || [])[1]);
+  const stepsAtCap = Number.isFinite(stepS) && stepS > 0 ? Math.round(t7200 / stepS) : 0;
+  for (let i = 0; i < 500; i++) ex.room_temperature_from_k(1, 300.0, t7200);   // warm up the timer path
+  const TRAJ_SAMPLES = 20000;
+  const ta = process.hrtime.bigint();
+  for (let i = 0; i < TRAJ_SAMPLES; i++) ex.room_temperature_from_k(1, 300.0, t7200);
+  const worstUs = Number(process.hrtime.bigint() - ta) / 1000 / TRAJ_SAMPLES;
+  check(
+    "the worst-case trajectory call stays a small fraction of the frame budget",
+    worstUs < 150.0,   // 150 us = 10 % of the 1.5 ms budget; the measured value is 2.57 us
+    `${worstUs.toFixed(2)} us per 7200 s call (${stepsAtCap} steps), ${(worstUs / 1500 * 100).toFixed(2)}% of the 1.5 ms budget`,
+  );
+
   // CONCAVE, NOT LINEAR. The whole difference between a first-order response and a fade.
   const d1 = t0 - t60;      // 0..60
   const d5 = K(240) - t300; // 240..300

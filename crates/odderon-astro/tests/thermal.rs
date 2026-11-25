@@ -671,6 +671,43 @@ fn radiative_rejection_inverts_to_a_radiator_temperature() {
     );
 }
 
+/// A zero-emissivity radiator rejects no heat at any temperature, so the sizing inversion has no answer.
+///
+/// The contract is `Option<f64>` and `None` means "the question has no answer". With `emissivity = 0` the
+/// equation `Q = εσA(T⁴ − T_surr⁴)` reduces to `Q = 0`: a positive load is unsatisfiable at every temperature
+/// and a zero load is satisfied by *every* temperature, so neither yields a single temperature to return. The
+/// earlier version admitted `0` through an inclusive range and returned `inf` for a positive load and `NaN`
+/// for a zero one -- a reading of `Infinity`/`NaN` where there is no value, the same defect class as the room
+/// clamp. This gate pins `None` on both sides and that a tiny positive emissivity still answers.
+#[test]
+fn a_zero_emissivity_radiator_has_no_temperature_to_settle_at() {
+    // A positive load: no temperature rejects it through a zero-emissivity surface.
+    assert_eq!(
+        radiator_temperature(1000.0, 1.0, 0.0, 300.0),
+        None,
+        "a zero-emissivity surface cannot reject a positive load at any temperature"
+    );
+    // A zero load: the equation is satisfied by every temperature, so there is no unique answer either.
+    assert_eq!(
+        radiator_temperature(0.0, 1.0, 0.0, 300.0),
+        None,
+        "with zero load and zero emissivity every temperature satisfies the equation; no single temperature"
+    );
+    // NaN emissivity is still refused, not passed through to the division.
+    assert_eq!(
+        radiator_temperature(1000.0, 1.0, f64::NAN, 300.0),
+        None,
+        "a NaN emissivity is not a physical value"
+    );
+    // And the boundary just inside still answers -- the gate is not rejecting the whole valid range.
+    let just_inside =
+        radiator_temperature(1000.0, 1.0, 1e-9, 300.0).expect("a positive emissivity");
+    assert!(
+        just_inside.is_finite() && just_inside > 300.0,
+        "a tiny positive emissivity must still return a finite, hot temperature, got {just_inside}"
+    );
+}
+
 /// Radiation scales as the fourth power — of the *difference*, which is why the naive ratio is not 16.
 ///
 /// Doubling a surface temperature from 300 K to 600 K multiplies `T⁴` by 16, but the rejated quantity is
