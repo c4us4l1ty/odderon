@@ -186,6 +186,14 @@ jobs:
       # clone the page said `— no kernel` over a hole onto a flat horizon, and a reader reasonably
       # concluded that the hole WAS the room. A missing build output is not a defect; reporting it as an
       # unexplained blank is.
+      # THE FULL CLOCK: the kernel's trajectory, the page's rate against wall time, the cache actually
+      # re-shading, and R2 surviving a twenty-second run. This is the check that reads the cache rather than
+      # a screenshot, because a screenshot of this page has a stopwatch drawn on it -- the earlier version
+      # measured the panel's own digits and called it the room.
+      - name: time in the room (the clock, the cache, and R2)
+        run: node tools/check-room-clock.mjs
+        env:
+          LD_LIBRARY_PATH: /tmp/al2023/lib
       - name: a missing kernel is declared, explained and actionable
         run: node tools/check-missing-kernel.mjs
         env:
@@ -326,6 +334,14 @@ jobs:
       # cache (which renders the room once, before the kernel answers, and blits it forever).
       - name: the room's light comes from the thermal kernel (source contract)
         run: node tools/check-room.mjs --static
+      # CLAIM 2's SECOND HALF, THE PART THAT NEEDS TIME. "The room cools" is a claim about a trajectory, and
+      # this half needs neither the wasm kernel nor a browser: it pins the page's clock constants, the cache
+      # rule that makes the trajectory reach the picture, and the T^4 coupling that is the only physically
+      # available way visible pixels can carry it. It runs here so a page that drops the temperature from
+      # `cacheInvalidated()` -- which happened, and which four earlier pixel checks could not see -- fails
+      # without waiting for the wasm job.
+      - name: the room cools, and the page's clock is derived (source contract)
+        run: node tools/check-room-clock.mjs --static
       - name: saved picture's panel matches the page
         run: node tools/check-hud-capture.mjs
         env:

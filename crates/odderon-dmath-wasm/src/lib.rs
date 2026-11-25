@@ -231,6 +231,113 @@ fn reference_internal() -> odderon_astro::thermal::InternalGain {
     odderon_astro::thermal::InternalGain { watts: 300.0 }
 }
 
+// ---------------------------------------------------------------------------------------------
+// THE CLOCK: what the room is doing a given number of seconds after the curtain came down.
+// ---------------------------------------------------------------------------------------------
+//
+// The four functions above are STEADY-STATE numbers: flip the curtain and they snap to their new values.
+// That is arithmetically right and it is not what happens to a room. `tests/thermal.rs` measures the
+// other half -- **5.9 K in the first ten minutes** from a free-floating start, against a 44.4 min time
+// constant -- and until now that trajectory was unreachable from the page: the room could be a
+// calculator, not a simulation.
+//
+// ## Stateless on purpose
+//
+// `room_state_at(t)` RE-SIMULATES from the settled starting point every time it is called. It would be
+// cheaper to keep the zone state in a `static mut` and step it, and it would be wrong for three reasons
+// this project has already paid for:
+//
+//   1. **Determinism.** A mutable global makes the answer depend on call history, so the same `t` gives
+//      different temperatures depending on how the host got there. Every other export here is a pure
+//      function of its arguments; this one stays one.
+//   2. **Replay.** A mission replay has to be able to ask "what was the room doing at t = 300 s" without
+//      having simulated the 299 seconds before it.
+//   3. **Seekability.** The page's clock can be stopped, restarted, or dragged, and nothing accumulates.
+//
+// The cost is 600/30 = 20 Euler steps for a ten-minute query, on a budget of one call per frame change.
+// Measured below; it is nothing.
+//
+// ## The step size is the model's, not a chosen one
+//
+// 30 s because `tests/thermal.rs` uses 30 s and asserts it is inside `max_stable_step()`. Taking the
+// bound and dividing by two here instead would be a second, silently different discretisation of the
+// same physics, which is the "two constants for one quantity" defect this file has already been
+// corrected for once.
+
+/// The step the trajectory is integrated at, s. The test suite's own.
+const ROOM_STEP_S: f64 = 30.0;
+
+/// The longest trajectory the page may ask for, s (two hours).
+///
+/// A host that passes a nonsense `t` gets a clamped answer rather than an unbounded loop: this is a
+/// `no_std` cdylib whose only failure mode is a trap, and a trap in the renderer is a blank page.
+const ROOM_MAX_T_S: f64 = 7200.0;
+
+/// Zone temperature `elapsed_s` seconds after `curtain_closed` became true, kelvin.
+///
+/// The starting point is the room's SETTLED temperature with the curtain in its *previous* state --
+/// which is where a real room is when someone gets up and pulls the curtain. Integrating from the
+/// closed state's own resting temperature would show a room that never moves: it is already there.
+fn room_temperature_after(was_closed: bool, elapsed_s: f64) -> f64 {
+    let outdoors = reference_outdoors();
+    let internal = reference_internal();
+    let before = reference_zone(was_closed);
+    let after = reference_zone(true); // the curtain has closed
+
+    let settled = match before.free_float_temperature(&outdoors, &internal) {
+        Some(t) => t,
+        None => return 0.0, // no conductance => no resting temperature => nothing to report
+    };
+
+    let t = if elapsed_s.is_finite() {
+        elapsed_s.clamp(0.0, ROOM_MAX_T_S)
+    } else {
+        0.0
+    };
+
+    let mut state = odderon_astro::thermal::ZoneState {
+        temperature_k: settled,
+    };
+    let mut elapsed = 0.0;
+    // `while elapsed + step <= t` rather than `while elapsed < t`: the last partial step would be a
+    // different dt from every other one, and an explicit Euler step's error depends on dt. Better to
+    // stop on the last full step than to mix step sizes in one trajectory.
+    while elapsed + ROOM_STEP_S <= t {
+        state = after.step(&state, &outdoors, &internal, 0.0, ROOM_STEP_S);
+        elapsed += ROOM_STEP_S;
+    }
+    state.temperature_k
+}
+
+/// Zone temperature, kelvin, `elapsed_s` seconds after the curtain CLOSES.
+///
+/// `elapsed_s` is floored at 0 and capped at two hours (`ROOM_MAX_T_S`); see `room_temperature_after`.
+#[unsafe(no_mangle)]
+pub extern "C" fn room_temperature_k(elapsed_s: f64) -> f64 {
+    room_temperature_after(false, elapsed_s)
+}
+
+/// The room's SETTLED temperature, kelvin, with the curtain in the given state.
+///
+/// This is the free-floating temperature the zone holds with that much sun coming in -- the room's
+/// answer to "what does it sit at", as opposed to what it is doing on the way there.
+#[unsafe(no_mangle)]
+pub extern "C" fn room_settled_k(curtain: u32) -> f64 {
+    let zone = reference_zone(curtain != 0);
+    zone.free_float_temperature(&reference_outdoors(), &reference_internal())
+        .unwrap_or(0.0)
+}
+
+/// The solar gain, W, at `elapsed_s` after the curtain closes -- the trajectory's energy side.
+///
+/// Equal to `room_solar_w(1)` for every `t`, and exported anyway: the page shows gain and temperature
+/// side by side, and a reader is entitled to see that the gain step is a step and the temperature is not.
+/// It is also the cheapest possible cross-check that the two functions share one fixture.
+#[unsafe(no_mangle)]
+pub extern "C" fn room_solar_w_at(curtain: u32) -> f64 {
+    room_solar_w(curtain)
+}
+
 /// Solar gain through the window, W.
 ///
 /// Open: 800 × 3 × 0.60 = **1440 W**. Closed: 800 × 3 × 0.05 = **120 W**. Those two numbers are the

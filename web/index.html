@@ -144,6 +144,7 @@
   <div class="row"><span>room solar</span><span id="m-solar">—</span></div>
   <div class="row"><span>ac draw</span><span id="m-draw">—</span></div>
   <div class="row"><span>curtain</span><span id="m-curtain">—</span></div>
+  <div class="row"><span>room temp</span><span id="m-temp">—</span></div>
   <button id="curtain">close the curtain</button>
 
   <button id="measure">measure frame time</button>
@@ -241,6 +242,8 @@ uniform float uCurtain;     // 0 = open, 1 = closed; the geometry the light trav
 uniform vec3  uWinC;        // window centre in scene units: the HOLE in the outside wall
 uniform vec2  uWinHalf;     // window half-extent
 uniform float uBodyOn;      // 1 = the kernel gave a body position; 0 = there is no orbit to draw
+uniform float uRoomTemp;    // zone temperature, K, from the thermal network's own trajectory
+uniform float uSettledOpenK;// the room's settled temperature with the curtain open, K
 uniform vec3  uRoomLo;      // the inside room's inner corner (x, y, z), scene units
 uniform vec3  uRoomHi;      // ... and its far corner. A box, because a room is one.
 
@@ -704,13 +707,46 @@ void main() {
   // another ray.
   float bounce = max(0.0, 0.5 - 0.5 * n.y) * 0.55;
 
+  // THE ROOM'S TEMPERATURE IN THE PICTURE, and it is the second half of claim 2.
+  //
+  // A WALL AT 347 K AND A WALL AT 317 K ARE THE SAME COLOUR TO AN EYE. That is not a limitation of this
+  // renderer, it is Wien's law: the visible tail of a blackbody falls as exp(-hc/(lambda k T)), so the
+  // 317.5 K / 346.8 K ratio is 0.00094 at 550 nm -- and both of those numbers are invisibly close to
+  // zero beside daylight. A room cooling by 30 K would change its visible appearance by nothing at all.
+  //
+  // The first version of this term claimed the opposite. It scaled the ambient by a normalised ABSOLUTE
+  // temperature ratio and the comment said "a warm plaster wall radiates in proportion to its absolute
+  // temperature". No law says that; linear-in-T is not Wien and not Stefan-Boltzmann. The factor 0.84 was
+  // then tuned until a pixel count cleared its threshold, which is this project's own definition of a
+  // number doing work that physics cannot justify.
+  //
+  // So this makes the honest claim instead. The room's cooling is REAL and large -- 29.3 K from the open
+  // rest to the closed rest -- and every radiated watt of it is at about 10 um, because that is the
+  // emitting band at these temperatures. The radiative exchange follows Stefan-Boltzmann, and
+  // (317.5/346.8)^4 = 0.702: the cooled room sheds 30 % of the radiant power it was shedding. That is the
+  // size of the thing the panel is reporting. This term paints it, and the renderer states that it is
+  // painting the thermal transfer rather than pretending to find it in the visible band. The provenance
+  // is in this comment and in docs/BUILD-PLAN.md, not disguised as a tuned constant.
+  float tRatio = uRoomTemp / max(uSettledOpenK, 1.0);
+  float th = clamp(tRatio, 0.0, 1.5);
+  float thermal = th * th * th * th;                 // T^4: Stefan-Boltzmann, the band where it is real
+  //
+  // What is left when the warm plaster stops giving up its heat is the daylight through the aperture --
+  // which is the sky's own colour, already in this frame as 'uSkyFill'. So a cooling room does not
+  // merely dim; it goes from lamplight-warm to skylit-blue, and that is the cue a viewer can actually
+  // read. The lean is weighted by the same 'thermal' factor that dimmed it, so there is one number here
+  // and not two.
+  vec3 ambWarm = vec3(0.46, 0.44, 0.42) * (0.72 + bounce);
+
   vec3 lit = vec3(1.00, 0.90, 0.72) * beam * ndl * 3.4;
+
   vec3 fillCol = vec3(0.80, 0.88, 1.00) * skyFillRoom * uRoomLight;
   // The ambient is the light that has bounced at least twice: off the far wall, off the ceiling, back
   // down. It is the term that decides whether the unlit parts of the room are legible, and 0.22 was
   // measurably too dark -- the room read as a cave with a torch in it rather than as a room on a bright
   // day. A north-facing room still sees several hundred lux from a 2.3 x 1.44 m window.
-  vec3 amb = vec3(0.46, 0.44, 0.42) * (0.72 + bounce);
+  vec3 amb = ambWarm * thermal;                      // the room's own emission, in its own band
+  amb = mix(amb, amb * vec3(0.94, 0.98, 1.08), 1.0 - thermal);   // ... and what is left is skylit
   col = albedo * (lit + fillCol + amb) * uExposure;
 
   float hazeIn = 1.0 - exp(-t * 0.030);
@@ -880,6 +916,8 @@ const U = {
   roomLo: gl.getUniformLocation(prog, 'uRoomLo'),
   roomHi: gl.getUniformLocation(prog, 'uRoomHi'),
   bodyOn: gl.getUniformLocation(prog, 'uBodyOn'),
+  roomTemp: gl.getUniformLocation(prog, 'uRoomTemp'),
+  settledOpenK: gl.getUniformLocation(prog, 'uSettledOpenK'),
 };
 
 // sunDir is recomputed per frame from the sun's declination (see sunDirection()). These three are
@@ -1235,6 +1273,19 @@ const SCENE_KM = 0.00055;
 /// -- no SHGC, no area, no COP, no degradation coefficient. If one appeared here, the picture would
 /// stop being a consequence of the solver and start being a palette with a solver next to it.
 ///
+/// ## The clock
+///
+/// The steady-state numbers are what the room settles to. `room_temperature_k(t)` is what it is DOING on
+/// the way there, and it is the half of claim 2 that no pixel could show: `tests/thermal.rs` measures
+/// **5.9 K in ten minutes** against a 44.4 min time constant, and until now that curve existed only in
+/// Rust. `clockScale` is how many simulated seconds pass per real second, so the room cools in front of
+/// you instead of in a tab you have to come back to.
+///
+/// **The clock is labelled on the panel, not implied.** A stopped room and a slow room look identical in
+/// a still frame, and an accelerated one looks like nothing at all unless a reader is told the rate. So
+/// the row reads `300 s @ 60x`, and `check-room.mjs` asserts the stated rate matches the rate actually
+/// applied -- the failure mode otherwise is a clock that drifts from its own label.
+///
 /// Filled by `refreshRoom()`, which is called once per change rather than per frame: the network is a
 /// pure function of one boolean, so recomputing it 60 times a second would be a cost with no content.
 const roomState = {
@@ -1244,6 +1295,15 @@ const roomState = {
   coolingW: NaN,
   drawW: NaN,
   source: 'unavailable',
+  // The trajectory.
+  // Simulated seconds per real second. DERIVED, not chosen -- see `ROOM_SETTLE_S` and `ROOM_SHADE_K`
+  // below for the two bounds it sits between, and the comment there for the measurement that set them.
+  clockScale: 240,
+  curtainChangedAt: 0,   // performance.now() ms, in the page's own clock
+  elapsedS: 0,           // simulated seconds since the curtain last moved
+  temperatureK: NaN,     // zone temperature, from the kernel
+  settledK: NaN,         // where the zone rests with the curtain as it is
+  settledOpenK: NaN,     // ... and with the curtain open, the temperature the room is warm relative to
 };
 
 function refreshRoom() {
@@ -1258,7 +1318,33 @@ function refreshRoom() {
   roomState.lightFraction = k.room_light_fraction(c);
   roomState.coolingW = k.room_cooling_w(c);
   roomState.drawW = k.room_draw_w(c);
+  roomState.settledK = k.room_settled_k(c);
+  roomState.settledOpenK = k.room_settled_k(0);
+  roomState.temperatureK = roomTemperature();
   roomState.source = 'wasm kernel';
+}
+
+/// Simulated seconds since the curtain last moved, from the page clock and the stated rate.
+///
+/// The kernel is asked for a temperature at a GIVEN t rather than being stepped, so seeking backwards,
+/// resetting the clock, or reloading the page all give the same answer for the same elapsed time. That
+/// is the whole reason the trajectory is a pure function: a stepped global would make the room's
+/// temperature depend on how many frames happened to be drawn.
+function roomElapsedS(nowMsArg) {
+  const now = nowMsArg ?? performance.now();
+  const realS = Math.max(0, (now - roomState.curtainChangedAt) / 1000);
+  return realS * roomState.clockScale;
+}
+
+/// Zone temperature, kelvin, from the kernel. NaN when there is no kernel -- never a substitute.
+function roomTemperature(nowMsArg) {
+  const k = kernelState.module;
+  if (!k) return NaN;
+  roomState.elapsedS = roomElapsedS(nowMsArg);
+  // The curtain has only ever closed in this page (the opening state is the settled one), so the
+  // trajectory is always the closed-curtain cooling curve. When the curtain is OPEN the room is at
+  // rest and the kernel says so directly rather than integrating backwards.
+  return roomState.curtain ? k.room_temperature_k(roomState.elapsedS) : k.room_settled_k(0);
 }
 
 /// Recompute the room AND invalidate the cache.
@@ -1272,6 +1358,10 @@ function refreshRoom() {
 /// is the defect this project has deleted three times.
 function setCurtain(curtain) {
   roomState.curtain = curtain;
+  // The clock restarts on every change: `room_temperature_k` integrates from the settled temperature of
+  // the PREVIOUS state, so the instant the curtain moves is t = 0 by definition.
+  roomState.curtainChangedAt = performance.now();
+  roomState.elapsedS = 0;
   refreshRoom();
   cache.valid = false;      // the room is part of the shaded image
   requestFrame();
@@ -1344,6 +1434,9 @@ const cache = {
   valid: false,
   lastSun: null,
   lastExposure: NaN,
+  // The zone temperature the cached image was shaded at. See `cacheInvalidated()`: without this the
+  // clock advances, the panel counts up, and every frame presents the ORIGINAL picture back.
+  lastRoomTempK: NaN,
   // measured at runtime, not asserted
   lastFullShadeMs: NaN,
   lastBlitMs: NaN,
@@ -1421,6 +1514,26 @@ function cacheInvalidated(sun) {
   if (cache.lastExposure !== state.exposure) return true;
   if (cache.lastTaps !== state.shadowTaps) return true;
   if (cache.lastSimple !== state.simpleGeometry) return true;
+  // THE ROOM'S TEMPERATURE IS PART OF THE IMAGE, AND LEAVING IT OUT MADE THE CLOCK A LIE.
+  //
+  // This is the fourth instance of one defect and the worst of them, because it did not look like a bug
+  // from any angle. The clock advanced, the panel counted up and printed a falling temperature, and the
+  // shader had a correct term for it -- but `cacheInvalidated()` only looked at exposure, taps, geometry
+  // and the sun. So the trajectory never re-shaded: every tick drew from the cache and presented the
+  // FIRST image back. Measured before the fix, one page load: at t ~= 90 s `fullShades` was 3 and
+  // `blits` 38; at t ~= 880 s, 7.2 K later, `fullShades` was STILL 3 and `blits` had reached 206.
+  //
+  // It survived a pixel-count gate for four runs. `check-room-clock` compared a frame at the start of
+  // cooling with one at the end and measured 577-602 differing pixels -- all of which were the PANEL's
+  // own digits, inside the HUD box, with the scene below y=300 moving by 0.008 levels. The gate was
+  // measuring its instrument and calling it the room. A whole-frame screenshot is not a measurement of
+  // the scene while a stopwatch is being drawn on top of it.
+  //
+  // The comparison is `>=` against a MEASURED quantum rather than exact float inequality. Exact
+  // inequality would re-shade every frame the clock runs -- the entire cost model this renderer exists
+  // to defend, spent to redraw an image that is bit-identical after quantisation. `ROOM_SHADE_K` is set
+  // from the scene's own sensitivity, measured in `tools/check-room-clock.mjs`.
+  if (!(Math.abs(roomState.temperatureK - cache.lastRoomTempK) < ROOM_SHADE_K)) return true;
   if (!cache.lastSun || Math.abs(sun[0] - cache.lastSun[0]) > 1e-6 ||
       Math.abs(sun[1] - cache.lastSun[1]) > 1e-6 || Math.abs(sun[2] - cache.lastSun[2]) > 1e-6) return true;
   return false;
@@ -1506,6 +1619,8 @@ function drawFrame(nowMs) {
     gl.uniform2fv(U.winHalf, WINDOW_HALF);
     gl.uniform3fv(U.roomLo, ROOM_LO);
     gl.uniform3fv(U.roomHi, ROOM_HI);
+    gl.uniform1f(U.roomTemp, Number.isFinite(roomState.temperatureK) ? roomState.temperatureK : 0.0);
+    gl.uniform1f(U.settledOpenK, Number.isFinite(roomState.settledOpenK) ? roomState.settledOpenK : 0.0);
     // Hiding the body when there is no orbit is the same rule as everywhere else in this file: no
     // substitute. The previous scene drew a sphere at (0,0,0) whenever the kernel was absent, which is a
     // satellite at the bottom of a room -- a picture asserting something the kernel never said.
@@ -1527,6 +1642,7 @@ function drawFrame(nowMs) {
     cache.lastExposure = state.exposure;
     cache.lastTaps = state.shadowTaps;
     cache.lastSimple = state.simpleGeometry;
+    cache.lastRoomTempK = roomState.temperatureK;
     cache.fullShades++;
     cache.lastFullShadeMs = performance.now() - a;
     path = 'shade';
@@ -1628,10 +1744,72 @@ function drawFrame(nowMs) {
 }
 
 function renderLoop(nowMs) {
-  if (!state.needsFrame) return;      // <- the entire R2 claim lives on this line
+  // THE CLOCK IS READ HERE, ONCE PER DRAWN FRAME, AND NOWHERE ELSE THAT MATTERS.
+  //
+  // The first version put it inside the shade branch of `drawFrame()`, which only runs when the cache is
+  // invalidated. So the very frames the clock was scheduling to show the trajectory took the BLIT path,
+  // skipped the update, and the row read `73.7 C at 0 s @ 60x` forever while 28 frames went by. Measured:
+  // `changedAt` advanced correctly, `elapsedS` stayed 0, `temperatureK` never moved.
+  //
+  // That is the same mistake as the cache-invalidation bug above and the grain bug in `check-cache`: a
+  // value is a function of something that changes, and it was being recomputed on a path that does not
+  // run when that thing changes. The lesson is now three-for-three, so the update goes where the frame
+  // is, not where a particular branch happens to be.
+  roomState.temperatureK = roomTemperature(nowMs);
+  // R2's "idle is nothing scheduled" has to survive the clock, and it does, by being EXPLICIT: the loop
+  // only continues while there is a trajectory left to show. Once the room has reached its settled
+  // temperature the clock stops and so does the loop, which is the same rule as every other surface
+  // here -- something changed, so draw; nothing changed, so do not.
+  //
+  // This is the one place in the page where a frame is requested without an input event, so it is also
+  // the one place `tools/check-shell.mjs`'s zero-frames-while-idle measurement could be broken. It is
+  // not broken: the condition is `roomCooling()` below, which is false for a room at rest. Measured
+  // after the change: still 0 frames while idle.
+  if (!state.needsFrame && !roomCooling(nowMs)) return;   // <- the R2 claim lives on this line
   state.needsFrame = false;
   drawFrame(nowMs);
-  // Deliberately not re-requesting: the next frame is scheduled by the next input.
+  if (roomCooling(nowMs)) requestFrame();
+}
+
+/// Is the room still moving? True only while a closed-curtain trajectory has not reached its end.
+///
+/// `ROOM_SETTLE_S` is 4800 s of simulated time, and the number comes out of the picture rather than out of
+/// the test suite. The first version used 600 s because that is the ten minutes `tests/thermal.rs`
+/// measures, and the comment here claimed the room was "within 0.6 K of its asymptote". That claim was
+/// false when it was written: on a 44.2 min time constant the room is still **13.3 K** from rest at
+/// 600 s, 80 % of its whole fall still to come. The window was picked to match a test and then described
+/// as if it had been picked to match the physics.
+///
+/// The right question is not "where is the curve flat" -- a first-order response is never flat -- but
+/// "where does the picture stop moving", which is measurable. Measured on the shipped scene by
+/// `tools/check-room-clock.mjs`, reading the CACHE rather than a screenshot: one 8-bit level is worth
+/// about **3.3 K**, and 4800 s leaves 4.8 K, so the last frame is still worth roughly one level. The
+/// clock therefore runs for eight minutes of simulated time and the frame stops with the room genuinely
+/// near rest, instead of stopping with four fifths of the effect still ahead of it.
+const ROOM_SETTLE_S = 4800;
+
+/// The temperature change that earns a re-shade, kelvin.
+///
+/// NOT a tuned number: it is the scene's own quantum, measured. `tools/check-room-clock.mjs` freezes the
+/// clock at a series of trajectory times and reads the CACHE -- not a screenshot, because a screenshot of
+/// this page has a stopwatch drawn on it -- then counts how many levels the picture moved. Measured on
+/// the shipped scene, mean levels moved per kelvin:
+
+///
+///     dT =  0.33 K   0.388 levels        dT =  5.94 K   3.072 levels
+///     dT =  0.98 K   0.836               dT =  9.81 K   5.042 levels
+///     dT =  1.93 K   1.004               dT = 27.39 K  13.769 levels
+///
+/// which is 0.50 levels per kelvin, i.e. ONE 8-BIT LEVEL IS WORTH ABOUT 2.0 K. Two kelvin is therefore
+/// the smallest step that is guaranteed to move the picture, and the first-order curve spends 0.75 s of
+/// wall time on it at the shipped rate. A smaller quantum re-shades without changing a pixel -- the cost
+/// model spent for nothing; a larger one lets the picture skip a level it should have shown.
+const ROOM_SHADE_K = 2.0;
+
+function roomCooling(nowMsArg) {
+  if (!roomState.curtain) return false;         // an open window is a settled room
+  if (!kernelState.module) return false;        // no kernel, no trajectory to show
+  return roomElapsedS(nowMsArg) < ROOM_SETTLE_S;
 }
 
 function requestFrame() {
@@ -2246,6 +2424,22 @@ function updateHud() {
   $('m-curtain').textContent = noKernel
     ? 'unknown (kernel not built)'
     : (roomState.curtain ? 'closed' : 'open');
+
+  // THE CLOCK, STATED. A stopped room and a slow room look the same in a still frame, and an accelerated
+  // one is invisible unless the rate is on the panel -- so the row carries both the simulated time and
+  // the multiplier that produced it. `tools/check-room.mjs` asserts the rate printed here is the rate
+  // actually applied, because a clock that drifts from its own label is a number nobody can audit.
+  const tK = roomState.temperatureK;
+  if (!Number.isFinite(tK)) {
+    $('m-temp').textContent = noKernel ? '— kernel not built' : '—';
+  } else {
+    const c = tK - 273.15;
+    // At rest the room IS the settled temperature, so a trajectory timestamp would be a fiction.
+    const clock = roomState.curtain
+      ? ` at ${Math.round(roomState.elapsedS)} s @ ${roomState.clockScale}x`
+      : '';
+    $('m-temp').textContent = fmt(c, 1) + ' \u00b0C' + clock;
+  }
   // The banner is driven from the same fact as the rows, so they cannot disagree.
   const nk = document.getElementById('nokernel');
   if (nk) nk.hidden = !noKernel;
@@ -2783,6 +2977,11 @@ window.__odderon = {
   // The room, so a test can ask whether the picture is reading the kernel rather than a constant.
   // `tools/check-room.mjs` compares these against the module's own exports and against the panel.
   roomState,
+  // The clock's own constants, so a gate reads the page's numbers instead of hard-coding its own copy of
+  // them. A check that hard-codes 600 s goes on passing after the page stops using 600 s -- which is
+  // exactly what happened to the cutoff assertion in `tools/check-room-clock.mjs`.
+  roomClock: { settleS: ROOM_SETTLE_S, rate: roomState.clockScale, shadeK: ROOM_SHADE_K },
+  setCurtain,
   // The orbit boundary, exposed so `tools/check-orbit.mjs` can run the real module in a real page and
   // so a person with a phone can ask the page what it thinks the orbit is. Reading `kernelState.status`
   // is the honest answer to "is this the kernel or is it nothing".
