@@ -613,8 +613,13 @@ pub fn atan2(y: f64, x: f64) -> f64 {
         return f64::NAN;
     }
     if x == 0.0 && y == 0.0 {
-        // The conventional convention, matching every reference implementation.
-        return if x.is_sign_negative() { PI } else { 0.0 };
+        // The conventional convention, matching every reference implementation: the magnitude is `π`
+        // when `x` is `-0` (the point sits on the negative x-axis) and `0` when `x` is `+0`, and the
+        // *sign* follows `y`. The earlier version returned an implicitly positive result, keyed off `x`,
+        // which gave `+π` for `atan2(-0, -0)` where every reference gives `-π` (a real difference, not a
+        // sign-of-zero one) and `+0` for `atan2(-0, +0)` where they give `-0`.
+        let mag = if x.is_sign_negative() { PI } else { 0.0 };
+        return if y.is_sign_negative() { -mag } else { mag };
     }
     if x > 0.0 {
         atan(y / x)
@@ -1134,6 +1139,42 @@ mod tests {
         assert_eq!(pow(0.0, 0.0), 1.0);
         assert_eq!(pow(1.0, 123.0), 1.0);
         assert_eq!(pow(0.0, 2.0), 0.0);
+    }
+
+    /// The signed-zero conventions of `atan2` at the origin, bit-for-bit against the platform.
+    ///
+    /// `atan2` is the most-used function in the trajectory code, and its doc claims "the conventional
+    /// convention, matching every reference implementation." At the origin that convention is fixed by
+    /// IEEE-754 and by every implementation (Rust, C, JS): the magnitude is `π` when `x` is `-0` and `0`
+    /// when `x` is `+0`, and the **sign follows `y`**. The earlier version keyed the sign off `x` and
+    /// returned an implicitly positive result, so `atan2(-0, -0)` gave `+π` where every reference gives
+    /// `-π` -- a real difference (`+π ≠ -π`), not a sign-of-zero one -- and `atan2(-0, +0)` gave `+0`
+    /// where they give `-0`. This gate pins all four signed-zero combinations bit-for-bit, so a return to
+    /// the old convention fails it.
+    #[test]
+    fn atan2_signed_zero_at_the_origin_matches_the_convention() {
+        // Each pair is (y, x). The expected value is the platform's, asserted explicitly so the test
+        // states the convention rather than only comparing to itself.
+        let cases: [(f64, f64, f64); 4] = [
+            (0.0, 0.0, 0.0),
+            (-0.0, 0.0, -0.0),
+            (0.0, -0.0, PI),
+            (-0.0, -0.0, -PI),
+        ];
+        for (y, x, want) in cases {
+            assert_eq!(
+                atan2(y, x).to_bits(),
+                want.to_bits(),
+                "atan2({y}, {x}) must be {want}; the signed-zero convention is the contract"
+            );
+            // And it must agree with the platform bit-for-bit, not merely in value: `0.0 == -0.0` is
+            // true, so a value comparison would let the `-0` cases slip back through.
+            assert_eq!(
+                atan2(y, x).to_bits(),
+                y.atan2(x).to_bits(),
+                "atan2({y}, {x}) must match the platform bit-for-bit"
+            );
+        }
     }
 
     #[test]
