@@ -721,9 +721,29 @@ function wrapTwoPi(x) {
   return r;
 }
 
-// Pixel budget. See the note in resize(): this is what makes the 1.5 ms claim reachable on a phone
-// whose native pixel count is 20x what the budget was written for.
-const MAX_PIXELS = 1_150_000;
+// ---------------------------------------------------------------------------------------------
+// The pixel budget, and why it is this number and not the one it used to be.
+//
+// R2 is a frame cost AND a resolution, because frame cost is very nearly linear in pixels. On
+// Reference B (Mali-G51, 1.04 Mpx) the pass this renderer actually runs -- `blitFramebuffer`, per
+// `m-path` -- was measured at 1.27 ms, i.e. 1.221 ms/Mpx. 1.5 ms therefore buys 1.228 Mpx, and with
+// the ~15% margin the plan quotes for a measurement made on someone else's device (3-year-old phone
+// silicon, thermal variance, a single session) it buys 1.068 Mpx.
+//
+// WHAT THIS CAP USED TO BE, AND WHY IT WAS WRONG. It was a bare `1_150_000`, sitting between the
+// 1.228 Mpx the budget buys and the ~1.15 Mpx an earlier (retracted) revision of GRAPHICS.md named as
+// the clause. It had no derivation, and it was ABOVE both the measured reach and a different current
+// doc claim (0.68 Mpx) that was derived from a texture-read figure this project has since RETRACTED.
+// So the constant agreed with nothing: not the measurement, not the doc, not the margin. It is now
+// derived from the measurement in this comment, and `tools/check-pixel-budget.mjs` recomputes that
+// derivation from the numbers and fails if the constant, the comment and GRAPHICS.md ever disagree.
+//
+// The cost of using the budget's full reach: a 1600x1000 deselected window previously rendered at
+// 1.15 Mpx and now renders at 1.068 Mpx, which is 7% fewer pixels and a 3.6% softer image. That is the
+// price of being able to say what the number is.
+// ---------------------------------------------------------------------------------------------
+const CLAUSE_MPX = 1.068;
+const MAX_PIXELS = Math.round(CLAUSE_MPX * 1e6);
 
 function dpr() { return Math.min(window.devicePixelRatio || 1, 2); }
 
@@ -1574,7 +1594,15 @@ async function measureFrame(samples = 12) {
     ? (upperBoundBlit(12) ?? NaN) : NaN;
   bench.blitMs = gpuBlits.length ? bench.gpuBlitMs : med(blitTimes);
   bench.blitP95 = gpuBlits.length ? p95f(gpuBlits) : p95f(blitTimes);
+  // The sorted stalled sample set, kept so the readout can print a percentile of the SAME samples as
+  // the median it shows rather than a separate, never-assigned field. Empty on a device with a GPU
+  // timer, because then the median is a GPU number and there is no stalled distribution to describe.
+  bench.blitSamplesSorted = gpuBlits.length ? [] : blitTimes.slice().sort((a, b) => a - b);
   bench.measuredMs = bench.blitMs;
+  // The resolution of the stalled measurement, so the readout can refuse to print a number finer than
+  // the thing that produced it. On a GPU that reports its blit as 0.00 ms, `fmt()` printed "0.00 ms
+  // stalled" -- which reads as "not measured" or as "free" and is neither.
+  bench.measuredResMs = 0.01;
   bench.gpuBlitP95 = gpuBlits.length ? p95f(gpuBlits) : NaN;
   // Two different reasons can leave us without a GPU number, and they are not the same finding:
   //   'absent'      - the extension does not exist, so the finish() interval is all there is.
@@ -1639,9 +1667,30 @@ function updateHud() {
     $('m-p95').textContent = fmt(gpuP95) + ' ms  (n=' + gpuSorted.length + ')';
     $('m-fps').textContent = fmt(1000 / gpuMed, 0) + '  (1/gpu)';
   } else if (Number.isFinite(bench.measuredMs)) {
-    $('m-frame').textContent = fmt(bench.measuredMs) + ' ms stalled';
-    $('m-p95').textContent = fmt(bench.measuredP95) + ' ms  (n=12)';
-    $('m-fps').textContent = fmt(1000 / bench.measuredMs, 0) + '  (1/frame)';
+    // BELOW THE RESOLUTION OF THE MEASUREMENT, SAY SO INSTEAD OF PRINTING A ZERO.
+    //
+    // `bench.measuredP95` is never assigned, so this branch used to print `-- ms` with a hard-coded
+    // "(n=12)" beside it: a percentile that does not exist, labelled with a sample count that was a
+    // literal. It is now derived from the same sorted sample set as the median, so the two rows always
+    // describe one quantity -- the invariant stated above -- and the count is the real one.
+    //
+    // `blitSamples` is empty when the GPU timer produced the median, and in that case there is no
+    // stalled p95 to report at all, so the row says that rather than inventing one.
+    const stalledN = bench.blitSamplesSorted ? bench.blitSamplesSorted.length : 0;
+    const stalledP95 = stalledN ? quantile(bench.blitSamplesSorted, 0.95) : NaN;
+    const res = bench.measuredResMs || 0.01;
+    const below = bench.measuredMs < res;
+    $('m-frame').textContent = below
+      ? '< ' + res.toFixed(2) + ' ms stalled'
+      : fmt(bench.measuredMs) + ' ms stalled';
+    $('m-p95').textContent = stalledN
+      ? (stalledP95 < res ? '< ' + res.toFixed(2) : fmt(stalledP95)) + ' ms  (n=' + stalledN + ')'
+      : '—  (gpu median, no stalled samples)';
+    // No frame rate from a sub-resolution frame time. `1000 / 0.01` is 100000, and printing
+    // "> 100000 (1/frame)" is arithmetically true and physically absurd: presentation is bounded by the
+    // display, not by this number. The row says the rate is unresolved instead.
+    $('m-fps').textContent = below ? 'faster than the timer' 
+                                   : fmt(1000 / bench.measuredMs, 0) + '  (1/frame)';
   } else {
     $('m-frame').textContent = fmt(med, 3) + ' ms submit only';
     $('m-p95').textContent = fmt(p95, 3) + ' ms submit';
@@ -1657,12 +1706,15 @@ function updateHud() {
   // on which mechanism is live makes two screenshots harder to compare than they need to be.
   $('m-path').textContent = (bench.lastPath === 'shade' ? 'shade + ' : '') +
     (blitSupported ? 'blitFramebuffer' : 'tex read (blit off)');
+  // A cost that prints as "0.00" reads as "not measured", which is why the frame row says "< 0.01"
+  // instead. The same rule applies to the two costs: below the timer's resolution, say so.
+  const cost = (v, d = 2) => (v < 0.01 ? '< 0.01' : fmt(v, d));
   $('m-shade').textContent = Number.isFinite(bench.shadeMs)
-    ? fmt(bench.shadeMs, 2) + ' ms'
-    : (cache.fullShades ? fmt(cache.lastFullShadeMs, 1) + ' ms (last)' : '—');
+    ? cost(bench.shadeMs) + ' ms'
+    : (cache.fullShades ? cost(cache.lastFullShadeMs, 1) + ' ms (last)' : '—');
   $('m-blit').textContent = Number.isFinite(bench.blitMs)
-    ? fmt(bench.blitMs, 2) + ' ms'
-    : fmt(cache.lastBlitMs, 2) + ' ms (last)';
+    ? cost(bench.blitMs) + ' ms'
+    : cost(cache.lastBlitMs) + ' ms (last)';
   $('m-draws').textContent = (bench.lastPath === 'shade' ? 2 : 1) + ' per frame';
   const bpp = bench.lastPixels > 0 ? bench.lastBytes / bench.lastPixels : NaN;
   $('m-bpp').textContent = fmt(bpp, 1) + ' B/px';
@@ -1672,9 +1724,15 @@ function updateHud() {
   // The pixel count is the number a frame cost actually correlates with, so it belongs on the panel
   // next to the frame time. `canvas` alone hid the budget: it showed the buffer size without ever
   // saying "this is NOT your screen's resolution".
-  $('m-canvas').textContent = canvas.width + '\u00d7' + canvas.height +
-    '  (' + (canvas.width * canvas.height / 1e6).toFixed(2) + ' Mpx' +
-    ((canvas.width * canvas.height) >= MAX_PIXELS * 0.999 ? ', capped' : '') + ')';
+  // THE CLAUSE IS PRINTED, not implied. The panel used to show the buffer size and a bare ", capped",
+  // which told a reader that SOMETHING had capped it but not what — so the one number R2 is judged
+  // against was the one number not on the panel. It is shown as "in clause" / "over" here, and
+  // `tools/check-pixel-budget.mjs` recomputes the derivation so the printed clause cannot drift from
+  // the measurement it comes from.
+  const mpx = canvas.width * canvas.height / 1e6;
+  const capped = mpx >= MAX_PIXELS / 1e6 * 0.999;
+  $('m-canvas').textContent = canvas.width + '\u00d7' + canvas.height + '  (' + mpx.toFixed(2) + ' Mpx' +
+    (capped ? ' at clause ' : ', clause ') + CLAUSE_MPX.toFixed(2) + ')';
 
   const settled = performance.now() - state.lastInput > 250;
   const idleOk = settled && bench.submitSamples.length === 0 && bench.framesDrawn === bench.framesAtIdleCheck;
@@ -1707,8 +1765,14 @@ function updateHud() {
     // Below 0.01 ms, two decimal places prints "0.00", which reads as "not measured" rather than as
     // "too fast to resolve". Say the smaller thing instead of a zero.
     const shown = bench.blitUpperMs < 0.01 ? '< 0.01' : fmt(bench.blitUpperMs, 2);
-    r2.textContent = '\u2264 ' + shown + ' ms upper bound ' +
-      (clear ? '< 1.5  (real cost is lower)' : '> 1.5  (inconclusive, not a failure)');
+    // No leading "≤" when the number is already a bound: "≤ < 0.01" says the same thing twice.
+    // Kept short enough for ONE line. The wording is unchanged where it carries meaning -- "upper
+    // bound" is what makes the number readable as a bound rather than a measurement, and
+    // `tools/check-cache.mjs` asserts the phrase is there. What was dropped is the parenthetical
+    // "(real cost is lower)", which pushed the row onto two visual lines and is the report's job to
+    // say, not a 340-px panel's.
+    r2.textContent = (bench.blitUpperMs < 0.01 ? '' : '\u2264 ') + shown + ' ms upper bound ' +
+      (clear ? '< 1.5' : '> 1.5');
     r2.className = clear ? 'pass' : 'warn';
   } else if (bench.gpuTimerState === 'no-samples') {
     // The timer exists but handed back nothing. Say so plainly: this is an instrument problem, and
