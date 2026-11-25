@@ -1238,12 +1238,45 @@ function drawFrame(nowMs) {
 
   if (captureReq.want) captureNow();
   if (pictureReq.want) {
-    // Copy out here, inside the draw, while the drawing buffer is still guaranteed non-empty.
+    // THE PICTURE IS COPIED FROM THE CACHE, NOT FROM THE SCREEN, and that is a correction.
+    //
+    // This block used to do `ctx2d.drawImage(canvas, 0, 0)` inside the draw. That is a readback of the
+    // DEFAULT FRAMEBUFFER, and on this backend a readback of the default framebuffer after a
+    // `blitFramebuffer` returns BLACK -- the same quirk documented on `captureNow()` above, which is
+    // why the pixel probe was moved onto the cache and this one was not. The result was that every
+    // saved picture, at every device pixel ratio, showed the panel over a black scene while the live
+    // page rendered correctly. `tools/check-hud-capture.mjs` could not see it: its mask is built from
+    // the PANEL, so a black scene around a perfect panel scored IoU 1.000.
+    //
+    // Measured on this sandbox, on one page load, 200 sampled pixels each: the cache reads mean luma
+    // 146.3 with 200/200 non-black, and the default framebuffer reads 0.0 with 0/200. The presented
+    // frame is correct on both paths, so this is a readback quirk rather than a rendering fault -- but
+    // an artifact a person judges claim 5 from is not allowed to be the thing the quirk eats.
+    //
+    // Reading the cache works on BOTH paths, because the cache holds the shaded image whether the
+    // per-frame pass was a blit or the texture-read triangle. It is also always exactly the drawing
+    // buffer's size: `cacheResize()` is only ever called with `canvas.width/height`, and
+    // `tools/check-cache.mjs` asserts "cache size follows the drawing buffer" rather than trusting it.
     pictureReq.want = false;
     const c = document.createElement('canvas');
-    c.width = canvas.width;
-    c.height = canvas.height;
-    c.getContext('2d').drawImage(canvas, 0, 0);
+    c.width = cache.w;
+    c.height = cache.h;
+    const ctx2d = c.getContext('2d');
+    const rowBytes = c.width * 4;
+    const px = new Uint8Array(rowBytes * c.height);
+    const prevRead = gl.getParameter(gl.READ_FRAMEBUFFER_BINDING);
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, cache.fbo);
+    gl.readPixels(0, 0, c.width, c.height, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, prevRead);
+    // GL's origin is bottom-left and a canvas's is top-left, so the rows come out inverted. Copying
+    // them straight through would save a picture of the scene upside down -- visible, but the kind of
+    // visible that gets dismissed as "the camera is flipped" rather than as a bug.
+    const img = ctx2d.createImageData(c.width, c.height);
+    for (let y = 0; y < c.height; y++) {
+      const src = (c.height - 1 - y) * rowBytes;
+      img.data.set(px.subarray(src, src + rowBytes), y * rowBytes);
+    }
+    ctx2d.putImageData(img, 0, 0);
     pictureReq.resolve(c);
   }
 }

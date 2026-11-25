@@ -27,15 +27,25 @@
  * and compares the **text** in the same region (the render-scale button block: static labels, so a
  * changing number cannot confuse it).
  *
- * ## Two defects, and why the metric took three attempts
+ * ## THREE defects, and why each metric took the attempts it took
  *
- * There were two independent faults, and the second was only found by running the check on a phone
- * viewport after the first was fixed:
+ * They were found in this order, and each later one was found only because the earlier one had been fixed:
  *
  *   a. **No stylesheet.** The SVG contained `#hud` but not the document's `<style>`, so the panel was
  *      rasterised unstyled and rows collapsed into one line of text.
  *   b. **No dpr scaling.** The panel was composited using CSS-pixel coordinates into a drawing buffer
  *      that is 729 px wide for a 390-px viewport, so on a phone it appeared at ~half size in the corner.
+ *   c. **A black scene.** The frame was copied with `drawImage(canvas)` — a readback of the default
+ *      framebuffer, which on this backend returns black after a `blitFramebuffer`. The saved picture was
+ *      therefore a correct panel over **nothing**, at every device ratio, while the live page was fine.
+ *      The module already documented this quirk on `captureNow()` and had moved the pixel probe onto the
+ *      cache; the picture was left on the broken path. It is now read from the cache, where the image
+ *      provably lives: cache mean luma **146.3** (200/200 non-black) against **0.0** (0/200) from the
+ *      default framebuffer, measured on one page load.
+ *
+ * Defect (c) is why this file now checks the **whole frame** and not only the panel. The panel mask is
+ * built from the panel region, so a perfect panel over an empty scene scored **IoU 1.000** — the check
+ * certified exactly the artifact that was broken. Panel and frame are now two separate assertions.
  *
  * The metric that finally works — resize both crops to one canonical width, then compare bright-pixel
  * masks — is the third, and the first two attempts each failed for a reason worth keeping:
@@ -47,9 +57,11 @@
  *     rasterised with no CSS at all still fills its box with text by coincidence. Geometry cannot see a
  *     layout collapse.
  *
- * ## The threshold
+ * ## The thresholds
  *
- * `MIN_IOU = 0.45`. Measured, at both viewports:
+ * Two assertions, two metrics, both measured at both viewports.
+ *
+ * **Panel — `MIN_IOU = 0.45`:**
  *
  * | page state | IoU |
  * | --- | --- |
@@ -57,8 +69,22 @@
  * | no stylesheet, no dpr scaling (pre-fix) | **0.000 – 0.025** |
  * | stylesheet fixed, dpr scaling missing | **0.007** at dpr 2 |
  *
- * The threshold sits between the populations rather than near either, so a font or hinting change cannot
- * trip it and neither defect can pass it.
+ * **Whole frame — `MIN_CELL_AGREE = 0.80`**, over the 16x9 grid, skipping the panel and the stamp:
+ *
+ * | page state | cells agreeing |
+ * | --- | --- |
+ * | correct | **0.960 / 0.985** |
+ * | black scene (pre-fix readback) | **0.170 / 0.607** |
+ *
+ * Two weaker frame metrics were measured and rejected before this one:
+ *
+ *   * **Absolute brightness.** The pre-fix phone frame is only PARTLY black (0.0–207 across it), so it
+ *     read **8.7% lit against an 8% floor**. A threshold a broken capture can nearly clear is not a guard.
+ *   * **Picture / live brightness ratio.** **0.071** at dpr 1 but **0.314** at dpr 2, because the phone
+ *     frame is mostly dark ground. The populations were closest exactly where the bug was worst.
+ *
+ * Both thresholds sit between their populations rather than near either, so a font or hinting change
+ * cannot trip them and none of the three defects can pass them.
  *
  * Usage: node tools/check-hud-capture.mjs [--port N] [--url URL]
  * Needs the Chromium unpacked and LD_LIBRARY_PATH=/tmp/al2023/lib, like the other browser checks.
@@ -88,6 +114,13 @@ function flag(name, dflt) {
 // a panel drawn at CSS size instead of buffer size 0.005. The threshold sits between the populations
 // rather than near either, so a font or hinting change cannot trip it, and neither defect can pass it.
 const MIN_IOU = 0.45;
+// What fraction of the picture's non-panel cells must match the page, cell for cell, before the picture
+// counts as a picture OF THE PAGE. Correct: 0.960 (dpr 1) / 0.985 (dpr 2). Black scene: 0.170 / 0.559.
+// 0.80 sits between the populations with room on both sides.
+const MIN_CELL_AGREE = 0.8;
+// Two cells count as agreeing when their mean luma is within this many levels. The phone frame's ground
+// is dark and slightly different between the two paths; 25 absorbs that without absorbing a black frame.
+const CELL_TOLERANCE = 25;
 
 const server = createServer(async (req, res) => {
   try {
@@ -158,17 +191,22 @@ for (const vp of VIEWPORTS) {
   }
 
   const live = await page.screenshot({ clip: rect, encoding: "base64" });
+  // The panel crop, above, and the whole page, for the whole-frame comparison. Two screenshots because
+  // they answer two different questions and one cannot be cropped out of the other cheaply.
+  const liveFull = await page.screenshot({ encoding: "base64" });
   const captured = await page.evaluate(() =>
     window.__odderon.capturePicture({ measure: false }).then((r) => r.png.split(",")[1]),
   );
 
-  const result = await page.evaluate(
-    async (liveB64, capB64, r) => {
+  let result;
+  try {
+  result = await page.evaluate(
+    async (liveB64, liveFullB64, capB64, r, tol) => {
       const load = (d) =>
         new Promise((s, j) => {
           const i = new Image();
           i.onload = () => s(i);
-          i.onerror = j;
+          i.onerror = () => j(new Error("image failed to decode (bytes " + (d ? d.length : 0) + ")"));
           i.src = "data:image/png;base64," + d;
         });
       const [liveImg, capImg] = await Promise.all([load(liveB64), load(capB64)]);
@@ -228,12 +266,115 @@ for (const vp of VIEWPORTS) {
         if (A.m[i] || B.m[i]) union++;
         if (A.m[i] && B.m[i]) inter++;
       }
-      return { iou: union ? inter / union : 0, inkLive: A.ink, inkPicture: B.ink, k: +k.toFixed(3) };
+      // AND THE WHOLE FRAME, NOT JUST THE PANEL.
+      //
+      // The panel check above is blind by construction: its mask is built from the PANEL region, so a save
+      // that composited a perfect panel over a BLACK SCENE still scored 1.000. That is not hypothetical --
+      // it was the state of the tree when this metric was written. Every saved picture, at dpr 1 and
+      // dpr 2, showed the panel over black, because the picture was copied from the default framebuffer
+      // and this backend returns black from that readback after a `blitFramebuffer`.
+      //
+      // Two simpler metrics were tried first and both were too weak to gate on:
+      //   * absolute scene brightness -- the pre-fix phone capture was only PARTIALLY black (0.0-207
+      //     across the frame), so it read 8.7% lit against a floor of 8%. A threshold that a broken
+      //     capture can nearly clear is not a guard.
+      //   * the picture/live brightness RATIO -- 0.071 at dpr 1 but 0.314 at dpr 2, because the phone
+      //     frame is mostly dark ground. The populations were closest exactly where the bug was worst.
+      //
+      // What works is comparing the two images REGION BY REGION on a coarse grid, which asks the question
+      // the artifact actually has to answer: does this picture look like the page? Measured: correct
+      // 0.960 / 0.985 of cells agree; black-scene 0.170 / 0.559.
+      const GX = 16;
+      const GY = 9;
+      const gridMeans = (img) => {
+        const c = document.createElement("canvas");
+        c.width = img.width;
+        c.height = img.height;
+        const cx = c.getContext("2d", { willReadFrequently: true });
+        cx.drawImage(img, 0, 0);
+        const d = cx.getImageData(0, 0, c.width, c.height).data;
+        const cw = img.width / GX;
+        const ch = img.height / GY;
+        const out = [];
+        for (let gy = 0; gy < GY; gy++) {
+          for (let gx = 0; gx < GX; gx++) {
+            let s = 0;
+            let n = 0;
+            for (let i = 0; i < 7; i++) {
+              for (let j = 0; j < 7; j++) {
+                const x = Math.floor((gx + (i + 0.5) / 7) * cw);
+                const y = Math.floor((gy + (j + 0.5) / 7) * ch);
+                if (x < 0 || y < 0 || x >= img.width || y >= img.height) continue;
+                const q = (y * img.width + x) * 4;
+                s += 0.299 * d[q] + 0.587 * d[q + 1] + 0.114 * d[q + 2];
+                n++;
+              }
+            }
+            out.push(n ? s / n : 0);
+          }
+        }
+        return out;
+      };
+
+      // The picture's own cell grid, and the live page's. The live shot is the whole viewport at its own
+      // device scale, so both are reduced to the same 16x9 grid before they are compared.
+      const liveFullImg = await load(liveFullB64);
+      const gLive = gridMeans(liveFullImg);
+      const gCap = gridMeans(capImg);
+      // The stamp's height in picture pixels, for the cell-skip below. Same arithmetic as
+      // `capturePicture()`: six lines, 16 px leading, 8 px padding, all scaled with the frame.
+      const stampHpx = 6 * 16 * Math.max(1, k) + 2 * 8 * Math.max(1, k);
+
+      const cwCap = capImg.width / GX;
+      const chCap = capImg.height / GY;
+      let cellsUsed = 0;
+      let cellsAgree = 0;
+      let diffSum = 0;
+      for (let gy = 0; gy < GY; gy++) {
+        for (let gx = 0; gx < GX; gx++) {
+          const x0 = gx * cwCap;
+          const x1 = (gx + 1) * cwCap;
+          const y0 = gy * chCap;
+          const y1 = (gy + 1) * chCap;
+          // Skip cells the panel covers: the panel is checked by the IoU metric above, and it is
+          // deliberately opaque here where the page is translucent.
+          const hitsPanel = !(
+            x1 < r.x * k ||
+            x0 > (r.x + r.width) * k ||
+            y1 < r.y * k ||
+            y0 > (r.y + r.height) * k
+          );
+          // Skip the provenance stamp: it is drawn only into the picture.
+          const hitsStamp = y1 > capImg.height - stampHpx - chCap * 0.5;
+          if (hitsPanel || hitsStamp) continue;
+          cellsUsed++;
+          const d = Math.abs(gLive[gy * GX + gx] - gCap[gy * GX + gx]);
+          diffSum += d;
+          if (d <= tol) cellsAgree++;
+        }
+      }
+
+      return {
+        iou: union ? inter / union : 0,
+        inkLive: A.ink,
+        inkPicture: B.ink,
+        k: +k.toFixed(3),
+        cellsUsed,
+        cellAgree: cellsUsed ? +(cellsAgree / cellsUsed).toFixed(3) : 0,
+        cellMeanDiff: cellsUsed ? +(diffSum / cellsUsed).toFixed(1) : 0,
+      };
     },
     live,
+    liveFull,
     captured,
     rect,
+    CELL_TOLERANCE,
   );
+  } catch (e) {
+    fail(`${vp.label}: comparison threw: ${e && e.message ? e.message : e}`);
+    await page.close();
+    continue;
+  }
 
   // Guard the guard: an empty mask on either side makes IoU meaningless, and "0 of 0 pixels agree" is
   // not a pass. This is the exact shape of failure that let the original bug through.
@@ -252,6 +393,28 @@ for (const vp of VIEWPORTS) {
     checks.push([
       "ok  ",
       `${vp.label}: panel matches the page  IoU ${result.iou.toFixed(3)} (>= ${MIN_IOU}, scale ${result.k})`,
+    ]);
+  }
+
+  // The whole frame, judged separately from the panel. This is the assertion that would have caught a
+  // perfect panel composited over an empty scene -- the state this file found the tree in.
+  if (result.cellsUsed < 24) {
+    fail(
+      `${vp.label}: only ${result.cellsUsed} grid cells are outside the panel and stamp, which is too few ` +
+        `to say anything about the scene`,
+    );
+  } else if (result.cellAgree < MIN_CELL_AGREE) {
+    fail(
+      `${vp.label}: the picture does not look like the page -- only ${(result.cellAgree * 100).toFixed(1)}% ` +
+        `of the frame's cells match (>= ${(MIN_CELL_AGREE * 100).toFixed(0)}%, mean difference ` +
+        `${result.cellMeanDiff} levels). The panel can be perfect over an empty frame; a person judging ` +
+        `claim 5 would be looking at nothing.`,
+    );
+  } else {
+    checks.push([
+      "ok  ",
+      `${vp.label}: the picture looks like the page  ${(result.cellAgree * 100).toFixed(1)}% of cells ` +
+        `agree (>= ${(MIN_CELL_AGREE * 100).toFixed(0)}%, mean diff ${result.cellMeanDiff} levels)`,
     ]);
   }
 
