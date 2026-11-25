@@ -11,6 +11,14 @@
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
     padding: 10px 14px; font: 12px/1.5 ui-monospace, monospace;
     background: #4a1414; color: #ffd9d0; border-top: 2px solid #c1440e;
+    /* IT MUST NOT EAT CLICKS. This banner spans the full width at the bottom of a fixed layer, so it sits
+       ON TOP of the panel's lower controls -- and a transparent-to-the-eye element that is not
+       transparent to the pointer silently breaks every button underneath it. `tools/check-cache.mjs`
+       caught it: "exposure change -> full shade {shades:0, blits:0}" and "cached image actually updates
+       luma 116.2 -> 116.2", because `#exposure` was behind this div. A check that failed when the kernel
+       was absent, which is CI's condition and not mine.
+       The banner is information, not a control, so the pointer passes through it. */
+    pointer-events: none;
   }
   #nokernel b { display: block; margin-bottom: 4px; color: #fff; font-size: 13px; }
   #nokernel span { display: block; max-width: 110ch; opacity: .92; }
@@ -23,7 +31,7 @@
   #gl { display: block; width: 100vw; height: 100vh; touch-action: none; }
 
   #hud {
-    position: fixed; top: 8px; left: 8px; z-index: 10;
+    position: fixed; top: 8px; left: 8px; z-index: 40;   /* above #nokernel, so neither hides the other */
     padding: 10px 12px; border-radius: 6px;
     background: rgba(10,12,15,.82); border: 1px solid #232a33;
     backdrop-filter: blur(6px);
