@@ -700,7 +700,8 @@ fn a_zero_emissivity_radiator_has_no_temperature_to_settle_at() {
         "a NaN emissivity is not a physical value"
     );
     // And the boundary just inside still answers -- the gate is not rejecting the whole valid range.
-    let just_inside = radiator_temperature(1000.0, 1.0, 1e-9, 300.0).expect("a positive emissivity");
+    let just_inside =
+        radiator_temperature(1000.0, 1.0, 1e-9, 300.0).expect("a positive emissivity");
     assert!(
         just_inside.is_finite() && just_inside > 300.0,
         "a tiny positive emissivity must still return a finite, hot temperature, got {just_inside}"
