@@ -350,6 +350,24 @@ check(
     await pg.evaluate(async () => {
       const od = window.__odderon;
       if (!od) return;
+      // FREEZE THE FRAME INDEX TOO, and this one is new information rather than belt and braces.
+      //
+      // `emit()` mixes SENSOR GRAIN into every pixel as a hash of `gl_FragCoord + uFrame`, where
+      // `uFrame` is `bench.framesDrawn % 1024`. The grain exists so an 8-bit gradient does not band, and
+      // it is deliberately per-frame. So two page loads that draw a different number of frames before
+      // settling -- and they do, because the kernel landing and the settle loop differ by a frame or two
+      // -- produce two DIFFERENT noise draws over identical scenes.
+      //
+      // That made this comparison measure the noise: 149 085 pixels differing by up to 5 levels, on a
+      // flat-colour probe, with the two per-frame passes proven exact. The reason it only started
+      // failing now is worth recording: the interior used to return from `main()` BEFORE the grain
+      // block, so most of the frame carried no grain at all and the difference stayed under the
+      // threshold. Routing every path through one output stage -- which was the fix for the grain being
+      // silently unreachable -- exposed that this assertion had been comparing a largely noiseless
+      // image. The claim it was making was true by accident.
+      //
+      // Pinning the index makes both pages draw the same noise, so the check compares what it means to
+      // compare: whether the per-frame pass reproduces the shaded image.
       const before = od.bench.framesDrawn;
       if (window.__freezeTick) window.__freezeTick();
       od.requestFrame();

@@ -234,6 +234,13 @@ jobs:
       # the repository's own git config with status 200. See `tools/static-path.mjs` for the mechanism.
       - name: static path resolver (no traversal out of web/ or dist/)
         run: node tools/check-static-path.mjs
+      # `web/index.html` keeps its fragment shader in a JavaScript template literal, so ONE backtick in a
+      # GLSL comment -- and GLSL comments are full of words like 'patch' -- closes the literal early and
+      # the module never runs. The symptom is a blank canvas with no WebGL error at all. Four edits to the
+      # room scene hit this and each one cost a render cycle to find. Counting backticks does not detect
+      # it (the count stays even); asking Node to parse the script does.
+      - name: the page's module script parses
+        run: node tools/check-script-syntax.mjs
       # THE ORBIT STUB GATE. `web/index.html` drew its satellite with a local Kepler solver for the whole
       # life of the file, labelled as a stand-in in three separate comments, and no check noticed -- every
       # check asked whether the page rendered, and the stand-in rendered perfectly. A comment describing

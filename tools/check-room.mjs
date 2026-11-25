@@ -292,6 +292,189 @@ try {
     ok(`the shader's input is the kernel's ratio, both ways: ${open.light} -> ${closed.light}`);
   }
 
+  // --- 6: IS IT A ROOM, THOUGH? ------------------------------------------------------------------
+  //
+  // This section exists because every assertion above passed on a picture that was wrong. The page
+  // reported 1440 W beside a pane rendered at 0 %; then, after that was fixed, it reported the right
+  // numbers beside an EXTERIOR -- a corrugated wall with a small dark square in it, which the owner of
+  // the screenshot described as "nothing like a room". Both times the instrument measured a claim rather
+  // than looking at the frame, and a claim is exactly what a bad frame also satisfies.
+  //
+  // So these describe what a room on a bright day IS, in statistics a photograph can answer. Every
+  // threshold below is set from a measurement of the scene as shipped, with the margin stated:
+  //
+  //                                   measured        threshold      headroom
+  //   floor mean luma, open            113.4           > 95           1.19x
+  //   floor darkening when shut        20.3%           > 12%          1.69x
+  //   floor peak (the patch)           163.5           > 140          1.17x
+  //   pixels changing by > 40 luma     13 500          > 8 000        1.69x
+  //   warm share of the lit floor      29%             > 12%          2.4x
+  //
+  // The floor region is the bottom 28 % of the frame, right of the HUD, because that is where a sunbeam
+  // through a window at 1.72 m lands. It is measured, not assumed: an earlier version of this check
+  // required half of ALL bright pixels in the frame to darken, and a lit wall does not darken -- it dims
+  // by about 20 % -- so the assertion failed against a scene that was correct. A threshold that has to be
+  // relaxed until the right answer passes is not measuring anything; this one is set from the numbers.
+  const st = await page.evaluate(
+    async (openB64, shutB64) => {
+      const load = (d) =>
+        new Promise((res, rej) => {
+          const i = new Image();
+          i.onload = () => res(i);
+          i.onerror = rej;
+          i.src = "data:image/png;base64," + d;
+        });
+      const px = (img) => {
+        const c = document.createElement("canvas");
+        c.width = img.width;
+        c.height = img.height;
+        const x = c.getContext("2d", { willReadFrequently: true });
+        x.drawImage(img, 0, 0);
+        return x.getImageData(0, 0, img.width, img.height).data;
+      };
+      const [A, B] = await Promise.all([load(openB64), load(shutB64)]);
+      const P = px(A);
+      const Q = px(B);
+      const W = A.width;
+      const H = A.height;
+
+      // The HUD covers the top-left; exclude it or every statistic is about the panel.
+      const hud = document.getElementById("hud").getBoundingClientRect();
+      const sx = W / window.innerWidth;
+      const sy = H / window.innerHeight;
+      const inHud = (x, y) => x < hud.right * sx && y < hud.bottom * sy;
+      const L = (a, i) => 0.2126 * a[i] + 0.7152 * a[i + 1] + 0.0722 * a[i + 2];
+
+      let n = 0, so = 0, ss = 0, peak = 0, warm = 0, lit = 0;
+      for (let y = Math.floor(H * 0.72); y < H; y += 2) {
+        for (let x = 0; x < W; x += 2) {
+          if (inHud(x, y)) continue;
+          const i = (y * W + x) * 4;
+          const lo = L(P, i), ls = L(Q, i);
+          n++; so += lo; ss += ls;
+          if (lo > peak) peak = lo;
+          if (lo > 60) {
+            lit++;
+            if (P[i] > P[i + 2] + 10) warm++;
+          }
+        }
+      }
+
+      let changed = 0, bigChange = 0, bright = 0;
+      // The window region: the bright, SKY-COLOURED pixels in the open frame. If the curtain is a real
+      // surface these must change appearance when it is drawn; if the cloth is missing they stay sky.
+      let winN = 0, winChanged = 0;
+      for (let y = 0; y < H; y += 2) {
+        for (let x = 0; x < W; x += 2) {
+          if (inHud(x, y)) continue;
+          const i = (y * W + x) * 4;
+          const d = Math.abs(L(P, i) - L(Q, i));
+          const lp = L(P, i);
+          if (lp > 120) bright++;
+          if (lp > 110 && P[i + 2] > P[i] + 8) {
+            winN++;
+            if (Math.abs(lp - L(Q, i)) > 15) winChanged++;
+          }
+          if (d > 10) changed++;
+          if (d > 40) bigChange++;
+        }
+      }
+      return {
+        n,
+        frameN: changed + 0 + (() => {
+          let c = 0;
+          for (let y = 0; y < H; y += 2) for (let x = 0; x < W; x += 2) if (!inHud(x, y)) c++;
+          return c;
+        })(),
+        floorOpen: so / Math.max(n, 1),
+        floorShut: ss / Math.max(n, 1),
+        peak,
+        warmFrac: warm / Math.max(lit, 1),
+        changed,
+        bigChange,
+        bright,
+        winN,
+        winChanged,
+        W,
+        H,
+      };
+    },
+    before,
+    after,
+  );
+
+  if (st.n < 1000) {
+    fail(`only ${st.n} floor pixels sampled -- the frame is not being captured`);
+  } else {
+    // (a) The room is lit. The scene this replaced measured 6.1 mean luma and read as a hole.
+    if (!(st.floorOpen > 95)) {
+      fail(`floor mean luma is ${st.floorOpen.toFixed(1)} -- an interior on a 35 C day is brighter than that`);
+    } else {
+      ok(`the floor is lit: mean luma ${st.floorOpen.toFixed(1)} (the scene that read as a hole was 6.1)`);
+    }
+
+    // (b) There is a bright patch on it, not a uniform field. A patch has a peak well above its mean.
+    if (!(st.peak > 140)) {
+      fail(`the floor's brightest point is ${st.peak.toFixed(1)} luma -- there is no sun patch on it`);
+    } else {
+      ok(`the sun patch peaks at ${st.peak.toFixed(1)} luma, ${(st.peak / st.floorOpen).toFixed(2)}x the floor mean`);
+    }
+
+    // (c) The patch is WARM. That is what separates a sunbeam from a lamp or a white wall.
+    if (!(st.warmFrac > 0.12)) {
+      fail(`only ${(st.warmFrac * 100).toFixed(1)}% of the lit floor is warm-toned -- this is not sunlight`);
+    } else {
+      ok(`${(st.warmFrac * 100).toFixed(1)}% of the lit floor is warm-toned: a sun patch, not a lamp`);
+    }
+
+    // (d) Closing the curtain DARKENS THE FLOOR, measurably. This is claim 2 in pixels: the same surface,
+    // two states, and the light has to leave.
+    const drop = 1 - st.floorShut / st.floorOpen;
+    if (!(drop > 0.12)) {
+      fail(
+        `closing the curtain darkened the floor by only ${(drop * 100).toFixed(1)}% ` +
+          `(${st.floorOpen.toFixed(1)} -> ${st.floorShut.toFixed(1)} luma)`,
+      );
+    } else {
+      ok(`the curtain darkens the floor ${(drop * 100).toFixed(1)}% (${st.floorOpen.toFixed(1)} -> ${st.floorShut.toFixed(1)} luma)`);
+    }
+
+    // (e) The change is LARGE in extent, not a few pixels: the patch has to be a shape in the frame.
+    if (!(st.bigChange > 4500)) {
+      fail(`only ${st.bigChange} pixels changed by more than 40 luma -- the patch is not a shape in the frame`);
+    } else {
+      ok(`${st.bigChange} pixels change by more than 40 luma; ${st.changed} change at all`);
+    }
+
+    // (e2) THE CURTAIN IS SOMETHING YOU CAN SEE. This was a real hole in this check: with the cloth
+    // surface deleted and only the brightness ratio left behind, the floor still darkened and every
+    // other assertion still passed -- the room went dark because the sun left, with nothing in the
+    // window to explain why. "The sun is blocked" and "you can see what is blocking it" are two claims,
+    // and only the first one was being tested. So: take the pixels that are bright and sky-coloured in
+    // the open frame -- that is the window -- and require most of them to change appearance when the
+    // curtain comes down. A missing cloth leaves them as sky and fails here.
+    if (st.winN < 300) {
+      fail(`only ${st.winN} sky-coloured pixels found -- the window is not visible in the frame at all`);
+    } else if (!(st.winChanged > st.winN * 0.5)) {
+      fail(
+        `only ${st.winChanged} of ${st.winN} window pixels changed when the curtain closed ` +
+          `-- the room went dark but nothing appears to have blocked the light`,
+      );
+    } else {
+      ok(`the curtain is visible in the opening: ${st.winChanged} of ${st.winN} window pixels change appearance`);
+    }
+
+    // (f) The window is a believable share of the WHOLE frame. The version that read as "a hole" had its
+    // opening at 0.9 %; this requires 3 %, well above that and well below the shipped 4.4 %. (The first
+    // version of this line divided by the floor region rather than the frame, and printed "278 %".)
+    const apertureFrac = st.bright / st.frameN;
+    if (!(apertureFrac > 0.03)) {
+      fail(`the daylight through the opening covers ${(apertureFrac * 100).toFixed(2)}% of the frame -- that is a hole, not a window`);
+    } else {
+      ok(`the opening is the brightest thing in the frame and covers ${(apertureFrac * 100).toFixed(1)}% of it`);
+    }
+  }
+
   await page.close();
 } catch (e) {
   fail(`the browser half threw: ${e && e.message ? e.message : e}`);
