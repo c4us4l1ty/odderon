@@ -1385,6 +1385,175 @@ function blitFrame() {
 // It cannot be done on the real cache texture: re-reading `tex` on the second and later iterations may
 // be met by a cache hit, which would measure the cache rather than the read. `probeTex` exists for this
 // and nothing else.
+// ---------------------------------------------------------------------------------------------
+// A DIRECT per-frame measurement, for devices without a GPU timer.
+//
+// `upperBoundBlit()` below answers "how fast can the GPU possibly be going", by amortising one stall
+// over 64 frames. That is a useful number and it is an ESTIMATE: it is not a measurement of one frame,
+// which is exactly the gap claim 4 has been parked on -- "one side is an amortised upper estimate and
+// the other a median of an emulated call".
+//
+// This measures ONE frame, and it uses `fenceSync` rather than `finish()`. The difference matters for
+// the same reason `upperBoundBlit()` documents: on a phone, `gl.finish()` returns at the next refresh
+// boundary, so a per-frame finish measures the display. A fence is a completion marker for the command
+// stream we submitted, not a presentation barrier, and it is legal to wait on it with a bounded
+// timeout. `gl.clientWaitSync` returns a status we can READ, which is what makes this honest.
+//
+// It blits into an OFFSCREEN target of the cache's own size, never into the default framebuffer. This
+// is the mechanism: `blitOnce()` in `upperBoundBlit()` draws into the default framebuffer 64 times, and
+// a naive fence-based version of this function would do the same once per frame and put presentation
+// and its 4.00 ms vsync wait back on the clock -- the exact defect `upperBoundBlit()` documents having
+// already committed once. An offscreen blit is still a real blit: same source, same size, same
+// `NEAREST` filter, and `tools/check-astro-bench.mjs` asserts the numbers are equal when both can be
+// resolved. What it does not include is presentation, so the figure is a lower bound in that one
+// respect, and the panel says so rather than implying it is a whole frame.
+//
+// AND IT REFUSES TO REPORT WHAT IT CANNOT SEE. Run on a machine whose clock or driver cannot resolve a
+// single blit -- SwiftShader here, where a whole frame reads 0.00-0.30 ms at 1 ms granularity -- this
+// returns a null figure and the reason, instead of a decimal. A measurement whose resolution exceeds
+// the thing it measures is the "number at the limit of resolution is a fake claim" failure this
+// project has already been bitten by.
+// Below this, a per-frame wall-clock figure is not resolvable by this method on any backend we have.
+const RES_MIN_MS = 0.01;
+
+async function directBlitMs(frames = 32) {
+  if (!cache.probeFbo) return { ms: null, reason: 'no offscreen target' };
+  if (typeof gl.fenceSync !== 'function' || typeof gl.clientWaitSync !== 'function') {
+    return { ms: null, reason: 'fenceSync unavailable' };
+  }
+  const W = cache.w;
+  const H = cache.h;
+  const med = (xs) => { const a = xs.slice().sort((p, q) => p - q); return a[a.length >> 1]; };
+
+  // THE STOPWATCH'S OWN PRICE, measured in the same loop shape. Without this the figure includes
+  // fence creation and the wait call itself, which on these backends is comparable to the work.
+  // THE OVERHEAD LOOP MUST HAVE THE SAME SHAPE AS THE MEASURED LOOP, yield included.
+  //
+  // The first version of this used a single `clientWaitSync` with a large timeout and no `await`, so
+  // it measured 0.1 ms while the measured loop -- which yields a tick so the driver can signal --
+  // measured 4.0 ms. Subtracting one from the other credited 3.9 ms of SCHEDULER to the renderer, and
+  // the refusal message then read "yield floor 0.1 ms exceeds the 1.5 ms budget", which is arithmeti-
+  // cally absurd and would have been shipped as a finding. Measure the same loop with the blit removed.
+  const empty = [];
+  for (let i = 0; i < 8; i++) {
+    const t0 = performance.now();
+    const f = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    gl.flush();
+    let st0 = gl.clientWaitSync(f, 0, 0);
+    if (st0 === gl.TIMEOUT_EXPIRED) {
+      await new Promise((r) => setTimeout(r, 0));
+      gl.clientWaitSync(f, gl.SYNC_FLUSH_COMMANDS_BIT, 0);
+    }
+    gl.deleteSync(f);
+    empty.push(performance.now() - t0);
+  }
+  const overhead = med(empty);
+
+  const per = [];
+  let timedOut = 0;
+  for (let i = 0; i < frames; i++) {
+    const t0 = performance.now();
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, cache.fbo);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, cache.probeFbo);
+    gl.blitFramebuffer(0, 0, W, H, 0, 0, W, H, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+    const f = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    gl.flush();
+    // Bounded wait. `SYNC_OBJECT_ALREADY_SIGNALED` / `CONDITION_SATISFIED` both mean it completed;
+    // anything else means this sample must not be counted as a measurement.
+    // WAITING ON A FENCE NEEDS BOTH A LEGAL TIMEOUT AND A YIELDED MAIN THREAD.
+    //
+    // Two measured mistakes, both of which made this function report "32 fences timed out" on a
+    // backend where every fence was completing:
+    //
+    //  1. `5e7` is not a legal timeout here. `clientWaitSync` takes a GLint64, but this binding hands
+    //     anything large enough to `WAIT_FAILED` (37149) rather than a timeout.
+    //  2. A busy-poll on `performance.now()` never lets the driver signal. Polled with `timeout = 0`
+    //     the fence reads TIMEOUT_EXPIRED, then CONDITION_SATISFIED, then ALREADY_SIGNALED -- but only
+    //     when 30 ms of real wall clock passes between polls. A tight loop burns its whole budget
+    //     inside the first millisecond and sees nothing but TIMEOUT_EXPIRED.
+    //
+    // So: ONE yielded tick, which is what the driver needs to signal, and never a spin. The cost of
+    // the yield itself is subtracted below, so what is left is the blit.
+    let st = gl.clientWaitSync(f, 0, 0);
+    if (st === gl.TIMEOUT_EXPIRED) {
+      // MEASURED: a `setTimeout(0)` loop is NOT a cheap way to wait. Each tick is clamped to ~4 ms
+      // here, and this loop needed about five of them, so a blit-plus-wait read 20.8 ms when the same
+      // yield with NO GPU work at all already cost 4.2 ms and `finish()` after a single tick cost
+      // 4.1 ms. The number being measured had become the polling loop.
+      //
+      // One timer tick is enough for the driver to signal -- the fence goes TIMEOUT_EXPIRED, then
+      // CONDITION_SATISFIED, within a single yielded task. So: poll once, then wait on the timer
+      // rather than on the status.
+      await new Promise((r) => setTimeout(r, 0));
+      st = gl.clientWaitSync(f, gl.SYNC_FLUSH_COMMANDS_BIT, 0);
+    }
+    gl.deleteSync(f);
+    if (st === gl.WAIT_FAILED) {
+      timedOut++;
+    } else {
+      // TIMEOUT_EXPIRED after one yield is not a failure -- the fence is just not idle yet. The
+      // elapsed time is a real completion interval and is counted as such; only WAIT_FAILED means the
+      // driver refused the question.
+      per.push(Math.max(0, performance.now() - t0));
+    }
+  }
+  gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+  gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+
+  if (per.length < 8) return { ms: null, reason: 'fences did not complete (' + timedOut + ' timed out)' };
+
+  // THE FLOOR OF THIS METHOD IS THE SCHEDULER, NOT THE GPU -- measured, and it is over budget.
+  //
+  // Signalling a fence requires yielding to the event loop, and one `setTimeout(0)` tick on this
+  // backend costs 4.1 ms (median of 16; minimum 0, so it is the CLAMP, not the work). The whole R2
+  // budget is 1.5 ms. Measured on the same page: a tick with NO GPU work at all 4.1 ms, the same tick
+  // with a fence and no blit 4.2 ms, a blit plus that tick 4.0-4.2 ms. The blit does not move the
+  // number, because the number IS the yield.
+  //
+  // So `per` medians around 4 ms whatever the renderer does, and reporting it would put "4.00 ms
+  // direct" on the panel as though the renderer had been measured. That is the "measurement whose
+  // method is hidden" defect this file has fixed four times. When the method's own floor is above the
+  // budget it is being asked about, the honest output is the floor and a refusal.
+  const floor = overhead;
+  // NEVER NEGATIVE. Both terms are samples of the same scheduler-bound clock, so their difference can
+  // come out below zero by the width of the tick -- and it did: the panel printed "~-0.1 ms frame",
+  // a negative time, because `toFixed(1)` on -0.05 renders as "-0.1". A physical quantity that cannot
+  // be negative must not be printed as one.
+  const aboveFloor = Math.max(0, med(per) - floor);
+  if (aboveFloor < RES_MIN_MS) {
+    // The blit does not move the number above the method's own floor, so there is nothing here about
+    // the renderer. Say which of the two floors stopped it -- the scheduler clock or the GPU clock --
+    // because they lead to different next steps.
+    const why = floor > 1.5
+      ? 'a yield costs ' + floor.toFixed(1) + ' ms on this device, over the 1.5 ms budget'
+      : 'the blit is below the ' + floor.toFixed(2) + ' ms floor of this method';
+    return { ms: null, reason: why, floor };
+  }
+
+  // A HALF-PERIOD GUARD ON THE CLOCK. `performance.now()` is coarsened on purpose by browsers, so a
+  // distribution that never leaves a single tick cannot be averaged into a real number: the median is
+  // the tick, not the renderer. If the samples do not span at least two distinct values, there is no
+  // measurement here to report.
+  const distinct = new Set(per.map((v) => v.toFixed(3))).size;
+  if (distinct < 2) {
+    return {
+      ms: null,
+      reason: 'below the timer resolution (' + per.length + ' frames, all ' + per[0].toFixed(2) + ' ms)',
+    };
+  }
+
+  const corrected = Math.max(0, aboveFloor);
+  bench.directOverheadMs = overhead;
+  bench.directFrames = per.length;
+  // The figure is a DIFFERENCE between two samples of a 4 ms-bound scheduler, so its resolution is
+  // the tick, not a hundredth of a millisecond. Carried out with the number so nothing downstream can
+  // print "0.20 ms" and let a reader assume it is resolved to 0.01.
+  bench.directUncertaintyMs = 0.1;
+  // If the corrected figure is indistinguishable from the tick, report the tick as the resolution
+  // rather than a decimal -- the same "< 0.01" rule the frame row uses, applied to the caveat.
+  return { ms: corrected, overhead, uncertainty: 0.1, timedOut, frames: per.length };
+}
+
 function upperBoundBlit(samples = 12) {
   if (!cache.probeFbo) return null;
   // ONE `gl.finish()` FOR K BLITS -- NOT ONE PER BLIT. This is the whole mechanism and it was wrong
@@ -1592,6 +1761,15 @@ async function measureFrame(samples = 12) {
   // measured there and reported as an upper bound, never as a frame time.
   bench.blitUpperMs = (!Number.isFinite(bench.gpuBlitMs) && bench.gpuTimerState !== 'ok')
     ? (upperBoundBlit(12) ?? NaN) : NaN;
+  // A DIRECT per-frame number outranks the amortised estimate, because it is what claim 4 asks for:
+  // one frame, measured, rather than T/K with a stall divided out. Attempted only when there is no GPU
+  // timer -- where a timer exists it is strictly better and already reported as `gpuBlitMs`.
+  const direct = (!Number.isFinite(bench.gpuBlitMs) && bench.gpuTimerState !== 'ok')
+    ? await directBlitMs(32) : { ms: null, reason: 'gpu timer supplied a median' };
+  bench.directBlitMs = direct.ms;
+  bench.directBlitReason = direct.reason || null;
+  bench.directBlitOverheadMs = direct.overhead ?? NaN;
+  bench.directBlitFrames = direct.frames ?? 0;
   bench.blitMs = gpuBlits.length ? bench.gpuBlitMs : med(blitTimes);
   bench.blitP95 = gpuBlits.length ? p95f(gpuBlits) : p95f(blitTimes);
   // The sorted stalled sample set, kept so the readout can print a percentile of the SAME samples as
@@ -1757,6 +1935,18 @@ function updateHud() {
     r2.textContent = fmt(bench.gpuBlitMs, 2) + ' ms gpu ' +
       (blitSupported ? 'blit ' : 'texture read ') + (ok ? '< 1.5' : '> 1.5');
     r2.className = ok ? 'pass' : 'fail';
+  } else if (Number.isFinite(bench.directBlitMs)) {
+    // ONE FRAME, MEASURED. This is claim 4's missing quantity, so it is reported ahead of the bound.
+    // The caveat is on the row rather than in a report: the blit is into an offscreen target, so it
+    // excludes presentation. Saying "direct" without that would be trading one overclaim for another.
+    const ok = bench.directBlitMs < 1.5;
+    // One decimal, because one decimal is what a 4 ms-bound clock supports after the floor is
+    // subtracted. Two would be inventing resolution at the limit of the instrument.
+    // One tenth, and never a negative zero. `Math.max(0, ...)` upstream means the smallest figure this
+    // row can show is "~0.0", which is the honest render of "at or below the method's floor".
+    r2.textContent = '~' + Math.max(0, bench.directBlitMs).toFixed(1) + ' ms frame ' +
+      (ok ? '< 1.5' : '> 1.5');
+    r2.className = 'warn';   // a latency derived by subtraction is evidence, not a settled verdict
   } else if (Number.isFinite(bench.blitUpperMs)) {
     // An upper bound is the strongest statement this device supports. If it clears the budget, the real
     // cost cannot fail; if it does not, that is inconclusive rather than a failure, and the wording says
@@ -1771,9 +1961,22 @@ function updateHud() {
     // `tools/check-cache.mjs` asserts the phrase is there. What was dropped is the parenthetical
     // "(real cost is lower)", which pushed the row onto two visual lines and is the report's job to
     // say, not a 340-px panel's.
-    r2.textContent = (bench.blitUpperMs < 0.01 ? '' : '\u2264 ') + shown + ' ms upper bound ' +
-      (clear ? '< 1.5' : '> 1.5');
+    // THIS IS A THROUGHPUT FIGURE, NOT A FRAME COST, and the row says so.
+    //
+    // K blits over T ms gives T/K: the rate at which this GPU can retire blits when they are queued
+    // back to back. That is a real and useful number, but it is a bound on THROUGHPUT, and a pipelined
+    // GPU answers it with a smaller number than the latency of any single frame. Measured here: the
+    // T/K figure is 0.014 ms while one fenced frame is 0.2 ms. Both are right; they answer different
+    // questions. R2 asks for the cost of ONE frame, so calling T/K a frame-cost bound overstated what
+    // it had measured -- the same class of error as calling submit time a frame time.
+    r2.textContent = (bench.blitUpperMs < 0.01 ? '' : '\u2264 ') + shown + ' ms per frame k=64' +
+      (clear ? ' < 1.5' : ' > 1.5');
     r2.className = clear ? 'pass' : 'warn';
+  } else if (bench.directBlitReason && Number.isFinite(bench.blitUpperMs)) {
+    // There is a bound but no direct measurement, and the reason is a fact about this device worth
+    // showing: a reader seeing only "upper bound" cannot tell whether the direct number was tried.
+    r2.textContent = 'bound only: ' + bench.directBlitReason.slice(0, 34);
+    r2.className = 'warn';
   } else if (bench.gpuTimerState === 'no-samples') {
     // The timer exists but handed back nothing. Say so plainly: this is an instrument problem, and
     // calling the finish() number below "vsync-bound" would be inventing a cause for it.
@@ -2243,7 +2446,8 @@ window.__odderon = {
   // project keeps catching itself testing.
   measureFrame,
   blitFrame,      // the per-frame primitive, so a test measures the real one rather than a copy
-  upperBoundBlit, // the no-GPU-timer bound, so its honesty can be tested rather than trusted
+  upperBoundBlit, // the no-GPU-timer estimate, so its honesty can be tested rather than trusted
+  directBlitMs,   // the per-frame DIRECT measurement, for the same reason
   // Force the next frame down the expensive path, so a test can compare cached vs freshly shaded.
   invalidate() { cache.valid = false; },
 };
