@@ -1259,9 +1259,18 @@ async function loadKernel() {
                     'orbit_velocity_x', 'orbit_velocity_y', 'orbit_velocity_z',
                     'orbit_iterations', 'orbit_unconverged',
                     'orbit_mu', 'orbit_semi_major_axis', 'orbit_eccentricity',
-                    // The room. Claim 2 is the reason this build exists, and these are the four
-                    // numbers that make it visible instead of merely measured.
-                    'room_solar_w', 'room_light_fraction', 'room_cooling_w', 'room_draw_w'];
+                    // The room. Claim 2 is the reason this build exists, and these are the numbers that
+                    // make it visible instead of merely measured.
+                    //
+                    // EVERY EXPORT THE PAGE CALLS, NOT JUST THE FOUR STEADY-STATE NUMBERS. The list was
+                    // once only those four, which made the guard below claim more than it checked: a
+                    // module missing `room_settled_k` or `room_temperature_from_k` passed it and then threw
+                    // an uncaught TypeError inside `refreshRoom()`/`roomTemperature()`. Because the boot
+                    // calls `setCurtain()` from a `.then()` with no catch, that stalled the whole page --
+                    // no room, no HUD, no diagnostic -- which is precisely the failure this guard exists
+                    // to prevent. The list is the contract; it has to name the whole of it.
+                    'room_solar_w', 'room_light_fraction', 'room_cooling_w', 'room_draw_w',
+                    'room_settled_k', 'room_temperature_from_k'];
     const missing = needed.filter((n) => typeof ex[n] !== 'function');
     if (missing.length) throw new Error('module missing exports: ' + missing.join(', '));
     kernelState.module = ex;
@@ -1386,18 +1395,36 @@ function roomElapsedS(nowMsArg) {
 /// where a long-closed room IS, not where a room that has been cooling for ten minutes is. Measured
 /// before the fix: close (329.48 K after 2388 simulated s), reopen -- 346.82 K, a **17.34 K** jump in one
 /// frame, where the zone's own time constant is 44 min.
-function roomTemperature(nowMsArg) {
+/// The room's temperature at a given elapsed time, PURE: it reads the kernel and writes nothing.
+///
+/// Split out of `roomTemperature()` because `roomMoving()` needs the same number but must NOT touch
+/// `roomState.elapsedS`. `roomMoving()` is a query, and it is called from `updateHud()` on a 100 ms
+/// timer as well as from the render loop. When it called `roomTemperature()` directly, every HUD tick
+/// overwrote `roomState.elapsedS` with a value computed from `performance.now()` -- a different clock
+/// from the render loop's rAF timestamp -- so the panel's own predicate desynced the two fields the
+/// page keeps in lockstep. Measured on a seeked page: `elapsedS` 1800 s while `temperatureK` was still
+/// the 600 s value, an 8.5 K disagreement between the page and the kernel it was supposed to match.
+function roomTempK(curtain, fromK, elapsedS) {
   const k = kernelState.module;
   if (!k) return NaN;
-  roomState.elapsedS = roomElapsedS(nowMsArg);
   // ONE LAW FOR BOTH DIRECTIONS. The room warming up after the curtain reopens is the same first-order
   // response as the room cooling after it closes -- same zone, same heat capacity, same conductance --
   // and the kernel now takes the starting temperature so both are literally the same call.
   return k.room_temperature_from_k(
-    roomState.curtain ? 1 : 0,
-    Number.isFinite(roomState.fromK) ? roomState.fromK : 0.0,
-    roomState.elapsedS,
+    curtain ? 1 : 0,
+    Number.isFinite(fromK) ? fromK : 0.0,
+    elapsedS,
   );
+}
+
+/// Zone temperature, kelvin, from the kernel, AND the elapsed time it was computed at.
+///
+/// This is the render loop's entry point: it records `roomState.elapsedS` so the panel and the cache
+/// agree on which moment the cached temperature belongs to, then returns the temperature.
+function roomTemperature(nowMsArg) {
+  const t = roomElapsedS(nowMsArg);
+  roomState.elapsedS = t;
+  return roomTempK(roomState.curtain, roomState.fromK, t);
 }
 
 /// Apply a curtain state, start its trajectory, and invalidate the cache.
@@ -1893,8 +1920,12 @@ const ROOM_SHADE_K = 2.0;
 function roomMoving(nowMsArg) {
   if (!kernelState.module) return false;                    // no kernel, no trajectory to show
   if (!Number.isFinite(roomState.fromK)) return false;       // nothing has been disturbed yet
-  if (roomElapsedS(nowMsArg) >= ROOM_SETTLE_S) return false;  // the window is over
-  const now = roomTemperature(nowMsArg);
+  // Read the elapsed time locally and pass it to the PURE helper. Calling `roomTemperature()` here
+  // would write `roomState.elapsedS` from this clock, and this function is called from `updateHud()`
+  // on a timer as well as from the render loop -- see `roomTempK`.
+  const t = roomElapsedS(nowMsArg);
+  if (t >= ROOM_SETTLE_S) return false;  // the window is over
+  const now = roomTempK(roomState.curtain, roomState.fromK, t);
   const target = roomState.settledK;
   return Number.isFinite(now) && Number.isFinite(target) && Math.abs(now - target) > ROOM_SHADE_K;
 }

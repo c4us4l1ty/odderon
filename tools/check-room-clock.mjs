@@ -58,8 +58,36 @@ const report = () => {
 
 // --- 1: the kernel's trajectory, against the Rust test's own numbers ----------------------------
 const src = await readFile(join(ROOT, "web", "index.html"), "utf8");
-check("the page asks the kernel for a temperature at a given time", /room_temperature_k\s*\(/.test(src));
-check("the page asks for the settled temperature too", /room_settled_k\s*\(/.test(src));
+// Comments stripped, because a check that matches inside a doc comment is not checking the page. The
+// first version asserted `/room_temperature_k\s*\(/` and passed for years after the page stopped
+// calling `room_temperature_k` and switched to `room_temperature_from_k`: the match was the function
+// name inside a `///` comment, so the claim "the page asks the kernel for a temperature at a given time"
+// stayed green while the thing it described was gone. A gate must fail when the code it names changes.
+const code = src.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+check(
+  "the page calls the kernel's trajectory export (a real call site, not a comment)",
+  /k\.room_temperature_from_k\s*\(/.test(code),
+);
+check(
+  "the page asks for the settled temperature too (a real call site, not a comment)",
+  /k\.room_settled_k\s*\(/.test(code),
+);
+
+// AND THE EXPORT LIST MUST NAME EVERY EXPORT THE PAGE CALLS. The `needed` array in `loadKernel()` is
+// the page's own contract that a partially-built module fails at the boundary instead of mid-render,
+// and it was once only the four steady-state numbers: a module missing `room_settled_k` or
+// `room_temperature_from_k` passed the guard and then threw an uncaught TypeError inside
+// `refreshRoom()`, stalling the whole boot with no diagnostic. The list is extracted here and checked
+// against the call sites, so it cannot silently drop an export the page depends on -- the way it did.
+const nl = code.indexOf("const needed =");
+const needed = [...code.slice(nl, code.indexOf("];", nl)).matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+const called = [...code.matchAll(/\b(?:k|ex)\.(room_[a-z_]+)\s*\(/g)].map((m) => m[1]);
+const missingFromList = [...new Set(called)].filter((n) => !needed.includes(n));
+check(
+  "the kernel export list names every room export the page calls",
+  needed.length > 0 && missingFromList.length === 0,
+  missingFromList.length ? `missing from the list: ${missingFromList.join(", ")}` : `${needed.length} exports checked`,
+);
 check("the clock is labelled with its rate, not implied", /clockScale/.test(src) && /@ \$\{/.test(src));
 // THE CACHE MUST DEPEND ON THE TEMPERATURE. This one line is the entire bug this gate was blind to for
 // four runs: without it the clock ticks, the panel counts down, and every frame re-presents the original
@@ -76,14 +104,33 @@ check("the page continues the trajectory from the temperature it is leaving", /r
 // The defect was a ternary whose two branches were different laws -- a curve one way, a constant the other.
 // The first version of this line looked for one exact phrasing and a mutant with the defect written
 // differently walked straight through it, which is the "threshold a broken build clears" failure again.
-const tempFn = (/function roomTemperature\(nowMsArg\) \{([\s\S]*?)\n\}/.exec(src) || [])[1] || "";
+//
+// The body is followed through the helper it delegates to (`roomTempK`), because the refactor that kept
+// `roomMoving()` from writing `roomState.elapsedS` moved the kernel call out of `roomTemperature()` into
+// that helper. Asserting on `roomTemperature()`'s body alone would now fail a correct page -- and, worse,
+// would start passing again the moment someone reintroduced a `room_settled_k` fallback inside the helper.
+const fnBody = (name) => (new RegExp(`function ${name}\\([^)]*\\) \\{([\\s\\S]*?)\\n\\}`).exec(src) || [])[1] || "";
+const tempChain = fnBody("roomTemperature") + fnBody("roomTempK");
 check(
   "roomTemperature() is one trajectory call, not a different law per curtain state",
-  /room_temperature_from_k\(/.test(tempFn) && !/room_settled_k\(/.test(tempFn),
-  tempFn.includes("room_settled_k") ? "it reads room_settled_k() -- the teleport" : "one call, no settled fallback",
+  /room_temperature_from_k\(/.test(tempChain) && !/room_settled_k\(/.test(tempChain),
+  tempChain.includes("room_settled_k") ? "it reads room_settled_k() -- the teleport" : "one call, no settled fallback",
 );
 check("the trajectory runs in both directions, so an open curtain can still be moving",
   /function roomMoving/.test(src) && /roomMoving\(\)/.test(src));
+// AND `roomMoving()` MUST NOT WRITE `roomState.elapsedS`. It is a query, called from `updateHud()` on a
+// 100 ms timer as well as from the render loop, and it used to call `roomTemperature()` -- which writes
+// `elapsedS` from whatever clock it is handed. The HUD tick therefore overwrote the render loop's
+// `elapsedS` (set from the rAF timestamp) with a `performance.now()` value, desyncing the two fields the
+// page keeps in lockstep. Measured on a seeked page: `elapsedS` 1800 s beside a `temperatureK` still
+// holding the 600 s value. The fix is a pure helper (`roomTempK`) that both functions call; this asserts
+// the query keeps its side effect out.
+const movingFn = (/function roomMoving\(nowMsArg\) \{([\s\S]*?)\n\}/.exec(src) || [])[1] || "";
+check(
+  "roomMoving() is a pure query and does not write the elapsed time",
+  !/roomState\.elapsedS\s*=/.test(movingFn),
+  movingFn.includes("roomState.elapsedS =") ? "it writes roomState.elapsedS -- the desync" : "no write",
+);
 // ...AND THE COUPLING MUST BE THE PHYSICAL ONE, not linear-in-T dressed up as radiation.
 check(
   "the temperature drives a T^4 term (Stefan-Boltzmann), not a linear one",
@@ -392,9 +439,26 @@ try {
         await new Promise((res) => setTimeout(res, 50));
         if (Math.abs(o.roomState.elapsedS - T) < 1) break;   // the page has taken the seek
       }
-      return { tK: o.roomState.temperatureK, elapsed: o.roomState.elapsedS };
+      return {
+        tK: o.roomState.temperatureK,
+        elapsed: o.roomState.elapsedS,
+        // The page's OWN inputs, so the reference is the same call the page makes. It used to compare
+        // against `ex.room_temperature_k(t)`, the first-close trajectory, which starts every call from
+        // the settled-open temperature. That was correct when the page did the same; now the page carries
+        // `fromK` -- the temperature it is actually leaving -- so a page that remembers being cold is
+        // correctly DIVERGING from the first-close curve, and the old comparison read that as an 8.5 K
+        // error on a correct page. Comparing against the wrong kernel function is how a gate becomes a
+        // false alarm.
+        curtain: o.roomState.curtain ? 1 : 0,
+        fromK: o.roomState.fromK,
+      };
     }, t);
-    pageVsKernel.push({ t, page: r.tK, kernel: ex.room_temperature_k(t), elapsed: r.elapsed });
+    pageVsKernel.push({
+      t,
+      page: r.tK,
+      kernel: ex.room_temperature_from_k(r.curtain, r.fromK, t),
+      elapsed: r.elapsed,
+    });
   }
   const worst = pageVsKernel.reduce((m, p) => Math.max(m, Math.abs(p.page - p.kernel)), 0);
   check(
