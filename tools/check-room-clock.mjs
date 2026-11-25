@@ -58,8 +58,36 @@ const report = () => {
 
 // --- 1: the kernel's trajectory, against the Rust test's own numbers ----------------------------
 const src = await readFile(join(ROOT, "web", "index.html"), "utf8");
-check("the page asks the kernel for a temperature at a given time", /room_temperature_k\s*\(/.test(src));
-check("the page asks for the settled temperature too", /room_settled_k\s*\(/.test(src));
+// Comments stripped, because a check that matches inside a doc comment is not checking the page. The
+// first version asserted `/room_temperature_k\s*\(/` and passed for years after the page stopped
+// calling `room_temperature_k` and switched to `room_temperature_from_k`: the match was the function
+// name inside a `///` comment, so the claim "the page asks the kernel for a temperature at a given time"
+// stayed green while the thing it described was gone. A gate must fail when the code it names changes.
+const code = src.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+check(
+  "the page calls the kernel's trajectory export (a real call site, not a comment)",
+  /k\.room_temperature_from_k\s*\(/.test(code),
+);
+check(
+  "the page asks for the settled temperature too (a real call site, not a comment)",
+  /k\.room_settled_k\s*\(/.test(code),
+);
+
+// AND THE EXPORT LIST MUST NAME EVERY EXPORT THE PAGE CALLS. The `needed` array in `loadKernel()` is
+// the page's own contract that a partially-built module fails at the boundary instead of mid-render,
+// and it was once only the four steady-state numbers: a module missing `room_settled_k` or
+// `room_temperature_from_k` passed the guard and then threw an uncaught TypeError inside
+// `refreshRoom()`, stalling the whole boot with no diagnostic. The list is extracted here and checked
+// against the call sites, so it cannot silently drop an export the page depends on -- the way it did.
+const nl = code.indexOf("const needed =");
+const needed = [...code.slice(nl, code.indexOf("];", nl)).matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+const called = [...code.matchAll(/\b(?:k|ex)\.(room_[a-z_]+)\s*\(/g)].map((m) => m[1]);
+const missingFromList = [...new Set(called)].filter((n) => !needed.includes(n));
+check(
+  "the kernel export list names every room export the page calls",
+  needed.length > 0 && missingFromList.length === 0,
+  missingFromList.length ? `missing from the list: ${missingFromList.join(", ")}` : `${needed.length} exports checked`,
+);
 check("the clock is labelled with its rate, not implied", /clockScale/.test(src) && /@ \$\{/.test(src));
 // THE CACHE MUST DEPEND ON THE TEMPERATURE. This one line is the entire bug this gate was blind to for
 // four runs: without it the clock ticks, the panel counts down, and every frame re-presents the original
@@ -67,6 +95,41 @@ check("the clock is labelled with its rate, not implied", /clockScale/.test(src)
 check(
   "the cache is invalidated by the room's temperature, not only by the sun",
   /lastRoomTempK/.test(src) && /ROOM_SHADE_K/.test(src),
+);
+// THE ROOM MUST REMEMBER. `fromK` is the only thing that carries a trajectory across a curtain change, and
+// the page must read it BEFORE flipping the state or it captures the destination. A `room_settled_k(0)`
+// in `roomTemperature()` is the old teleport, and it read as plausible for a whole session.
+check("the page continues the trajectory from the temperature it is leaving", /roomState\.fromK = Number\.isFinite/.test(src));
+// `roomTemperature()` must be ONE call to the trajectory, with the curtain state as an argument to it.
+// The defect was a ternary whose two branches were different laws -- a curve one way, a constant the other.
+// The first version of this line looked for one exact phrasing and a mutant with the defect written
+// differently walked straight through it, which is the "threshold a broken build clears" failure again.
+//
+// The body is followed through the helper it delegates to (`roomTempK`), because the refactor that kept
+// `roomMoving()` from writing `roomState.elapsedS` moved the kernel call out of `roomTemperature()` into
+// that helper. Asserting on `roomTemperature()`'s body alone would now fail a correct page -- and, worse,
+// would start passing again the moment someone reintroduced a `room_settled_k` fallback inside the helper.
+const fnBody = (name) => (new RegExp(`function ${name}\\([^)]*\\) \\{([\\s\\S]*?)\\n\\}`).exec(src) || [])[1] || "";
+const tempChain = fnBody("roomTemperature") + fnBody("roomTempK");
+check(
+  "roomTemperature() is one trajectory call, not a different law per curtain state",
+  /room_temperature_from_k\(/.test(tempChain) && !/room_settled_k\(/.test(tempChain),
+  tempChain.includes("room_settled_k") ? "it reads room_settled_k() -- the teleport" : "one call, no settled fallback",
+);
+check("the trajectory runs in both directions, so an open curtain can still be moving",
+  /function roomMoving/.test(src) && /roomMoving\(\)/.test(src));
+// AND `roomMoving()` MUST NOT WRITE `roomState.elapsedS`. It is a query, called from `updateHud()` on a
+// 100 ms timer as well as from the render loop, and it used to call `roomTemperature()` -- which writes
+// `elapsedS` from whatever clock it is handed. The HUD tick therefore overwrote the render loop's
+// `elapsedS` (set from the rAF timestamp) with a `performance.now()` value, desyncing the two fields the
+// page keeps in lockstep. Measured on a seeked page: `elapsedS` 1800 s beside a `temperatureK` still
+// holding the 600 s value. The fix is a pure helper (`roomTempK`) that both functions call; this asserts
+// the query keeps its side effect out.
+const movingFn = (/function roomMoving\(nowMsArg\) \{([\s\S]*?)\n\}/.exec(src) || [])[1] || "";
+check(
+  "roomMoving() is a pure query and does not write the elapsed time",
+  !/roomState\.elapsedS\s*=/.test(movingFn),
+  movingFn.includes("roomState.elapsedS =") ? "it writes roomState.elapsedS -- the desync" : "no write",
 );
 // ...AND THE COUPLING MUST BE THE PHYSICAL ONE, not linear-in-T dressed up as radiation.
 check(
@@ -129,6 +192,32 @@ if (ex) {
     "the kernel cools 5.9 K in ten minutes, as the Rust test measures",
     Math.abs(drop600 - 5.9) < 0.15,
     `${drop600.toFixed(2)} K`,
+  );
+
+  // THE ABI'S HANDLING OF A NON-FINITE INPUT. A host that sends a bad number is the one input a clamp
+  // exists for, and the two non-finite values are not "large" -- they have no reading at all. The old
+  // code sent every non-finite `elapsed_s` to 0.0, which INVERTED the meaning: an infinite time, which
+  // means "fully settled", returned the START temperature. Both values below are plausible kelvin, which
+  // is why nothing else noticed. `Infinity` must read like a very long time and `NaN` like no time.
+  const clamp = (curtain, fromK, elapsed) => ex.room_temperature_from_k(curtain, fromK, elapsed);
+  const atInf = clamp(1, 300.0, Infinity);
+  const atHuge = clamp(1, 300.0, 1e9);
+  const atZero = clamp(1, 300.0, 0.0);
+  const atNan = clamp(1, 300.0, NaN);
+  check(
+    "elapsed_s = Infinity clamps to the cap, not to the start temperature",
+    Math.abs(atInf - atHuge) < 1e-9 && atInf - atZero > 10.0,
+    `Infinity -> ${atInf.toFixed(2)} K, 1e9 -> ${atHuge.toFixed(2)} K, t=0 -> ${atZero.toFixed(2)} K ` +      `(the old code returned the start for Infinity)`,
+  );
+  check(
+    "elapsed_s = NaN reads as no time, and does NOT collapse onto Infinity",
+    Math.abs(atNan - atZero) < 1e-9 && Math.abs(atNan - atInf) > 10.0,
+    `NaN -> ${atNan.toFixed(2)} K against t=0 ${atZero.toFixed(2)} K and Infinity ${atInf.toFixed(2)} K`,
+  );
+  check(
+    "a non-finite start temperature falls back to the previous resting temperature",
+    Number.isFinite(clamp(1, NaN, 600.0)) && Math.abs(clamp(1, NaN, 600.0) - clamp(1, Infinity, 600.0)) < 1e-9,
+    `NaN -> ${clamp(1, NaN, 600.0).toFixed(2)} K, Infinity -> ${clamp(1, Infinity, 600.0).toFixed(2)} K`,
   );
 
   // CONCAVE, NOT LINEAR. The whole difference between a first-order response and a fade.
@@ -350,9 +439,26 @@ try {
         await new Promise((res) => setTimeout(res, 50));
         if (Math.abs(o.roomState.elapsedS - T) < 1) break;   // the page has taken the seek
       }
-      return { tK: o.roomState.temperatureK, elapsed: o.roomState.elapsedS };
+      return {
+        tK: o.roomState.temperatureK,
+        elapsed: o.roomState.elapsedS,
+        // The page's OWN inputs, so the reference is the same call the page makes. It used to compare
+        // against `ex.room_temperature_k(t)`, the first-close trajectory, which starts every call from
+        // the settled-open temperature. That was correct when the page did the same; now the page carries
+        // `fromK` -- the temperature it is actually leaving -- so a page that remembers being cold is
+        // correctly DIVERGING from the first-close curve, and the old comparison read that as an 8.5 K
+        // error on a correct page. Comparing against the wrong kernel function is how a gate becomes a
+        // false alarm.
+        curtain: o.roomState.curtain ? 1 : 0,
+        fromK: o.roomState.fromK,
+      };
     }, t);
-    pageVsKernel.push({ t, page: r.tK, kernel: ex.room_temperature_k(t), elapsed: r.elapsed });
+    pageVsKernel.push({
+      t,
+      page: r.tK,
+      kernel: ex.room_temperature_from_k(r.curtain, r.fromK, t),
+      elapsed: r.elapsed,
+    });
   }
   const worst = pageVsKernel.reduce((m, p) => Math.max(m, Math.abs(p.page - p.kernel)), 0);
   check(
@@ -454,20 +560,79 @@ try {
     `${settledB - settledA} frames drawn in 2.5 idle seconds after the full run`,
   );
 
-  // And an OPEN curtain is a settled room, so it must be idle too -- the clock must not run backwards.
-  await page.evaluate(() => {
+  // THE ROOM HAS A MEMORY, and this is the bug that proved it did not.
+  //
+  // Before this, reopening the curtain teleported the room to the settled OPEN temperature in one frame:
+  // measured 329.48 K -> 346.82 K, a **17.34 K** step, where a 120 kJ/K zone with UA 45 W/K needs about
+  // forty minutes. The old code was not merely a jump at the toggle -- while the curtain was open the page
+  // read `room_settled_k(0)` directly, so the room sat at its resting temperature forever and every
+  // reopening discarded the cooling the user had just watched.
+  const reopened = await page.evaluate(async () => {
     const o = window.__odderon;
+    const before = o.roomState.temperatureK;
     o.setCurtain(false);
     o.requestFrame();
+    await new Promise((r) => setTimeout(r, 150));
+    return { before, after: o.roomState.temperatureK, from: o.roomState.fromK };
   });
-  await new Promise((r) => setTimeout(r, 800));
+  check(
+    "reopening the curtain does not teleport the room to its open resting temperature",
+    Math.abs(reopened.after - reopened.before) < 3.0,
+    `${reopened.before.toFixed(1)} -> ${reopened.after.toFixed(1)} K (a 17.3 K jump is the old defect)`,
+  );
+
+  // ...and the warm-up must actually run, in the direction physics says: toward the OPEN resting
+  // temperature, and it must still be short of it two seconds later. A page that parked at the settled
+  // value would pass the assertion above and fail this one.
+  const warmed = await page.evaluate(async () => {
+    const o = window.__odderon;
+    const a = o.roomState.temperatureK;
+    await new Promise((r) => setTimeout(r, 6000));       // ~1440 simulated s at 240x
+    return { a, b: o.roomState.temperatureK, settled: o.roomState.settledK, el: o.roomState.elapsedS };
+  });
+  check(
+    "an open curtain now WARMS the room, toward the open resting temperature but short of it",
+    warmed.b > warmed.a && warmed.b < warmed.settled - 0.5,
+    `${warmed.a.toFixed(1)} -> ${warmed.b.toFixed(1)} K over ${Math.round(warmed.el)} simulated s, ` +
+      `target ${warmed.settled.toFixed(1)} K`,
+  );
+
+  // The panel must SAY so. A room warming in the image and printing no clock on the panel is a
+  // warm-up the reader cannot audit, and it is the same class of lie as the panel describing one state
+  // while the page shows another. The row was gated on the curtain being CLOSED, so the open warm-up --
+  // the trajectory the page has just learned to run -- printed a bare temperature with no timestamp
+  // while the closed case printed the same temperature with one. Measured on the mutant: `57.6 °C` for a
+  // room at 330.72 K moving toward 346.82 K, no clock at all.
+  const clockRow = await page.evaluate(() => ({
+    row: document.getElementById("m-temp").textContent,
+    elapsedS: Math.round(window.__odderon.roomState.elapsedS),
+    moving: window.__odderon.roomMoving(),
+    settled: window.__odderon.roomState.settledK,
+    tK: window.__odderon.roomState.temperatureK,
+  }));
+  check(
+    "the panel prints the clock for an open, warming room (not only for a closed one)",
+    clockRow.moving && /\d+\s*s\s*@\s*\d+x/.test(clockRow.row),
+    `row "${clockRow.row}" at ${clockRow.tK.toFixed(1)} K, ${clockRow.elapsedS} s, target ${clockRow.settled.toFixed(1)} K`,
+  );
+
+  // ...and only once it has finished warming does the page go quiet again. This is R2 with the new law:
+  // idle is nothing scheduled, and a warming room is not idle.
+  const warmEnd = await page.evaluate(async () => {
+    const o = window.__odderon;
+    for (let i = 0; i < 200; i++) {
+      if (!o.roomMoving()) break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    return { tK: o.roomState.temperatureK, settled: o.roomState.settledK };
+  });
   const openA = await page.evaluate(() => window.__odderon.bench.framesDrawn);
-  await new Promise((r) => setTimeout(r, 2000));
+  await new Promise((r) => setTimeout(r, 2500));
   const openB = await page.evaluate(() => window.__odderon.bench.framesDrawn);
   check(
-    "an open curtain schedules nothing either",
+    "once the room has finished warming, an open curtain schedules nothing",
     openB === openA,
-    `${openB - openA} frames drawn in 2 idle seconds with the curtain open`,
+    `${openB - openA} frames in 2.5 idle s at ${warmEnd.tK.toFixed(1)} K against ${warmEnd.settled.toFixed(1)} K`,
   );
 
   await page.close();
