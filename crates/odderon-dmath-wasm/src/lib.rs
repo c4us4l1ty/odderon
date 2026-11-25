@@ -539,7 +539,10 @@ mod tests {
         // Infinity must NOT collapse onto the same answer: that collapse is exactly what the bug did.
         let at_nan = crate::room_temperature_from_k(1, 300.0, f64::NAN);
         let at_zero = crate::room_temperature_from_k(1, 300.0, 0.0);
-        assert!(near(at_nan, at_zero), "NaN elapsed should read as zero time");
+        assert!(
+            near(at_nan, at_zero),
+            "NaN elapsed should read as zero time"
+        );
         assert!(
             at_nan - 300.0 < 1e-6 && 300.0 - at_nan < 1e-6,
             "NaN elapsed returned {at_nan}, expected the start"
@@ -565,7 +568,13 @@ mod tests {
         // temperature: it starts from the state the room was already in.
         let from_nan = crate::room_temperature_from_k(1, f64::NAN, 600.0);
         let from_inf = crate::room_temperature_from_k(1, f64::INFINITY, 600.0);
-        assert!(from_nan.is_finite() && from_nan > 0.0, "NaN from_k produced {from_nan}");
-        assert!(near(from_nan, from_inf), "NaN and Inf from_k must agree on the fallback");
+        assert!(
+            from_nan.is_finite() && from_nan > 0.0,
+            "NaN from_k produced {from_nan}"
+        );
+        assert!(
+            near(from_nan, from_inf),
+            "NaN and Inf from_k must agree on the fallback"
+        );
     }
 }
