@@ -166,6 +166,21 @@ jobs:
           mkdir -p dist
           find target/wasm32-unknown-unknown/release -maxdepth 1 -name '*.wasm' -exec cp {} dist/ \;
           ls -la dist
+      # CLAIM 2, IN THE PAGE, AGAINST THE REAL KERNEL.
+      #
+      # This is the only job where the module and a browser exist together, so it is the only place the
+      # room can be checked end to end: the panel's numbers are compared against the module's own exports
+      # computed independently, and the pixels are compared across a curtain toggle. It was shown failing
+      # four ways -- against the pre-fix page (no room at all), against a page that derives SHGC itself,
+      # against setCurtain without the cache invalidation, and against a **decorative** room hardcoded to
+      # `0.083` that produced the same image, the same text and the same pixel change.
+      - run: npm install --no-audit --no-fund
+      - name: chromium (SwiftShader)
+        run: node tools/unpack-chromium.mjs
+      - name: the room's light comes from the thermal kernel
+        run: node tools/check-room.mjs
+        env:
+          LD_LIBRARY_PATH: /tmp/al2023/lib
       - uses: actions/upload-artifact@v4
         with:
           name: wasm
@@ -277,14 +292,14 @@ jobs:
       # the arithmetic ever drift apart again. Pure arithmetic over source text, so no browser.
       - name: pixel clause matches its derivation and the doc
         run: node tools/check-pixel-budget.mjs
-      # CLAIM 2, IN THE PAGE. The thermal network has measured the room for months while no pixel read
-      # it. This asserts the light in the picture comes from the kernel and not from a constant -- and
-      # it was shown failing against the pre-fix page (which has no room), against a page that derives
-      # SHGC itself, and against a decorative room hardcoded to 0.083 that produced the same image.
-      - name: the room's light comes from the thermal kernel
-        run: node tools/check-room.mjs
-        env:
-          LD_LIBRARY_PATH: /tmp/al2023/lib
+      # CLAIM 2's SOURCE CONTRACT. The thermal network has measured the room for months while no pixel
+      # read it, and the failure mode once it does is subtle: a brightness constant that happens to look
+      # right produces the same image as a solver. The FULL check needs the wasm kernel and a browser, so
+      # it runs in `build-wasm`; this half needs neither and still catches the two failures a page grows
+      # on its own -- physics re-derived in the presenter, and a curtain that forgets to invalidate the
+      # cache (which renders the room once, before the kernel answers, and blits it forever).
+      - name: the room's light comes from the thermal kernel (source contract)
+        run: node tools/check-room.mjs --static
       - name: saved picture's panel matches the page
         run: node tools/check-hud-capture.mjs
         env:

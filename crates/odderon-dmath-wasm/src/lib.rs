@@ -203,7 +203,11 @@ pub extern "C" fn orbit_velocity_z(dt: f64) -> f64 {
 /// The reference room the game ships: 25 m² floor, 3 m² glazing, SHGC 0.60 open.
 fn reference_zone(curtain: bool) -> odderon_astro::thermal::Zone {
     let z = odderon_astro::thermal::Zone::small_apartment_room();
-    if curtain { z.curtain_closed() } else { z }
+    if curtain {
+        z.curtain_closed()
+    } else {
+        z
+    }
 }
 
 /// Outdoor conditions the room is judged against: §6.7's peak summer day.
@@ -236,7 +240,11 @@ pub extern "C" fn room_solar_w(curtain: u32) -> f64 {
     let zone = reference_zone(curtain != 0);
     let outdoors = reference_outdoors();
     let g = zone.solar_gain(&outdoors);
-    if g.is_finite() && g > 0.0 { g } else { 0.0 }
+    if g.is_finite() && g > 0.0 {
+        g
+    } else {
+        0.0
+    }
 }
 
 /// Solar gain as a fraction of the fully-open window, 0..1.
@@ -261,7 +269,11 @@ pub extern "C" fn room_cooling_w(curtain: u32) -> f64 {
     let outdoors = reference_outdoors();
     let unit = odderon_astro::thermal::VapourCompression::window_unit();
     let w = unit.cooling_to_hold(&zone, &outdoors, &reference_internal());
-    if w.is_finite() && w > 0.0 { w } else { 0.0 }
+    if w.is_finite() && w > 0.0 {
+        w
+    } else {
+        0.0
+    }
 }
 
 /// Electrical draw of the unit doing that cooling, W.

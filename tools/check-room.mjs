@@ -45,6 +45,13 @@ const args = process.argv.slice(2);
 const portArg = args.indexOf("--port");
 const port = portArg >= 0 ? Number(args[portArg + 1]) : 8431;
 
+// `--static` runs only the source contract, which needs no wasm and no browser. `shell-claims` has
+// neither, and `build-wasm` has both; this mirrors `check-orbit.mjs`'s two modes rather than moving
+// the whole job or shipping a second copy of the gate. The static half still catches the failure that
+// matters most -- a page that re-derives the physics, or one that forgets to invalidate the cache --
+// and it does it in under a second on a runner with no Chromium.
+const STATIC_ONLY = args.includes("--static");
+
 const checks = [];
 const fail = (m) => checks.push(["FAIL", m]);
 const ok = (m) => checks.push(["ok  ", m]);
@@ -77,6 +84,18 @@ if (!/function setCurtain[\s\S]{0,400}cache\.valid = false/.test(src)) {
   fail("setCurtain() does not invalidate the cache -- the room will render once, before the kernel answers");
 } else {
   ok("setCurtain() invalidates the cache");
+}
+
+if (STATIC_ONLY) {
+  console.log(`  (static mode: ${checks.length} source assertions, no wasm and no browser)`);
+  for (const [tag, msg] of checks) console.log(`  ${tag} ${msg}`);
+  console.log("");
+  if (checks.some(([t]) => t === "FAIL")) {
+    console.log("room check FAILED");
+    process.exit(1);
+  }
+  console.log("room check passed");
+  process.exit(0);
 }
 
 // --- 3 & 4: the real numbers, from the real module ---------------------------------------------
