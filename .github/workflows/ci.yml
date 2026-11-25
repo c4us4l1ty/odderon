@@ -277,6 +277,14 @@ jobs:
       # the arithmetic ever drift apart again. Pure arithmetic over source text, so no browser.
       - name: pixel clause matches its derivation and the doc
         run: node tools/check-pixel-budget.mjs
+      # CLAIM 2, IN THE PAGE. The thermal network has measured the room for months while no pixel read
+      # it. This asserts the light in the picture comes from the kernel and not from a constant -- and
+      # it was shown failing against the pre-fix page (which has no room), against a page that derives
+      # SHGC itself, and against a decorative room hardcoded to 0.083 that produced the same image.
+      - name: the room's light comes from the thermal kernel
+        run: node tools/check-room.mjs
+        env:
+          LD_LIBRARY_PATH: /tmp/al2023/lib
       - name: saved picture's panel matches the page
         run: node tools/check-hud-capture.mjs
         env:

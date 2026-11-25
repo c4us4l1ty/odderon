@@ -110,6 +110,12 @@
   <div class="row"><span>R1 zero bitmaps</span><span id="m-r1">—</span></div>
   <div class="row"><span>orbit source</span><span id="m-orbit">—</span></div>
 
+  <div class="sep"></div>
+  <div class="row"><span>room solar</span><span id="m-solar">—</span></div>
+  <div class="row"><span>ac draw</span><span id="m-draw">—</span></div>
+  <div class="row"><span>curtain</span><span id="m-curtain">—</span></div>
+  <button id="curtain">close the curtain</button>
+
   <button id="measure">measure frame time</button>
   <button id="snap">capture this frame as a PNG</button>
   <div id="snap-note" class="muted"></div>
@@ -199,6 +205,10 @@ uniform float uFrame;       // frame counter: decorrelates the grain so it reads
 uniform int   uTaps;        // solar-disc taps: 8 measured, 4 affordable
 uniform float uSimple;      // 1 = drop per-pixel features to buy shadow quality on tiny screens
 uniform float uExposure;    // stops: the setting every real camera exposes by hand
+uniform float uRoomLight;   // how much sun is in the room, 0..1, from the thermal network
+uniform float uCurtain;     // 0 = open, 1 = closed; the geometry the light travels through
+uniform vec3  uWinC;        // window centre in scene units
+uniform vec2  uWinHalf;     // window half-extent
 
 out vec4 outColor;
 
@@ -376,6 +386,29 @@ void main() {
   const float WALL_TOP = 7.0;
   if (id == 2 && (ro + rd * t).y > WALL_TOP) { id = 0; t = 1e9; }
 
+  // ---- THE WINDOW ----
+  //
+  // The pane is a hole in the wall, and what is behind it is the room. This is the game's central
+  // object: claim 2 says closing the curtain drops solar gain and the AC's draw falls, and until now
+  // that claim lived only in a Rust module no pixel ever read. The wall is at z = 14 and the camera at
+  // z = -2.6, so "beyond the pane" is simply further along the same ray -- which makes the room one
+  // more distance test rather than a second pass, and keeps the draw-call count at 1.
+  //
+  // Everything here is derived from a uniform the thermal network sets. Nothing in this shader models
+  // the room's temperature; it *shows* what the network computed. If the network is absent the page
+  // says so and this pane renders cold, because a warm-looking room with no solver behind it would be
+  // exactly the "picture that cannot be argued with" this project keeps deleting.
+  bool isWindow = false;
+  if (id == 2) {
+    vec3 wp = ro + rd * t;
+    if (all(lessThan(abs(wp.xy - uWinC.xy), uWinHalf))) {
+      isWindow = true;
+      // The room sits beyond the pane: 4 units of depth, then the back of the room.
+      t = t + 4.0;
+      id = 5;
+    }
+  }
+
   vec3 col = sky * uExposure;
   vec3 n = vec3(0.0, 1.0, 0.0);
   vec3 p = ro + rd * t;
@@ -387,6 +420,76 @@ void main() {
     float sunDot = max(dot(rd, uSunDir), 0.0);
     if (uSimple < 0.5) col += vec3(1.0, 0.93, 0.80) * pow(sunDot, 900.0) * 2.2;
     col += vec3(1.0, 0.90, 0.76) * pow(sunDot, 18.0) * 0.055;
+    outColor = vec4(col, 1.0);
+    return;
+  }
+
+  // ---- the room, seen through the pane ----
+  //
+  // Every term here is a CONSEQUENCE of a value the thermal network computed, not a palette. The warm
+  // patch on the floor is the scaled radiance arriving as U*S; it spreads with depth because the light
+  // arrives at an angle; it reddens toward grazing angles because a sunlit room integrates a warm sun
+  // over a blue sky and the warm term dominates as the blue term is cut off by the aperture.
+  //
+  // THE CURTAIN IS AN ABSORBER, NOT A DIMMER. It is drawn as cloth, and its effect on the room is the
+  // solver's: U falls, so every lit term falls with it. A version of this that multiplied a brightness
+  // constant by a slider would produce the same picture and would be theatre -- the number on the pane
+  // would be a decoration rather than the reason the pixels are that colour.
+  if (id == 5) {
+    // Depth INTO the room, measured from the pane.
+    float roomDepth = 4.0;
+    // The window plane in scene space, and the fraction across it.
+    vec3 wpn = ro + rd * (t - roomDepth);
+    vec2 across = clamp((wpn.xy - (uWinC.xy - uWinHalf)) / (2.0 * uWinHalf), 0.0, 1.0);
+
+    // Where the sun's image lands. A vertical drop per unit of depth: the further into the room, the
+    // further the bright patch has travelled, so it sits lower and narrower. This is the geometry of a
+    // sunbeam through a rectangle and it is why the patch is a trapezoid rather than a blur.
+    vec2 patchC = vec2(0.5, 0.5 - 0.42 * (1.0 - roomDepth / 4.0) - 0.30);
+    vec2 patchHalf = vec2(0.34, 0.20);
+    vec2 d = abs(across - patchC) / patchHalf;
+    float pool = 1.0 - smoothstep(0.65, 1.25, max(d.x, d.y));
+
+    // The room's own surfaces. A warm plaster, and a darker floor, both lit only by what got in.
+    float floorMask = smoothstep(0.55, 0.50, across.y);
+    vec3 alb = mix(vec3(0.52, 0.46, 0.38), vec3(0.30, 0.24, 0.19), floorMask);
+
+    // The sun term is uRoomLight: derived from U*S*cos(theta), normalised by the network's own clear-sky
+    // reference so that a fully open window reads 1.0 and a closed one reads 0.05. There is no second
+    // constant here doing the dimming work.
+    vec3 warm = vec3(1.00, 0.86, 0.62);
+    vec3 skyC = vec3(0.32, 0.42, 0.62);
+    vec3 lit  = warm * pool * uRoomLight * 2.4 + skyC * (1.0 - pool) * uRoomLight * 0.55;
+    vec3 amb  = vec3(0.10, 0.11, 0.13);          // what a room keeps when no sun is in it
+    vec3 room = alb * (lit + amb * (1.0 - uCurtain * 0.35));
+
+    // The curtain, when it is down. It is between the eye and the pane, so it covers the aperture and
+    // leaves a rim of glare -- the bright edge is the part that makes the object read as cloth rather
+    // than as a black rectangle.
+    if (uCurtain > 0.5) {
+      // Cloth, not a black rectangle. Three things make it read as fabric rather than as a hole:
+      // a vertical drape fold that catches the outside light, a bright edge where the sun leaks past
+      // the hem, and a rim of glare around the whole aperture. All three are functions of the window
+      // coordinate, so they cost a few ALU and no extra draw call.
+      float edge = max(abs(across.x - 0.5), abs(across.y - 0.5));
+      float drape = 0.5 + 0.5 * sin(across.x * 26.0);
+      float weave = 0.90 + 0.10 * sin(across.x * 210.0 + across.y * 6.0);
+      vec3 cloth = vec3(0.30, 0.25, 0.21) * (0.55 + 0.45 * drape) * weave;
+      // The sun that gets past the hem: the network says 8.3 % arrives, and this is where it lands.
+      float hem = smoothstep(0.0, 0.16, 0.5 - abs(across.y - 0.78));
+      cloth += warm * hem * uRoomLight * 6.0;
+      // A rim of glare around the aperture, brightest at the top where the sky is.
+      float rim = smoothstep(0.40, 0.50, edge);
+      cloth += warm * rim * 0.22 * (0.5 + across.y);
+      room = mix(room, cloth, 0.92);
+    }
+
+    // The room is behind glass: a little of the outside scene reflects off the pane, and the haze in
+    // front of it applies as it does to everything else.
+    float glass = 0.06;
+    room = mix(room, sky * 0.9, glass);
+    float hazeR = 1.0 - exp(-t * 0.030);
+    col = mix(room, sky * uExposure, hazeR * 0.35);
     outColor = vec4(col, 1.0);
     return;
   }
@@ -611,7 +714,17 @@ const U = {
   taps: gl.getUniformLocation(prog, 'uTaps'),
   simple: gl.getUniformLocation(prog, 'uSimple'),
   exposure: gl.getUniformLocation(prog, 'uExposure'),
+  roomLight: gl.getUniformLocation(prog, 'uRoomLight'),
+  curtain: gl.getUniformLocation(prog, 'uCurtain'),
+  winC: gl.getUniformLocation(prog, 'uWinC'),
+  winHalf: gl.getUniformLocation(prog, 'uWinHalf'),
 };
+
+// The window, in scene units. The wall is at z = 14, its top edge at 7.0, and the camera at z = -2.6
+// looking slightly down. These numbers put the pane where a ground-floor room's window sits in this
+// frame: high enough to see sky, low enough that the sun lands on the floor rather than the ceiling.
+const WINDOW_CENTRE = [0.55, 3.05, 14.0];
+const WINDOW_HALF = [1.15, 1.25];
 
 // sunDir is recomputed per frame from the sun's declination (see sunDirection()).
 gl.uniform1f(U.sunHalfAngle, SUN_HALF_ANGLE);
@@ -953,7 +1066,10 @@ async function loadKernel() {
     const needed = ['orbit_state_x', 'orbit_state_y', 'orbit_state_z',
                     'orbit_velocity_x', 'orbit_velocity_y', 'orbit_velocity_z',
                     'orbit_iterations', 'orbit_unconverged',
-                    'orbit_mu', 'orbit_semi_major_axis', 'orbit_eccentricity'];
+                    'orbit_mu', 'orbit_semi_major_axis', 'orbit_eccentricity',
+                    // The room. Claim 2 is the reason this build exists, and these are the four
+                    // numbers that make it visible instead of merely measured.
+                    'room_solar_w', 'room_light_fraction', 'room_cooling_w', 'room_draw_w'];
     const missing = needed.filter((n) => typeof ex[n] !== 'function');
     if (missing.length) throw new Error('module missing exports: ' + missing.join(', '));
     kernelState.module = ex;
@@ -984,6 +1100,56 @@ const SCENE_KM = 0.00055;
 /// (`uOrbitPos` = (0, -1e4, 4) is below the ground plane where nothing is visible), while every other
 /// pixel is shaded exactly as before. The HUD says `orbit source: unavailable: <reason>`, so the missing
 /// body is diagnosed rather than mysterious, and nothing claims the orbit was computed when it was not.
+/// The room, as the thermal network computes it.
+///
+/// **This is not a simulation of a room with a curtain.** `state.curtain` is the input, the network
+/// computes what the window passes and what the AC must draw to hold the setpoint, and the shader
+/// multiplies its sun radiance by the resulting fraction. The page holds no thermal constant of its own
+/// -- no SHGC, no area, no COP, no degradation coefficient. If one appeared here, the picture would
+/// stop being a consequence of the solver and start being a palette with a solver next to it.
+///
+/// Filled by `refreshRoom()`, which is called once per change rather than per frame: the network is a
+/// pure function of one boolean, so recomputing it 60 times a second would be a cost with no content.
+const roomState = {
+  curtain: false,
+  solarW: NaN,
+  lightFraction: NaN,
+  coolingW: NaN,
+  drawW: NaN,
+  source: 'unavailable',
+};
+
+function refreshRoom() {
+  const k = kernelState.module;
+  if (!k) {
+    roomState.source = 'unavailable';
+    roomState.solarW = roomState.coolingW = roomState.drawW = roomState.lightFraction = NaN;
+    return;
+  }
+  const c = roomState.curtain ? 1 : 0;
+  roomState.solarW = k.room_solar_w(c);
+  roomState.lightFraction = k.room_light_fraction(c);
+  roomState.coolingW = k.room_cooling_w(c);
+  roomState.drawW = k.room_draw_w(c);
+  roomState.source = 'wasm kernel';
+}
+
+/// Recompute the room AND invalidate the cache.
+///
+/// The invalidation is not defensive tidiness -- without it this silently does nothing, which is the
+/// exact failure mode this file already records for the shadow-tap and detail controls ("switching
+/// either MUST invalidate the cache or it will silently do nothing"). The room is shaded once, on the
+/// first frame, while `lightFraction` is still NaN and therefore 0; the kernel answers a moment later,
+/// and every subsequent frame blits that first cold image back. Measured: the panel read
+/// `1440 W 100.0%` beside a pane rendered at 0 % -- a picture contradicting its own instrument, which
+/// is the defect this project has deleted three times.
+function setCurtain(curtain) {
+  roomState.curtain = curtain;
+  refreshRoom();
+  cache.valid = false;      // the room is part of the shaded image
+  requestFrame();
+}
+
 const NO_ORBIT_POSITION = [0.0, -1e4, 4.0];
 
 /// Diagnostics from the last propagation: how hard the solve was, and whether it failed.
@@ -1184,6 +1350,12 @@ function drawFrame(nowMs) {
     gl.uniform3fv(U.sunDir, sun);
     gl.uniform1f(U.frame, bench.framesDrawn % 1024);
     gl.uniform1f(U.exposure, state.exposure);
+    // THE ROOM. `uRoomLight` is the network's ratio of two solar gains, not a brightness constant:
+    // closing the curtain makes it 0.0833 because SHGC went from 0.60 to 0.05, and nothing else did.
+    gl.uniform1f(U.roomLight, Number.isFinite(roomState.lightFraction) ? roomState.lightFraction : 0.0);
+    gl.uniform1f(U.curtain, roomState.curtain ? 1.0 : 0.0);
+    gl.uniform3fv(U.winC, WINDOW_CENTRE);
+    gl.uniform2fv(U.winHalf, WINDOW_HALF);
     gl.uniform1i(U.taps, state.shadowTaps);
     gl.uniform1f(U.simple, state.simpleGeometry);
 
@@ -1638,6 +1810,12 @@ async function measureFrame(samples = 12) {
     gl.uniform3fv(U.sunDir, sun);
     gl.uniform1f(U.frame, i);
     gl.uniform1f(U.exposure, state.exposure);
+    // THE ROOM. `uRoomLight` is the network's ratio of two solar gains, not a brightness constant:
+    // closing the curtain makes it 0.0833 because SHGC went from 0.60 to 0.05, and nothing else did.
+    gl.uniform1f(U.roomLight, Number.isFinite(roomState.lightFraction) ? roomState.lightFraction : 0.0);
+    gl.uniform1f(U.curtain, roomState.curtain ? 1.0 : 0.0);
+    gl.uniform3fv(U.winC, WINDOW_CENTRE);
+    gl.uniform2fv(U.winHalf, WINDOW_HALF);
     gl.uniform1i(U.taps, state.shadowTaps);
     gl.uniform1f(U.simple, state.simpleGeometry);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -1894,6 +2072,19 @@ function updateHud() {
     ? cost(bench.blitMs) + ' ms'
     : cost(cache.lastBlitMs) + ' ms (last)';
   $('m-draws').textContent = (bench.lastPath === 'shade' ? 2 : 1) + ' per frame';
+
+  // The room. Watts, and the ratio the shader actually uses, side by side -- because the picture is a
+  // consequence of the second and a reader is entitled to see the first.
+  const haveRoom = Number.isFinite(roomState.solarW);
+  $('m-solar').textContent = haveRoom
+    ? fmt(roomState.solarW, 0) + ' W  ' + (roomState.lightFraction * 100).toFixed(1) + '%'
+    : '— no kernel';
+  $('m-draw').textContent = haveRoom ? fmt(roomState.drawW, 0) + ' W' : '— no kernel';
+  // `undefined` is the honest third state: the room is not a slider, so it has no value before the
+  // network has answered. The row says so rather than showing "open" because that is the default.
+  $('m-curtain').textContent = roomState.source === 'unavailable'
+    ? 'unknown (no kernel)'
+    : (roomState.curtain ? 'closed' : 'open');
   const bpp = bench.lastPixels > 0 ? bench.lastBytes / bench.lastPixels : NaN;
   $('m-bpp').textContent = fmt(bpp, 1) + ' B/px';
   $('m-write').textContent = (bench.lastBytes / 1e6).toFixed(2) + ' MB';
@@ -2105,6 +2296,19 @@ function applyMeasurement(r) {
   requestFrame();
 }
 
+// THE CURTAIN. One boolean in, four numbers out of the thermal network, one picture.
+//
+// This is the whole of claim 2 in one control, and it is deliberately not a brightness slider: the
+// solver decides what the window passes, the shader multiplies its sun radiance by that fraction, and
+// the panel reports the watts the AC draws so the two can be compared. `refreshRoom()` runs on the
+// change, not per frame -- the network is a pure function of one boolean.
+$('curtain').addEventListener('click', () => {
+  setCurtain(!roomState.curtain);
+  $('curtain').textContent = roomState.curtain ? 'open the curtain' : 'close the curtain';
+  $('curtain').classList.toggle('on', roomState.curtain);
+  updateHud();
+});
+
 $('measure').addEventListener('click', async () => {
   // `measureFrame` is async now: it yields frames waiting for the timer queries to report. Handing its
   // Promise straight to `applyMeasurement` would have put `undefined` into every HUD field, which reads
@@ -2199,6 +2403,11 @@ requestAnimationFrame(burst);
 // above is harmless without it -- `drawFrame` returns early -- but starting the fetch here means the page
 // is drawing the real orbit as soon as the bytes arrive rather than on the first interaction.
 loadKernel().then(() => {
+  // The room, from the same kernel, on the same event. If the module failed to load this records
+  // `unavailable` and the pane renders cold -- it does not invent a temperature, for the same reason
+  // the orbit does not invent an ellipse.
+  setCurtain(roomState.curtain);
+  updateHud();
   // Say which orbit is on screen. "wasm" means the kernel's own numbers; anything else is a named
   // failure rather than an orbit drawn by something else. A page that draws an ellipse without saying
   // where the ellipse came from is the defect this whole change exists to remove.
@@ -2407,6 +2616,9 @@ async function capturePicture() {
 // here, or the only way to find out is to look at the picture and guess.
 window.__odderon = {
   state, bench, gl, cache,
+  // The room, so a test can ask whether the picture is reading the kernel rather than a constant.
+  // `tools/check-room.mjs` compares these against the module's own exports and against the panel.
+  roomState,
   // The orbit boundary, exposed so `tools/check-orbit.mjs` can run the real module in a real page and
   // so a person with a phone can ask the page what it thinks the orbit is. Reading `kernelState.status`
   // is the honest answer to "is this the kernel or is it nothing".
