@@ -147,6 +147,32 @@ if (ex) {
     `${drop600.toFixed(2)} K`,
   );
 
+  // THE ABI'S HANDLING OF A NON-FINITE INPUT. A host that sends a bad number is the one input a clamp
+  // exists for, and the two non-finite values are not "large" -- they have no reading at all. The old
+  // code sent every non-finite `elapsed_s` to 0.0, which INVERTED the meaning: an infinite time, which
+  // means "fully settled", returned the START temperature. Both values below are plausible kelvin, which
+  // is why nothing else noticed. `Infinity` must read like a very long time and `NaN` like no time.
+  const clamp = (curtain, fromK, elapsed) => ex.room_temperature_from_k(curtain, fromK, elapsed);
+  const atInf = clamp(1, 300.0, Infinity);
+  const atHuge = clamp(1, 300.0, 1e9);
+  const atZero = clamp(1, 300.0, 0.0);
+  const atNan = clamp(1, 300.0, NaN);
+  check(
+    "elapsed_s = Infinity clamps to the cap, not to the start temperature",
+    Math.abs(atInf - atHuge) < 1e-9 && atInf - atZero > 10.0,
+    `Infinity -> ${atInf.toFixed(2)} K, 1e9 -> ${atHuge.toFixed(2)} K, t=0 -> ${atZero.toFixed(2)} K ` +      `(the old code returned the start for Infinity)`,
+  );
+  check(
+    "elapsed_s = NaN reads as no time, and does NOT collapse onto Infinity",
+    Math.abs(atNan - atZero) < 1e-9 && Math.abs(atNan - atInf) > 10.0,
+    `NaN -> ${atNan.toFixed(2)} K against t=0 ${atZero.toFixed(2)} K and Infinity ${atInf.toFixed(2)} K`,
+  );
+  check(
+    "a non-finite start temperature falls back to the previous resting temperature",
+    Number.isFinite(clamp(1, NaN, 600.0)) && Math.abs(clamp(1, NaN, 600.0) - clamp(1, Infinity, 600.0)) < 1e-9,
+    `NaN -> ${clamp(1, NaN, 600.0).toFixed(2)} K, Infinity -> ${clamp(1, Infinity, 600.0).toFixed(2)} K`,
+  );
+
   // CONCAVE, NOT LINEAR. The whole difference between a first-order response and a fade.
   const d1 = t0 - t60;      // 0..60
   const d5 = K(240) - t300; // 240..300

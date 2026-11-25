@@ -295,7 +295,7 @@ const ROOM_MAX_K: f64 = 2000.0;
 /// that reads the curtain position.
 ///
 /// Worse, it was not merely a jump at the moment of the toggle: while the curtain was OPEN the page read
-/// `room_settled_k(0)` directly, so the room sat at its open resting temperature forever, mid-heat-up or
+/// `crate::room_settled_k(0)` directly, so the room sat at its open resting temperature forever, mid-heat-up or
 /// not. Every reopening discarded the cooling the user had just watched.
 ///
 /// So the trajectory now takes its starting point as an ARGUMENT. `from_k <= 0` keeps the old behaviour
@@ -305,7 +305,7 @@ const ROOM_MAX_K: f64 = 2000.0;
 /// given) is the settled temperature of the state it is coming FROM, which is the other one.
 ///
 /// The name is `to_closed` and not `was_closed` because the first version of this used `was_closed` and
-/// built `reference_zone(!was_closed)` from it -- so `room_temperature_from_k(1, ...)`, documented as "the
+/// built `reference_zone(!was_closed)` from it -- so `crate::room_temperature_from_k(1, ...)`, documented as "the
 /// curtain is closing", actually simulated the OPEN room. Measured on the page before the fix: closing the
 /// curtain made the temperature read 346.82 K (the settled OPEN room) and reopening it read 317.48 K (the
 /// settled CLOSED one). Every direction was exactly backwards, and both values were plausible, which is
@@ -324,10 +324,15 @@ fn room_temperature_after(to_closed: bool, from_k: f64, elapsed_s: f64) -> f64 {
     };
     let after = reference_zone(to_closed);
 
-    let t = if elapsed_s.is_finite() {
-        elapsed_s.clamp(0.0, ROOM_MAX_T_S)
-    } else {
+    // `Infinity` is a real reading and it means "fully settled", so it must clamp UP to the cap like any
+    // other large finite time -- the old branch sent every non-finite value to 0.0, which inverted the
+    // meaning: `crate::room_temperature_from_k(1, 300.0, f64::INFINITY)` returned the START temperature (300.0)
+    // instead of the settled one (317.48 K), and it looked like a plausible number on the panel. Only
+    // NaN has no reading; NaN.clamp is NaN, so it is the one case that needs the explicit floor.
+    let t = if elapsed_s.is_nan() {
         0.0
+    } else {
+        elapsed_s.clamp(0.0, ROOM_MAX_T_S)
     };
 
     let mut state = odderon_astro::thermal::ZoneState {
@@ -488,4 +493,76 @@ pub extern "C" fn orbit_semi_major_axis() -> f64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn orbit_eccentricity() -> f64 {
     ECC
+}
+
+#[cfg(test)]
+mod tests {
+    // The ABI is a contract a host can violate with a single bad number, and two of the values it can
+    // send are not "large" but *non-finite*, which is a different failure: it is not an out-of-range
+    // reading that a clamp should absorb, it is a reading with no meaning at all. These tests pin the
+    // mapping so a future refactor cannot silently invert it.
+    //
+    // Written without float methods (`.abs()`, `.min()`, ...) because `ci/kernel-policy.sh` R1 scans this
+    // whole file for host transcendentals and would reject the test module along with the kernel.
+
+    /// Within a tolerance, either way. `a - b` and `b - a` rather than a method call.
+    fn near(a: f64, b: f64) -> bool {
+        (a - b) < 1e-9 && (b - a) < 1e-9
+    }
+
+    #[test]
+    fn infinite_elapsed_means_fully_settled_not_the_start() {
+        // The defect this test exists for: the old code sent every non-finite `elapsed_s` to 0.0, so
+        // "infinitely long ago" and "just now" returned the SAME answer -- the start temperature, for a
+        // call whose whole meaning is how far along the trajectory the room is.
+        //
+        // The trajectory is asymptotic, so the two-hour cap is close to but not exactly the settled
+        // temperature; the property that matters is that Infinity reads like a very long time, not like
+        // the start. Compare it against the same call at 1e9 s (finite, clamps to the cap) and against
+        // the start temperature it must no longer equal.
+        let at_infinity = crate::room_temperature_from_k(1, 300.0, f64::INFINITY);
+        let at_huge_finite = crate::room_temperature_from_k(1, 300.0, 1e9);
+        let at_zero = crate::room_temperature_from_k(1, 300.0, 0.0);
+        assert!(
+            near(at_infinity, at_huge_finite),
+            "Infinity ({at_infinity}) must clamp to the cap like a large finite time ({at_huge_finite})"
+        );
+        assert!(
+            at_infinity - at_zero > 10.0,
+            "elapsed_s = Infinity returned the start temperature ({at_infinity}); the clamp inverted the meaning"
+        );
+    }
+
+    #[test]
+    fn nan_elapsed_means_no_time_elapsed() {
+        // NaN has no reading, so it floors to zero rather than to the cap. The point is that NaN and
+        // Infinity must NOT collapse onto the same answer: that collapse is exactly what the bug did.
+        let at_nan = crate::room_temperature_from_k(1, 300.0, f64::NAN);
+        let at_zero = crate::room_temperature_from_k(1, 300.0, 0.0);
+        assert!(near(at_nan, at_zero), "NaN elapsed should read as zero time");
+        assert!(at_nan - 300.0 < 1e-6 && 300.0 - at_nan < 1e-6, "NaN elapsed returned {at_nan}, expected the start");
+    }
+
+    #[test]
+    fn large_finite_and_negative_elapsed_clamp() {
+        // 1e9 is finite, so it clamps to the two-hour cap; the cap is short of the asymptote, so this
+        // asserts the cap is reached, not that the asymptote is.
+        let at_cap = crate::room_temperature_from_k(1, 300.0, 7200.0);
+        let big = crate::room_temperature_from_k(1, 300.0, 1e9);
+        assert!(near(big, at_cap), "1e9 s should clamp to the two-hour cap");
+        // Negative time is clamped to zero, not inverted.
+        let neg = crate::room_temperature_from_k(1, 300.0, -1.0);
+        let zero = crate::room_temperature_from_k(1, 300.0, 0.0);
+        assert!(near(neg, zero), "negative elapsed should read as zero time");
+    }
+
+    #[test]
+    fn non_finite_start_falls_back_to_the_previous_resting_temperature() {
+        // A host that has no better number than NaN or infinity must not be forced to invent a
+        // temperature: it starts from the state the room was already in.
+        let from_nan = crate::room_temperature_from_k(1, f64::NAN, 600.0);
+        let from_inf = crate::room_temperature_from_k(1, f64::INFINITY, 600.0);
+        assert!(from_nan.is_finite() && from_nan > 0.0, "NaN from_k produced {from_nan}");
+        assert!(near(from_nan, from_inf), "NaN and Inf from_k must agree on the fallback");
+    }
 }
