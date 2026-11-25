@@ -74,6 +74,17 @@ check(
   /th \* th \* th \* th/.test(src),
 );
 check("the visible-band claim is not made anywhere in the shader", !/radiates in proportion to its absolute temperature/.test(src));
+// A PAGE WITH NO KERNEL MUST STILL BE ABLE TO BLIT. `NaN < ROOM_SHADE_K` is false, so a naive comparison
+// makes every frame a full shade -- the whole cost model defeated by an absent file, on exactly the page
+// `check-missing-kernel` exists to keep honest. This was a real defect, caught by CI's no-wasm job after
+// passing locally with a kernel present. The guard is asserted here so it cannot come back silently.
+// The assertion is on the GUARDED COMPARISON, not on the presence of `Number.isFinite` anywhere in the
+// file -- the first version of this line matched the uniform-upload code and passed a mutant that had the
+// bug back. A guard that a broken build clears is not a guard.
+check(
+  "a missing kernel does not invalidate the cache every frame",
+  /Number\.isFinite\(roomState\.temperatureK\)\s*&&[\s\S]{0,120}ROOM_SHADE_K/.test(src),
+);
 // The window and the rate are one decision with two numbers, and both must match the derivation stated
 // beside them. A page that ran 600 s and called it settled while 80 % of the fall was still ahead was the
 // version this replaced.

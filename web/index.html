@@ -1533,7 +1533,19 @@ function cacheInvalidated(sun) {
   // inequality would re-shade every frame the clock runs -- the entire cost model this renderer exists
   // to defend, spent to redraw an image that is bit-identical after quantisation. `ROOM_SHADE_K` is set
   // from the scene's own sensitivity, measured in `tools/check-room-clock.mjs`.
-  if (!(Math.abs(roomState.temperatureK - cache.lastRoomTempK) < ROOM_SHADE_K)) return true;
+  // NaN-SAFE, AND THE NaN CASE IS NOT A DETAIL. The first version of this line was a bare
+  // `if (!(Math.abs(t - last) < ROOM_SHADE_K)) return true;`, which reads correctly and is wrong for the
+  // one page that has no kernel: `NaN - NaN` is NaN, `NaN < 1.5` is false, so the condition fires on
+  // EVERY frame. A page whose kernel failed to load -- the state `check-missing-kernel` exists to make
+  // honest -- would re-shade at full cost on every tick and never blit, which is the entire cost model
+  // defeated by an absent file. It was caught by `tools/check-cache.mjs` in CI's no-wasm job, which
+  // reported `{"shades":1,"blits":1}` where it wanted a blit; the local run had a kernel and passed.
+  //
+  // So the rule is stated in terms of what it means: a temperature is a change only if one of the two
+  // values is a real number. Two NaNs mean "there is no room on this page", which is not a change.
+  if (Number.isFinite(roomState.temperatureK) && Number.isFinite(cache.lastRoomTempK)) {
+    if (!(Math.abs(roomState.temperatureK - cache.lastRoomTempK) < ROOM_SHADE_K)) return true;
+  }
   if (!cache.lastSun || Math.abs(sun[0] - cache.lastSun[0]) > 1e-6 ||
       Math.abs(sun[1] - cache.lastSun[1]) > 1e-6 || Math.abs(sun[2] - cache.lastSun[2]) > 1e-6) return true;
   return false;
