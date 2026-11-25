@@ -68,6 +68,22 @@ check(
   "the cache is invalidated by the room's temperature, not only by the sun",
   /lastRoomTempK/.test(src) && /ROOM_SHADE_K/.test(src),
 );
+// THE ROOM MUST REMEMBER. `fromK` is the only thing that carries a trajectory across a curtain change, and
+// the page must read it BEFORE flipping the state or it captures the destination. A `room_settled_k(0)`
+// in `roomTemperature()` is the old teleport, and it read as plausible for a whole session.
+check("the page continues the trajectory from the temperature it is leaving", /roomState\.fromK = Number\.isFinite/.test(src));
+// `roomTemperature()` must be ONE call to the trajectory, with the curtain state as an argument to it.
+// The defect was a ternary whose two branches were different laws -- a curve one way, a constant the other.
+// The first version of this line looked for one exact phrasing and a mutant with the defect written
+// differently walked straight through it, which is the "threshold a broken build clears" failure again.
+const tempFn = (/function roomTemperature\(nowMsArg\) \{([\s\S]*?)\n\}/.exec(src) || [])[1] || "";
+check(
+  "roomTemperature() is one trajectory call, not a different law per curtain state",
+  /room_temperature_from_k\(/.test(tempFn) && !/room_settled_k\(/.test(tempFn),
+  tempFn.includes("room_settled_k") ? "it reads room_settled_k() -- the teleport" : "one call, no settled fallback",
+);
+check("the trajectory runs in both directions, so an open curtain can still be moving",
+  /function roomMoving/.test(src) && /roomMoving\(\)/.test(src));
 // ...AND THE COUPLING MUST BE THE PHYSICAL ONE, not linear-in-T dressed up as radiation.
 check(
   "the temperature drives a T^4 term (Stefan-Boltzmann), not a linear one",
@@ -454,20 +470,60 @@ try {
     `${settledB - settledA} frames drawn in 2.5 idle seconds after the full run`,
   );
 
-  // And an OPEN curtain is a settled room, so it must be idle too -- the clock must not run backwards.
-  await page.evaluate(() => {
+  // THE ROOM HAS A MEMORY, and this is the bug that proved it did not.
+  //
+  // Before this, reopening the curtain teleported the room to the settled OPEN temperature in one frame:
+  // measured 329.48 K -> 346.82 K, a **17.34 K** step, where a 120 kJ/K zone with UA 45 W/K needs about
+  // forty minutes. The old code was not merely a jump at the toggle -- while the curtain was open the page
+  // read `room_settled_k(0)` directly, so the room sat at its resting temperature forever and every
+  // reopening discarded the cooling the user had just watched.
+  const reopened = await page.evaluate(async () => {
     const o = window.__odderon;
+    const before = o.roomState.temperatureK;
     o.setCurtain(false);
     o.requestFrame();
+    await new Promise((r) => setTimeout(r, 150));
+    return { before, after: o.roomState.temperatureK, from: o.roomState.fromK };
   });
-  await new Promise((r) => setTimeout(r, 800));
+  check(
+    "reopening the curtain does not teleport the room to its open resting temperature",
+    Math.abs(reopened.after - reopened.before) < 3.0,
+    `${reopened.before.toFixed(1)} -> ${reopened.after.toFixed(1)} K (a 17.3 K jump is the old defect)`,
+  );
+
+  // ...and the warm-up must actually run, in the direction physics says: toward the OPEN resting
+  // temperature, and it must still be short of it two seconds later. A page that parked at the settled
+  // value would pass the assertion above and fail this one.
+  const warmed = await page.evaluate(async () => {
+    const o = window.__odderon;
+    const a = o.roomState.temperatureK;
+    await new Promise((r) => setTimeout(r, 6000));       // ~1440 simulated s at 240x
+    return { a, b: o.roomState.temperatureK, settled: o.roomState.settledK, el: o.roomState.elapsedS };
+  });
+  check(
+    "an open curtain now WARMS the room, toward the open resting temperature but short of it",
+    warmed.b > warmed.a && warmed.b < warmed.settled - 0.5,
+    `${warmed.a.toFixed(1)} -> ${warmed.b.toFixed(1)} K over ${Math.round(warmed.el)} simulated s, ` +
+      `target ${warmed.settled.toFixed(1)} K`,
+  );
+
+  // ...and only once it has finished warming does the page go quiet again. This is R2 with the new law:
+  // idle is nothing scheduled, and a warming room is not idle.
+  const warmEnd = await page.evaluate(async () => {
+    const o = window.__odderon;
+    for (let i = 0; i < 200; i++) {
+      if (!o.roomMoving()) break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    return { tK: o.roomState.temperatureK, settled: o.roomState.settledK };
+  });
   const openA = await page.evaluate(() => window.__odderon.bench.framesDrawn);
-  await new Promise((r) => setTimeout(r, 2000));
+  await new Promise((r) => setTimeout(r, 2500));
   const openB = await page.evaluate(() => window.__odderon.bench.framesDrawn);
   check(
-    "an open curtain schedules nothing either",
+    "once the room has finished warming, an open curtain schedules nothing",
     openB === openA,
-    `${openB - openA} frames drawn in 2 idle seconds with the curtain open`,
+    `${openB - openA} frames in 2.5 idle s at ${warmEnd.tK.toFixed(1)} K against ${warmEnd.settled.toFixed(1)} K`,
   );
 
   await page.close();

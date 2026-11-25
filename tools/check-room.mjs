@@ -80,7 +80,13 @@ for (const [re, lit, what] of forbidden) {
 if (checks.every(([t]) => t === "ok  ")) ok("the page holds no thermal constant of its own");
 
 // The invalidation, which is the defect this check found first.
-if (!/function setCurtain[\s\S]{0,400}cache\.valid = false/.test(src)) {
+//
+// Scoped to the FUNCTION BODY rather than to the next 400 characters. The proximity window was a proxy
+// for "is this line inside `setCurtain()`", and it broke the moment the function grew a doc comment: the
+// body still had `cache.valid = false`, eight hundred characters in, and the check failed a correct page.
+// A window measured in characters is a threshold that a broken build can clear by adding a comment.
+const setCurtainBody = (/function setCurtain\(curtain\) \{([\s\S]*?)\n\}/.exec(src) || [])[1] || "";
+if (!/cache\.valid = false/.test(setCurtainBody)) {
   fail("setCurtain() does not invalidate the cache -- the room will render once, before the kernel answers");
 } else {
   ok("setCurtain() invalidates the cache");

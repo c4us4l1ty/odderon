@@ -130,13 +130,68 @@ try {
       // Is the banner actually IN the frame the user is looking at? A fixed element can be laid out
       // off-screen, or under the canvas, and still pass a `hidden === false` test.
       inViewport: box ? box.top < window.innerHeight && box.bottom > 0 && box.width > 200 : false,
+      // The two rectangles whose RELATIONSHIP was the bug: the panel's opaque box and the banner's left
+      // edge. A banner that starts inside the panel is a banner whose first words nobody can read.
+      bannerLeft: box ? box.left : NaN,
+      hudRight: document.getElementById("hud")?.getBoundingClientRect().right ?? NaN,
     };
   });
 
   check("the kernel really is absent for this run", /unavailable/.test(seen.kernel), seen.kernel);
   check("the banner is shown", seen.hidden === false);
   check("the banner occupies the frame", seen.inViewport && seen.visiblePx > 20000, `${Math.round(seen.visiblePx)} px²`);
-  check("the banner says the room is not in the picture", /no room in this picture/i.test(seen.text));
+  // THE BANNER MUST NOT SAY THE ROOM IS ABSENT, because the room is not absent: the geometry is drawn by
+  // the same shader either way, and claiming otherwise is a second false statement beside the true one.
+  // It said "there is no room in this picture" until a screenshot showed the room plainly in it. What is
+  // missing is the MEASUREMENT, so that is what the banner has to name.
+  // AND THE ROOM MUST STILL BE DRAWN. This is the check that would have caught the worst bug of the clock
+  // work: the shader's new `(T/T0)^4` term is multiplied into the ambient, and with no kernel the host
+  // sends 0.0 for the temperature, which made the ambient zero. Measured: mean scene luma **123.1 with the
+  // kernel, 27.5 without** -- a black room with a banner over it, asserting this room is at absolute zero.
+  // Nothing here noticed, because every assertion above reads the DOM. The panel was correct throughout.
+  const noKernelLuma = await page.evaluate(async () => {
+    const o = window.__odderon, gl = o.gl, c = o.cache;
+    o.requestFrame();
+    await new Promise((r) => setTimeout(r, 500));
+    const buf = new Uint8Array(c.w * c.h * 4);
+    const prev = gl.getParameter(gl.READ_FRAMEBUFFER_BINDING);
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, c.fbo);
+    gl.readPixels(0, 0, c.w, c.h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, prev);
+    let L = 0, n = 0;
+    for (let y = 0; y < c.h; y++) for (let x = Math.round(c.w * 0.30); x < c.w; x++) {
+      const i = (y * c.w + x) * 4;
+      L += (buf[i] + buf[i + 1] + buf[i + 2]) / 3;
+      n++;
+    }
+    return L / n;
+  });
+  // The band is wide and low on purpose. This is not a judgement about how a room should look without a
+  // kernel; it is the difference between "the room is drawn" and "the room is black", and the measured
+  // values are 114.3 and 27.5. Anything between those two is a bug this check cannot rank.
+  check(
+    "the room is still drawn without a kernel (no absolute-zero ambient)",
+    noKernelLuma > 80,
+    `mean scene luma ${noKernelLuma.toFixed(1)} (drawn ~114, black-room bug ~27)`,
+  );
+
+  check(
+    "the banner names the measurement as what is missing, not the room",
+    /no numbers|not.*measured|— kernel not built/i.test(seen.text) && !/no room in this picture/i.test(seen.text),
+    seen.text.slice(0, 80),
+  );
+  check("the banner does not claim the geometry is missing", !/no room/i.test(seen.text));
+
+  // THE BANNER MUST NOT BE PAINTED OVER BY THE PANEL. It spans the full width at the bottom of the window
+  // and the panel is a fixed opaque box at the left, so its first 348 px sat UNDERNEATH the panel -- and
+  // the headline rendered as "s no room in this picture.", the opening words simply painted out. A
+  // screenshot is what showed it; a DOM query would not have, because the text node was intact and
+  // correctly laid out. So this compares the two RECTANGLES, which is the property that was violated.
+  check(
+    "the banner starts where the panel ends, so no line is painted over",
+    seen.bannerLeft >= seen.hudRight - 0.5,
+    `banner left ${Math.round(seen.bannerLeft)} px, panel right ${Math.round(seen.hudRight)} px`,
+  );
   check("the banner names the artifact", /odderon_dmath_wasm\.wasm/.test(seen.text), "");
   check("the banner names a remedy", /fetch:wasm/.test(seen.text), "");
   check("the room row says the kernel was not built", /kernel not built/.test(seen.solar), seen.solar);

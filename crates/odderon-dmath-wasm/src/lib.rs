@@ -273,21 +273,56 @@ const ROOM_STEP_S: f64 = 30.0;
 /// `no_std` cdylib whose only failure mode is a trap, and a trap in the renderer is a blank page.
 const ROOM_MAX_T_S: f64 = 7200.0;
 
-/// Zone temperature `elapsed_s` seconds after `curtain_closed` became true, kelvin.
+/// Sanity clamps on a caller-supplied starting temperature, kelvin (0.01 K to 2000 K).
 ///
-/// The starting point is the room's SETTLED temperature with the curtain in its *previous* state --
-/// which is where a real room is when someone gets up and pulls the curtain. Integrating from the
-/// closed state's own resting temperature would show a room that never moves: it is already there.
-fn room_temperature_after(was_closed: bool, elapsed_s: f64) -> f64 {
+/// The host sends a number it got from this module, so these should never bite. They exist because a
+/// `no_std` cdylib's only failure mode is a trap: a host that passes `-1e9` or a stale pointer-decoded
+/// value gets a clamped room rather than a NaN that spreads into the shader.
+const ROOM_MIN_K: f64 = 0.01;
+const ROOM_MAX_K: f64 = 2000.0;
+
+/// Zone temperature `elapsed_s` seconds into the current curtain state, kelvin.
+///
+/// ## The room has a memory, and assuming otherwise was a visible lie
+///
+/// The first version of this function had no `from_k`: it started every trajectory at the SETTLED
+/// temperature of the previous curtain state, on the argument that a settled room is where a real room is
+/// when someone gets up and pulls the curtain. That is true the first time, and false every time after.
+/// Measured on the page: close the curtain, let the room cool to 329.48 K, then reopen it -- the room
+/// jumped to 346.82 K **in one frame**, a step of **17.34 K**, where a 120 kJ/K zone with UA 45 W/K takes
+/// about forty minutes to get back. The model in `thermal.rs` has heat capacity; the presentation had
+/// none. A room that cannot remember being cold is not a room with a thermal mass, it is a calculator
+/// that reads the curtain position.
+///
+/// Worse, it was not merely a jump at the moment of the toggle: while the curtain was OPEN the page read
+/// `room_settled_k(0)` directly, so the room sat at its open resting temperature forever, mid-heat-up or
+/// not. Every reopening discarded the cooling the user had just watched.
+///
+/// So the trajectory now takes its starting point as an ARGUMENT. `from_k <= 0` keeps the old behaviour
+/// (start from the previous state's resting temperature) because that is the honest answer to "this room
+/// has been sitting like this since forever", and it is what the first close should use.
+/// `to_closed` is the state the room is moving INTO. The default starting point (when `from_k` is not
+/// given) is the settled temperature of the state it is coming FROM, which is the other one.
+///
+/// The name is `to_closed` and not `was_closed` because the first version of this used `was_closed` and
+/// built `reference_zone(!was_closed)` from it -- so `room_temperature_from_k(1, ...)`, documented as "the
+/// curtain is closing", actually simulated the OPEN room. Measured on the page before the fix: closing the
+/// curtain made the temperature read 346.82 K (the settled OPEN room) and reopening it read 317.48 K (the
+/// settled CLOSED one). Every direction was exactly backwards, and both values were plausible, which is
+/// why the panel printed them without complaint.
+fn room_temperature_after(to_closed: bool, from_k: f64, elapsed_s: f64) -> f64 {
     let outdoors = reference_outdoors();
     let internal = reference_internal();
-    let before = reference_zone(was_closed);
-    let after = reference_zone(true); // the curtain has closed
-
-    let settled = match before.free_float_temperature(&outdoors, &internal) {
-        Some(t) => t,
-        None => return 0.0, // no conductance => no resting temperature => nothing to report
+    let start = if from_k.is_finite() && from_k > 0.0 {
+        from_k
+    } else {
+        let before = reference_zone(!to_closed); // ... the state it is coming from
+        match before.free_float_temperature(&outdoors, &internal) {
+            Some(t) => t,
+            None => return 0.0, // no conductance => no resting temperature => nothing to report
+        }
     };
+    let after = reference_zone(to_closed);
 
     let t = if elapsed_s.is_finite() {
         elapsed_s.clamp(0.0, ROOM_MAX_T_S)
@@ -296,7 +331,7 @@ fn room_temperature_after(was_closed: bool, elapsed_s: f64) -> f64 {
     };
 
     let mut state = odderon_astro::thermal::ZoneState {
-        temperature_k: settled,
+        temperature_k: start.clamp(ROOM_MIN_K, ROOM_MAX_K),
     };
     let mut elapsed = 0.0;
     // `while elapsed + step <= t` rather than `while elapsed < t`: the last partial step would be a
@@ -309,12 +344,33 @@ fn room_temperature_after(was_closed: bool, elapsed_s: f64) -> f64 {
     state.temperature_k
 }
 
-/// Zone temperature, kelvin, `elapsed_s` seconds after the curtain CLOSES.
+/// Zone temperature, kelvin, `elapsed_s` seconds after the curtain CLOSES from a settled open room.
 ///
 /// `elapsed_s` is floored at 0 and capped at two hours (`ROOM_MAX_T_S`); see `room_temperature_after`.
+/// Kept as the exact first-close trajectory, because it is the one `tests/thermal.rs` measures and the
+/// one the 5.9 K figure belongs to. A room that has already moved should use `room_temperature_from_k`.
 #[unsafe(no_mangle)]
 pub extern "C" fn room_temperature_k(elapsed_s: f64) -> f64 {
-    room_temperature_after(false, elapsed_s)
+    room_temperature_after(true, 0.0, elapsed_s)
+}
+
+/// Zone temperature `elapsed_s` seconds after the curtain moves, STARTING FROM `from_k`, kelvin.
+///
+/// This is the general trajectory and the one the page uses. `curtain` is the state the room is moving
+/// INTO: 0 for open, non-zero for closed. `from_k <= 0` means "start from the previous state's resting
+/// temperature", which is what a room that has been left alone looks like -- so a host that has no better
+/// number is not forced to invent one.
+///
+/// Replaces the old `room_temperature_k` + read-`room_settled_k`-while-open arrangement, which was a
+/// different law for each curtain position: a curve one way, a constant the other. Both halves are now
+/// the same first-order response of the same zone, which is the only thing that makes reopening the
+/// curtain the reverse of closing it.
+#[unsafe(no_mangle)]
+pub extern "C" fn room_temperature_from_k(curtain: u32, from_k: f64, elapsed_s: f64) -> f64 {
+    // `curtain != 0` is "the room is moving into the closed state". Written with the C convention spelled
+    // out, because the first version had this as `curtain == 0` and every trajectory ran backwards: a
+    // closing curtain simulated the room WARMING to 323.42 K and an opening one simulated it COOLING.
+    room_temperature_after(curtain != 0, from_k, elapsed_s)
 }
 
 /// The room's SETTLED temperature, kelvin, with the curtain in the given state.
@@ -326,16 +382,6 @@ pub extern "C" fn room_settled_k(curtain: u32) -> f64 {
     let zone = reference_zone(curtain != 0);
     zone.free_float_temperature(&reference_outdoors(), &reference_internal())
         .unwrap_or(0.0)
-}
-
-/// The solar gain, W, at `elapsed_s` after the curtain closes -- the trajectory's energy side.
-///
-/// Equal to `room_solar_w(1)` for every `t`, and exported anyway: the page shows gain and temperature
-/// side by side, and a reader is entitled to see that the gain step is a step and the temperature is not.
-/// It is also the cheapest possible cross-check that the two functions share one fixture.
-#[unsafe(no_mangle)]
-pub extern "C" fn room_solar_w_at(curtain: u32) -> f64 {
-    room_solar_w(curtain)
 }
 
 /// Solar gain through the window, W.

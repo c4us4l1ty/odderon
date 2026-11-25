@@ -7,9 +7,19 @@
 <style>
   /* Below the panel, not over it. The first version sat at top:0 and covered the frame-time, p95 and
      path rows -- an explanation of a missing kernel that hides the instrument diagnosing it. */
+  /* THE BANNER CLEARS THE PANEL. The panel is fixed at left:8px and is up to 340px wide; the banner spans
+     the full width at the bottom of the window, so its first 348 px sat UNDERNEATH the panel and the
+     panel's opaque background painted over them. Measured: `#nokernel` x=0..1200, the panel's right edge
+     at x=348, and the headline rendered as "s no room in this picture." -- the opening words of the
+     sentence were simply painted out.
+     Not solved with z-index: the panel is 40 and the banner 30, and raising the banner would hide the
+     instrument instead, which is the defect this banner's own comment records from its first version
+     ("an explanation of a missing kernel that hides the instrument diagnosing it"). The banner is
+     *information*; the instrument is not. So the banner starts where the panel ends. */
   #nokernel {
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+    position: fixed; left: var(--hud-right); right: 0; bottom: 0; z-index: 30;
     padding: 10px 14px; font: 12px/1.5 ui-monospace, monospace;
+    max-height: 55vh; overflow: auto;
     background: #4a1414; color: #ffd9d0; border-top: 2px solid #c1440e;
     /* IT MUST NOT EAT CLICKS. This banner spans the full width at the bottom of a fixed layer, so it sits
        ON TOP of the panel's lower controls -- and a transparent-to-the-eye element that is not
@@ -30,12 +40,16 @@
 
   #gl { display: block; width: 100vw; height: 100vh; touch-action: none; }
 
+  /* The panel's own width, in one place. Both elements that have to agree about the horizontal layout
+     read it: the panel sets it, and the banner starts after it. A second copy of 348 is exactly how this
+     drifted the first time. */
+  :root { --hud-w: min(340px, calc(100vw - 16px)); --hud-left: 8px; --hud-right: calc(var(--hud-left) + var(--hud-w)); }
   #hud {
-    position: fixed; top: 8px; left: 8px; z-index: 40;   /* above #nokernel, so neither hides the other */
+    position: fixed; top: var(--hud-left); left: var(--hud-left); z-index: 40;   /* above #nokernel, so neither hides the other */
     padding: 10px 12px; border-radius: 6px;
     background: rgba(10,12,15,.82); border: 1px solid #232a33;
     backdrop-filter: blur(6px);
-    max-width: min(340px, calc(100vw - 16px));
+    width: var(--hud-w);
     user-select: none;
   }
   #hud h1 { margin: 0 0 8px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: #7d8b9c; font-weight: 600; }
@@ -85,13 +99,15 @@
 <canvas id="gl"></canvas>
 
 <div id="nokernel" hidden>
-  <b>The thermal kernel is not built, so there is no room in this picture.</b>
-  <span>Everything the panel reports about the room — solar gain, AC draw, the curtain — comes from the
-  wasm module, and it is not in this checkout. <code>dist/</code> is git-ignored (a build output), so a
-  page served straight from a clone cannot have it; the preview you are looking at is exactly that case.
+  <b>The thermal kernel is not built, so this room has no numbers.</b>
+  <span>The geometry you see is real, and it is drawn by the same shader either way. What is missing is
+  everything that MEASURES it: solar gain, AC draw, the curtain's SHGC and the room's temperature all
+  come from the wasm module, and it is not in this checkout. <code>dist/</code> is git-ignored (a build
+  output), so a page served straight from a clone cannot have it; the preview you are looking at is
+  exactly that case. Until then the room renders at its open-curtain appearance — no substitute
+  temperature is invented, and the panel says <code>— kernel not built</code> rather than a number.
   Run <code>npm run fetch:wasm</code>, or <code>cargo build --release --target
   wasm32-unknown-unknown -p odderon-dmath-wasm &amp;&amp; cp target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm dist/</code>.
-  The window you see is a hole with sky behind it and no network to say what the room is doing.
   <em>If neither works here:</em> <code>fetch:wasm</code> needs GitHub CLI credentials and the cargo path
   needs a Rust toolchain, so a sandboxed preview with neither can only show the geometry — which is
   exactly what this is.</span>
@@ -727,9 +743,20 @@ void main() {
   // size of the thing the panel is reporting. This term paints it, and the renderer states that it is
   // painting the thermal transfer rather than pretending to find it in the visible band. The provenance
   // is in this comment and in docs/BUILD-PLAN.md, not disguised as a tuned constant.
-  float tRatio = uRoomTemp / max(uSettledOpenK, 1.0);
-  float th = clamp(tRatio, 0.0, 1.5);
-  float thermal = th * th * th * th;                 // T^4: Stefan-Boltzmann, the band where it is real
+  //
+  // AND IT MUST BE THE IDENTITY WHEN THERE IS NO KERNEL. The host sends 0.0 for a temperature it does not
+  // have, which makes th zero, which makes thermal zero, which multiplies the ambient to nothing -- so
+  // the first version of this turned a missing module into a room at absolute zero. Measured: mean scene
+  // luma **123.1 with the kernel, 27.5 without**, and the walls behind the banner went black. That is a
+  // substitute constant asserting something the kernel never said, which is the defect this page already
+  // refuses for the orbit body ("no substitute"). When the module is absent the right answer is not a
+  // temperature, it is no modulation at all: the room renders as the room, and the panel and the banner
+  // say the kernel is missing.
+  float thermal = 1.0;
+  if (uSettledOpenK > 1.0) {
+    float th = clamp(uRoomTemp / uSettledOpenK, 0.0, 1.5);
+    thermal = th * th * th * th;                     // T^4: Stefan-Boltzmann, the band where it is real
+  }
   //
   // What is left when the warm plaster stops giving up its heat is the daylight through the aperture --
   // which is the sky's own colour, already in this frame as 'uSkyFill'. So a cooling room does not
@@ -1304,6 +1331,7 @@ const roomState = {
   temperatureK: NaN,     // zone temperature, from the kernel
   settledK: NaN,         // where the zone rests with the curtain as it is
   settledOpenK: NaN,     // ... and with the curtain open, the temperature the room is warm relative to
+  fromK: NaN,            // the temperature the current trajectory started from; NaN = no trajectory yet
 };
 
 function refreshRoom() {
@@ -1320,6 +1348,17 @@ function refreshRoom() {
   roomState.drawW = k.room_draw_w(c);
   roomState.settledK = k.room_settled_k(c);
   roomState.settledOpenK = k.room_settled_k(0);
+  // THE BASELINE, ONCE THE KERNEL EXISTS. Until a trajectory has run there is no "temperature the room is
+  // leaving", and `setCurtain()` deliberately refuses to invent one from a clock that has not started --
+  // but `roomMoving()` also refuses to schedule a frame without it, so the page sat still forever: closing
+  // the curtain set `fromK` to NaN, the loop stopped, and the panel read `73.7 C at 0 s` until the tab was
+  // closed. Measured, after the guard was added and before this line: closed for 9 s, `elapsedS` still 0.
+  //
+  // The baseline is the current state's own resting temperature, which is exactly right: a room nobody has
+  // disturbed is at rest in the state it is in.
+  if (!Number.isFinite(roomState.fromK) && Number.isFinite(roomState.settledK)) {
+    roomState.fromK = roomState.settledK;
+  }
   roomState.temperatureK = roomTemperature();
   roomState.source = 'wasm kernel';
 }
@@ -1337,17 +1376,31 @@ function roomElapsedS(nowMsArg) {
 }
 
 /// Zone temperature, kelvin, from the kernel. NaN when there is no kernel -- never a substitute.
+/// The temperature the room is moving FROM when the curtain changes, kelvin.
+///
+/// `NaN` means "no trajectory has run yet", and the kernel treats that as "start from the previous
+/// state's resting temperature" -- which is the right answer exactly once, for a room nobody has touched.
+/// After that this holds a real number and every toggle continues from the room that is actually there.
+///
+/// THIS REPLACED A READ OF `room_settled_k(0)`, and the difference is the whole bug: a settled room is
+/// where a long-closed room IS, not where a room that has been cooling for ten minutes is. Measured
+/// before the fix: close (329.48 K after 2388 simulated s), reopen -- 346.82 K, a **17.34 K** jump in one
+/// frame, where the zone's own time constant is 44 min.
 function roomTemperature(nowMsArg) {
   const k = kernelState.module;
   if (!k) return NaN;
   roomState.elapsedS = roomElapsedS(nowMsArg);
-  // The curtain has only ever closed in this page (the opening state is the settled one), so the
-  // trajectory is always the closed-curtain cooling curve. When the curtain is OPEN the room is at
-  // rest and the kernel says so directly rather than integrating backwards.
-  return roomState.curtain ? k.room_temperature_k(roomState.elapsedS) : k.room_settled_k(0);
+  // ONE LAW FOR BOTH DIRECTIONS. The room warming up after the curtain reopens is the same first-order
+  // response as the room cooling after it closes -- same zone, same heat capacity, same conductance --
+  // and the kernel now takes the starting temperature so both are literally the same call.
+  return k.room_temperature_from_k(
+    roomState.curtain ? 1 : 0,
+    Number.isFinite(roomState.fromK) ? roomState.fromK : 0.0,
+    roomState.elapsedS,
+  );
 }
 
-/// Recompute the room AND invalidate the cache.
+/// Apply a curtain state, start its trajectory, and invalidate the cache.
 ///
 /// The invalidation is not defensive tidiness -- without it this silently does nothing, which is the
 /// exact failure mode this file already records for the shadow-tap and detail controls ("switching
@@ -1357,9 +1410,17 @@ function roomTemperature(nowMsArg) {
 /// `1440 W 100.0%` beside a pane rendered at 0 % -- a picture contradicting its own instrument, which
 /// is the defect this project has deleted three times.
 function setCurtain(curtain) {
+  // The room it is leaving, read BEFORE the state changes or the trajectory restarts.
+  //
+  // ONLY IF A TRAJECTORY HAS ACTUALLY RUN. This function is also called once at boot, from
+  // `loadKernel().then(...)`, to apply the initial state -- and at that moment there is no trajectory and
+  // `curtainChangedAt` is still 0, so `roomTemperature()` reports the temperature at `performance.now()`
+  // seconds into nothing: the clamped 319.41 K. Capturing that as the starting point started the room at
+  // 46.3 C. Measured before this guard: the page opened reading 319.41 K where the settled open room is
+  // 346.82 K -- a 27.4 K error, on the first frame, from a function trying to be careful.
+  roomState.fromK = Number.isFinite(roomState.fromK) ? roomTemperature() : NaN;
   roomState.curtain = curtain;
-  // The clock restarts on every change: `room_temperature_k` integrates from the settled temperature of
-  // the PREVIOUS state, so the instant the curtain moves is t = 0 by definition.
+  // The clock restarts on every change: the instant the curtain moves is t = 0 by definition.
   roomState.curtainChangedAt = performance.now();
   roomState.elapsedS = 0;
   refreshRoom();
@@ -1775,12 +1836,12 @@ function renderLoop(nowMs) {
   //
   // This is the one place in the page where a frame is requested without an input event, so it is also
   // the one place `tools/check-shell.mjs`'s zero-frames-while-idle measurement could be broken. It is
-  // not broken: the condition is `roomCooling()` below, which is false for a room at rest. Measured
+  // not broken: the condition is `roomMoving()` below, which is false for a room at rest. Measured
   // after the change: still 0 frames while idle.
-  if (!state.needsFrame && !roomCooling(nowMs)) return;   // <- the R2 claim lives on this line
+  if (!state.needsFrame && !roomMoving(nowMs)) return;   // <- the R2 claim lives on this line
   state.needsFrame = false;
   drawFrame(nowMs);
-  if (roomCooling(nowMs)) requestFrame();
+  if (roomMoving(nowMs)) requestFrame();
 }
 
 /// Is the room still moving? True only while a closed-curtain trajectory has not reached its end.
@@ -1818,10 +1879,24 @@ const ROOM_SETTLE_S = 4800;
 /// model spent for nothing; a larger one lets the picture skip a level it should have shown.
 const ROOM_SHADE_K = 2.0;
 
-function roomCooling(nowMsArg) {
-  if (!roomState.curtain) return false;         // an open window is a settled room
-  if (!kernelState.module) return false;        // no kernel, no trajectory to show
-  return roomElapsedS(nowMsArg) < ROOM_SETTLE_S;
+/// Is the room still moving? True in EITHER direction, while a trajectory has not reached its end.
+///
+/// This used to be `roomCooling()`, and it returned false whenever the curtain was open, on the stated
+/// ground that "an open window is a settled room". That was true only because reopening the curtain used
+/// to teleport the room to its settled temperature. Now that the room actually warms up, an open curtain
+/// is a room in motion -- and the old predicate stopped the render loop at the exact instant the warm-up
+/// began, so the picture froze while the panel counted. Measured: reopen, then 6 s later, `elapsedS` read
+/// 0 and the temperature had not moved.
+///
+/// R2 is still intact, and by construction rather than by luck: a room that has never been disturbed has
+/// `fromK = NaN` and therefore no trajectory, so a page sitting at its initial state schedules nothing.
+function roomMoving(nowMsArg) {
+  if (!kernelState.module) return false;                    // no kernel, no trajectory to show
+  if (!Number.isFinite(roomState.fromK)) return false;       // nothing has been disturbed yet
+  if (roomElapsedS(nowMsArg) >= ROOM_SETTLE_S) return false;  // the window is over
+  const now = roomTemperature(nowMsArg);
+  const target = roomState.settledK;
+  return Number.isFinite(now) && Number.isFinite(target) && Math.abs(now - target) > ROOM_SHADE_K;
 }
 
 function requestFrame() {
@@ -2993,6 +3068,7 @@ window.__odderon = {
   // them. A check that hard-codes 600 s goes on passing after the page stops using 600 s -- which is
   // exactly what happened to the cutoff assertion in `tools/check-room-clock.mjs`.
   roomClock: { settleS: ROOM_SETTLE_S, rate: roomState.clockScale, shadeK: ROOM_SHADE_K },
+  roomMoving,
   setCurtain,
   // The orbit boundary, exposed so `tools/check-orbit.mjs` can run the real module in a real page and
   // so a person with a phone can ask the page what it thinks the orbit is. Reading `kernelState.status`
