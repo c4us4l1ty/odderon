@@ -254,8 +254,22 @@ fn reference_internal() -> odderon_astro::thermal::InternalGain {
 //      having simulated the 299 seconds before it.
 //   3. **Seekability.** The page's clock can be stopped, restarted, or dragged, and nothing accumulates.
 //
-// The cost is 600/30 = 20 Euler steps for a ten-minute query, on a budget of one call per frame change.
-// Measured below; it is nothing.
+// The cost is `t / 30` Euler steps for a query at time `t` -- 20 for a ten-minute query, 240 for the
+// longest the page can ask for (the two-hour cap). On a budget of one call per drawn frame, that is
+// measured against the 1.5 ms frame budget, on the shipped module, at 20 000 calls per timing:
+//
+//     t =    60 s      2 steps     0.11 us
+//     t =   600 s     20 steps     0.16 us
+//     t =  1800 s     60 steps     0.64 us
+//     t =  3600 s    120 steps     1.35 us
+//     t =  7200 s    240 steps     2.57 us   (~11 ns per step)
+//
+// The worst case is **0.17 % of the budget**, and a whole 4800 s clock run draws roughly 1200 frames,
+// so the trajectory costs about 3 ms in total across a run that takes 20 s of wall time. It is a real
+// O(t/30), but the constant is small enough that the page does not pay for it, which is why the
+// stateless design above is kept: determinism, replay and seekability are worth more than the 2.5 us
+// the worst-case call costs. This is the measurement that closes the "should this be stepped instead"
+// question -- it has been measured, and it stays a pure function.
 //
 // ## The step size is the model's, not a chosen one
 //
