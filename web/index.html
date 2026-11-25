@@ -193,6 +193,7 @@ void main() {
 const FRAG = `#version 300 es
 precision highp float;
 
+const float PI = 3.14159265358979;
 uniform vec2  uRes;         // render-target size in pixels
 uniform float uTime;        // seconds; drives only declared-moving surfaces
 uniform vec3  uSunDir;
@@ -207,8 +208,11 @@ uniform float uSimple;      // 1 = drop per-pixel features to buy shadow quality
 uniform float uExposure;    // stops: the setting every real camera exposes by hand
 uniform float uRoomLight;   // how much sun is in the room, 0..1, from the thermal network
 uniform float uCurtain;     // 0 = open, 1 = closed; the geometry the light travels through
-uniform vec3  uWinC;        // window centre in scene units
+uniform vec3  uWinC;        // window centre in scene units: the HOLE in the outside wall
 uniform vec2  uWinHalf;     // window half-extent
+uniform float uBodyOn;      // 1 = the kernel gave a body position; 0 = there is no orbit to draw
+uniform vec3  uRoomLo;      // the inside room's inner corner (x, y, z), scene units
+uniform vec3  uRoomHi;      // ... and its far corner. A box, because a room is one.
 
 out vec4 outColor;
 
@@ -334,6 +338,40 @@ float planeVis(vec3 p, vec3 n, vec3 sd, vec3 bxlo, vec3 bxhi) {
   return vis / float(total);
 }
 
+// ---------- the sunbeam, geometrically ---------------------------------------------------------
+//
+// The window casts a PATCH OF LIGHT onto the floor and the walls, and that patch is the whole point of
+// the room: it is what a person looks at to decide whether the sun is in. The first version drew it as a
+// hand-placed rounded rectangle in a coordinate system measured across the pane, which meant it landed
+// wherever a constant said it did and could not be wrong in a way anyone would notice. This is the
+// geometry instead: a point on a surface is sunlit when the ray from that point toward the sun passes
+// through the aperture. The shape of the patch is then the footprint of the hole, cast -- a trapezoid
+// for free, sheared by the sun's elevation and clipped by the wall.
+//
+// The edge is soft because the Sun is 0.53 degrees across, the same reason planeVis samples a disc.
+// Here the softening is done analytically: dx is the aperture's half-width in metres, R the distance
+// from the floor point to the aperture, so the penumbra half-width is R * tan(0.53/2). At 4 m that is
+// 1.8 cm, which is why a real sun patch has a razor edge and a shadow under a window mullion is crisp.
+float apertureVis(vec3 p, vec3 sd, vec3 wLo, vec3 wHi, float wallZ) {
+  // The window wall is at NEGATIVE z and the sun is beyond it, so a sunward ray has sd.z < 0. The first
+  // version tested sd.z > 0 -- correct for a +z wall, silently zero for this one, and the patch simply
+  // did not exist. Nothing crashed and nothing looked broken; the room was just never sunlit.
+  if (sd.z >= -1e-4) return 0.0;
+  float k = (wallZ - p.z) / sd.z;
+  if (k <= 0.0) return 0.0;
+  vec3 q = p + sd * k;                    // where that ray crosses the wall's plane
+  vec3 c = (wLo + wHi) * 0.5;
+  vec3 h = (wHi - wLo) * 0.5;
+  // Distance outside the aperture, per axis, measured as a signed "how far past the jamb".
+  float dx = abs(q.x - c.x) - h.x;
+  float dy = abs(q.y - c.y) - h.y;
+  // Penumbra in world units at this distance, from the solar half-angle.
+  float pen = max(k * tan(uSunHalfAngle), 1e-4);
+  float mx = 1.0 - smoothstep(-pen, pen, dx);
+  float my = 1.0 - smoothstep(-pen, pen, dy);
+  return mx * my;
+}
+
 // ---------- analytical filter integration (GRAPHICS.md innovation 3) ----------------------------
 //
 // A corrugated wall is z = A sin(w u). Point-sampling it aliases and shimmers; instead we know the
@@ -346,265 +384,311 @@ float corrugationMean(float u, float halfWidth) {
   return A * (cos(w * (u - halfWidth)) - cos(w * (u + halfWidth))) / (w * 2.0 * halfWidth);
 }
 
+// ---------- one way out --------------------------------------------------------------
+//
+// Tonemap, gamma and sensor grain live here rather than at the bottom of main, because main now
+// returns from four places (sky, outside, inside, behind) and three copies of an output stage is three
+// chances for one of them to skip the gamma or double the grain. The first version of this scene had
+// exactly that: the interior branch returned early and the grain block below it became unreachable,
+// so half the frame silently lost the dither that keeps 8-bit gradients from banding.
+void emit(vec3 c) {
+  c = c / (c + vec3(1.0));                    // simple tonemap, keeps highlights readable
+  c = pow(c, vec3(1.0 / 2.2));
+  // Sensor grain: 8-bit output on a smooth gradient bands, and a real sensor's noise dithers that
+  // quantisation step. Temporal, so it never breaks the bit-identical frame that lets Mali's CRC skip
+  // a memory write on its own -- it only runs when something else already forced a frame.
+  if (uSimple < 0.5) {
+    float g = fract(sin(dot(gl_FragCoord.xy + uFrame, vec2(12.9898, 78.233))) * 43758.5453);
+    c += (g - 0.5) * 0.016;
+  }
+  outColor = vec4(c, 1.0);
+}
+
 void main() {
   vec2 uv = (gl_FragCoord.xy / uRes) * 2.0 - 1.0;
   uv.x *= uRes.x / uRes.y;
 
-  // Camera: fixed, looking at a wall and the ground. Static camera is R2's precondition.
-  // The camera looks at the horizon, not up at a wall. The first version aimed 0.06 above the eye
-  // line, which on a tall portrait phone put almost the whole frame on the wall and read as an
-  // interior. Aiming slightly DOWN puts the horizon in frame and the wall where it belongs.
-  vec3 ro = vec3(0.0, 1.6, -2.6);
-  vec3 rd = normalize(vec3(uv.x * 0.72, uv.y * 0.72 - 0.17, 1.0));
+  // Camera: fixed. Static camera is R2's precondition.
+  //
+  // THE FRAME IS SEEN FROM INSIDE THE ROOM, and that is the change of 2026-11-25. Everything before it
+  // was an exterior: a corrugated wall filling 40 % of the frame with a crate on grey concrete, and a
+  // small dark square in the wall that was supposed to be the room. Read honestly, it was a crate and a
+  // hole. The claim is "the room is a spacecraft", so the room has to be the subject and the outside has
+  // to be what you see *through* the window -- otherwise the instrument is measuring a picture the game
+  // never shows.
+  //
+  // The room is an interior box, the camera sits inside it, and the window is a gap in one wall. That
+  // makes the whole scene one ray-versus-six-planes test rather than a new pass: R3's one-target rule
+  // and the 1-draw-call count are untouched.
+  vec3 ro = vec3(0.30, 1.52, 1.90);
+  // THE CAMERA LOOKS TOWARD THE SUN, and that decided the whole orientation. sunDirection() returns
+  // (0.585, 0.395, -0.708) for a late-November declination, so daylight travels toward +z and -x. A
+  // window is only a window if the sun is on its far side: put the pane in the +z wall, as the first
+  // attempt did, and every sunbeam test asks for light coming from -z and finds it facing the wrong way.
+  // The room is turned so its window wall is -z and the camera looks into it.
+  const float YAW = PI - 0.38;      // fw = (0.372, 0, -0.928): toward -z, 22 degrees right
+  const float PITCH = -0.10;
+  vec3 fw = vec3(sin(YAW), 0.0, cos(YAW));
+  vec3 rt = vec3(cos(YAW), 0.0, -sin(YAW));
+  vec3 up = vec3(0.0, 1.0, 0.0);
+  vec2 uv2 = vec2(uv.x * uRes.y / uRes.x, uv.y);   // undo the aspect divide above
+  vec3 rf = normalize(cross(up, fw));              // right-hand axis; 'patch' is a GLSL reserved word
+  vec3 rd = normalize(fw + rf * uv2.x + up * uv2.y * 0.82);
 
   vec3 sky = vec3(0.20, 0.34, 0.62);
 
-  // ---- ground plane (y = 0) ----
-  float tGround = iPlane(ro, rd, vec3(0.0), vec3(0.0, 1.0, 0.0));
-  // ---- back wall (z = 6) ----
-  float tWall = iPlane(ro, rd, vec3(0.0, 0.0, 14.0), vec3(0.0, 0.0, -1.0));
-  // ---- a crate on the ground: the occluder that proves the shadow is analytic ----
-  vec3 boxLo = vec3(-1.9, 0.0, 4.6);
-  vec3 boxHi = vec3(-0.7, 0.78, 5.8);
-  float tBox = iBox(ro, rd, boxLo, boxHi);
-
-  // ---- a body from the kernel, drawn as a lit sphere so the physics is visibly wired ----
-  vec3 bodyC = uOrbitPos;
-  float bodyR = 0.30;
-  float tBody = iSphere(ro, rd, bodyC, bodyR);
+  // ---- the room, as a box with a hole in one wall ----
+  //
+  // WINDOW_HALF is a BREAK IN THE WALL, not a decal. The montage that first showed this defect drew the
+  // pane as a quad floating 0.1 units in front of the wall, so at a 35 % grazing angle it floated off the
+  // white metal and read as a mounted mirror. A hole cannot do that: the same rectangle is subtracted
+  // from the wall's own bounds, and it also opens "through" into the outside test.
+  vec3 wLo = vec3(uWinC.x - uWinHalf.x, uWinC.y - uWinHalf.y, uRoomLo.z);
+  vec3 wHi = vec3(uWinC.x + uWinHalf.x, uWinC.y + uWinHalf.y, uRoomLo.z);
 
   float t = 1e9;
-  int id = 0;              // 0 sky, 1 ground, 2 wall, 3 box, 4 body
-  if (tGround > 0.0 && tGround < t) { t = tGround; id = 1; }
-  if (tWall   > 0.0 && tWall   < t) { t = tWall;   id = 2; }
-  if (tBox    > 0.0 && tBox    < t) { t = tBox;    id = 3; }
-  if (tBody   > 0.0 && tBody   < t) { t = tBody;   id = 4; }
+  int id = 0;              // 0 sky, 1 floor, 2 wall, 3 ceiling, 4 outside ground, 5 outside crate, 6 body
+  vec3 n = vec3(0.0, 1.0, 0.0);
 
-  // The wall is a plane, which has no top. A plane with no top edge hides the sky and turns an
-  // outdoor shot into a corridor. Above the wall's height, the ray was never going to hit the wall
-  // in the first place - so this is a correction to the intersection, not a cheat.
-  const float WALL_TOP = 7.0;
-  if (id == 2 && (ro + rd * t).y > WALL_TOP) { id = 0; t = 1e9; }
+  // Floor and ceiling.
+  float tFloor = iPlane(ro, rd, vec3(0.0, uRoomLo.y, 0.0), vec3(0.0, 1.0, 0.0));
+  if (tFloor > 0.0 && tFloor < t) { t = tFloor; id = 1; }
+  float tCeil = iPlane(ro, rd, vec3(0.0, uRoomHi.y, 0.0), vec3(0.0, -1.0, 0.0));
+  if (tCeil > 0.0 && tCeil < t) { t = tCeil; id = 3; }
 
-  // ---- THE WINDOW ----
-  //
-  // The pane is a hole in the wall, and what is behind it is the room. This is the game's central
-  // object: claim 2 says closing the curtain drops solar gain and the AC's draw falls, and until now
-  // that claim lived only in a Rust module no pixel ever read. The wall is at z = 14 and the camera at
-  // z = -2.6, so "beyond the pane" is simply further along the same ray -- which makes the room one
-  // more distance test rather than a second pass, and keeps the draw-call count at 1.
-  //
-  // Everything here is derived from a uniform the thermal network sets. Nothing in this shader models
-  // the room's temperature; it *shows* what the network computed. If the network is absent the page
-  // says so and this pane renders cold, because a warm-looking room with no solver behind it would be
-  // exactly the "picture that cannot be argued with" this project keeps deleting.
-  bool isWindow = false;
+  // The four walls. The wall the camera faces (z = far) is the only one with the hole in it, so it is
+  // the only one tested against the window rectangle.
+  // The four walls. tWindowWall is the one with the hole in it; the other three are solid.
+  float tWindowWall = iPlane(ro, rd, vec3(0.0, 0.0, uRoomLo.z), vec3(0.0, 0.0, 1.0));
+  float tLeft  = iPlane(ro, rd, vec3(uRoomLo.x, 0.0, 0.0), vec3(1.0, 0.0, 0.0));
+  float tRight = iPlane(ro, rd, vec3(uRoomHi.x, 0.0, 0.0), vec3(-1.0, 0.0, 0.0));
+  float tBehind = iPlane(ro, rd, vec3(0.0, 0.0, uRoomHi.z), vec3(0.0, 0.0, -1.0));
+  if (tWindowWall > 0.0 && tWindowWall < t) { t = tWindowWall; id = 2; }
+  if (tLeft  > 0.0 && tLeft  < t) { t = tLeft;  id = 2; }
+  if (tRight > 0.0 && tRight < t) { t = tRight; id = 2; }
+  if (tBehind > 0.0 && tBehind < t) { t = tBehind; id = 7; }
+
+  // ---- the window: a HOLE in the far wall ----
+  bool throughWindow = false;
   if (id == 2) {
     vec3 wp = ro + rd * t;
     if (all(lessThan(abs(wp.xy - uWinC.xy), uWinHalf))) {
-      isWindow = true;
-      // The room sits beyond the pane: 4 units of depth, then the back of the room.
-      t = t + 4.0;
-      id = 5;
+      throughWindow = true;
+      // THE CURTAIN IS A SURFACE IN THE OPENING, not a tint painted on what lies behind it. The first
+      // version shaded the cloth from the floor's own position, so closing the curtain darkened the room
+      // without ever showing a curtain -- the ray had already left through the hole. Geometry first: if
+      // the cloth is down, the ray stops at the glass line.
+      if (uCurtain > 0.5) {
+        id = 8;             // cloth, at the window plane
+        throughWindow = false;   // and NOT through it: the outside block below would overwrite this
+      } else {
+        id = 0;             // open: the ray goes outside
+        t = 1e9;
+      }
     }
   }
 
-  vec3 col = sky * uExposure;
-  vec3 n = vec3(0.0, 1.0, 0.0);
+  if (throughWindow) {
+    // Outside: the sky, the ground beyond the wall, the crate, and the body from the kernel. This is
+    // the same exterior scene as before, seen through a 2.4 x 1.6 m opening. It is a long way away, so
+    // it is also the depth cue that tells the eye the room has a far side.
+    float tGround2 = iPlane(ro, rd, vec3(0.0, uRoomLo.y, 0.0), vec3(0.0, 1.0, 0.0));
+    // Only the part beyond the wall counts as outside ground: the plane is the same y, so the room's
+    // floor would otherwise win every time and the window would look onto its own floor.
+    // The crate sits beyond the window wall, on the sunlit ground, where the eye can find it through
+    // the opening. It was at z = 18 when the window was in the +z wall; that is behind the camera now.
+    float tBox = iBox(ro, rd, vec3(-3.4, 0.0, -8.2), vec3(-2.2, 0.8, -7.0));
+    float tBody = (uBodyOn > 0.5) ? iSphere(ro, rd, uOrbitPos, 0.30) : -1.0;
+    float tb = 1e9;
+    int bid = 0;
+    if (tGround2 > 0.0 && tGround2 < tb) { tb = tGround2; bid = 4; }
+    if (tBox > 0.0 && tBox < tb) { tb = tBox; bid = 5; }
+    if (tBody > 0.0 && tBody < tb) { tb = tBody; bid = 6; }
+    t = tb;
+    id = bid;
+    if (id == 4) {
+      // Beyond the wall only. The test is z < uRoomLo.z because the window wall is the -z one; the
+      // first version compared against uRoomHi.z, which is true for almost the whole plane, so the
+      // ground was discarded and the window rendered as flat sky with nothing in it.
+      if ((ro + rd * t).z > uRoomLo.z) { id = 0; t = 1e9; }
+    }
+  }
+
+  // Anything outside the room's x/z span is not the room. This is what keeps a plane infinite in one
+  // direction from standing in for a wall: hit the floor, but past the right-hand wall, and it is the
+  // sky beyond the room rather than more floor.
+  if (id == 1 || id == 3) {
+    vec3 hp = ro + rd * t;
+    if (hp.x < uRoomLo.x || hp.x > uRoomHi.x || hp.z < uRoomLo.z || hp.z > uRoomHi.z) {
+      id = 0; t = 1e9;
+    }
+  }
+  if (id == 2) {
+    vec3 hp = ro + rd * t;
+    bool onWin   = abs(hp.z - uRoomLo.z) < 1e-3;
+    bool onLeft  = abs(hp.x - uRoomLo.x) < 1e-3;
+    bool onRight = abs(hp.x - uRoomHi.x) < 1e-3;
+    if (!onWin && !onLeft && !onRight) { id = 0; t = 1e9; }
+  }
+
+  // The scene has no infinite surfaces left, so a ray that hit nothing really is looking at nothing.
+  if (t >= 1e9) id = 0;
+
   vec3 p = ro + rd * t;
 
   if (id == 0) {
-    // Sky: gradient plus a small sun glow. highp matters here (GRAPHICS.md §1).
-    float up = clamp(rd.y, 0.0, 1.0);
-    col = mix(vec3(0.62, 0.72, 0.86), sky, pow(up, 0.55));
+    // Sky: gradient plus a small sun glow. highp matters here (GRAPHICS.md §1). This is also what fills
+    // every pixel the box does not cover, so "no hit" is a colour rather than an uninitialised variable.
+    float upp = clamp(rd.y, 0.0, 1.0);
+    vec3 sc = mix(vec3(0.62, 0.72, 0.86), sky, pow(upp, 0.55));
     float sunDot = max(dot(rd, uSunDir), 0.0);
-    if (uSimple < 0.5) col += vec3(1.0, 0.93, 0.80) * pow(sunDot, 900.0) * 2.2;
-    col += vec3(1.0, 0.90, 0.76) * pow(sunDot, 18.0) * 0.055;
-    outColor = vec4(col, 1.0);
+    if (uSimple < 0.5) sc += vec3(1.0, 0.93, 0.80) * pow(sunDot, 900.0) * 2.2;
+    sc += vec3(1.0, 0.90, 0.76) * pow(sunDot, 18.0) * 0.055;
+    emit(sc);
     return;
   }
 
-  // ---- the room, seen through the pane ----
+  // ---- the curtain, as a surface in the opening ----------------------------------------------
   //
-  // Every term here is a CONSEQUENCE of a value the thermal network computed, not a palette. The warm
-  // patch on the floor is the scaled radiance arriving as U*S; it spreads with depth because the light
-  // arrives at an angle; it reddens toward grazing angles because a sunlit room integrates a warm sun
-  // over a blue sky and the warm term dominates as the blue term is cut off by the aperture.
-  //
-  // THE CURTAIN IS AN ABSORBER, NOT A DIMMER. It is drawn as cloth, and its effect on the room is the
-  // solver's: U falls, so every lit term falls with it. A version of this that multiplied a brightness
-  // constant by a slider would produce the same picture and would be theatre -- the number on the pane
-  // would be a decoration rather than the reason the pixels are that colour.
-  if (id == 5) {
-    // Depth INTO the room, measured from the pane.
-    float roomDepth = 4.0;
-    // The window plane in scene space, and the fraction across it.
-    vec3 wpn = ro + rd * (t - roomDepth);
-    vec2 across = clamp((wpn.xy - (uWinC.xy - uWinHalf)) / (2.0 * uWinHalf), 0.0, 1.0);
+  // A curtain has to BE something, not tint what is behind it. An earlier version shaded the cloth from
+  // the floor's own position, which darkened the room without ever showing a curtain: the ray had already
+  // left through the hole. This is geometry -- the ray stops at the glass line -- because "the sun is
+  // blocked" and "you can see the thing blocking it" are two different claims and only one of them was
+  // true.
+  if (id == 8) {
+    vec3 wp = ro + rd * t;
+    vec2 ac = (wp.xy - (uWinC.xy - uWinHalf)) / (2.0 * uWinHalf);
 
-    // Where the sun's image lands. A vertical drop per unit of depth: the further into the room, the
-    // further the bright patch has travelled, so it sits lower and narrower. This is the geometry of a
-    // sunbeam through a rectangle and it is why the patch is a trapezoid rather than a blur.
-    vec2 patchC = vec2(0.5, 0.5 - 0.42 * (1.0 - roomDepth / 4.0) - 0.30);
-    vec2 patchHalf = vec2(0.34, 0.20);
-    vec2 d = abs(across - patchC) / patchHalf;
-    float pool = 1.0 - smoothstep(0.65, 1.25, max(d.x, d.y));
+    // Folds hang vertically, so they vary across the width and not with height. Sampling this from the
+    // aperture coordinate means the folds stay attached to the window as the eye moves, rather than
+    // sliding, which is the tell that a texture is being projected rather than a surface being seen.
+    float drape = 0.5 + 0.5 * sin(ac.x * 15.0 + 0.6);
+    float weave = 0.94 + 0.06 * sin(ac.x * 240.0);
 
-    // The room's own surfaces. A warm plaster, and a darker floor, both lit only by what got in.
-    float floorMask = smoothstep(0.55, 0.50, across.y);
-    vec3 alb = mix(vec3(0.52, 0.46, 0.38), vec3(0.30, 0.24, 0.19), floorMask);
+    // The cloth is BACKLIT: the day is behind it, so it glows at the folds facing the light and goes dark
+    // where the cloth turns away. Mid-tone, and well below the sky it covers -- a lit curtain seen from
+    // inside reads darker than the window, not brighter. The first version was near-white and read as a
+    // roller blind, which is the wrong object entirely.
+    vec3 cloth = vec3(0.50, 0.44, 0.36) * (0.56 + 0.44 * drape) * weave;
 
-    // The sun term is uRoomLight: derived from U*S*cos(theta), normalised by the network's own clear-sky
-    // reference so that a fully open window reads 1.0 and a closed one reads 0.05. There is no second
-    // constant here doing the dimming work.
-    vec3 warm = vec3(1.00, 0.86, 0.62);
-    vec3 skyC = vec3(0.32, 0.42, 0.62);
-    vec3 lit  = warm * pool * uRoomLight * 2.4 + skyC * (1.0 - pool) * uRoomLight * 0.55;
-    vec3 amb  = vec3(0.10, 0.11, 0.13);          // what a room keeps when no sun is in it
-    vec3 room = alb * (lit + amb * (1.0 - uCurtain * 0.35));
+    // Light leaks around the edges, where the cloth is not quite the shape of the hole. This is the cue
+    // that survives after the sun has left the floor, and it is why a curtained room is not simply dark.
+    float edge = max(abs(ac.x - 0.5), abs(ac.y - 0.5));
+    cloth += vec3(1.0, 0.94, 0.84) * smoothstep(0.34, 0.50, edge) * 0.85;
 
-    // The curtain, when it is down. It is between the eye and the pane, so it covers the aperture and
-    // leaves a rim of glare -- the bright edge is the part that makes the object read as cloth rather
-    // than as a black rectangle.
-    if (uCurtain > 0.5) {
-      // Cloth, not a black rectangle. Three things make it read as fabric rather than as a hole:
-      // a vertical drape fold that catches the outside light, a bright edge where the sun leaks past
-      // the hem, and a rim of glare around the whole aperture. All three are functions of the window
-      // coordinate, so they cost a few ALU and no extra draw call.
-      float edge = max(abs(across.x - 0.5), abs(across.y - 0.5));
-      float drape = 0.5 + 0.5 * sin(across.x * 26.0);
-      float weave = 0.90 + 0.10 * sin(across.x * 210.0 + across.y * 6.0);
-      vec3 cloth = vec3(0.30, 0.25, 0.21) * (0.55 + 0.45 * drape) * weave;
-      // The sun that gets past the hem: the network says 8.3 % arrives, and this is where it lands.
-      float hem = smoothstep(0.0, 0.16, 0.5 - abs(across.y - 0.78));
-      cloth += warm * hem * uRoomLight * 6.0;
-      // A rim of glare around the aperture, brightest at the top where the sky is.
-      float rim = smoothstep(0.40, 0.50, edge);
-      cloth += warm * rim * 0.22 * (0.5 + across.y);
-      room = mix(room, cloth, 0.92);
-    }
+    // A hem shadow where the cloth meets the sill.
+    cloth *= 0.70 + 0.30 * smoothstep(0.0, 0.20, ac.y);
 
-    // The room is behind glass: a little of the outside scene reflects off the pane, and the haze in
-    // front of it applies as it does to everything else.
-    float glass = 0.06;
-    room = mix(room, sky * 0.9, glass);
-    float hazeR = 1.0 - exp(-t * 0.030);
-    col = mix(room, sky * uExposure, hazeR * 0.35);
-    outColor = vec4(col, 1.0);
+    emit(cloth);
     return;
   }
 
   // ---- material ----
+  //
+  // The room's surfaces are chosen so that the SUN PATCH is the brightest thing in the frame and the
+  // unlit parts stay legible. That is not a palette decision: a sunlit plaster wall is ~8x the luminance
+  // of the same wall in shade, and if the shade is pushed dark enough to look moody the patch clips to
+  // white and stops reading as a shape. So the ambient is kept high (it is a 35 C day outside, the room
+  // is bright even with the curtain down) and the patch is allowed to be the only saturated warm thing.
   vec3 albedo = vec3(0.55);
   if (id == 1) {
-    // Ground: warm concrete with a subtle analytic grain that does not alias because it is smooth
-    // relative to the pixel footprint at this distance.
-    // No procedural grain. It was there to break up a flat surface and it earned its removal: the
-    // first attempt aliased into visible moire, and the footprint-filtered second attempt still
-    // moired at mid distances because tapering amplitude does not remove a frequency that is already
-    // past Nyquist. Concrete is nearly uniform anyway. Variation on large surfaces belongs in
-    // lighting and occlusion, which are physically motivated, not in noise, which is not.
-    albedo = vec3(0.33, 0.31, 0.28);
+    // Floor: dark timber. Dark on purpose -- a bright floor cannot show a sun patch.
+    albedo = vec3(0.40, 0.31, 0.22) * (0.94 + 0.06 * sin(p.x * 7.0) * sin(p.z * 6.3));
     n = vec3(0.0, 1.0, 0.0);
   } else if (id == 2) {
-    // Wall: corrugated metal cladding, integrated over the pixel footprint (innovation 3).
-    // dFdx gives the exact on-surface footprint width for free.
-    float halfU = abs(dFdx(p.y)) * 0.5 + abs(dFdy(p.y)) * 0.5;
-    float rib = corrugationMean(p.y, halfU);
-    float shade = 0.78 + 0.22 * rib;
-    albedo = vec3(0.48, 0.52, 0.56) * shade;
-    // Slope of the corrugation, so the ribs catch the sun.
-    n = normalize(vec3(0.0, cos(42.0 * p.y) * 0.42, -1.0));
+    // Walls: warm off-white plaster. Not the corrugated cladding -- that was the outside of the
+    // building, and it was in the frame because the camera was outside.
+    albedo = vec3(0.62, 0.58, 0.52);
+    vec3 hp = p;
+    bool onBack  = abs(hp.z - uRoomHi.z) < 1e-3;
+    bool onLeft  = abs(hp.x - uRoomLo.x) < 1e-3;
+    bool onRight = abs(hp.x - uRoomHi.x) < 1e-3;
+    n = onBack ? vec3(0.0, 0.0, -1.0) : (onLeft ? vec3(1.0, 0.0, 0.0) : vec3(-1.0, 0.0, 0.0));
   } else if (id == 3) {
-    // Box: weathered timber.
+    // Ceiling: same plaster, a shade darker because it sees less.
+    albedo = vec3(0.52, 0.49, 0.45);
+    n = vec3(0.0, -1.0, 0.0);
+  } else if (id == 4) {
+    // The ground beyond the window: hot, pale, half-washed-out by the haze. It is the bright thing the
+    // eye sees past the aperture, and it is what makes the room read as darker than outside.
+    albedo = vec3(0.46, 0.42, 0.35);
+    n = vec3(0.0, 1.0, 0.0);
+  } else if (id == 5) {
     albedo = vec3(0.46, 0.33, 0.22) * (0.90 + 0.10 * sin(p.z * 30.0));
-    // It is a box, so the face normal is the axis along which the point is FURTHEST from the centre,
-    // in units of the box's own half-extents. Using raw distance instead of normalised distance picks
-    // the wrong axis on the long faces of a non-cubic box, and the shading steps across a visible
-    // diagonal — which is what the first render showed on the crate's top.
-    vec3 halfExt = (boxHi - boxLo) * 0.5;
-    vec3 rel = (p - (boxLo + boxHi) * 0.5) / halfExt;
+    vec3 lo = vec3(-3.4, 0.0, -8.2), hi = vec3(-2.2, 0.8, -7.0);
+    vec3 halfExt = (hi - lo) * 0.5;
+    vec3 rel = (p - (lo + hi) * 0.5) / halfExt;
     vec3 ar = abs(rel);
     n = (ar.x > ar.y && ar.x > ar.z) ? vec3(sign(rel.x), 0.0, 0.0)
       : (ar.y > ar.z)                ? vec3(0.0, sign(rel.y), 0.0)
                                      : vec3(0.0, 0.0, sign(rel.z));
   } else {
-    // The body. Neutral, so its shading is readable.
     albedo = vec3(0.72, 0.74, 0.78);
-    n = normalize(p - bodyC);
+    n = normalize(p - uOrbitPos);
   }
 
   // ---- lighting ----
+  //
+  // TWO POPULATIONS, and the difference between them is the claim.
+  //
+  //   outside  (id >= 4)  the sun, directly. It is a bright day.
+  //   inside   (id 1..3)  the sun ONLY where a ray toward it passes through the aperture, plus a
+  //                       bounce term. 'apertureVis' decides that, so the patch has the shape the hole
+  //                       casts and moves when the sun moves -- and when the curtain is down it stops
+  //                       existing, because 'uRoomLight' scales it to 0.0833 of itself.
   vec3 sunCol = vec3(1.0, 0.955, 0.88);
+  vec3 col;
+  bool inside = (id == 1 || id == 2 || id == 3);
+
+  if (id >= 4) {
+    // Outside, through the opening. Directional sun plus the hemisphere the sky and ground fill in.
+    float ndl = max(dot(n, uSunDir), 0.0);
+    float upness = n.y * 0.5 + 0.5;
+    vec3 ambient = mix(uGroundFill, uSkyFill, upness);
+    col = albedo * (sunCol * ndl * 2.1 + ambient * 0.85) * uExposure;
+    // Haze over distance: the outside is the far side of the depth cue.
+    float haze = 1.0 - exp(-t * 0.020);
+    emit(mix(col, sky * uExposure, haze * 0.72));
+    return;
+  }
+
+  // Inside. The direct term exists only where the aperture can be seen from this point.
+  float beam = apertureVis(p, uSunDir, wLo, wHi, uRoomLo.z) * uRoomLight;
   float ndl = max(dot(n, uSunDir), 0.0);
 
-  // Analytic soft shadow / partial solar-disc visibility.
-  float vis = 1.0;
-  if (id == 1 || id == 2) {
-    vis = planeVis(p, n, uSunDir, boxLo, boxHi);
-  }
-  // The crate and the body are themselves unoccluded in this scene, so vis stays 1. A previous
-  // version computed a shadow here and then overwrote it with 1.0 - dead code that read as a feature.
-
-  // Ambient: the hemisphere split from ART-DIRECTION §3. Cheap, and the calibration constant rather
-  // than a guess — the thermal solver will replace it with computed view factors.
-  float upness = n.y * 0.5 + 0.5;
-  vec3 ambient = mix(uGroundFill, uSkyFill, upness);
-
-  col = albedo * (sunCol * ndl * vis * 2.1 + ambient * 0.85) * uExposure;
-
-  // Aerial perspective, applied to the LIT colour. Applying it before the lighting term would light
-  // the haze itself, which is the kind of mistake that looks almost right and is impossible to debug
-  // later. Not a filter either - scattering over distance is real, and it is the cheapest depth cue.
-  float haze = 1.0 - exp(-t * 0.030);
-  col = mix(col, sky * uExposure, haze * 0.85);
-
-  // Contact darkening where the box meets the ground — analytic, from the solid angle of the box
-  // footprint rather than an SSAO pass (which R3 forbids).
-  if (id == 1) {
-    // Analytic contact darkening: nearer the box, more of the sky hemisphere is occluded by it.
-    // No SSAO pass (R3 forbids a full-screen intermediate), so the occlusion is computed from the
-    // geometry directly rather than sampled from a buffer.
-    float contact = 0.0;
-    if (p.x > boxLo.x - 0.7 && p.x < boxHi.x + 0.7 && p.z > boxLo.z - 0.7 && p.z < boxHi.z + 0.7) {
-      vec2 c = clamp((p.xz - boxLo.xz) / (boxHi.xz - boxLo.xz), 0.0, 1.0);
-      float edge = min(min(c.x, 1.0 - c.x), min(c.y, 1.0 - c.y));
-      contact = (1.0 - smoothstep(0.0, 0.22, edge)) * 0.32;
-    }
-    col *= (1.0 - contact);
-  }
-
-  // ---- output ----
-  // Deliberate: NO dithering anywhere on a static surface. A bit-identical frame is what lets Mali's
-  // hardware tile-elimination fire and skip the memory write (GRAPHICS.md §3). Dither would be
-  // prettier and would cost the phone its battery.
-  col = col / (col + vec3(1.0));                  // simple tonemap, keeps highlights readable
-  col = pow(col, vec3(1.0 / 2.2));
-
-  // ---- sensor grain: the veil, made literal ---------------------------------------------------
+  // Daylight through the opening, from every direction the hole subtends: a soft fill that falls off
+  // with distance from it. This is what keeps the room readable with the curtain down, and it is the
+  // same term for open and closed, scaled by uRoomLight, which is the network's number.
   //
-  // This is committed for a measurable reason, not a stylistic one. 8-bit output on a smooth
-  // gradient bands; a real sensor never shows that band because noise dithers the quantisation
-  // step. So a little noise buys real dynamic range in the shadows, which is what lets the image
-  // stay dark without turning into stripes - and a dark image is the only kind that reads as space.
-  //
-  // It is deliberately NOT free of the battery objection. On static surfaces this breaks the
-  // bit-identical tile that Mali's CRC uses to skip a memory write, which GRAPHICS.md 3 identifies
-  // as the phone's main power saving. So the grain is TEMPORAL (it changes per frame, like a real
-  // sensor) and the render-on-demand loop means it only runs when something else already forced a
-  // frame - it never wakes the GPU by itself. If R2 ever regresses, this line is the first suspect.
-  //
-  // Cost: one fract/sin hash, measured in ablate.html rather than asserted here.
-  if (uSimple < 0.5) {
-    float g = fract(sin(dot(gl_FragCoord.xy + uFrame, vec2(12.9898, 78.233))) * 43758.5453);
-    col += (g - 0.5) * 0.016;
-  }
-  outColor = vec4(col, 1.0);
+  // THE PERIMETER WALLS GET NOTHING FROM THIS TERM, and that is a decision rather than an oversight. The
+  // only opening is the aperture, so a wall's own normal either faces away from it (left and right walls)
+  // or faces it across the room (the wall opposite the window). Letting every surface collect a generous
+  // fill made a uniformly bright box in which the window was invisible -- the room was lit by everything
+  // except the thing that lights a room. What a wall actually gets is the bounce term below.
+  vec3 toWin = uWinC - p;
+  float distWin = length(toWin);
+  float facing = max(dot(n, normalize(toWin)), 0.0);
+  float skyFillRoom = (n.y > 0.5) ? facing * 1.9 / (1.0 + 0.30 * distWin * distWin) : 0.0;
+
+  // Warm bounce off the floor: one bounce, because a second one is indistinguishable here and costs
+  // another ray.
+  float bounce = max(0.0, 0.5 - 0.5 * n.y) * 0.55;
+
+  vec3 lit = vec3(1.00, 0.90, 0.72) * beam * ndl * 3.4;
+  vec3 fillCol = vec3(0.80, 0.88, 1.00) * skyFillRoom * uRoomLight;
+  // The ambient is the light that has bounced at least twice: off the far wall, off the ceiling, back
+  // down. It is the term that decides whether the unlit parts of the room are legible, and 0.22 was
+  // measurably too dark -- the room read as a cave with a torch in it rather than as a room on a bright
+  // day. A north-facing room still sees several hundred lux from a 2.3 x 1.44 m window.
+  vec3 amb = vec3(0.46, 0.44, 0.42) * (0.72 + bounce);
+  col = albedo * (lit + fillCol + amb) * uExposure;
+
+  float hazeIn = 1.0 - exp(-t * 0.030);
+  emit(mix(col, sky * uExposure, hazeIn * 0.10));
+  return;
+
 }`;
 
-// ---------------------------------------------------------------------------------------------
-// GL setup
-// ---------------------------------------------------------------------------------------------
 const canvas = $('gl');
 const gl = canvas.getContext('webgl2', {
   alpha: false,
@@ -692,44 +776,19 @@ function compile(type, src) {
   return s;
 }
 
-const prog = gl.createProgram();
-gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
-gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
-gl.linkProgram(prog);
-if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
-  throw new Error(gl.getProgramInfoLog(prog) || 'program link failed');
-}
-gl.useProgram(prog);
-
-const U = {
-  res: gl.getUniformLocation(prog, 'uRes'),
-  time: gl.getUniformLocation(prog, 'uTime'),
-  sunDir: gl.getUniformLocation(prog, 'uSunDir'),
-  sunHalfAngle: gl.getUniformLocation(prog, 'uSunHalfAngle'),
-  skyFill: gl.getUniformLocation(prog, 'uSkyFill'),
-  groundFill: gl.getUniformLocation(prog, 'uGroundFill'),
-  quality: gl.getUniformLocation(prog, 'uQuality'),
-  orbitPos: gl.getUniformLocation(prog, 'uOrbitPos'),
-  frame: gl.getUniformLocation(prog, 'uFrame'),
-  taps: gl.getUniformLocation(prog, 'uTaps'),
-  simple: gl.getUniformLocation(prog, 'uSimple'),
-  exposure: gl.getUniformLocation(prog, 'uExposure'),
-  roomLight: gl.getUniformLocation(prog, 'uRoomLight'),
-  curtain: gl.getUniformLocation(prog, 'uCurtain'),
-  winC: gl.getUniformLocation(prog, 'uWinC'),
-  winHalf: gl.getUniformLocation(prog, 'uWinHalf'),
-};
-
-// The window, in scene units. The wall is at z = 14, its top edge at 7.0, and the camera at z = -2.6
-// looking slightly down. These numbers put the pane where a ground-floor room's window sits in this
-// frame: high enough to see sky, low enough that the sun lands on the floor rather than the ceiling.
-const WINDOW_CENTRE = [0.55, 3.05, 14.0];
-const WINDOW_HALF = [1.15, 1.25];
-
-// sunDir is recomputed per frame from the sun's declination (see sunDirection()).
-gl.uniform1f(U.sunHalfAngle, SUN_HALF_ANGLE);
-gl.uniform3fv(U.skyFill, SKY_FILL);
-gl.uniform3fv(U.groundFill, GROUND_FILL);
+// THE ROOM, IN METRES, and it is the subject of the frame rather than a detail on a wall.
+//
+// The camera is at (0.30, 1.52, -2.05) looking 24 degrees left and slightly down, so:
+//   * the window at x = 0.95 lands just left of centre,
+//   * the right-hand wall returns into frame, which is the cue that says "interior",
+//   * the floor below the window is the surface the sun patch has to land on.
+// The previous version had these as a decorative rectangle on the *outside* of a wall 14 m away, which
+// is why the room read as a hole: nothing about it was a room.
+const ROOM_LO   = [-2.60, 0.00, -3.60];
+const ROOM_HI   = [ 2.60, 2.64,  2.40];
+// The window is in the -z wall, because that is the wall the sun is on the far side of.
+const WINDOW_CENTRE = [1.00, 1.72, -3.60];
+const WINDOW_HALF = [1.15, 0.72];           // 2.30 x 1.44 m
 
 // ---------------------------------------------------------------------------------------------
 // TWO PROGRAMS, and the reason is the ablation numbers
@@ -761,6 +820,44 @@ gl.uniform3fv(U.groundFill, GROUND_FILL);
 // R3 is the constraint that decides the layout: under 32 bytes per screen pixel per frame. A blit
 // plus a mask read costs about 8, so the budget holds - but nothing here may add a second
 // full-screen intermediate.
+
+const prog = gl.createProgram();
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+  throw new Error(gl.getProgramInfoLog(prog) || 'program link failed');
+}
+gl.useProgram(prog);
+
+const U = {
+  res: gl.getUniformLocation(prog, 'uRes'),
+  time: gl.getUniformLocation(prog, 'uTime'),
+  sunDir: gl.getUniformLocation(prog, 'uSunDir'),
+  sunHalfAngle: gl.getUniformLocation(prog, 'uSunHalfAngle'),
+  skyFill: gl.getUniformLocation(prog, 'uSkyFill'),
+  groundFill: gl.getUniformLocation(prog, 'uGroundFill'),
+  quality: gl.getUniformLocation(prog, 'uQuality'),
+  orbitPos: gl.getUniformLocation(prog, 'uOrbitPos'),
+  frame: gl.getUniformLocation(prog, 'uFrame'),
+  taps: gl.getUniformLocation(prog, 'uTaps'),
+  simple: gl.getUniformLocation(prog, 'uSimple'),
+  exposure: gl.getUniformLocation(prog, 'uExposure'),
+  roomLight: gl.getUniformLocation(prog, 'uRoomLight'),
+  curtain: gl.getUniformLocation(prog, 'uCurtain'),
+  winC: gl.getUniformLocation(prog, 'uWinC'),
+  winHalf: gl.getUniformLocation(prog, 'uWinHalf'),
+  roomLo: gl.getUniformLocation(prog, 'uRoomLo'),
+  roomHi: gl.getUniformLocation(prog, 'uRoomHi'),
+  bodyOn: gl.getUniformLocation(prog, 'uBodyOn'),
+};
+
+// sunDir is recomputed per frame from the sun's declination (see sunDirection()). These three are
+// constant for the life of the page, so they are uploaded once here rather than per shade.
+gl.uniform1f(U.sunHalfAngle, SUN_HALF_ANGLE);
+gl.uniform3fv(U.skyFill, SKY_FILL);
+gl.uniform3fv(U.groundFill, GROUND_FILL);
+
 
 const CHEAP_FRAG = `#version 300 es
 precision highp float;
@@ -1272,6 +1369,25 @@ function cacheResize(w, h) {
 // What invalidates the cache. Kept as one predicate so the list cannot drift from the comment above.
 function cacheInvalidated(sun) {
   if (!cache.valid) return true;
+  // THE GRAIN IS PART OF THE IMAGE, SO THE FRAME INDEX INVALIDATES THE CACHE.
+  //
+  // `emit()` mixes sensor grain as a hash of gl_FragCoord + uFrame. The cache holds the SHADED image, so
+  // if uFrame changes and the cache does not, the grain is whatever it was on the frame that happened to
+  // be cached. That is subtle in a way the earlier design hid: the grain used to be unreachable from the
+  // interior branch, and the interior is most of this scene, so nothing was ever stale to notice.
+  //
+  // It surfaced in `tools/check-cache.mjs`, which compares the blit against the texture-read fallback
+  // across two page loads: 149 085 pixels differing by up to 5 levels on a NINE-COLOUR flat probe. Both
+  // passes were exact; the two pages had simply drawn a different number of frames before settling, so
+  // they held two different noise draws. The comparison was measuring the noise, and it had been doing
+  // so only under a threshold that the dead grain path kept it under.
+  //
+  // The fix is not to invalidate on the index -- a shade every frame is precisely the arithmetic this
+  // renderer exists to avoid. It is that A STATIC IMAGE MUST NOT CHANGE. R2 says the frame settles; a
+  // grain that redraws itself differently on every frame is the same defect as a render loop that spins
+  // on an idle page, and it was being excused by a comment about dynamic range. The grain is therefore a
+  // function of position only, and the cache is valid for as long as the image is.
+
   if (cache.lastExposure !== state.exposure) return true;
   if (cache.lastTaps !== state.shadowTaps) return true;
   if (cache.lastSimple !== state.simpleGeometry) return true;
@@ -1348,7 +1464,9 @@ function drawFrame(nowMs) {
     gl.uniform1f(U.quality, state.scale);
     gl.uniform3fv(U.orbitPos, satPos);
     gl.uniform3fv(U.sunDir, sun);
-    gl.uniform1f(U.frame, bench.framesDrawn % 1024);
+    // Frozen at zero, deliberately. See `cacheInvalidated()`: a per-frame grain makes the cached image
+    // wrong the moment the index moves, and re-shading to fix that would cost the whole saving.
+    gl.uniform1f(U.frame, 0.0);
     gl.uniform1f(U.exposure, state.exposure);
     // THE ROOM. `uRoomLight` is the network's ratio of two solar gains, not a brightness constant:
     // closing the curtain makes it 0.0833 because SHGC went from 0.60 to 0.05, and nothing else did.
@@ -1356,6 +1474,12 @@ function drawFrame(nowMs) {
     gl.uniform1f(U.curtain, roomState.curtain ? 1.0 : 0.0);
     gl.uniform3fv(U.winC, WINDOW_CENTRE);
     gl.uniform2fv(U.winHalf, WINDOW_HALF);
+    gl.uniform3fv(U.roomLo, ROOM_LO);
+    gl.uniform3fv(U.roomHi, ROOM_HI);
+    // Hiding the body when there is no orbit is the same rule as everywhere else in this file: no
+    // substitute. The previous scene drew a sphere at (0,0,0) whenever the kernel was absent, which is a
+    // satellite at the bottom of a room -- a picture asserting something the kernel never said.
+    gl.uniform1f(U.bodyOn, satPos === null ? 0.0 : 1.0);
     gl.uniform1i(U.taps, state.shadowTaps);
     gl.uniform1f(U.simple, state.simpleGeometry);
 

@@ -254,10 +254,31 @@ check(
   //
   // The contract is not weakened: the row must still state the quantity and the budget comparison, and
   // it must now ALSO be honest about which one it is.
+  // THE ROW MAY STATE A FRAME COST IN MORE THAN ONE PHRASING, and this assertion was rejecting a correct
+  // one. Which branch the panel takes depends on what the device could measure:
+  //
+  //   "0 draws when idle"                 nothing was drawn at all -- the strictest pass
+  //   "~0.1 ms frame < 1.5"               one fenced frame, offscreen, when a direct number exists
+  //   "0.20 ms gpu blit < 1.5"            a GPU timer figure
+  //   "< 0.01 ms per frame < 1.5"         an upper bound, when no timer and no fence exist
+  //
+  // The first phrasing contains "per frame"; the direct one says "ms frame". Both state a frame cost, and
+  // the check required the literal phrase, so it FAILED whenever the page happened to settle on the
+  // direct branch. Measured: 1 failure in 4 consecutive runs, on unchanged code -- and a check that
+  // passes on retry is not a check. The device decides which branch runs; the assertion should not also
+  // be deciding it.
+  //
+  // What the assertion is actually FOR is that the row names a frame-time quantity rather than a
+  // throughput rate, so that is what it now tests: a frame-time word must be present, the 1.5 ms budget
+  // must be present, and the row must not be labelled as a throughput figure.
+  const statesFrameCost = /(per frame|ms frame|gpu blit|0 draws when idle)/.test(r2 || "");
   check("the panel states the per-frame quantity and the budget",
-    /per frame/.test(r2 || "") && /1\.5/.test(r2 || ""), r2 || "");
+    statesFrameCost && /1\.5|0 draws/.test(r2 || ""), r2 || "");
+  check("the row is not labelled as a throughput figure",
+    !/throughput/.test(r2 || ""), r2 || "");
+  // ...and the phrase that WAS the overclaim stays gone.
   check("the panel does not call a throughput bound a frame time",
-    !/ms (upper bound|direct)\b/.test(r2 || "") || /per frame/.test(r2 || ""), r2 || "");
+    !/ms (upper bound|direct)\b/.test(r2 || ""), r2 || "");
 
   // THE DIRECT MEASUREMENT MUST REFUSE RATHER THAN INVENT. This is the quantity claim 4 has been
   // parked on, so it is the one most likely to be flattered by a bad implementation -- and two were
@@ -350,6 +371,24 @@ check(
     await pg.evaluate(async () => {
       const od = window.__odderon;
       if (!od) return;
+      // FREEZE THE FRAME INDEX TOO, and this one is new information rather than belt and braces.
+      //
+      // `emit()` mixes SENSOR GRAIN into every pixel as a hash of `gl_FragCoord + uFrame`, where
+      // `uFrame` is `bench.framesDrawn % 1024`. The grain exists so an 8-bit gradient does not band, and
+      // it is deliberately per-frame. So two page loads that draw a different number of frames before
+      // settling -- and they do, because the kernel landing and the settle loop differ by a frame or two
+      // -- produce two DIFFERENT noise draws over identical scenes.
+      //
+      // That made this comparison measure the noise: 149 085 pixels differing by up to 5 levels, on a
+      // flat-colour probe, with the two per-frame passes proven exact. The reason it only started
+      // failing now is worth recording: the interior used to return from `main()` BEFORE the grain
+      // block, so most of the frame carried no grain at all and the difference stayed under the
+      // threshold. Routing every path through one output stage -- which was the fix for the grain being
+      // silently unreachable -- exposed that this assertion had been comparing a largely noiseless
+      // image. The claim it was making was true by accident.
+      //
+      // Pinning the index makes both pages draw the same noise, so the check compares what it means to
+      // compare: whether the per-frame pass reproduces the shaded image.
       const before = od.bench.framesDrawn;
       if (window.__freezeTick) window.__freezeTick();
       od.requestFrame();
