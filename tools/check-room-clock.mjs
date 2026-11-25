@@ -507,6 +507,25 @@ try {
       `target ${warmed.settled.toFixed(1)} K`,
   );
 
+  // The panel must SAY so. A room warming in the image and printing no clock on the panel is a
+  // warm-up the reader cannot audit, and it is the same class of lie as the panel describing one state
+  // while the page shows another. The row was gated on the curtain being CLOSED, so the open warm-up --
+  // the trajectory the page has just learned to run -- printed a bare temperature with no timestamp
+  // while the closed case printed the same temperature with one. Measured on the mutant: `57.6 °C` for a
+  // room at 330.72 K moving toward 346.82 K, no clock at all.
+  const clockRow = await page.evaluate(() => ({
+    row: document.getElementById("m-temp").textContent,
+    elapsedS: Math.round(window.__odderon.roomState.elapsedS),
+    moving: window.__odderon.roomMoving(),
+    settled: window.__odderon.roomState.settledK,
+    tK: window.__odderon.roomState.temperatureK,
+  }));
+  check(
+    "the panel prints the clock for an open, warming room (not only for a closed one)",
+    clockRow.moving && /\d+\s*s\s*@\s*\d+x/.test(clockRow.row),
+    `row "${clockRow.row}" at ${clockRow.tK.toFixed(1)} K, ${clockRow.elapsedS} s, target ${clockRow.settled.toFixed(1)} K`,
+  );
+
   // ...and only once it has finished warming does the page go quiet again. This is R2 with the new law:
   // idle is nothing scheduled, and a warming room is not idle.
   const warmEnd = await page.evaluate(async () => {

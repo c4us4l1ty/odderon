@@ -2522,7 +2522,16 @@ function updateHud() {
   } else {
     const c = tK - 273.15;
     // At rest the room IS the settled temperature, so a trajectory timestamp would be a fiction.
-    const clock = roomState.curtain
+    //
+    // The predicate is `roomMoving()`, not the curtain position. Gating on the curtain reported a
+    // CLOSED room only, so a room warming after the curtain reopened -- which is exactly the trajectory
+    // this project just taught the page -- read as a settled room with no clock at all, a warm-up that
+    // was happening in the image and had no number on the panel beside it. That is the defect this line
+    // had been carrying since the clock was introduced: a room moving in one direction, printed as at
+    // rest. Measured before the fix, room at 330.72 K and 1416 s into a 346.82 K warm-up: the row read
+    // `57.6 °C` with no timestamp, where the same room a moment earlier at the same rate, but closed,
+    // read `57.6 °C at 1424 s @ 240x`. The temperature was identical and the clock was simply absent.
+    const clock = roomMoving()
       ? ` at ${Math.round(roomState.elapsedS)} s @ ${roomState.clockScale}x`
       : '';
     $('m-temp').textContent = fmt(c, 1) + ' \u00b0C' + clock;
