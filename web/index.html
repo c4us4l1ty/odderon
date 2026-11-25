@@ -5,6 +5,24 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Odderon — Block 1 instrument</title>
 <style>
+  /* Below the panel, not over it. The first version sat at top:0 and covered the frame-time, p95 and
+     path rows -- an explanation of a missing kernel that hides the instrument diagnosing it. */
+  #nokernel {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+    padding: 10px 14px; font: 12px/1.5 ui-monospace, monospace;
+    background: #4a1414; color: #ffd9d0; border-top: 2px solid #c1440e;
+    /* IT MUST NOT EAT CLICKS. This banner spans the full width at the bottom of a fixed layer, so it sits
+       ON TOP of the panel's lower controls -- and a transparent-to-the-eye element that is not
+       transparent to the pointer silently breaks every button underneath it. `tools/check-cache.mjs`
+       caught it: "exposure change -> full shade {shades:0, blits:0}" and "cached image actually updates
+       luma 116.2 -> 116.2", because `#exposure` was behind this div. A check that failed when the kernel
+       was absent, which is CI's condition and not mine.
+       The banner is information, not a control, so the pointer passes through it. */
+    pointer-events: none;
+  }
+  #nokernel b { display: block; margin-bottom: 4px; color: #fff; font-size: 13px; }
+  #nokernel span { display: block; max-width: 110ch; opacity: .92; }
+  #nokernel code { background: #2a0a0a; padding: 1px 4px; border-radius: 2px; }
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: #0b0d10; overflow: hidden; }
@@ -13,7 +31,7 @@
   #gl { display: block; width: 100vw; height: 100vh; touch-action: none; }
 
   #hud {
-    position: fixed; top: 8px; left: 8px; z-index: 10;
+    position: fixed; top: 8px; left: 8px; z-index: 40;   /* above #nokernel, so neither hides the other */
     padding: 10px 12px; border-radius: 6px;
     background: rgba(10,12,15,.82); border: 1px solid #232a33;
     backdrop-filter: blur(6px);
@@ -66,6 +84,18 @@
 <body>
 <canvas id="gl"></canvas>
 
+<div id="nokernel" hidden>
+  <b>The thermal kernel is not built, so there is no room in this picture.</b>
+  <span>Everything the panel reports about the room — solar gain, AC draw, the curtain — comes from the
+  wasm module, and it is not in this checkout. <code>dist/</code> is git-ignored (a build output), so a
+  page served straight from a clone cannot have it; the preview you are looking at is exactly that case.
+  Run <code>npm run fetch:wasm</code>, or <code>cargo build --release --target
+  wasm32-unknown-unknown -p odderon-dmath-wasm &amp;&amp; cp target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm dist/</code>.
+  The window you see is a hole with sky behind it and no network to say what the room is doing.
+  <em>If neither works here:</em> <code>fetch:wasm</code> needs GitHub CLI credentials and the cargo path
+  needs a Rust toolchain, so a sandboxed preview with neither can only show the geometry — which is
+  exactly what this is.</span>
+</div>
 <div id="hud">
   <h1>Odderon · Block 1 instrument</h1>
 
@@ -2200,15 +2230,25 @@ function updateHud() {
   // The room. Watts, and the ratio the shader actually uses, side by side -- because the picture is a
   // consequence of the second and a reader is entitled to see the first.
   const haveRoom = Number.isFinite(roomState.solarW);
+  // "— no kernel" told a reader nothing actionable: not whether the module failed to load, was the wrong
+  // build, or was simply never fetched. That is the difference between a broken checkout and a page that
+  // has not been asked to build anything, and only one of them is worth reporting as a defect. The row
+  // now carries the reason, and a banner says how to fix it -- see `#nokernel` below.
+  const noKernel = roomState.source === 'unavailable';
   $('m-solar').textContent = haveRoom
     ? fmt(roomState.solarW, 0) + ' W  ' + (roomState.lightFraction * 100).toFixed(1) + '%'
-    : '— no kernel';
-  $('m-draw').textContent = haveRoom ? fmt(roomState.drawW, 0) + ' W' : '— no kernel';
+    : (noKernel ? '— kernel not built' : '— waiting for kernel');
+  $('m-draw').textContent = haveRoom
+    ? fmt(roomState.drawW, 0) + ' W'
+    : (noKernel ? '— kernel not built' : '— waiting for kernel');
   // `undefined` is the honest third state: the room is not a slider, so it has no value before the
   // network has answered. The row says so rather than showing "open" because that is the default.
-  $('m-curtain').textContent = roomState.source === 'unavailable'
-    ? 'unknown (no kernel)'
+  $('m-curtain').textContent = noKernel
+    ? 'unknown (kernel not built)'
     : (roomState.curtain ? 'closed' : 'open');
+  // The banner is driven from the same fact as the rows, so they cannot disagree.
+  const nk = document.getElementById('nokernel');
+  if (nk) nk.hidden = !noKernel;
   const bpp = bench.lastPixels > 0 ? bench.lastBytes / bench.lastPixels : NaN;
   $('m-bpp').textContent = fmt(bpp, 1) + ' B/px';
   $('m-write').textContent = (bench.lastBytes / 1e6).toFixed(2) + ' MB';

@@ -181,6 +181,15 @@ jobs:
         run: node tools/check-room.mjs
         env:
           LD_LIBRARY_PATH: /tmp/al2023/lib
+      # THE ABSENCE HAS TO BE VISIBLE, and this job is the only place it can be tested: it has the built
+      # module AND a browser, so it can take the module away and look at what the page does. On a clean
+      # clone the page said `— no kernel` over a hole onto a flat horizon, and a reader reasonably
+      # concluded that the hole WAS the room. A missing build output is not a defect; reporting it as an
+      # unexplained blank is.
+      - name: a missing kernel is declared, explained and actionable
+        run: node tools/check-missing-kernel.mjs
+        env:
+          LD_LIBRARY_PATH: /tmp/al2023/lib
       - uses: actions/upload-artifact@v4
         with:
           name: wasm
