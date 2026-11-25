@@ -253,11 +253,24 @@ last change, no further frame is drawn at all, and frame cost must fall **below 
 load). Edge quality must be indistinguishable from a supersampled offline render of the same scene.
 *If it does not settle, the temporal cache is lying about what is static.*
 
-**R2's resolution clause, MEASURED AND CORRECTED.** An earlier revision of this section named 1.15 Mpx
-as the clause. That number was an assumption, and the Reference B measurement falsified it: a single
-texture read costs **2.29 ms at 1.04 Mpx**, so at 1.15 Mpx a pure blit would be 2.53 ms — over budget
-before any shading happens. The clause is therefore **0.68 Mpx**, derived from the measurement rather
-than chosen, and what it buys can be checked by hand.
+**R2's resolution clause, MEASURED AND CORRECTED — TWICE.** An earlier revision of this section named
+1.15 Mpx as the clause. That number was an assumption, and it was falsified the hard way: a texture read
+was measured at **2.29 ms at 1.04 Mpx**, which made a 1.15 Mpx frame cost 2.53 ms — over budget before
+any shading happens.
+
+The **0.68 Mpx** clause that replaced it was derived from that 2.29 ms figure, and **that figure was then
+retracted**: the same device, re-measured on 2026-11-24, prices the shipped texture-read pass at
+**1.65 ms**, not 2.29 ms. So the 0.68 Mpx clause was arithmetic done correctly on a measurement that no
+longer stands, and it has been withdrawn with it. This is worth stating plainly because it is the same
+failure twice: a number that looked derived because it had a derivation, resting on a quantity nobody
+had re-checked.
+
+The clause is now **1.068 Mpx**, derived from the pass the renderer **actually runs** and the margin this
+project actually quotes: `blitFramebuffer` at **1.27 ms** per 1.04 Mpx is 1.221 ms/Mpx, so 1.5 ms buys
+**1.228 Mpx**, and the **~15%** margin for a single session on three-year-old phone silicon that
+`BUILD-PLAN.md` uses for R2 leaves **1.068 Mpx**. That is `MAX_PIXELS = 1_068_000` in `web/index.html`,
+declared as `CLAUSE_MPX`, and `tools/check-pixel-budget.mjs` recomputes the derivation from these three
+numbers and fails if this doc, that constant and the arithmetic ever disagree again.
 
 **R2's resolution clause, and why it had to exist.** R2 was written as a time with no pixel count, and
 that makes it unfalsifiable rather than strict: frame cost is very nearly linear in pixels, so "1.5 ms"
@@ -266,7 +279,8 @@ describes an entirely different shader at 0.5 Mpx than at 4 Mpx. Measured on Ref
 roughly **15**. Fifteen operations is a flat colour, or a counted few layers — not analytic shadows,
 corrugation, aerial perspective, tonemap and grain. So R2 is satisfiable and unsatisfiable depending
 only on resolution, which makes it a policy statement wearing a hardware test's clothes. The clause
-names the budget: **0.68 Mpx**, i.e. roughly 825x825, or a phone at 0.81x device pixels.
+names the budget: **1.068 Mpx**, i.e. roughly 1033x1033, and on Reference B's 1.04 Mpx screen it is
+reached at native resolution.
 
 **R2 and R3, measured against each other.** These were written independently and had never been
 checked against each other. They are not in conflict, but the margin is narrow and worth stating.
@@ -444,11 +458,15 @@ median of an emulated call. **R2 moves from "open, previously failing" to "suppo
 estimates with a ~15% margin, awaiting one direct measurement."** That last step needs a GPU timer, which
 Reference B does not have.
 
-Route 2 — **moving R2's resolution clause from 1.15 Mpx to ~0.94 Mpx** — remains available and remains
-the cheaper option: it needs no rendering change at all. The clause is `MAX_PIXELS = 1_150_000` in
-`web/index.html`, and its comment says it enforces the documented fallback, which is **0.68 Mpx**. The
-code and the doc have been disagreeing for some time; that disagreement is **still open**, and the blit
-does not resolve it.
+Route 2 — **moving R2's resolution clause** — is no longer a route; it is **done**. The clause was
+`MAX_PIXELS = 1_150_000` in `web/index.html`, a number with no derivation, sitting above the 1.228 Mpx
+the budget buys with no margin and disagreeing with this document's 0.68 Mpx. The old text here said the
+disagreement was "**still open**" and that the blit did not resolve it. That was true and it was not a
+plan. The clause is now **1.068 Mpx**, derived from the 1.27 ms blit and the quoted margin, declared as
+`CLAUSE_MPX` with `MAX_PIXELS` computed from it, and held in place by `tools/check-pixel-budget.mjs`,
+which fails if this document, that constant and the derivation ever disagree. What it cost: a 1600x1000
+window renders 7% fewer pixels than before, and 3.6% softer. What it bought: the number on the panel and
+the number in this document are now the same number, and neither is a ghost of a retracted measurement.
 
 `BUILD-PLAN.md`'s "R2 passes at 1.25 ms with 17% margin" stays withdrawn.
 

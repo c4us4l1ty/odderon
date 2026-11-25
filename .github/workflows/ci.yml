@@ -270,6 +270,13 @@ jobs:
       # all and values printed on top of their own labels -- in the artifact claim 5 is argued from, while
       # the live page was correct and every other check therefore passed. This captures both and compares
       # the text.
+      # THE PIXEL CLAUSE AND ITS DOC MUST BE THE SAME NUMBER. `MAX_PIXELS` was a bare 1,150,000 with no
+      # derivation, disagreeing with GRAPHICS.md's 0.68 Mpx -- and that 0.68 was itself derived from a
+      # texture-read row this project retracted. Both numbers are now derived from the 1.27 ms
+      # `blitFramebuffer` row and the quoted 15% margin, and this step fails if the code, the doc and
+      # the arithmetic ever drift apart again. Pure arithmetic over source text, so no browser.
+      - name: pixel clause matches its derivation and the doc
+        run: node tools/check-pixel-budget.mjs
       - name: saved picture's panel matches the page
         run: node tools/check-hud-capture.mjs
         env:
