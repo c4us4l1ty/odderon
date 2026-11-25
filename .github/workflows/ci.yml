@@ -190,6 +190,16 @@ jobs:
         run: node tools/check-missing-kernel.mjs
         env:
           LD_LIBRARY_PATH: /tmp/al2023/lib
+      # ...and the PREVIEW must be able to serve the kernel at all. `dist/` is git-ignored, so a server
+      # started from a clone had nothing to serve and the page could only draw geometry -- while CI, which
+      # downloads the artifact, was green. The preview is the one place the game is actually looked at, so
+      # "you cannot see it here" is not an acceptable answer. `tools/serve.mjs` now falls back to cargo's
+      # own release directory; this check empties `dist/`, fetches the module over HTTP, INSTANTIATES it
+      # and calls the room exports, so a 200 with the wrong bytes fails.
+      - name: the dev server serves the kernel even with dist/ empty
+        run: node tools/check-serve-dist.mjs
+        env:
+          LD_LIBRARY_PATH: /tmp/al2023/lib
       - uses: actions/upload-artifact@v4
         with:
           name: wasm
