@@ -181,6 +181,119 @@ pub extern "C" fn orbit_velocity_z(dt: f64) -> f64 {
     state_at(dt).v.z
 }
 
+// ---------------------------------------------------------------------------------------------------
+// The room, from the thermal network
+// ---------------------------------------------------------------------------------------------------
+//
+// Claim 2 is the reason this room is the first build: "the room is a spacecraft -- closing the curtain
+// drops solar gain by the amount §6.7 says, and the AC's electrical draw visibly falls." That claim has
+// been measured in `odderon_astro::thermal` for some time and **no pixel ever read it**. These four
+// exports are the seam.
+//
+// The unit that crosses the boundary is a FRACTION OF CLEAR SKY, not a colour and not a brightness. The
+// shader multiplies it by its own sun radiance, so the picture is a consequence of the network's
+// arithmetic rather than of a constant someone liked the look of. `1.0` means "the window is passing
+// what an unshaded window passes"; `0.0` means nothing is getting through.
+//
+// Everything here is `Option`-free on purpose: these are `extern "C"` and a `f64` cannot express "no
+// answer". The inputs are the network's own constructor values, so the only failure mode is a
+// non-physical irradiance, which is floored at zero rather than NaN-ing the frame. The page refuses to
+// draw a warm room from a network it could not load; it does not have to also refuse to multiply.
+
+/// The reference room the game ships: 25 m² floor, 3 m² glazing, SHGC 0.60 open.
+fn reference_zone(curtain: bool) -> odderon_astro::thermal::Zone {
+    let z = odderon_astro::thermal::Zone::small_apartment_room();
+    if curtain {
+        z.curtain_closed()
+    } else {
+        z
+    }
+}
+
+/// Outdoor conditions the room is judged against: §6.7's peak summer day.
+///
+/// These are **the test suite's fixture, not a new set of assumptions** -- `tests/thermal.rs`'s
+/// `summer()` and `occupant()`. That matters: the first version of this file invented 32 C and no
+/// occupant, and the AC draw came out at **582 W open / 161.5 W closed, a 72.25 % drop**, against the
+/// module's documented **713 / 304 W, a 57.4 % drop**. Both are internally consistent; only one is the
+/// number `BUILD-PLAN.md` ships. Re-deriving a fixture beside a tested one is how two constants for one
+/// quantity get into a codebase, so this reads the same values and pins them against the test's own.
+fn reference_outdoors() -> odderon_astro::thermal::Outdoors {
+    odderon_astro::thermal::Outdoors {
+        temperature_k: 35.0 + 273.15, // §6.7 peak summer, as `summer()` has it
+        irradiance_w_per_m2: 800.0,   // plane of the glazing
+    }
+}
+
+/// The light load of a person and a laptop, as `occupant()` has it. 300 W is 17 % of the open-window
+/// solar gain, so leaving it out is not a rounding difference -- it moves the draw drop by 15 points.
+fn reference_internal() -> odderon_astro::thermal::InternalGain {
+    odderon_astro::thermal::InternalGain { watts: 300.0 }
+}
+
+/// Solar gain through the window, W.
+///
+/// Open: 800 × 3 × 0.60 = **1440 W**. Closed: 800 × 3 × 0.05 = **120 W**. Those two numbers are the
+/// bible's §6.7 arithmetic and the entire curtain experiment.
+#[unsafe(no_mangle)]
+pub extern "C" fn room_solar_w(curtain: u32) -> f64 {
+    let zone = reference_zone(curtain != 0);
+    let outdoors = reference_outdoors();
+    let g = zone.solar_gain(&outdoors);
+    if g.is_finite() && g > 0.0 {
+        g
+    } else {
+        0.0
+    }
+}
+
+/// Solar gain as a fraction of the fully-open window, 0..1.
+///
+/// This is what the shader multiplies its sun radiance by, so the room's brightness IS the network's
+/// ratio of two gains rather than a second constant. Closing the curtain gives 0.05/0.60 = **0.0833**,
+/// which is the SHGC ratio and nothing else.
+#[unsafe(no_mangle)]
+pub extern "C" fn room_light_fraction(curtain: u32) -> f64 {
+    let open = room_solar_w(0);
+    if open <= 0.0 {
+        return 0.0;
+    }
+    let here = room_solar_w(if curtain != 0 { 1 } else { 0 });
+    (here / open).clamp(0.0, 1.0)
+}
+
+/// Cooling the AC must supply to hold the setpoint, W -- the quantity whose fall claim 2 is about.
+#[unsafe(no_mangle)]
+pub extern "C" fn room_cooling_w(curtain: u32) -> f64 {
+    let zone = reference_zone(curtain != 0);
+    let outdoors = reference_outdoors();
+    let unit = odderon_astro::thermal::VapourCompression::window_unit();
+    let w = unit.cooling_to_hold(&zone, &outdoors, &reference_internal());
+    if w.is_finite() && w > 0.0 {
+        w
+    } else {
+        0.0
+    }
+}
+
+/// Electrical draw of the unit doing that cooling, W.
+///
+/// This is the number on a meter, and the one the bible says "visibly falls": **713 W to 304 W**, a 57%
+/// drop, and *not* the 59% load ratio, because ASHRAE's cyclic degradation coefficient makes a cycling
+/// unit worse at part load. If this ever returns a ratio equal to the load ratio, the degradation term
+/// has been lost.
+#[unsafe(no_mangle)]
+pub extern "C" fn room_draw_w(curtain: u32) -> f64 {
+    let zone = reference_zone(curtain != 0);
+    let outdoors = reference_outdoors();
+    let unit = odderon_astro::thermal::VapourCompression::window_unit();
+    let cooling = unit.cooling_to_hold(&zone, &outdoors, &reference_internal());
+    match unit.draw_for(cooling) {
+        Some(w) if w.is_finite() && w > 0.0 => w,
+        _ => 0.0,
+    }
+}
+
 /// Newton iterations the propagator needed at `dt`.
 ///
 /// A pure function of `dt` like the accessors above, so a caller gets the iteration count for the
