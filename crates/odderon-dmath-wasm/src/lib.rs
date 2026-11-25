@@ -525,11 +525,11 @@ mod tests {
         let at_zero = crate::room_temperature_from_k(1, 300.0, 0.0);
         assert!(
             near(at_infinity, at_huge_finite),
-            "Infinity ({at_infinity}) must clamp to the cap like a large finite time ({at_huge_finite})"
+            "Infinity ({at_infinity}) must clamp to the cap like a finite time ({at_huge_finite})"
         );
         assert!(
             at_infinity - at_zero > 10.0,
-            "elapsed_s = Infinity returned the start temperature ({at_infinity}); the clamp inverted the meaning"
+            "Infinity returned the start ({at_infinity}); the clamp inverted the meaning"
         );
     }
 
@@ -540,7 +540,10 @@ mod tests {
         let at_nan = crate::room_temperature_from_k(1, 300.0, f64::NAN);
         let at_zero = crate::room_temperature_from_k(1, 300.0, 0.0);
         assert!(near(at_nan, at_zero), "NaN elapsed should read as zero time");
-        assert!(at_nan - 300.0 < 1e-6 && 300.0 - at_nan < 1e-6, "NaN elapsed returned {at_nan}, expected the start");
+        assert!(
+            at_nan - 300.0 < 1e-6 && 300.0 - at_nan < 1e-6,
+            "NaN elapsed returned {at_nan}, expected the start"
+        );
     }
 
     #[test]
