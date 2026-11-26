@@ -86,6 +86,30 @@
   #snap-note { margin-top: 5px; font-size: 11px; }
   #snap-note a { color: #8fc4f0; }
   #measure-note { margin-top: 5px; font-size: 11px; }
+  #hud h2 { margin: 4px 0 4px; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: #7d8b9c; font-weight: 600; }
+  .pad-inputs { display: flex; gap: 8px; margin-top: 8px; }
+  .pad-inputs label { flex: 1; display: flex; flex-direction: column; gap: 3px; font-size: 10px; color: #7d8b9c; }
+  .pad-inputs input {
+    padding: 5px 6px; border-radius: 5px; font: inherit; font-size: 12px;
+    background: #151b22; border: 1px solid #2a3642; color: #d6e8f8; font-variant-numeric: tabular-nums;
+  }
+  #pad-fill, #pad-reset {
+    margin-top: 6px; width: 100%; padding: 7px 8px; border-radius: 5px; cursor: pointer;
+    background: #1d2733; border: 1px solid #30404f; color: #cfe3f5; font: inherit;
+  }
+  #pad-fill:active, #pad-reset:active { background: #27384a; }
+  #pad-reset { margin-top: 4px; font-size: 11px; color: #9fb0c0; }
+  #pad-note { margin-top: 5px; font-size: 11px; line-height: 1.4; }
+  #pad-stand { margin-top: 6px; font-size: 11px; line-height: 1.4; max-height: 180px; overflow-y: auto; }
+  .wreck { margin-bottom: 5px; padding: 5px 6px; border-radius: 5px; background: #151b22; border: 1px solid #2a3642; }
+  .wreck-head { color: #ff8a80; font-variant-numeric: tabular-nums; }
+  .wreck-log { color: #7d8b9c; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .wreck { cursor: pointer; }
+  .wreck.selected { border-color: #ffd166; }
+  #pad-debrief { margin-top: 8px; padding: 6px 7px; border-radius: 5px; background: #151b22; border: 1px solid #2a3642; font-size: 11px; line-height: 1.4; }
+  .debrief-head { color: #ffd166; margin-bottom: 4px; letter-spacing: .06em; text-transform: uppercase; font-size: 10px; }
+  .debrief-cause { color: #cfd6de; margin-bottom: 4px; }
+  .debrief-remedy { color: #6ee7a8; }
   .scales { display: flex; gap: 4px; margin-top: 6px; }
   .scales button {
     flex: 1; padding: 6px 4px; border-radius: 5px; cursor: pointer;
@@ -167,6 +191,28 @@
   <button id="snap">capture this frame as a PNG</button>
   <div id="snap-note" class="muted"></div>
   <div id="measure-note" class="muted"></div>
+
+  <div class="sep"></div>
+  <h2>the pad</h2>
+  <div class="muted" id="pad-intro">fill the line from the checklist. the first load is under-specified on purpose.</div>
+  <div class="row"><span>chill down (s)</span><span id="m-pad-chill">5</span></div>
+  <div class="row"><span>purge cycles</span><span id="m-pad-bleeds">0</span></div>
+  <div class="pad-inputs">
+    <label>chill s <input id="pad-chill" type="number" min="0" step="5" value="5"></label>
+    <label>bleeds <input id="pad-bleeds" type="number" min="0" step="1" value="0"></label>
+  </div>
+  <button id="pad-fill">fill the line</button>
+  <button id="pad-reset">reset to the checklist</button>
+  <div class="row"><span>pump inlet vapour</span><span id="m-pad-frac">—</span></div>
+  <div class="row"><span>residual heat</span><span id="m-pad-heat">—</span></div>
+  <div class="row"><span>liquid in tank</span><span id="m-pad-liquid">—</span></div>
+  <div class="row"><span>pressure</span><span id="m-pad-pressure">—</span></div>
+  <div class="row big" id="m-pad-verdict">—</div>
+  <div id="pad-note" class="muted"></div>
+
+  <div class="row"><span>wrecks on the stand</span><span id="m-pad-wrecks">0</span></div>
+  <div id="pad-stand" class="muted">nothing on the stand yet. a failed fill leaves a wreck here.</div>
+  <div id="pad-debrief" class="muted">no wreck to debrief yet. a failed fill leaves a wreck, and the debrief explains it.</div>
 
   <div id="note" class="muted"></div>
 </div>
@@ -1270,7 +1316,13 @@ async function loadKernel() {
                     // no room, no HUD, no diagnostic -- which is precisely the failure this guard exists
                     // to prevent. The list is the contract; it has to name the whole of it.
                     'room_solar_w', 'room_light_fraction', 'room_cooling_w', 'room_draw_w',
-                    'room_settled_k', 'room_temperature_from_k'];
+                    'room_settled_k', 'room_temperature_from_k',
+                    // The pad. P1's gate is a reproducible failure from the input log: the clipboard
+                    // drives the chilldown, the kernel returns whether the pump cavitates, and the same
+                    // checklist fails the same way every run. These are the exports the clipboard reads.
+                    'pad_failure_time', 'pad_inlet_vapour_fraction', 'pad_is_wreck',
+                    'pad_liquid_kg', 'pad_pressure_kpa', 'pad_temperature_k',
+                    'pad_vapour_pressure_kpa', 'pad_chilldown_residual_heat', 'pad_flash_fraction'];
     const missing = needed.filter((n) => typeof ex[n] !== 'function');
     if (missing.length) throw new Error('module missing exports: ' + missing.join(', '));
     kernelState.module = ex;
@@ -1370,6 +1422,250 @@ function refreshRoom() {
   }
   roomState.temperatureK = roomTemperature();
   roomState.source = 'wasm kernel';
+}
+
+// =============================================================================================
+// The pad: a cryo load driven from a checklist, and the failure it makes reproducible
+// =============================================================================================
+//
+// P1's gate is *a reproducible failure from the input log*. The clipboard is the input log: the player
+// sets a chilldown (chill time and purge cycles), presses fill, and the kernel returns whether the pump
+// cavitates. The first load is under-specified on purpose -- the bible's productive failure -- so the
+// default checklist fails, and the player learns chilldown by fixing it.
+//
+// The page holds NO cryo constant of its own: every number below comes from the kernel, the same rule the
+// room follows. The only numbers here are the window the fill runs for and the reference fill rate, and
+// both are named and derived rather than hidden.
+
+/// The fill window, simulated seconds. Long enough that a load which will fail has failed.
+const PAD_WINDOW_S = 60.0;
+/// The reference fill rate, kg/s. The kernel's own `REFERENCE_FILL_RATE`; the page does not re-derive it.
+const PAD_FILL_RATE = 0.50;
+
+const padState = {
+  // The input log of the last run: exactly what was filled, so the failure is reproducible from it.
+  chillS: 5.0,
+  bleeds: 0,
+  // The outcome of the last run, from the kernel.
+  failureTime: NaN,      // simulated seconds at first cavitation, or -1 if clean, NaN if refused
+  inletFraction: NaN,    // pump inlet vapour fraction
+  residualHeat: NaN,     // J/kg left in the line after the chilldown
+  liquidKg: NaN,
+  pressureKpa: NaN,
+  ran: false,
+  // THE STAND. Every failed fill leaves a wreck here -- the input log and the state it failed into -- so
+  // the wreckage is always examinable rather than cut away. A wreck is a record, not a verdict: it carries
+  // exactly what was run, so a reader can re-simulate it and confirm the failure. The stand accumulates;
+  // it is not cleared by a later clean run, because a wreck that happened is not undone by a run that did
+  // not.
+  wrecks: [],
+  // The wreck the debrief is currently explaining. -1 means none selected (the debrief explains the most
+  // recent wreck, or prompts if there is none). Selecting a wreck on the stand makes its debrief appear.
+  selectedWreck: -1,
+};
+
+/// The under-specified checklist the bible's first load starts from: a short chill, no purges. This is the
+/// "one item that is wrong" -- named so the default is one obvious value and the reset returns to it.
+const PAD_CHECKLIST = { chillS: 5.0, bleeds: 0 };
+
+/// Run a cryo load from the current checklist and report what the kernel says.
+///
+/// Reads the inputs, calls the kernel, and writes the outcome to `padState` and the panel. The failure is
+/// a function of the input log, so re-running the same checklist reproduces the same verdict -- which is
+/// the claim `tools/check-pad.mjs` checks against the wasm exports.
+function runPad() {
+  const k = kernelState.module;
+  const chillS = Number($('pad-chill').value);
+  const bleeds = Math.max(0, Math.floor(Number($('pad-bleeds').value)));
+  padState.chillS = chillS;
+  padState.bleeds = bleeds;
+
+  if (!k) {
+    padState.ran = false;
+    $('m-pad-verdict').textContent = '— kernel not built';
+    $('m-pad-verdict').className = 'row big';
+    $('pad-note').textContent = 'the pad needs the wasm kernel; build it or run fetch:wasm.';
+    return;
+  }
+
+  // The kernel is a pure function of the input log and t. Same checklist, same answer, every run.
+  padState.failureTime = k.pad_failure_time(chillS, bleeds, PAD_FILL_RATE, PAD_WINDOW_S);
+  padState.inletFraction = k.pad_inlet_vapour_fraction(chillS, bleeds, PAD_FILL_RATE, PAD_WINDOW_S);
+  padState.residualHeat = k.pad_chilldown_residual_heat(chillS, bleeds);
+  padState.liquidKg = k.pad_liquid_kg(chillS, bleeds, PAD_FILL_RATE, PAD_WINDOW_S);
+  padState.pressureKpa = k.pad_pressure_kpa(chillS, bleeds, PAD_FILL_RATE, PAD_WINDOW_S);
+  padState.ran = true;
+
+  // THE WRECK, RECORDED. If this input log produces a wreck -- the pump cavitated -- the failed run is
+  // added to the stand as an examinable record: the input log that produced it plus the state it failed
+  // into. The kernel decides whether it is a wreck (`pad_is_wreck`), so the page does not invent one; and
+  // the record is the same pure function of the log, so it is reproducible from itself.
+  if (k.pad_is_wreck(chillS, bleeds, PAD_FILL_RATE, PAD_WINDOW_S)) {
+    padState.wrecks.push({
+      chillS, bleeds,
+      fillRate: PAD_FILL_RATE,
+      window: PAD_WINDOW_S,
+      failureTime: padState.failureTime,
+      inletFraction: padState.inletFraction,
+      residualHeat: padState.residualHeat,
+    });
+  }
+
+  updatePadHud();
+}
+
+/// Populate the pad rows and the verdict from `padState`.
+function updatePadHud() {
+  const f = padState.inletFraction;
+  $('m-pad-chill').textContent = Number.isFinite(padState.chillS) ? padState.chillS.toFixed(0) : '—';
+  $('m-pad-bleeds').textContent = Number.isFinite(padState.bleeds) ? padState.bleeds : '—';
+  $('m-pad-frac').textContent = Number.isFinite(f) ? f.toFixed(3) : '—';
+  $('m-pad-heat').textContent = Number.isFinite(padState.residualHeat)
+    ? Math.round(padState.residualHeat) + ' J/kg' : '—';
+  $('m-pad-liquid').textContent = Number.isFinite(padState.liquidKg)
+    ? padState.liquidKg.toFixed(2) + ' kg' : '—';
+  $('m-pad-pressure').textContent = Number.isFinite(padState.pressureKpa)
+    ? padState.pressureKpa.toFixed(1) + ' kPa' : '—';
+
+  const verdict = $('m-pad-verdict');
+  if (!padState.ran) {
+    verdict.textContent = '— not run';
+    verdict.className = 'row big';
+    return;
+  }
+  if (!Number.isFinite(padState.failureTime)) {
+    verdict.textContent = '— refused (bad input)';
+    verdict.className = 'row big warn';
+  } else if (padState.failureTime < 0) {
+    // The load ran clean. The checklist was specified well enough that the pump never saw a two-phase
+    // mixture above the threshold.
+    verdict.textContent = 'load ran clean';
+    verdict.className = 'row big pass';
+    $('pad-note').textContent =
+      'the pump held prime for the whole fill. the test article is intact on the stand.';
+  } else {
+    // The bible's productive failure: the pump cavitated and the test article died. The wreck stays on the
+    // stand and examinable -- the failure is recorded, not cut away.
+    verdict.textContent = 'CAVITATED at ' + padState.failureTime.toFixed(1) + ' s';
+    verdict.className = 'row big fail';
+    $('pad-note').textContent =
+      'the pump lost prime at ' + padState.failureTime.toFixed(1) + ' s of simulated fill: the line was ' +
+      'too warm, the cryogen flashed, and the test article has no flow. the wreck stays on the stand.';
+  }
+
+  // THE STAND, RENDERED. Every wreck is an examinable record: the input log that produced it and the state
+  // it failed into. A wreck is shown with its checklist and its failure, so a reader can see WHY it failed
+  // and re-run the same log to confirm it. The stand is not cleared by a later clean run.
+  renderStand();
+}
+
+/// Render the wreck stand: one examinable record per failed fill, oldest first.
+///
+/// Each wreck is self-describing -- it carries the chill time, purge cycles, fill rate and window it was
+/// run with, plus the failure -- so the record is reproducible from itself. This is the bible's "the
+/// wreckage is always examinable": the failure is shown, not cut away.
+function renderStand() {
+  const el = $('pad-stand');
+  if (!el) return;
+  const wrecks = padState.wrecks;
+  $('m-pad-wrecks').textContent = wrecks.length;
+  if (wrecks.length === 0) {
+    el.textContent = 'nothing on the stand yet. a failed fill leaves a wreck here.';
+    el.className = 'muted';
+    return;
+  }
+  el.className = '';
+  el.innerHTML = wrecks.map((w, i) =>
+    '<div class="wreck' + (i === padState.selectedWreck ? ' selected' : '') + '" data-wreck="' + i + '">' +
+    '<div class="wreck-head">wreck ' + (i + 1) + ' · cavitated at ' + w.failureTime.toFixed(1) + ' s</div>' +
+    '<div class="wreck-log">chill ' + w.chillS.toFixed(0) + ' s · ' + w.bleeds + ' purge' +
+    (w.bleeds === 1 ? '' : 's') + ' · inlet vapour ' + w.inletFraction.toFixed(3) + '</div>' +
+    '</div>').join('');
+  // Each wreck is selectable: clicking it makes its debrief appear. The selection is a pointer event on
+  // the rendered record, not a separate control, so examining a wreck and reading its debrief are one act.
+  el.querySelectorAll('.wreck').forEach((node) => {
+    node.addEventListener('click', () => selectWreck(Number(node.dataset.wreck)));
+  });
+  renderDebrief();
+}
+
+/// THE DEBRIEF. The bible's consolidation step, and it is grounded in the wreck rather than in a fixed
+/// string: it reads the wreck's own numbers to explain *why* this load cavitated, and it asks the kernel
+/// what checklist would *not* -- so the remedy is verified by the same pure function that produced the
+/// failure, not asserted beside it. A debrief that said the same thing for every wreck would be instruction
+/// dressed as a diagnosis; this one changes with the wreck it explains.
+///
+/// The cause is the energy balance the kernel computes: the chilldown left `residualHeat` J/kg in the
+/// line, the incoming cryogen absorbed it and flashed to `inletFraction` vapour by the pump, and past the
+/// threshold the pump loses prime. The remedy is the kernel's own monotonicity -- the chilldown removes
+/// heat with both more chill time and more purges -- turned into a concrete, kernel-verified suggestion.
+function debriefWreck(w) {
+  const cause =
+    'the chilldown left ' + Math.round(w.residualHeat) + ' J/kg in the line. at that heat the cryogen ' +
+    'flashed to ' + w.inletFraction.toFixed(3) + ' vapour by the pump -- past the threshold -- so the pump ' +
+    'cavitated at ' + w.failureTime.toFixed(1) + ' s and the test article had no flow.';
+  const remedy = suggestCleanChecklist(w);
+  if (!remedy) {
+    return { cause, remedy: 'raise the chill time and the purge cycles, then fill again.', remedyChecklist: null };
+  }
+  return {
+    cause,
+    remedy:
+      'the chilldown is monotone in both chill time and purges, so more of either lowers the residual heat. ' +
+      'a checklist that runs clean: chill ' + remedy.chill.toFixed(0) + ' s with ' + remedy.bleeds + ' purge' +
+      (remedy.bleeds === 1 ? '' : 's') + '.',
+    remedyChecklist: remedy,
+  };
+}
+
+/// A checklist the kernel says runs clean, derived by asking `pad_is_wreck` -- not asserted. Tries the
+/// wreck's own purges with increasing chill, then the specified reference. Returns null only if no candidate
+/// in the searched set clears, which the page reports honestly rather than inventing a suggestion for.
+function suggestCleanChecklist(w) {
+  const k = kernelState.module;
+  if (!k) return null;
+  const tried = [];
+  for (const chill of [w.chillS * 2, w.chillS * 4, 120.0, 300.0]) {
+    if (tried.includes(chill)) continue;
+    tried.push(chill);
+    if (!k.pad_is_wreck(chill, w.bleeds, PAD_FILL_RATE, PAD_WINDOW_S)) {
+      return { chill, bleeds: w.bleeds };
+    }
+  }
+  // The reference checklist, if the wreck's purges were the problem.
+  if (!k.pad_is_wreck(300.0, 3, PAD_FILL_RATE, PAD_WINDOW_S)) {
+    return { chill: 300.0, bleeds: 3 };
+  }
+  return null;
+}
+
+/// Select a wreck on the stand and render its debrief. The debrief is the consolidation step: it appears
+/// for a wreck, grounded in that wreck's numbers, so the failure is explained rather than merely recorded.
+function selectWreck(index) {
+  padState.selectedWreck = index;
+  renderStand();
+  renderDebrief();
+}
+
+/// Render the debrief for the selected wreck (the most recent if none is selected).
+function renderDebrief() {
+  const el = $('pad-debrief');
+  if (!el) return;
+  const wrecks = padState.wrecks;
+  if (wrecks.length === 0) {
+    el.className = 'muted';
+    el.textContent = 'no wreck to debrief yet. a failed fill leaves a wreck, and the debrief explains it.';
+    return;
+  }
+  const idx = padState.selectedWreck >= 0 && padState.selectedWreck < wrecks.length
+    ? padState.selectedWreck : wrecks.length - 1;
+  const w = wrecks[idx];
+  const d = debriefWreck(w);
+  el.className = '';
+  el.innerHTML =
+    '<div class="debrief-head">debrief · wreck ' + (idx + 1) + '</div>' +
+    '<div class="debrief-cause">' + d.cause + '</div>' +
+    '<div class="debrief-remedy">' + d.remedy + '</div>';
 }
 
 /// Simulated seconds since the curtain last moved, from the page clock and the stated rate.
@@ -2567,6 +2863,10 @@ function updateHud() {
       : '';
     $('m-temp').textContent = fmt(c, 1) + ' \u00b0C' + clock;
   }
+  // The pad rows, refreshed on the same tick so a capture shows the current checklist outcome. This runs
+  // whether or not the room has a temperature: the pad is a separate subsystem and its rows must refresh
+  // even when the kernel is absent (where they report the refusal, not a number).
+  updatePadHud();
   // The banner is driven from the same fact as the rows, so they cannot disagree.
   const nk = document.getElementById('nokernel');
   if (nk) nk.hidden = !noKernel;
@@ -2794,6 +3094,23 @@ $('curtain').addEventListener('click', () => {
   updateHud();
 });
 
+// THE CLIPBOARD. The input log is the checklist: chill time and purge cycles, then fill. The kernel
+// decides the outcome; the page reports it. Fill runs the load; reset returns to the bible's under-specified
+// first checklist and runs it, so the productive failure is one click away and reproducible.
+$('pad-fill').addEventListener('click', () => {
+  runPad();
+});
+
+$('pad-reset').addEventListener('click', () => {
+  $('pad-chill').value = PAD_CHECKLIST.chillS;
+  $('pad-bleeds').value = PAD_CHECKLIST.bleeds;
+  runPad();
+});
+
+// The checklist values are shown as the player edits them, so the input log is visible before a fill.
+$('pad-chill').addEventListener('input', () => { $('m-pad-chill').textContent = $('pad-chill').value || '—'; });
+$('pad-bleeds').addEventListener('input', () => { $('m-pad-bleeds').textContent = $('pad-bleeds').value || '—'; });
+
 $('measure').addEventListener('click', async () => {
   // `measureFrame` is async now: it yields frames waiting for the timer queries to report. Handing its
   // Promise straight to `applyMeasurement` would have put `undefined` into every HUD field, which reads
@@ -2893,6 +3210,10 @@ loadKernel().then(() => {
   // the orbit does not invent an ellipse.
   setCurtain(roomState.curtain);
   updateHud();
+  // The pad, from the same kernel. The checklist defaults to the bible's under-specified first load, so
+  // the first thing the panel shows is the productive failure -- and it is reproducible: the same
+  // checklist, run again, fails the same way.
+  runPad();
   // Say which orbit is on screen. "wasm" means the kernel's own numbers; anything else is a named
   // failure rather than an orbit drawn by something else. A page that draws an ellipse without saying
   // where the ellipse came from is the defect this whole change exists to remove.

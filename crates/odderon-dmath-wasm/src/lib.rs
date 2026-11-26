@@ -509,6 +509,134 @@ pub extern "C" fn orbit_eccentricity() -> f64 {
     ECC
 }
 
+// =============================================================================================
+// The pad: a cryogenic fluid network and its reproducible failure
+// =============================================================================================
+//
+// `odderon_astro::cryo` is a pure function of the input log and `t`, so these exports are stateless
+// accessors over it -- the same shape as the room exports above. A refusal (a non-finite plan, fill rate
+// or elapsed time) crosses the ABI as `NaN`, which the page reads as "no reading" rather than as a number,
+// the same convention the room's trajectory uses for a missing kernel.
+//
+// The one export that carries the P1 gate is [`pad_failure_time`]: the simulated time at which the pump
+// first cavitates, or -1.0 if the load runs clean. Same inputs, same answer, on every platform -- which is
+// what makes the phase's "reproducible failure from the input log" checkable from outside Rust.
+
+/// Vapour (saturation) pressure of LOX at `t_k`, kPa. `NaN` for a non-finite or non-positive temperature.
+#[unsafe(no_mangle)]
+pub extern "C" fn pad_vapour_pressure_kpa(t_k: f64) -> f64 {
+    odderon_astro::cryo::vapour_pressure_kpa(t_k).unwrap_or(f64::NAN)
+}
+
+/// Residual heat per kilogram left in the line after a chilldown, J/kg. `NaN` for a non-finite plan.
+#[unsafe(no_mangle)]
+pub extern "C" fn pad_chilldown_residual_heat(chill_s: f64, bleeds: u32) -> f64 {
+    let plan = odderon_astro::cryo::ChillPlan { chill_s, bleeds };
+    odderon_astro::cryo::chilldown_residual_heat(&plan).unwrap_or(f64::NAN)
+}
+
+/// The mass fraction of incoming cryogen that flashes to vapour, 0..1. `NaN` for a non-finite input.
+#[unsafe(no_mangle)]
+pub extern "C" fn pad_flash_fraction(q_res: f64, margin: f64) -> f64 {
+    odderon_astro::cryo::flash_fraction(q_res, margin).unwrap_or(f64::NAN)
+}
+
+/// The simulated time at which the pump first cavitates, or **-1.0** if the load runs clean to the end of
+/// the window, or `NaN` if the run is refused (a non-finite plan, fill rate or elapsed time).
+///
+/// This is the P1 gate export. The bible's productive failure -- an under-specified chilldown froths, the
+/// pump cavitates, the test article dies -- is a function of the input log, and this returns the instant it
+/// happens. The same `(chill_s, bleeds, fill_rate, elapsed_s)` returns the same value on every platform.
+#[unsafe(no_mangle)]
+pub extern "C" fn pad_failure_time(
+    chill_s: f64,
+    bleeds: u32,
+    fill_rate: f64,
+    elapsed_s: f64,
+) -> f64 {
+    let net = odderon_astro::cryo::CryoNetwork::reference();
+    let plan = odderon_astro::cryo::ChillPlan { chill_s, bleeds };
+    match net.simulate(&plan, fill_rate, elapsed_s) {
+        Some(out) => match out.failure {
+            Some((_, t)) => t,
+            None => -1.0,
+        },
+        None => f64::NAN,
+    }
+}
+
+/// The pump inlet vapour fraction at the end of the run, 0..1. `NaN` if the run is refused.
+///
+/// Carried because a run that *did not* fail still shows how close it came, and "how close" is the quantity
+/// the cavitation predicate reads.
+#[unsafe(no_mangle)]
+pub extern "C" fn pad_inlet_vapour_fraction(
+    chill_s: f64,
+    bleeds: u32,
+    fill_rate: f64,
+    elapsed_s: f64,
+) -> f64 {
+    let net = odderon_astro::cryo::CryoNetwork::reference();
+    let plan = odderon_astro::cryo::ChillPlan { chill_s, bleeds };
+    net.simulate(&plan, fill_rate, elapsed_s)
+        .map(|o| o.pump_inlet_vapour_fraction)
+        .unwrap_or(f64::NAN)
+}
+
+/// Liquid cryogen in the tank at the end of the run, kg. `NaN` if the run is refused.
+#[unsafe(no_mangle)]
+pub extern "C" fn pad_liquid_kg(chill_s: f64, bleeds: u32, fill_rate: f64, elapsed_s: f64) -> f64 {
+    let net = odderon_astro::cryo::CryoNetwork::reference();
+    let plan = odderon_astro::cryo::ChillPlan { chill_s, bleeds };
+    net.simulate(&plan, fill_rate, elapsed_s)
+        .map(|o| o.liquid_kg)
+        .unwrap_or(f64::NAN)
+}
+
+/// Tank pressure at the end of the run, kPa. `NaN` if the run is refused.
+#[unsafe(no_mangle)]
+pub extern "C" fn pad_pressure_kpa(
+    chill_s: f64,
+    bleeds: u32,
+    fill_rate: f64,
+    elapsed_s: f64,
+) -> f64 {
+    let net = odderon_astro::cryo::CryoNetwork::reference();
+    let plan = odderon_astro::cryo::ChillPlan { chill_s, bleeds };
+    net.simulate(&plan, fill_rate, elapsed_s)
+        .map(|o| o.pressure_kpa)
+        .unwrap_or(f64::NAN)
+}
+
+/// Tank temperature at the end of the run, K. `NaN` if the run is refused.
+#[unsafe(no_mangle)]
+pub extern "C" fn pad_temperature_k(
+    chill_s: f64,
+    bleeds: u32,
+    fill_rate: f64,
+    elapsed_s: f64,
+) -> f64 {
+    let net = odderon_astro::cryo::CryoNetwork::reference();
+    let plan = odderon_astro::cryo::ChillPlan { chill_s, bleeds };
+    net.simulate(&plan, fill_rate, elapsed_s)
+        .map(|o| o.temperature_k)
+        .unwrap_or(f64::NAN)
+}
+
+/// Non-zero if this input log produces a **wreck** -- a failed cryo load, kept as a record on the stand.
+///
+/// The wreck is the bible's "the wreckage is always examinable": a failed run leaves a record (the input
+/// log and the state it failed into) rather than being cut away. This is the predicate the page uses to
+/// decide whether a fill leaves something to examine. `u32` rather than `bool` because `bool` is not a
+/// C-ABI type; a refused run (a non-finite input) is NOT a wreck, so it returns 0 rather than recording a
+/// failure that was never reached.
+#[unsafe(no_mangle)]
+pub extern "C" fn pad_is_wreck(chill_s: f64, bleeds: u32, fill_rate: f64, window_s: f64) -> u32 {
+    let net = odderon_astro::cryo::CryoNetwork::reference();
+    let plan = odderon_astro::cryo::ChillPlan { chill_s, bleeds };
+    u32::from(net.is_wreck(&plan, fill_rate, window_s))
+}
+
 #[cfg(test)]
 mod tests {
     // The ABI is a contract a host can violate with a single bad number, and two of the values it can
