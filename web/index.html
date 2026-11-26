@@ -293,6 +293,15 @@
   <div id="m-protege-options"></div>
   <div id="m-protege-note" class="muted"></div>
 
+  <div class="sep"></div>
+  <h3>the sky</h3>
+  <div class="muted">other ships in your sky on real orbits, their messages arriving at the speed of light. no netcode -- the kernel propagates each ship and measures the light-time to your station, so the same send lands the same way everywhere.</div>
+  <div class="row"><span>mail</span><span id="m-mail-count">—</span></div>
+  <div class="pad-inputs">
+    <button id="mail-record" type="button">record the sky</button>
+  </div>
+  <div id="m-mail-list"></div>
+
   <div id="note" class="muted"></div>
 </div>
 
@@ -2623,6 +2632,13 @@ function archiveSerialize(entry) {
   } else if (entry.type === 'briefing') {
     // A self-explanation: the diagnosis the protégé was briefed on, and the error entry it is about.
     parts.push(entry.params.of, f(entry.params.id, 0), entry.params.errHash, entry.readings.diagnosis);
+  } else if (entry.type === 'mail') {
+    // An inbound message: the peer's real orbital elements, the station, the send time, and the
+    // kernel's light-time and arrival. All of it is what a verifier re-derives from the kernel.
+    parts.push(entry.params.peer, f(entry.params.a, 3), f(entry.params.e, 6), f(entry.params.i, 6),
+      f(entry.params.raan, 6), f(entry.params.argp, 6), f(entry.params.nu, 6),
+      f(entry.params.lat, 6), f(entry.params.lon, 6), f(entry.params.sendS, 6),
+      f(entry.readings.lightTime, 9), f(entry.readings.arrival, 9));
   }
   return parts.join('|');
 }
@@ -2751,6 +2767,23 @@ function verifyArchiveEntry(entry) {
     const reDerived = (err && err.type === 'vehicle') ? protegeDiagnosis(err) : null;
     const readingsOk = reDerived === entry.readings.diagnosis;
     return { ok: hashOk && readingsOk, detail: (hashOk ? 'hash ' : 'hash ') + (readingsOk ? 'diagnosis matches' : 'diagnosis differs') };
+  }
+  if (entry.type === 'mail') {
+    // Re-derive the light-time and the arrival from the peer's elements and the station. The
+    // arrival is `sendS + light_time`, both the kernel's, so a third party can recompute them.
+    const p = entry.params.a * (1 - entry.params.e * entry.params.e);
+    const lat = entry.params.lat * Math.PI / 180;
+    const lon = entry.params.lon * Math.PI / 180;
+    const reDerived = {
+      lightTime: k.mail_light_time_s(p, entry.params.e, entry.params.i, entry.params.raan,
+        entry.params.argp, entry.params.nu, lat, lon, entry.params.sendS),
+      arrival: k.mail_arrival_s(p, entry.params.e, entry.params.i, entry.params.raan,
+        entry.params.argp, entry.params.nu, lat, lon, entry.params.sendS),
+    };
+    const hashOk = archiveHash(entry) === entry.hash;
+    const readingsOk = close(reDerived.lightTime, entry.readings.lightTime, 1e-9) &&
+      close(reDerived.arrival, entry.readings.arrival, 1e-9);
+    return { ok: hashOk && readingsOk, detail: (hashOk ? 'hash ' : 'hash ') + (readingsOk ? 'light-time matches' : 'light-time differs') };
   }
   return { ok: false, detail: 'unknown entry type' };
 }
@@ -2973,6 +3006,169 @@ function renderProtege() {
       };
     });
   }
+}
+
+// --------------------------------------------------------------------------------------------
+// causal mail (P4: async presence, bible §11.2)
+// --------------------------------------------------------------------------------------------
+// "Other players' ships appear in your sky as objects with real orbital elements, and their messages
+// arrive with real light-time delay, because the kernel is deterministic and the universe is a
+// function of time. No netcode, no lobbies, no tick reconciliation. Relatedness, delivered at the
+// speed of light."
+//
+// There is no network here. The peer ships are a fixed catalogue of real osculating orbits, and each
+// one's position at any instant is the kernel propagating its own elements -- the same propagator
+// the reference orbit uses, fed different elements. A peer "sends" on a deterministic schedule
+// (a pure function of the orbit clock), and its message reaches the station at `sendS + light_time`,
+// where the light-time is the kernel's own primitive between the peer's propagated position and the
+// station's inertial position. The page computes no light-time and holds no speed-of-light constant:
+// the same send, on every platform, lands at the same arrival. That determinism is the whole point --
+// relatedness without a server.
+//
+// The arrival is also recorded in the archive as a `mail` entry, so a third party can re-derive the
+// light-time and the arrival from the peer's elements and the station, exactly as the P4 gate asks.
+
+/// The peer ships in the sky. Each carries real orbital elements (`a` in km, eccentricity, and the
+/// three angles in radians), a send schedule (`period` seconds, first send at `epoch`), and the
+/// message it sends. The elements are distinct, physical orbits -- not the reference orbit, so the
+/// light-times differ and the sky is not one craft drawn four times.
+const CAUSAL_PEERS = [
+  { name: 'aria', a: 7000, e: 0.010, i: 0.30, raan: 0.50, argp: 0.20, nu: 0.00, period: 90,  epoch: -45,  text: 'holding station, the uplink is clean.' },
+  { name: 'bolt', a: 20000, e: 0.200, i: 0.90, raan: 1.00, argp: 0.30, nu: 0.50, period: 150, epoch: -75,  text: 'apogee pass coming up, call me on the downlink.' },
+  { name: 'compass', a: 42164, e: 0.020, i: 0.00, raan: 0.00, argp: 0.00, nu: 1.10, period: 300, epoch: -150, text: 'geosync hold, the desk lamp is on.' },
+  { name: 'drifter', a: 30000, e: 0.600, i: 1.20, raan: 2.00, argp: 0.40, nu: 1.00, period: 210, epoch: -105, text: 'long ellipse, I will be late for the window.' },
+];
+
+/// The causal-mail state. The inbox itself is a pure function of the orbit clock -- not stored -- so
+/// the same clock yields the same sky on every platform. `lastStation` is the only cached thing, and
+/// only to know when to re-render.
+const causalMailState = {
+  lastStation: null,
+  lastRefreshMs: 0,
+};
+
+/// The semi-latus rectum `p = a(1 - e²)`, the form the kernel's `Elements` stores. Orbital geometry
+/// (a polynomial in the elements), not light-time: the page computes no delay and holds no constant
+/// of propagation speed.
+function peerP(peer) {
+  return peer.a * (1 - peer.e * peer.e);
+}
+
+/// The readings of one peer's message sent at orbit-clock `sendS`: the kernel's one-way light-time,
+/// the kernel's arrival, and the two positions the light-time is measured between -- all kernel
+/// calls. A link the kernel cannot compute is `valid: false`, never a number the panel would print
+/// as a delay. Exposing the positions lets a verifier re-derive the light-time from the primitive
+/// rather than trust this function's single opaque number.
+function causalMailReadings(peer, sendS) {
+  const k = kernelState.module;
+  if (!k) return { source: 'absent' };
+  const lat = groundStation.latitudeDeg * Math.PI / 180;
+  const lon = groundStation.longitudeDeg * Math.PI / 180;
+  const p = peerP(peer);
+  const lightTime = k.mail_light_time_s(p, peer.e, peer.i, peer.raan, peer.argp, peer.nu, lat, lon, sendS);
+  const arrival = k.mail_arrival_s(p, peer.e, peer.i, peer.raan, peer.argp, peer.nu, lat, lon, sendS);
+  if (!Number.isFinite(lightTime) || !Number.isFinite(arrival)) {
+    return { source: 'wasm kernel', valid: false };
+  }
+  return {
+    source: 'wasm kernel',
+    valid: true,
+    lightTime,
+    arrival,
+    peerPos: {
+      x: k.peer_pos_x(p, peer.e, peer.i, peer.raan, peer.argp, peer.nu, sendS),
+      y: k.peer_pos_y(p, peer.e, peer.i, peer.raan, peer.argp, peer.nu, sendS),
+      z: k.peer_pos_z(p, peer.e, peer.i, peer.raan, peer.argp, peer.nu, sendS),
+    },
+    stationPos: {
+      x: k.station_pos_x(lat, lon, sendS),
+      y: k.station_pos_y(lat, lon, sendS),
+      z: k.station_pos_z(lat, lon, sendS),
+    },
+  };
+}
+
+/// The deterministic send time of a peer's most recent message at or before orbit-clock `nowS`: the
+/// schedule snapped to the peer's period. A pure function of (peer, nowS) -- the universe is a
+/// function of time, so there is no state to reconcile and no tick to catch up on.
+function causalMailSendTime(peer, nowS) {
+  const n = Math.floor((nowS - peer.epoch) / peer.period);
+  return peer.epoch + n * peer.period;
+}
+
+/// The inbox at orbit-clock `nowS`: every peer's current message, split into what has arrived
+/// (`arrival <= nowS`) and what is still in transit (with its countdown). Deterministic: the same
+/// clock, on every platform, yields the same sky.
+function causalMailInbox(nowS) {
+  const delivered = [];
+  const inTransit = [];
+  for (const peer of CAUSAL_PEERS) {
+    const sendS = causalMailSendTime(peer, nowS);
+    const r = causalMailReadings(peer, sendS);
+    if (!r.valid) continue;
+    const msg = { peer, sendS, arrival: r.arrival, lightTime: r.lightTime, text: peer.text };
+    if (r.arrival <= nowS) delivered.push(msg);
+    else { msg.countdown = r.arrival - nowS; inTransit.push(msg); }
+  }
+  return { delivered, inTransit };
+}
+
+/// Record a peer's message (sent at `sendS`) in the archive. The light-time and arrival are the
+/// kernel's, captured at the send instant, so a verifier can re-derive both from the peer's elements
+/// and the station.
+function recordMail(peer, sendS) {
+  const r = causalMailReadings(peer, sendS);
+  if (!r.valid) return null;
+  const entry = {
+    type: 'mail',
+    params: {
+      peer: peer.name, a: peer.a, e: peer.e, i: peer.i,
+      raan: peer.raan, argp: peer.argp, nu: peer.nu,
+      lat: groundStation.latitudeDeg, lon: groundStation.longitudeDeg, sendS,
+    },
+    readings: { lightTime: r.lightTime, arrival: r.arrival },
+  };
+  return archivePush(entry);
+}
+
+/// Record the whole live sky: every peer whose current message has arrived. Returns the count of
+/// entries recorded, so a caller (and a test) can tell whether anything was added.
+function recordMailInbox(nowS) {
+  const { delivered } = causalMailInbox(nowS);
+  let count = 0;
+  for (const msg of delivered) {
+    if (recordMail(msg.peer, msg.sendS)) count++;
+  }
+  return count;
+}
+
+/// Render the sky panel: each peer as a row -- its real orbital elements, and its message, delivered
+/// or in transit with a live countdown. A `NaN` reading is shown as `—`, the convention every other
+/// panel uses. The panel is the causal mail made visible; `causalMailInbox` is what makes it honest.
+function renderCausalMail(nowS) {
+  const host = $('m-mail-list');
+  if (!host) return;
+  const inbox = causalMailInbox(nowS);
+  const f = (v, d) => (Number.isFinite(v) ? v.toFixed(d) : '—');
+  const rows = CAUSAL_PEERS.map((peer) => {
+    const sendS = causalMailSendTime(peer, nowS);
+    const r = causalMailReadings(peer, sendS);
+    if (!r.valid) {
+      return `<div class="archive-row"><span class="archive-type">${peer.name}</span>` +
+        `<span class="archive-sum">no link</span><span class="archive-hash">—</span><span class="archive-ver">—</span></div>`;
+    }
+    const arrived = r.arrival <= nowS;
+    const status = arrived
+      ? `<span class="ok">delivered</span> · ${peer.text}`
+      : `<span class="muted">in transit · ${f(r.arrival - nowS, 1)} s</span>`;
+    const els = `a ${f(peer.a, 0)} km · e ${f(peer.e, 3)} · i ${f(peer.i * 180 / Math.PI, 1)}°`;
+    return `<div class="archive-row"><span class="archive-type">${peer.name}</span>` +
+      `<span class="archive-sum">${els} · sent ${f(sendS, 0)} s · light ${f(r.lightTime * 1000, 1)} ms</span>` +
+      `<span class="archive-hash">${peer.name}</span><span class="archive-ver">${status}</span></div>`;
+  });
+  host.innerHTML = rows.join('');
+  $('m-mail-count').textContent =
+    `${inbox.delivered.length} delivered · ${inbox.inTransit.length} in transit`;
 }
 
 // --------------------------------------------------------------------------------------------
@@ -3214,6 +3410,15 @@ function drawFrame(nowMs) {
     if (commsState.arrived !== wasArrived) refreshCommsHud();
   }
   const bodyReceive = (commsState.sent && commsState.arrived) ? 1 : 0;
+  // The sky: the causal-mail inbox is a function of the orbit clock. Re-render when the station
+  // changes, and otherwise at a slow cadence -- the countdown does not need frame-level precision,
+  // and six peers' kernel calls every frame are more than the picture needs.
+  const stationKey = groundStation.latitudeDeg + ',' + groundStation.longitudeDeg;
+  if (causalMailState.lastStation !== stationKey || nowMs - causalMailState.lastRefreshMs > 1000) {
+    causalMailState.lastStation = stationKey;
+    causalMailState.lastRefreshMs = nowMs;
+    renderCausalMail(orbitClockS);
+  }
 
   gl.viewport(0, 0, canvas.width, canvas.height);
   cacheResize(canvas.width, canvas.height);
@@ -4434,6 +4639,17 @@ $('protege-ask').addEventListener('click', () => {
   $('m-protege-note').textContent = q ? 'the junior is waiting for your diagnosis.' : 'the junior has no failure of yours to replay yet.';
 });
 
+// THE SKY. Record the live causal mail into the archive: every peer whose current message has
+// arrived becomes a `mail` entry, verifiable against the kernel's light-time and arrival. The
+// button is the act of keeping the sky in the museum -- relatedness, recorded and checkable.
+$('mail-record').addEventListener('click', () => {
+  const nowS = performance.now() / 1000;
+  const count = recordMailInbox(nowS);
+  $('note').textContent = count > 0
+    ? `recorded ${count} message(s) from the sky into the archive; verify the archive to check them.`
+    : 'no message from the sky has arrived yet -- wait for a peer\'s light-time to elapse.';
+});
+
 // The Akashi design hash is shown as soon as the kernel is built, so the version stamp is visible
 // before any entry is exported.
 function updateAkashiHash() {
@@ -4564,6 +4780,9 @@ loadKernel().then(() => {
   // The junior. Render the protégé panel so it is present from the first frame; a question appears
   // when the player asks and there is a failure in the archive to replay.
   renderProtege();
+  // The sky. Render the causal mail so the peer ships are present from the first frame; the inbox is
+  // a pure function of the orbit clock, so it is correct before any message is sent.
+  renderCausalMail(performance.now() / 1000);
   // Say which orbit is on screen. "wasm" means the kernel's own numbers; anything else is a named
   // failure rather than an orbit drawn by something else. A page that draws an ellipse without saying
   // where the ellipse came from is the defect this whole change exists to remove.
@@ -4835,6 +5054,18 @@ window.__odderon = {
   protegeAnswer,
   protegeNotice,
   renderProtege,
+  // Causal mail (P4: async presence, §11.2). Exposed so a test can read the sky, ask what a peer's
+  // message produces, and confirm the arrival is the kernel's light-time -- the P4 gate.
+  // `tools/check-causal-mail.mjs` reads these against the module's own exports and the panel.
+  causalMailState,
+  CAUSAL_PEERS,
+  peerP,
+  causalMailReadings,
+  causalMailSendTime,
+  causalMailInbox,
+  recordMail,
+  recordMailInbox,
+  renderCausalMail,
   renderer: () => renderer,
   requestFrame,
   /**

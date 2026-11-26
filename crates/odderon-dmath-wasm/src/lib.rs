@@ -1124,6 +1124,205 @@ pub extern "C" fn comms_arrival_s(lat: f64, lon: f64, from: f64) -> f64 {
     }
 }
 
+// ---------------------------------------------------------------------------------------------------
+// Causal mail — other ships in the sky, messages at the speed of light (bible §11.2)
+// ---------------------------------------------------------------------------------------------------
+//
+// "Other players' ships appear in your sky as objects with real orbital elements, and their messages
+// arrive with real light-time delay, because the kernel is deterministic and the universe is a
+// function of time. No netcode, no lobbies, no tick reconciliation."
+//
+// The peer ships are not the reference orbit: each carries its own osculating elements, and its
+// position at any instant is the kernel propagating those elements from the reference epoch. A
+// message a peer sends at orbit-clock `send_s` reaches the station at `send_s + light_time`, where
+// the light-time is the *same primitive* the comms link uses -- Euclidean distance over the exact
+// speed of light -- between the peer's propagated position and the station's inertial position. The
+// page computes no light-time and holds no speed-of-light constant; the arrival is a pure function
+// of (peer elements, station, send_s), so the same send lands the same way on every platform.
+//
+// The position exports are exposed alongside the arrival so the mail light-time is *verifiable*
+// against the primitive [`light_time_s`] rather than trusted as one opaque number: a verifier can
+// re-derive it from the peer's and the station's positions and compare. That is the P4 gate.
+
+/// Build a peer ship's state from real orbital elements and propagate it by `dt` seconds past the
+/// reference epoch. `None` when the elements do not describe a finite conic -- the kernel refuses
+/// rather than guessing a position. Shared by the position exports and the causal-mail arrival.
+fn peer_state(
+    p: f64,
+    e: f64,
+    i: f64,
+    raan: f64,
+    argp: f64,
+    nu: f64,
+    dt: f64,
+) -> Option<odderon_astro::State> {
+    let elements = odderon_astro::Elements {
+        p,
+        e,
+        i,
+        raan,
+        argp,
+        nu,
+        degeneracy: odderon_astro::Degeneracy::default(),
+    };
+    let state = elements.to_state(odderon_astro::mu::EARTH);
+    // `to_state` returns a NaN state when the conic is invalid (a non-positive `p`). Propagating
+    // that would carry NaN through the solver and return a position with no meaning. The check is
+    // written as `x != x` -- true only for NaN -- rather than a host method, so it stays inside the
+    // kernel policy. Refuse here, at the boundary, so the position exports return NaN.
+    if state.r.x != state.r.x {
+        return None;
+    }
+    Some(odderon_astro::propagate(&state, dt, odderon_astro::mu::EARTH).state)
+}
+
+/// The authored ground station's inertial position at orbit clock `from`, km. `None` when the
+/// geodetic site cannot be built. Exposed so the causal-mail light-time is verifiable against the
+/// primitive [`light_time_s`] rather than trusted as a single opaque number.
+fn station_position(lat: f64, lon: f64, from: f64) -> Option<odderon_astro::Vec3> {
+    let site = odderon_astro::observe::Site::from_geodetic(
+        &odderon_astro::catalogue::EARTH,
+        lat,
+        lon,
+        0.0,
+    )
+    .ok()?;
+    site.inertial_position(&odderon_astro::catalogue::EARTH_FRAME, from)
+}
+
+/// `x` of a peer ship's position, propagated from its orbital elements by `dt` seconds past the
+/// reference epoch, km. `NaN` when the elements do not describe a finite conic. See [`peer_state`].
+#[unsafe(no_mangle)]
+pub extern "C" fn peer_pos_x(
+    p: f64,
+    e: f64,
+    i: f64,
+    raan: f64,
+    argp: f64,
+    nu: f64,
+    dt: f64,
+) -> f64 {
+    peer_state(p, e, i, raan, argp, nu, dt)
+        .map(|s| s.r.x)
+        .unwrap_or(f64::NAN)
+}
+
+/// `y` of a peer ship's position, km. See [`peer_pos_x`].
+#[unsafe(no_mangle)]
+pub extern "C" fn peer_pos_y(
+    p: f64,
+    e: f64,
+    i: f64,
+    raan: f64,
+    argp: f64,
+    nu: f64,
+    dt: f64,
+) -> f64 {
+    peer_state(p, e, i, raan, argp, nu, dt)
+        .map(|s| s.r.y)
+        .unwrap_or(f64::NAN)
+}
+
+/// `z` of a peer ship's position, km. See [`peer_pos_x`].
+#[unsafe(no_mangle)]
+pub extern "C" fn peer_pos_z(
+    p: f64,
+    e: f64,
+    i: f64,
+    raan: f64,
+    argp: f64,
+    nu: f64,
+    dt: f64,
+) -> f64 {
+    peer_state(p, e, i, raan, argp, nu, dt)
+        .map(|s| s.r.z)
+        .unwrap_or(f64::NAN)
+}
+
+/// `x` of the authored ground station's inertial position at `from`, km. `NaN` when the site cannot
+/// be built. See [`station_position`].
+#[unsafe(no_mangle)]
+pub extern "C" fn station_pos_x(lat: f64, lon: f64, from: f64) -> f64 {
+    station_position(lat, lon, from)
+        .map(|v| v.x)
+        .unwrap_or(f64::NAN)
+}
+
+/// `y` of the station's inertial position, km. See [`station_pos_x`].
+#[unsafe(no_mangle)]
+pub extern "C" fn station_pos_y(lat: f64, lon: f64, from: f64) -> f64 {
+    station_position(lat, lon, from)
+        .map(|v| v.y)
+        .unwrap_or(f64::NAN)
+}
+
+/// `z` of the station's inertial position, km. See [`station_pos_x`].
+#[unsafe(no_mangle)]
+pub extern "C" fn station_pos_z(lat: f64, lon: f64, from: f64) -> f64 {
+    station_position(lat, lon, from)
+        .map(|v| v.z)
+        .unwrap_or(f64::NAN)
+}
+
+/// The one-way light-time from a peer ship to the authored ground station, seconds. The peer's
+/// position is propagated from its orbital elements at `send_s`; the station's position is taken at
+/// the same instant; the delay is the primitive [`light_time_s`]. `NaN` when either position is
+/// unavailable or the distance is not strictly positive and finite.
+fn mail_light_time_opt(
+    p: f64,
+    e: f64,
+    i: f64,
+    raan: f64,
+    argp: f64,
+    nu: f64,
+    lat: f64,
+    lon: f64,
+    send_s: f64,
+) -> Option<f64> {
+    let peer = peer_state(p, e, i, raan, argp, nu, send_s)?;
+    let station = station_position(lat, lon, send_s)?;
+    odderon_astro::lighttime::light_time_s(peer.r, station)
+}
+
+/// The one-way light-time from a peer ship to the station, seconds, or `NaN`. See
+/// [`mail_light_time_opt`].
+#[unsafe(no_mangle)]
+pub extern "C" fn mail_light_time_s(
+    p: f64,
+    e: f64,
+    i: f64,
+    raan: f64,
+    argp: f64,
+    nu: f64,
+    lat: f64,
+    lon: f64,
+    send_s: f64,
+) -> f64 {
+    mail_light_time_opt(p, e, i, raan, argp, nu, lat, lon, send_s).unwrap_or(f64::NAN)
+}
+
+/// The arrival time on the orbit clock of a message a peer sent at `send_s`: `send_s` plus the
+/// kernel's light-time. The pure function the causal-mail ledger is built from -- a message can
+/// never arrive before it was sent, because the light-time is non-negative by construction. `NaN`
+/// when the link cannot be computed.
+#[unsafe(no_mangle)]
+pub extern "C" fn mail_arrival_s(
+    p: f64,
+    e: f64,
+    i: f64,
+    raan: f64,
+    argp: f64,
+    nu: f64,
+    lat: f64,
+    lon: f64,
+    send_s: f64,
+) -> f64 {
+    match mail_light_time_opt(p, e, i, raan, argp, nu, lat, lon, send_s) {
+        Some(t) => send_s + t,
+        None => f64::NAN,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     // The ABI is a contract a host can violate with a single bad number, and two of the values it can

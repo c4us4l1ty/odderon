@@ -200,6 +200,12 @@ jobs:
       - name: protégé boundary (the diagnosis branches on physical kernel readings)
         run: node tools/check-protege.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
 
+      # The causal mail boundary, against the same binary: a peer ship's position is propagated from
+      # real orbital elements, and the message light-time equals the primitive measured between the
+      # peer's and the station's positions -- physical, causal, and deterministic. Static half below.
+      - name: causal mail boundary (the light-time is the kernel's, measured between real positions)
+        run: node tools/check-causal-mail.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
+
       - name: stage wasm artifacts
         run: |
           mkdir -p dist
@@ -377,6 +383,16 @@ jobs:
 
       - name: protégé verifier self-test (sound diagnosis, briefings verify)
         run: node tools/check-protege.mjs --selftest
+
+      # P4: the sky. Other ships on real orbits, their messages arriving at the speed of light -- no
+      # netcode, because the kernel is deterministic. The gate: the light-time is the kernel's, the
+      # inbox splits on causality, the schedule is a pure function of time, and the mail is recorded
+      # and verifiable. This is relatedness delivered at the speed of light, checked.
+      - name: "the sky - peer ships, light-time mail, no netcode"
+        run: node tools/check-causal-mail.mjs
+
+      - name: causal mail verifier self-test (sound inbox, recorded mail verifies)
+        run: node tools/check-causal-mail.mjs --selftest
       # On 2026-11-24 this job failed on a condition the page handles correctly: the optional wasm
       # artifact is absent on a clean checkout, the browser logs a 404, and `tools/screenshot.mjs` treats
       # any console error as an untrustworthy frame. The capture now exempts that one error -- but only
