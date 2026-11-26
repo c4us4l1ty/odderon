@@ -458,3 +458,245 @@ fn a_refused_run_leaves_no_wreck() {
     assert!(net.wreck(&plan, f64::NAN, 60.0).is_none());
     assert!(!net.is_wreck(&plan, f64::NAN, 60.0));
 }
+
+// =============================================================================================
+// 8. The Mark: grease pencil, ghost twin, one arrow, Akashi
+// =============================================================================================
+
+use odderon_astro::cryo::{
+    akashi_entry, attribution, design_hash, ghost_twin, Attribution, Mark,
+};
+
+/// The ghost twin's divergence is the reward prediction error: actual minus expected.
+///
+/// This is the P2 core. The player marks where they expect the needle to settle; the kernel runs the
+/// real model; the gap between the two is δ. A mark that agrees with the actual produces δ = 0; a mark
+/// that the actual overshoots produces a positive δ. The sign and magnitude must be the arithmetic
+/// difference, not an approximation of it.
+#[test]
+fn the_ghost_twin_divergence_is_actual_minus_expected() {
+    let net = network();
+    let plan = ChillPlan::underspecified();
+
+    // The actual inlet fraction for the under-specified plan is ~1.0 (it cavitates). Marking below
+    // that produces a positive divergence; marking above produces a negative one.
+    let actual = net
+        .simulate(&plan, 0.50, 60.0)
+        .unwrap()
+        .pump_inlet_vapour_fraction;
+
+    let low_mark = Mark::inlet(plan, 0.5);
+    let low = ghost_twin(&low_mark, &net, 0.50, 60.0).expect("a valid mark produces a ghost twin");
+    assert!(
+        (low.divergence - (actual - 0.5)).abs() < 1e-12,
+        "divergence {} must be actual ({}) minus expected (0.5)",
+        low.divergence,
+        actual,
+    );
+    assert_eq!(low.expected, 0.5);
+    assert_eq!(low.actual, actual);
+
+    let high_mark = Mark::inlet(plan, actual + 0.1);
+    let high = ghost_twin(&high_mark, &net, 0.50, 60.0).expect("a valid mark produces a ghost twin");
+    assert!(
+        high.divergence < 0.0,
+        "a mark above the actual must produce a negative divergence, got {}",
+        high.divergence,
+    );
+}
+
+/// The ghost twin is reproducible: the same mark and plan produce the same δ on every run.
+///
+/// The Loop of Consequence is a gate, not a story. If the divergence depended on when it was computed,
+/// the reward prediction error would be noise rather than signal.
+#[test]
+fn the_ghost_twin_is_reproducible() {
+    let net = network();
+    let plan = ChillPlan::underspecified();
+    let mark = Mark::inlet(plan, 0.3);
+
+    let a = ghost_twin(&mark, &net, 0.50, 60.0).unwrap();
+    let b = ghost_twin(&mark, &net, 0.50, 60.0).unwrap();
+    assert_eq!(a, b, "the same mark and plan must produce the same ghost twin exactly");
+}
+
+/// A non-finite expected value is refused: a mark with no meaning is not a prediction.
+#[test]
+fn a_non_finite_mark_is_refused() {
+    let net = network();
+    let plan = ChillPlan::underspecified();
+    let mark = Mark::inlet(plan, f64::NAN);
+    assert!(
+        ghost_twin(&mark, &net, 0.50, 60.0).is_none(),
+        "a NaN mark must be refused, not answered",
+    );
+}
+
+/// The one arrow names the single largest contributor to the divergence.
+///
+/// §6.2: `argmax over xᵢ of | ∂(Actual − Expected) / ∂xᵢ |`. The pad's plan has two inputs -- chill
+/// time and bleeds. The arrow must name the larger of the two sensitivities, and the result must be
+/// reproducible.
+#[test]
+fn the_one_arrow_names_the_largest_contributor() {
+    let net = network();
+    // chill_s=60, bleeds=0 gives an interior flash (~0.56): the needle is between the rails, so it
+    // responds to the plan inputs and the arrow has something to point at. The under-specified plan
+    // (chill_s=5, bleeds=0) flashes to 1.0 -- clamped at the rail -- where the sensitivity is zero
+    // and the arrow correctly points at nothing.
+    let plan = ChillPlan {
+        chill_s: 60.0,
+        bleeds: 0,
+    };
+    let mark = Mark::inlet(plan, 0.1);
+
+    let result = attribution(&mark, &net, 0.50, 60.0);
+    // The mark (0.1) disagrees with the actual (~0.56), so there is a divergence to attribute.
+    assert_ne!(
+        result.which,
+        Attribution::None,
+        "a divergent mark must produce an attribution, not None",
+    );
+    // The sensitivities must be non-negative and finite.
+    assert!(result.sensitivity_chill >= 0.0);
+    assert!(result.sensitivity_bleeds >= 0.0);
+    // The arrow names the larger of the two.
+    match result.which {
+        Attribution::ChillTime => {
+            assert!(
+                result.sensitivity_chill > result.sensitivity_bleeds,
+                "arrow says chill time but bleeds sensitivity ({}) is larger than chill ({})",
+                result.sensitivity_bleeds,
+                result.sensitivity_chill,
+            );
+        }
+        Attribution::Bleeds => {
+            assert!(
+                result.sensitivity_bleeds > result.sensitivity_chill,
+                "arrow says bleeds but chill sensitivity ({}) is larger than bleeds ({})",
+                result.sensitivity_chill,
+                result.sensitivity_bleeds,
+            );
+        }
+        Attribution::None => unreachable!("checked above"),
+    }
+}
+
+/// The one arrow is reproducible: the same mark and plan produce the same attribution.
+#[test]
+fn the_one_arrow_is_reproducible() {
+    let net = network();
+    let plan = ChillPlan::underspecified();
+    let mark = Mark::inlet(plan, 0.2);
+
+    let a = attribution(&mark, &net, 0.50, 60.0);
+    let b = attribution(&mark, &net, 0.50, 60.0);
+    assert_eq!(a, b, "the same mark and plan must produce the same attribution exactly");
+}
+
+/// A mark that agrees with the actual produces no arrow: a zero gap points nowhere.
+///
+/// The bible's rule is "one arrow, not five" -- but an arrow on a zero divergence is not a
+/// consequence, it is decoration. The attribution must be `None` when the mark and the actual agree.
+#[test]
+fn a_mark_that_agrees_with_the_actual_produces_no_arrow() {
+    let net = network();
+    let plan = ChillPlan::underspecified();
+    let actual = net
+        .simulate(&plan, 0.50, 60.0)
+        .unwrap()
+        .pump_inlet_vapour_fraction;
+    let mark = Mark::inlet(plan, actual);
+
+    let result = attribution(&mark, &net, 0.50, 60.0);
+    assert_eq!(
+        result.which,
+        Attribution::None,
+        "a mark equal to the actual must produce no attribution",
+    );
+}
+
+/// The design hash is deterministic: the same kernel produces the same hash on every run.
+///
+/// An Akashi entry is stamped with this so a reader can tell which kernel version produced it. If the
+/// hash were not deterministic, the stamp would be noise.
+#[test]
+fn the_design_hash_is_deterministic() {
+    let a = design_hash();
+    let b = design_hash();
+    assert_eq!(a, b, "the design hash must be a pure function of the constants");
+    assert_ne!(a, 0, "the design hash must not be the zero value");
+}
+
+/// The Akashi entry is a pure function of `(design hash, epoch, input log, mark)`.
+///
+/// §4.4: the entry is generated deterministically. The same inputs produce the same entry on every
+/// platform, every run. The wreck, ghost twin, and attribution on the entry must all be computed from
+/// the same plan, so the entry is self-consistent: a reader can take the plan and re-simulate it.
+#[test]
+fn the_akashi_entry_is_deterministic_and_self_consistent() {
+    let net = network();
+    let plan = ChillPlan::underspecified();
+    let mark = Mark::inlet(plan, 0.1);
+
+    let a = akashi_entry(&net, 7, &plan, 0.50, 60.0, Some(&mark)).expect("a valid entry");
+    let b = akashi_entry(&net, 7, &plan, 0.50, 60.0, Some(&mark)).expect("a valid entry");
+    assert_eq!(a, b, "the same inputs must produce the same Akashi entry exactly");
+
+    // The design hash is the kernel's, not a caller-supplied value.
+    assert_eq!(a.design_hash, design_hash());
+    // The epoch is carried through.
+    assert_eq!(a.epoch, 7);
+    // The plan is carried through.
+    assert_eq!(a.plan, plan);
+    // The ghost twin on the entry agrees with a direct computation.
+    let direct = ghost_twin(&mark, &net, 0.50, 60.0).unwrap();
+    assert_eq!(a.ghost, Some(direct));
+    // The wreck on the entry agrees with a direct computation.
+    assert_eq!(a.wreck, net.wreck(&plan, 0.50, 60.0));
+}
+
+/// The Akashi entry carries the Loop of Consequence end-to-end: mark → ghost twin → attribution → wreck.
+///
+/// This is the P2 gate. An entry with a mark must carry the ghost twin (the divergence δ), the one
+/// arrow (the attribution), and the wreck (the consequence). An entry without a mark carries no ghost
+/// twin and no attribution, but still carries the wreck -- the loop can fire without a prediction, but
+/// the consequence is always recorded.
+#[test]
+fn the_akashi_entry_carries_the_loop_of_consequence() {
+    let net = network();
+    // Use a plan with an interior flash so the attribution fires. The under-specified plan flashes
+    // to 1.0 (the rail), where the arrow correctly points at nothing -- but the gate here is that
+    // the full loop fires end-to-end, which needs a divergent mark with a live arrow.
+    let plan = ChillPlan {
+        chill_s: 60.0,
+        bleeds: 0,
+    };
+
+    // With a mark: the full loop.
+    let mark = Mark::inlet(plan, 0.1);
+    let entry = akashi_entry(&net, 1, &plan, 0.50, 60.0, Some(&mark)).unwrap();
+    assert!(entry.mark.is_some(), "an entry with a mark must carry it");
+    assert!(entry.ghost.is_some(), "an entry with a mark must carry the ghost twin");
+    assert!(
+        entry.ghost.unwrap().divergence != 0.0,
+        "the ghost twin must carry a non-zero divergence for a divergent mark",
+    );
+    assert_ne!(
+        entry.attribution.which,
+        Attribution::None,
+        "an entry with a divergent mark must carry an attribution",
+    );
+    assert!(entry.wreck.is_some(), "the plan cavitates, so the entry must carry a wreck");
+
+    // Without a mark: the consequence still fires, but there is no prediction to compare against.
+    let entry_no_mark = akashi_entry(&net, 2, &plan, 0.50, 60.0, None).unwrap();
+    assert!(entry_no_mark.mark.is_none());
+    assert!(entry_no_mark.ghost.is_none(), "no mark means no ghost twin");
+    assert_eq!(
+        entry_no_mark.attribution.which,
+        Attribution::None,
+        "no mark means no attribution",
+    );
+    assert!(entry_no_mark.wreck.is_some(), "the wreck fires regardless of whether a mark was placed");
+}

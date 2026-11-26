@@ -61,7 +61,7 @@
 
 use crate::is_positive_finite;
 use crate::provenance::{Prov, Quantity};
-use odderon_dmath::{exp, fmin, is_finite, ln};
+use odderon_dmath::{exp, fabs, fmin, is_finite, ln};
 
 // =============================================================================================
 // The cryogen: liquid oxygen
@@ -566,4 +566,324 @@ impl CryoNetwork {
     pub fn is_wreck(&self, plan: &ChillPlan, fill_rate_kg_per_s: f64, window_s: f64) -> bool {
         self.wreck(plan, fill_rate_kg_per_s, window_s).is_some()
     }
+}
+
+// =============================================================================================
+// P2: The Mark -- grease pencil, ghost twin, one arrow, Akashi
+// =============================================================================================
+//
+// The Loop of Consequence (`GAME-DESIGN-BIBLE.md` §3, §6.1, §6.2): the player commits an expectation
+// (the grease-pencil mark), the kernel runs the real model, and the gap between the mark and the actual
+// reading is the reward prediction error δ. The ghost twin shows the player's assumed reading against
+// reality; the one arrow names the single input that most contributes to the divergence; the Akashi
+// entry is the deterministic record of the whole loop.
+//
+// Every function here is a pure function of its inputs, the same discipline the rest of the module
+// follows: the same mark and plan produce the same ghost twin, the same attribution, and the same
+// Akashi entry on every platform, every run.
+
+/// Which gauge a grease-pencil mark is placed on.
+///
+/// The pad's primary gauge is the pump inlet vapour fraction: it is the reading the cavitation
+/// predicate reads, and the one the bible's failure turns on. A mark on this gauge is the player's
+/// expectation of where the needle will settle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MarkGauge {
+    /// The pump inlet vapour fraction, dimensionless 0–1.
+    InletVapourFraction,
+}
+
+/// A grease-pencil mark: the player's expectation, recorded before the fill.
+///
+/// The bible's gesture (§6.1): hover the gauge, a faint yellow ghost tick follows at the pointer, one
+/// click snaps a yellow mark onto the glass. The mark is the player's *implicit model* -- what they
+/// expect the reading to be. It is captured before the run, so the prediction error is a function of the
+/// mark and the plan, not of when the run happens.
+///
+/// The mark carries the plan it was made under, because the expectation is a claim about that plan: a
+/// mark made under one checklist says nothing about a different one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Mark {
+    /// Which gauge the mark is on.
+    pub gauge: MarkGauge,
+    /// The value the player expects, in the gauge's own units.
+    pub expected: f64,
+    /// The plan the mark was made under.
+    pub plan: ChillPlan,
+}
+
+impl Mark {
+    /// A mark on the inlet vapour fraction gauge.
+    pub fn inlet(plan: ChillPlan, expected: f64) -> Mark {
+        Mark {
+            gauge: MarkGauge::InletVapourFraction,
+            expected,
+            plan,
+        }
+    }
+}
+
+/// The ghost twin: the player's expected reading against the actual, and the divergence between them.
+///
+/// This is §6.2's overlay: the translucent yellow ghost of what the player assumed, placed against solid
+/// reality. The divergence δ = actual - expected is the reward prediction error -- the gap on the glass
+/// that the brain registers. A mark that agrees with the actual produces δ = 0; a mark that is absent
+/// (no mark placed) is not a ghost twin at all, which is why this is an `Option`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GhostTwin {
+    /// The player's expected reading (the yellow ghost).
+    pub expected: f64,
+    /// The kernel's actual reading (the steel needle).
+    pub actual: f64,
+    /// The divergence: actual - expected. Positive means the actual exceeded the expectation.
+    pub divergence: f64,
+}
+
+/// Compute the ghost twin for a mark against the actual reading the kernel produces for the same plan.
+///
+/// The mark and the plan must agree: the mark is a claim about *this* plan, so the actual is computed
+/// from the mark's own plan, not from a different one. A non-finite expected value is refused (`None`),
+/// the same rule the rest of the module applies to a reading with no meaning.
+///
+/// Returns `None` if the plan is refused (a non-finite chill time) or the expected value is non-finite,
+/// because a ghost twin with a missing side is not a ghost twin -- it is a number with no comparison.
+pub fn ghost_twin(mark: &Mark, net: &CryoNetwork, fill_rate_kg_per_s: f64, window_s: f64) -> Option<GhostTwin> {
+    if !is_finite(mark.expected) {
+        return None;
+    }
+    let actual = match mark.gauge {
+        MarkGauge::InletVapourFraction => {
+            net.simulate(&mark.plan, fill_rate_kg_per_s, window_s)?
+                .pump_inlet_vapour_fraction
+        }
+    };
+    if !is_finite(actual) {
+        return None;
+    }
+    Some(GhostTwin {
+        expected: mark.expected,
+        actual,
+        divergence: actual - mark.expected,
+    })
+}
+
+/// Which plan input most contributes to a divergence. The one arrow.
+///
+/// §6.2: `argmax over xᵢ of | ∂(Actual − Expected) / ∂xᵢ |`. Since the expected value is a constant
+/// (the mark), the divergence's sensitivity to each input is just the actual's sensitivity: the arrow
+/// names the input the player most needs to adjust to close the gap.
+///
+/// The pad's plan has two inputs -- chill time and bleeds. Both are computed analytically from the
+/// chilldown residual heat, which is the quantity the inlet vapour fraction reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Attribution {
+    /// The chill time (`chill_s`) is the largest contributor.
+    ChillTime,
+    /// The purge cycles (`bleeds`) are the largest contributor.
+    Bleeds,
+    /// No divergence: the mark agrees with the actual (within the refusal tolerance), so there is
+    /// nothing to attribute. An arrow on a zero gap points nowhere.
+    None,
+}
+
+/// The one-arrow result: which input the arrow points at, and the two sensitivities it compared.
+///
+/// The sensitivities are carried so the page can show *how much* each input contributes, not just the
+/// verdict -- the bible's "one arrow, not five" is about the verdict, but the numbers behind it are
+/// what make the arrow honest rather than a guess.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AttributionResult {
+    /// The verdict: which input the arrow points at.
+    pub which: Attribution,
+    /// |∂actual/∂chill_s|, the sensitivity of the actual reading to chill time.
+    pub sensitivity_chill: f64,
+    /// |∂actual/∂bleeds|, the sensitivity of the actual reading to purge cycles.
+    pub sensitivity_bleeds: f64,
+}
+
+/// The one-arrow attribution: which plan input most contributes to the divergence between the mark and
+/// the actual reading.
+///
+/// The sensitivities are computed analytically. The inlet vapour fraction is `flash_fraction(q_res,
+/// margin)`, and `q_res = chilldown_residual_heat(plan)`. The chain rule gives:
+///
+/// * `∂q_res/∂chill_s = -q_res / CHILL_TAU_S`
+/// * `∂q_res/∂bleeds  = q_res * ln(1 - BLEED_FRACTION)`
+///
+/// and `∂flash/∂q_res = 1/LOX_LATENT_HEAT` when the flash is in the interior (not clamped at 0 or 1),
+/// zero when it is clamped. The arrow compares the two absolute sensitivities and names the larger.
+///
+/// A non-finite or refused plan returns `Attribution::None` with zero sensitivities: there is no
+/// divergence to attribute because there is no actual reading to compare against.
+pub fn attribution(mark: &Mark, net: &CryoNetwork, fill_rate_kg_per_s: f64, window_s: f64) -> AttributionResult {
+    let Some(ghost) = ghost_twin(mark, net, fill_rate_kg_per_s, window_s) else {
+        return AttributionResult {
+            which: Attribution::None,
+            sensitivity_chill: 0.0,
+            sensitivity_bleeds: 0.0,
+        };
+    };
+    // The flash is in the interior (0 < f < 1) only when the residual heat is above the subcooling
+    // margin but below the latent heat. When it is clamped at 0 or 1, the sensitivity of the flash to
+    // the residual heat is zero, and so are both input sensitivities -- the reading does not respond
+    // to the plan in that region. That is honest: the arrow points at nothing because the needle is
+    // pinned at the rail.
+    let q_res = match chilldown_residual_heat(&mark.plan) {
+        Some(q) => q,
+        None => {
+            return AttributionResult {
+                which: Attribution::None,
+                sensitivity_chill: 0.0,
+                sensitivity_bleeds: 0.0,
+            };
+        }
+    };
+    let margin = match subcooling_margin_j_per_kg(net.initial_temperature_k, net.initial_pressure_kpa) {
+        Some(m) => m,
+        None => {
+            return AttributionResult {
+                which: Attribution::None,
+                sensitivity_chill: 0.0,
+                sensitivity_bleeds: 0.0,
+            };
+        }
+    };
+    let flash = match flash_fraction(q_res, margin) {
+        Some(f) => f,
+        None => {
+            return AttributionResult {
+                which: Attribution::None,
+                sensitivity_chill: 0.0,
+                sensitivity_bleeds: 0.0,
+            };
+        }
+    };
+    // Interior only: the flash responds to the residual heat. At the rails it does not.
+    if flash <= 0.0 || flash >= 1.0 {
+        return AttributionResult {
+            which: Attribution::None,
+            sensitivity_chill: 0.0,
+            sensitivity_bleeds: 0.0,
+        };
+    }
+    // d(flash)/d(q_res) = 1 / LOX_LATENT_HEAT in the interior.
+    let d_flash_d_qres = 1.0 / LOX_LATENT_HEAT.value;
+    // d(q_res)/d(chill_s) = -q_res / CHILL_TAU_S; d(q_res)/d(bleeds) = q_res * ln(1 - f).
+    let d_qres_d_chill = -q_res / CHILL_TAU_S.value;
+    let d_qres_d_bleeds = q_res * ln(1.0 - BLEED_FRACTION.value);
+    let sens_chill = fabs(d_flash_d_qres * d_qres_d_chill);
+    let sens_bleeds = fabs(d_flash_d_qres * d_qres_d_bleeds);
+    let which = if sens_bleeds > sens_chill {
+        Attribution::Bleeds
+    } else if sens_chill > sens_bleeds {
+        Attribution::ChillTime
+    } else {
+        Attribution::None
+    };
+    // A zero divergence means the mark agreed with the actual: no arrow on a zero gap.
+    let which = if fabs(ghost.divergence) < 1e-12 {
+        Attribution::None
+    } else {
+        which
+    };
+    AttributionResult {
+        which,
+        sensitivity_chill: sens_chill,
+        sensitivity_bleeds: sens_bleeds,
+    }
+}
+
+/// A deterministic hash of this module's constants, so an Akashi entry is pinned to a specific kernel
+/// version.
+///
+/// The bible (§4.4) requires the entry to be generated from `(design hash, epoch, input log)`. The
+/// design hash is a hash of the physical constants and modelling choices below: if any of them change,
+/// the hash changes, and an old Akashi entry can be told apart from a new one. A simple FNV-1a over the
+/// constant values is deterministic, `no_std`, and enough for that purpose -- it is a version stamp, not
+/// a cryptographic commitment.
+pub fn design_hash() -> u64 {
+    // FNV-1a, 64-bit. Each constant is folded in as its bit pattern.
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut mix = |v: f64| {
+        let bits = v.to_bits();
+        hash ^= bits;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    };
+    mix(LOX_NBP_K);
+    mix(ATMOSPHERE_KPA);
+    mix(LOX_GAS_CONSTANT);
+    mix(LOX_LATENT_HEAT.value);
+    mix(LOX_CP.value);
+    mix(LINE_INITIAL_TEMP_K.value);
+    mix(LINE_CHILL_FLOOR_K.value);
+    mix(CHILL_TAU_S.value);
+    mix(BLEED_FRACTION.value);
+    mix(CAVITATION_THRESHOLD.value);
+    mix(REFERENCE_FILL_RATE.value);
+    hash
+}
+
+/// An Akashi entry: the deterministic portfolio record of one Loop of Consequence.
+///
+/// §4.4: generated from `(design hash, epoch, input log)`. It carries the input log, the player's mark,
+/// the ghost twin (predicted vs actual), the one-arrow attribution, the wreck (if the run failed), and
+/// the provenance of the assumed constants. It is a pure function of its inputs: the same design hash,
+/// epoch, and input log produce the same entry on every platform, every run.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AkashiEntry {
+    /// The design hash: which kernel version this entry was produced by.
+    pub design_hash: u64,
+    /// The epoch: a monotonic counter, so two entries from the same input log are distinguishable.
+    pub epoch: u64,
+    /// The input log: the plan the entry is about.
+    pub plan: ChillPlan,
+    /// The fill rate, kg/s.
+    pub fill_rate_kg_per_s: f64,
+    /// The fill window, simulated seconds.
+    pub window_s: f64,
+    /// The player's grease-pencil mark, if one was placed.
+    pub mark: Option<Mark>,
+    /// The ghost twin: predicted vs actual and the divergence δ.
+    pub ghost: Option<GhostTwin>,
+    /// The one-arrow attribution.
+    pub attribution: AttributionResult,
+    /// The wreck, if the run failed.
+    pub wreck: Option<Wreck>,
+}
+
+/// Generate an Akashi entry deterministically from `(design hash, epoch, input log, mark)`.
+///
+/// The entry is a pure function of its inputs. The design hash is computed from the module's constants
+/// (not passed in), so an entry is always pinned to the kernel version that produced it. The epoch is a
+/// caller-supplied counter, so the same input log can produce multiple distinguishable entries over
+/// time. The wreck is computed from the same plan, so the entry is self-consistent: a reader can take
+/// the plan on the entry and re-simulate it to confirm the wreck and the ghost twin.
+pub fn akashi_entry(
+    net: &CryoNetwork,
+    epoch: u64,
+    plan: &ChillPlan,
+    fill_rate_kg_per_s: f64,
+    window_s: f64,
+    mark: Option<&Mark>,
+) -> Option<AkashiEntry> {
+    let ghost = mark.and_then(|m| ghost_twin(m, net, fill_rate_kg_per_s, window_s));
+    let attribution = match mark {
+        Some(m) => attribution(m, net, fill_rate_kg_per_s, window_s),
+        None => AttributionResult {
+            which: Attribution::None,
+            sensitivity_chill: 0.0,
+            sensitivity_bleeds: 0.0,
+        },
+    };
+    Some(AkashiEntry {
+        design_hash: design_hash(),
+        epoch,
+        plan: *plan,
+        fill_rate_kg_per_s,
+        window_s,
+        mark: mark.copied(),
+        ghost,
+        attribution,
+        wreck: net.wreck(plan, fill_rate_kg_per_s, window_s),
+    })
 }
