@@ -129,6 +129,17 @@ pub mod cryo;
 /// the surface-relative readings that turn an orbit into a flight. See [`rocket::rocket_flight`].
 pub mod rocket;
 
+/// Light-time and the comms link: the delay a signal takes to cross the distance between two
+/// positions, and the arrival time it predicts.
+///
+/// Not astrodynamics in the orbital sense, for the same reason [`cryo`], [`thermal`] and [`rocket`]
+/// are here: `odderon-astro` is the only `no_std` crate in the workspace, gated by the same kernel
+/// rules, and light-time is a pure function of two positions and the one defined constant
+/// [`lighttime::SPEED_OF_LIGHT_KM_S`]. It is the primitive the causal-mail claim
+/// (`GAME-DESIGN-BIBLE.md` §11.2) is built from: a message sent at a known time over a known
+/// distance arrives at a time this module predicts, deterministically. See [`lighttime::light_time_s`].
+pub mod lighttime;
+
 /// Gravitational parameters, km³/s².
 ///
 /// Values from the IAU/JPL published constants. They are *data*, not physics: a body's `mu` is a
