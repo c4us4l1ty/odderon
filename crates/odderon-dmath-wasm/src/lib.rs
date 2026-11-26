@@ -1202,7 +1202,9 @@ pub extern "C" fn peer_pos_x(
     nu: f64,
     dt: f64,
 ) -> f64 {
-    peer_state(p, e, i, raan, argp, nu, dt).map(|s| s.r.x).unwrap_or(f64::NAN)
+    peer_state(p, e, i, raan, argp, nu, dt)
+        .map(|s| s.r.x)
+        .unwrap_or(f64::NAN)
 }
 
 /// `y` of a peer ship's position, km. See [`peer_pos_x`].
@@ -1216,7 +1218,9 @@ pub extern "C" fn peer_pos_y(
     nu: f64,
     dt: f64,
 ) -> f64 {
-    peer_state(p, e, i, raan, argp, nu, dt).map(|s| s.r.y).unwrap_or(f64::NAN)
+    peer_state(p, e, i, raan, argp, nu, dt)
+        .map(|s| s.r.y)
+        .unwrap_or(f64::NAN)
 }
 
 /// `z` of a peer ship's position, km. See [`peer_pos_x`].
@@ -1230,26 +1234,34 @@ pub extern "C" fn peer_pos_z(
     nu: f64,
     dt: f64,
 ) -> f64 {
-    peer_state(p, e, i, raan, argp, nu, dt).map(|s| s.r.z).unwrap_or(f64::NAN)
+    peer_state(p, e, i, raan, argp, nu, dt)
+        .map(|s| s.r.z)
+        .unwrap_or(f64::NAN)
 }
 
 /// `x` of the authored ground station's inertial position at `from`, km. `NaN` when the site cannot
 /// be built. See [`station_position`].
 #[unsafe(no_mangle)]
 pub extern "C" fn station_pos_x(lat: f64, lon: f64, from: f64) -> f64 {
-    station_position(lat, lon, from).map(|v| v.x).unwrap_or(f64::NAN)
+    station_position(lat, lon, from)
+        .map(|v| v.x)
+        .unwrap_or(f64::NAN)
 }
 
 /// `y` of the station's inertial position, km. See [`station_pos_x`].
 #[unsafe(no_mangle)]
 pub extern "C" fn station_pos_y(lat: f64, lon: f64, from: f64) -> f64 {
-    station_position(lat, lon, from).map(|v| v.y).unwrap_or(f64::NAN)
+    station_position(lat, lon, from)
+        .map(|v| v.y)
+        .unwrap_or(f64::NAN)
 }
 
 /// `z` of the station's inertial position, km. See [`station_pos_x`].
 #[unsafe(no_mangle)]
 pub extern "C" fn station_pos_z(lat: f64, lon: f64, from: f64) -> f64 {
-    station_position(lat, lon, from).map(|v| v.z).unwrap_or(f64::NAN)
+    station_position(lat, lon, from)
+        .map(|v| v.z)
+        .unwrap_or(f64::NAN)
 }
 
 /// The one-way light-time from a peer ship to the authored ground station, seconds. The peer's
@@ -1286,7 +1298,8 @@ pub extern "C" fn mail_light_time_s(
     lon: f64,
     send_s: f64,
 ) -> f64 {
-    mail_light_time_opt(p, e, i, raan, argp, nu, lat, lon, send_s).unwrap_or(f64::NAN)
+    mail_light_time_opt(p, e, i, raan, argp, nu, lat, lon, send_s)
+        .unwrap_or(f64::NAN)
 }
 
 /// The arrival time on the orbit clock of a message a peer sent at `send_s`: `send_s` plus the
