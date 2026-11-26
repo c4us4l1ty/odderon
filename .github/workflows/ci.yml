@@ -180,6 +180,13 @@ jobs:
       - name: orbit-mission boundary (a predicted pass, honestly refused outside the band)
         run: node tools/check-orbit-mission.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
 
+      # The light-time comms' P3 boundary, against the same binary: the primitive gives exactly 1.0 s
+      # for a one-light-second distance and refuses coincident positions; the composed link gives a
+      # finite one-way delay, round-trip = 2 x one-way, arrival = send + one-way, all reproducible, and
+      # a refused site is status 2 -- the replay gate. Static half in `shell-claims`.
+      - name: lighttime boundary (a real light-time, honestly refused for a bad site)
+        run: node tools/check-lighttime.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
+
       - name: stage wasm artifacts
         run: |
           mkdir -p dist
@@ -328,6 +335,16 @@ jobs:
 
       - name: orbit-mission verifier self-test (accepts good exports, rejects bad)
         run: node tools/check-orbit-mission.mjs --selftest
+
+      # P3 Block 6: the light-time comms. The page must read the light-time and the message arrival
+      # from the kernel's `comms_*`/`light_time_s` exports -- no local speed-of-light constant, no local
+      # distance/c, no substitute delay when the kernel is absent. This is the gate that makes the
+      # causal-mail prediction mechanically the kernel's own, the same way the other P3 gates guard theirs.
+      - name: the comms link predicts light-time from the kernel, not from a JS delay
+        run: node tools/check-lighttime.mjs
+
+      - name: lighttime verifier self-test (accepts good exports, rejects bad)
+        run: node tools/check-lighttime.mjs --selftest
       # On 2026-11-24 this job failed on a condition the page handles correctly: the optional wasm
       # artifact is absent on a clean checkout, the browser logs a 404, and `tools/screenshot.mjs` treats
       # any console error as an untrustworthy frame. The capture now exempts that one error -- but only

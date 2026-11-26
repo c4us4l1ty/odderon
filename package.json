@@ -22,7 +22,8 @@
     "check:cache": "node tools/check-cache.mjs",
     "check:classes": "node tools/check-classes.mjs && node tools/check-classes-selftest.mjs",
     "check:rocket": "node tools/check-rocket.mjs",
-    "check:orbit-mission": "node tools/check-orbit-mission.mjs"
+    "check:orbit-mission": "node tools/check-orbit-mission.mjs",
+    "check:lighttime": "node tools/check-lighttime.mjs"
   },
   "devDependencies": {
     "@sparticuz/chromium": "131.0.0",

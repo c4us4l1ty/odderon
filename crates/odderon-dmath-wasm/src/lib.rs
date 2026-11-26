@@ -1015,6 +1015,115 @@ pub extern "C" fn pass_next_set_az_deg(lat: f64, lon: f64, from: f64) -> f64 {
     }
 }
 
+// =============================================================================================
+// The orbit mission: light-time comms
+// =============================================================================================
+//
+// The pass exports above answer *when* the body is over the station. Light-time answers the other
+// half of the causal-mail claim (`GAME-DESIGN-BIBLE.md` §11.2): a message does not arrive when it is
+// sent, it arrives after it crosses the distance at the speed of light. For an orbital body that
+// distance is hundreds of kilometres, so the delay is real and measurable -- and it is the quantity
+// a controller actually feels, which is why round-trip is exported alongside one-way.
+//
+// The composition is the same shape as the pass exports: the player authors the ground station
+// (geodetic lat/lon), the kernel builds the site through `Site::from_geodetic`, rotates it into the
+// inertial frame at the orbit clock `from`, takes the orbiting body's position at the same instant
+// from the same reference orbit, and divides the distance by the one defined speed of light. Both
+// positions are in the Earth-centered inertial frame, so the distance is a straight line and the
+// delay is a pure function of `(lat, lon, from)` -- the P3 replay claim.
+//
+// A link that cannot be computed (a site the ellipsoid refuses, a non-finite position, a zero
+// distance) is reported as `NaN` readings with `comms_link_status = 0` or `2`, never as a number the
+// page would print as a delay.
+
+/// One-way light time between two positions in the same inertial frame, seconds.
+///
+/// The primitive the whole comms link rests on: Euclidean distance divided by the exact, defined speed
+/// of light. Returns `NaN` when the distance is not strictly positive and finite (NaN/infinite input,
+/// or two coincident positions) -- a refusal, not a delay.
+#[unsafe(no_mangle)]
+pub extern "C" fn light_time_s(fx: f64, fy: f64, fz: f64, tx: f64, ty: f64, tz: f64) -> f64 {
+    let from = odderon_astro::Vec3::new(fx, fy, fz);
+    let to = odderon_astro::Vec3::new(tx, ty, tz);
+    match odderon_astro::lighttime::light_time_s(from, to) {
+        Some(t) => t,
+        None => f64::NAN,
+    }
+}
+
+/// `0` = no link (the light time could not be computed), `1` = the link is computable,
+/// `2` = the station could not be built. The gate the page reads before believing any comms field.
+fn comms_status(lat: f64, lon: f64, from: f64) -> u32 {
+    match station_body_light_time_s(lat, lon, from) {
+        Some(_) => 1,
+        None => {
+            // Distinguish "the site was refused" from "the distance was refused": only the first is a
+            // station the player can fix by moving it.
+            if site_is_refused(lat, lon) {
+                2
+            } else {
+                0
+            }
+        }
+    }
+}
+
+/// Whether the geodetic site itself could not be built (the ellipsoid refused it).
+fn site_is_refused(lat: f64, lon: f64) -> bool {
+    odderon_astro::observe::Site::from_geodetic(&odderon_astro::catalogue::EARTH, lat, lon, 0.0)
+        .is_err()
+}
+
+/// The one-way light time from the authored ground station to the orbiting body, seconds, at orbit
+/// clock `from`. Both positions are taken at the same instant in the inertial frame. `None` when the
+/// link cannot be computed.
+fn station_body_light_time_s(lat: f64, lon: f64, from: f64) -> Option<f64> {
+    let site = odderon_astro::observe::Site::from_geodetic(
+        &odderon_astro::catalogue::EARTH,
+        lat,
+        lon,
+        0.0,
+    )
+    .ok()?;
+    let station = site.inertial_position(&odderon_astro::catalogue::EARTH_FRAME, from)?;
+    let body = state_at(from).r;
+    odderon_astro::lighttime::light_time_s(station, body)
+}
+
+/// `1` if the orbiting body is reachable from the authored station at `from` (a finite light time),
+/// else `0` (no link) or `2` (the station could not be built).
+#[unsafe(no_mangle)]
+pub extern "C" fn comms_link_status(lat: f64, lon: f64, from: f64) -> u32 {
+    comms_status(lat, lon, from)
+}
+
+/// One-way light time from the authored station to the orbiting body at `from`, seconds, or `NaN`.
+#[unsafe(no_mangle)]
+pub extern "C" fn station_light_time_s(lat: f64, lon: f64, from: f64) -> f64 {
+    station_body_light_time_s(lat, lon, from).unwrap_or(f64::NAN)
+}
+
+/// Round-trip light time: the signal to the body and the reply back, seconds, or `NaN`. The quantity
+/// a real comms link is sized against -- the latency a controller feels, not the one-way figure.
+#[unsafe(no_mangle)]
+pub extern "C" fn comms_round_trip_s(lat: f64, lon: f64, from: f64) -> f64 {
+    match station_body_light_time_s(lat, lon, from) {
+        Some(t) => 2.0 * t,
+        None => f64::NAN,
+    }
+}
+
+/// The arrival time on the orbit clock of a message sent at `from` from the authored station to the
+/// orbiting body, seconds, or `NaN`. The arrival is `from + light_time`, the pure function the
+/// light-cone ledger is built from.
+#[unsafe(no_mangle)]
+pub extern "C" fn comms_arrival_s(lat: f64, lon: f64, from: f64) -> f64 {
+    match station_body_light_time_s(lat, lon, from) {
+        Some(t) => from + t,
+        None => f64::NAN,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     // The ABI is a contract a host can violate with a single bad number, and two of the values it can
