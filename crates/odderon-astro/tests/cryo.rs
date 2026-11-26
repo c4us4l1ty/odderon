@@ -206,8 +206,14 @@ fn a_line_past_saturation_has_no_margin() {
 /// with time is not a chilldown.
 #[test]
 fn more_chill_time_removes_more_heat() {
-    let short = chilldown_residual_heat(&ChillPlan { chill_s: 5.0, bleeds: 0 }).unwrap();
-    let long = chilldown_residual_heat(&ChillPlan { chill_s: 600.0, bleeds: 0 }).unwrap();
+    let short = chilldown_residual_heat(&ChillPlan {
+        chill_s: 5.0,
+        bleeds: 0,
+    }).unwrap();
+    let long = chilldown_residual_heat(&ChillPlan {
+        chill_s: 600.0,
+        bleeds: 0,
+    }).unwrap();
     assert!(long < short, "longer chill must leave less heat: {} vs {}", long, short);
     assert!(long > 0.0, "chilldown asymptotes to the floor, never below zero");
 }
@@ -215,8 +221,14 @@ fn more_chill_time_removes_more_heat() {
 /// More bleeds remove heat too: each purge cycle takes a fraction of the residual with it.
 #[test]
 fn more_bleeds_remove_more_heat() {
-    let few = chilldown_residual_heat(&ChillPlan { chill_s: 60.0, bleeds: 1 }).unwrap();
-    let many = chilldown_residual_heat(&ChillPlan { chill_s: 60.0, bleeds: 5 }).unwrap();
+    let few = chilldown_residual_heat(&ChillPlan {
+        chill_s: 60.0,
+        bleeds: 1,
+    }).unwrap();
+    let many = chilldown_residual_heat(&ChillPlan {
+        chill_s: 60.0,
+        bleeds: 5,
+    }).unwrap();
     assert!(many < few, "more bleeds must leave less heat: {} vs {}", many, few);
 }
 
@@ -226,9 +238,21 @@ fn more_bleeds_remove_more_heat() {
 /// correct chilldown.
 #[test]
 fn neither_chill_time_nor_bleeds_substitutes_for_the_other() {
-    let time_only = chilldown_residual_heat(&ChillPlan { chill_s: 600.0, bleeds: 0 }).unwrap();
-    let bleeds_only = chilldown_residual_heat(&ChillPlan { chill_s: 0.0, bleeds: 5 }).unwrap();
-    let both = chilldown_residual_heat(&ChillPlan { chill_s: 600.0, bleeds: 5 }).unwrap();
+    let time_only = chilldown_residual_heat(&ChillPlan {
+        chill_s: 600.0,
+        bleeds: 0,
+    })
+    .unwrap();
+    let bleeds_only = chilldown_residual_heat(&ChillPlan {
+        chill_s: 0.0,
+        bleeds: 5,
+    })
+    .unwrap();
+    let both = chilldown_residual_heat(&ChillPlan {
+        chill_s: 600.0,
+        bleeds: 5,
+    })
+    .unwrap();
     assert!(both < time_only, "bleeds on top of chill must help");
     assert!(both < bleeds_only, "chill on top of bleeds must help");
 }
@@ -236,9 +260,21 @@ fn neither_chill_time_nor_bleeds_substitutes_for_the_other() {
 /// A non-finite or negative chill time is refused: a plan that is not a plan is not a chilldown.
 #[test]
 fn a_non_finite_chill_plan_is_refused() {
-    assert!(chilldown_residual_heat(&ChillPlan { chill_s: f64::NAN, bleeds: 0 }).is_none());
-    assert!(chilldown_residual_heat(&ChillPlan { chill_s: f64::INFINITY, bleeds: 0 }).is_none());
-    assert!(chilldown_residual_heat(&ChillPlan { chill_s: -1.0, bleeds: 0 }).is_none());
+    assert!(chilldown_residual_heat(&ChillPlan {
+        chill_s: f64::NAN,
+        bleeds: 0
+    })
+    .is_none());
+    assert!(chilldown_residual_heat(&ChillPlan {
+        chill_s: f64::INFINITY,
+        bleeds: 0
+    })
+    .is_none());
+    assert!(chilldown_residual_heat(&ChillPlan {
+        chill_s: -1.0,
+        bleeds: 0
+    })
+    .is_none());
 }
 
 // =============================================================================================
@@ -293,7 +329,9 @@ fn a_non_finite_fill_rate_or_elapsed_time_is_refused() {
 #[test]
 fn an_empty_fill_produces_no_failure() {
     let net = network();
-    let out = net.simulate(&ChillPlan::underspecified(), 0.0, 60.0).unwrap();
+    let out = net
+        .simulate(&ChillPlan::underspecified(), 0.0, 60.0)
+        .unwrap();
     assert_eq!(out.liquid_kg, 0.0);
     assert!(out.failure.is_none(), "an empty fill must not cavitate");
 }
@@ -314,7 +352,10 @@ fn a_failed_run_leaves_a_wreck_and_a_clean_run_leaves_none() {
     assert!(wreck.failure_time_s >= 0.0);
 
     let clean = net.wreck(&ChillPlan::specified(), 0.50, 60.0);
-    assert!(clean.is_none(), "a clean run must leave no wreck to examine");
+    assert!(
+        clean.is_none(),
+        "a clean run must leave no wreck to examine"
+    );
 }
 
 /// THE WRECK CARRIES THE INPUT LOG. A wreck that does not say what was run is a verdict, not a record: a
@@ -323,7 +364,10 @@ fn a_failed_run_leaves_a_wreck_and_a_clean_run_leaves_none() {
 #[test]
 fn the_wreck_carries_the_input_log_that_produced_it() {
     let net = network();
-    let plan = ChillPlan { chill_s: 12.0, bleeds: 1 };
+    let plan = ChillPlan {
+        chill_s: 12.0,
+        bleeds: 1,
+    };
     let wreck = net.wreck(&plan, 0.50, 90.0).expect("this plan cavitates");
     assert_eq!(wreck.chill_s, 12.0);
     assert_eq!(wreck.bleeds, 1);
