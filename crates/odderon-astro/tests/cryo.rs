@@ -161,7 +161,12 @@ fn the_saturation_curve_is_anchored_at_the_normal_boiling_point() {
 fn the_saturation_curve_rises_with_temperature() {
     let cold = vapour_pressure_kpa(85.0).unwrap();
     let warm = vapour_pressure_kpa(100.0).unwrap();
-    assert!(warm > cold, "P_sat must rise with T: {} at 85 K vs {} at 100 K", cold, warm);
+    assert!(
+        warm > cold,
+        "P_sat must rise with T: {} at 85 K vs {} at 100 K",
+        cold,
+        warm
+    );
 }
 
 /// The inverse agrees with the forward curve. `subcooling_margin_j_per_kg` inverts the same Clausius–
@@ -176,7 +181,8 @@ fn the_subcooling_margin_inverts_the_saturation_curve() {
         // Recover T_sat from the margin at a known subcooling: margin = c_p * (T_sat - T_tank), so
         // T_sat = T_tank + margin / c_p. Use a tank 10 K below saturation.
         let tank_t = 80.0;
-        let margin = subcooling_margin_j_per_kg(tank_t, tank_p).expect("a positive subcooling has a margin");
+        let margin =
+            subcooling_margin_j_per_kg(tank_t, tank_p).expect("a positive subcooling has a margin");
         use odderon_astro::cryo::LOX_CP;
         tank_t + margin / LOX_CP.value
     };
@@ -209,13 +215,23 @@ fn more_chill_time_removes_more_heat() {
     let short = chilldown_residual_heat(&ChillPlan {
         chill_s: 5.0,
         bleeds: 0,
-    }).unwrap();
+    })
+    .unwrap();
     let long = chilldown_residual_heat(&ChillPlan {
         chill_s: 600.0,
         bleeds: 0,
-    }).unwrap();
-    assert!(long < short, "longer chill must leave less heat: {} vs {}", long, short);
-    assert!(long > 0.0, "chilldown asymptotes to the floor, never below zero");
+    })
+    .unwrap();
+    assert!(
+        long < short,
+        "longer chill must leave less heat: {} vs {}",
+        long,
+        short
+    );
+    assert!(
+        long > 0.0,
+        "chilldown asymptotes to the floor, never below zero"
+    );
 }
 
 /// More bleeds remove heat too: each purge cycle takes a fraction of the residual with it.
@@ -224,12 +240,19 @@ fn more_bleeds_remove_more_heat() {
     let few = chilldown_residual_heat(&ChillPlan {
         chill_s: 60.0,
         bleeds: 1,
-    }).unwrap();
+    })
+    .unwrap();
     let many = chilldown_residual_heat(&ChillPlan {
         chill_s: 60.0,
         bleeds: 5,
-    }).unwrap();
-    assert!(many < few, "more bleeds must leave less heat: {} vs {}", many, few);
+    })
+    .unwrap();
+    assert!(
+        many < few,
+        "more bleeds must leave less heat: {} vs {}",
+        many,
+        few
+    );
 }
 
 /// Neither mechanism substitutes for the other: a long chill with no bleeds still leaves more heat than the
@@ -262,17 +285,17 @@ fn neither_chill_time_nor_bleeds_substitutes_for_the_other() {
 fn a_non_finite_chill_plan_is_refused() {
     assert!(chilldown_residual_heat(&ChillPlan {
         chill_s: f64::NAN,
-        bleeds: 0
+        bleeds: 0,
     })
     .is_none());
     assert!(chilldown_residual_heat(&ChillPlan {
         chill_s: f64::INFINITY,
-        bleeds: 0
+        bleeds: 0,
     })
     .is_none());
     assert!(chilldown_residual_heat(&ChillPlan {
         chill_s: -1.0,
-        bleeds: 0
+        bleeds: 0,
     })
     .is_none());
 }
