@@ -789,19 +789,25 @@ fn launch_params(lat: f64, az: f64, el: f64, v: f64) -> odderon_astro::rocket::L
 /// non-finite or non-positive parameter) or the trajectory has not been modelled at that time.
 #[unsafe(no_mangle)]
 pub extern "C" fn rocket_state_x(lat: f64, az: f64, el: f64, v: f64, t: f64) -> f64 {
-    odderon_astro::rocket::rocket_state_at(&launch_params(lat, az, el, v), t).r.x
+    odderon_astro::rocket::rocket_state_at(&launch_params(lat, az, el, v), t)
+        .r
+        .x
 }
 
 /// `y` of the rocket position, km. See [`rocket_state_x`].
 #[unsafe(no_mangle)]
 pub extern "C" fn rocket_state_y(lat: f64, az: f64, el: f64, v: f64, t: f64) -> f64 {
-    odderon_astro::rocket::rocket_state_at(&launch_params(lat, az, el, v), t).r.y
+    odderon_astro::rocket::rocket_state_at(&launch_params(lat, az, el, v), t)
+        .r
+        .y
 }
 
 /// `z` of the rocket position, km. See [`rocket_state_x`].
 #[unsafe(no_mangle)]
 pub extern "C" fn rocket_state_z(lat: f64, az: f64, el: f64, v: f64, t: f64) -> f64 {
-    odderon_astro::rocket::rocket_state_at(&launch_params(lat, az, el, v), t).r.z
+    odderon_astro::rocket::rocket_state_at(&launch_params(lat, az, el, v), t)
+        .r
+        .z
 }
 
 /// Apogee altitude above the surface, km, for the authored launch.

@@ -294,7 +294,7 @@ fn range_is_the_central_angle_times_radius() {
 /// Central angle between two position vectors, in radians.
 fn central_angle_of(a: &odderon_astro::Vec3, b: &odderon_astro::Vec3) -> f64 {
     let cos_a = a.dot(*b) / (a.norm() * b.norm());
-    f64::acos(cos_a.min(1.0).max(-1.0))
+    f64::acos(cos_a.clamp(-1.0, 1.0))
 }
 
 // ---------------------------------------------------------------------------
@@ -344,13 +344,21 @@ fn launch_state_velocity_direction_matches_azimuth_and_elevation() {
     };
     let v = launch_state(&params).v;
     // unit direction components: east = sin(az)*cos(el), north = cos(az)*cos(el), up = sin(el).
-    let east = f64::sin(std::f64::consts::PI / 4.0)
-        * f64::cos(std::f64::consts::PI / 4.0);
-    let north = f64::cos(std::f64::consts::PI / 4.0)
-        * f64::cos(std::f64::consts::PI / 4.0);
+    let east = f64::sin(std::f64::consts::PI / 4.0) * f64::cos(std::f64::consts::PI / 4.0);
+    let north = f64::cos(std::f64::consts::PI / 4.0) * f64::cos(std::f64::consts::PI / 4.0);
     let up = f64::sin(std::f64::consts::PI / 4.0);
-    assert!((v.y - east).abs() < 1e-9, "east component {} vs {}", v.y, east);
-    assert!((v.z - north).abs() < 1e-9, "north component {} vs {}", v.z, north);
+    assert!(
+        (v.y - east).abs() < 1e-9,
+        "east component {} vs {}",
+        v.y,
+        east
+    );
+    assert!(
+        (v.z - north).abs() < 1e-9,
+        "north component {} vs {}",
+        v.z,
+        north
+    );
     assert!((v.x - up).abs() < 1e-9, "up component {} vs {}", v.x, up);
 }
 

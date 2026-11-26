@@ -42,7 +42,7 @@
 //!   surface radius. There is no landing burn, no parachute, no recovery sequence — the impact
 //!   time and range are the point at which the trajectory returns to `r = R`, and nothing after.
 
-use crate::{mu, radius, propagate, true_anomaly, Elements, State, Vec3};
+use crate::{mu, propagate, radius, true_anomaly, Elements, State, Vec3};
 use odderon_dmath::{acos, atan2, clamp_unit, cos, is_finite, sin, sqrt};
 
 /// The Kármán line: 100 km above the surface, the conventional boundary of space.
@@ -262,8 +262,7 @@ pub fn rocket_flight(params: &LaunchParams) -> RocketFlight {
     // E = 2·atan2(√(1-e)·sin(ν/2), √(1+e)·cos(ν/2)), M = E - e·sin(E), t = (π - M) / n
     let nu_launch = true_anomaly(&state, mu_earth);
     let half_nu = nu_launch * 0.5;
-    let e_anom = 2.0
-        * atan2(sqrt(1.0 - e) * sin(half_nu), sqrt(1.0 + e) * cos(half_nu));
+    let e_anom = 2.0 * atan2(sqrt(1.0 - e) * sin(half_nu), sqrt(1.0 + e) * cos(half_nu));
     let mean_anom_launch = e_anom - e * sin(e_anom);
 
     let a = elements.semi_major_axis();
