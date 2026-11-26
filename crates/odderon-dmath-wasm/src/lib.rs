@@ -1298,8 +1298,7 @@ pub extern "C" fn mail_light_time_s(
     lon: f64,
     send_s: f64,
 ) -> f64 {
-    mail_light_time_opt(p, e, i, raan, argp, nu, lat, lon, send_s)
-        .unwrap_or(f64::NAN)
+    mail_light_time_opt(p, e, i, raan, argp, nu, lat, lon, send_s).unwrap_or(f64::NAN)
 }
 
 /// The arrival time on the orbit clock of a message a peer sent at `send_s`: `send_s` plus the
