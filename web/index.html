@@ -1346,8 +1346,8 @@ async function loadKernel() {
     const missing = needed.filter((n) => typeof ex[n] !== 'function');
     if (missing.length) throw new Error('module missing exports: ' + missing.join(', '));
     kernelState.module = ex;
-    kernelState.status = 'wasm';
     updateAkashiHash();
+    kernelState.status = 'wasm';
     return ex;
   } catch (e) {
     kernelState.module = null;
