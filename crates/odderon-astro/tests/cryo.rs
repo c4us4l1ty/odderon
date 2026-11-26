@@ -25,8 +25,8 @@
 //! a failure says which of the two disagreed.
 
 use odderon_astro::cryo::{
-    chilldown_residual_heat, flash_fraction, subcooling_margin_j_per_kg, vapour_pressure_kpa, ChillPlan,
-    CryoNetwork, Failure,
+    chilldown_residual_heat, flash_fraction, subcooling_margin_j_per_kg, vapour_pressure_kpa,
+    ChillPlan, CryoNetwork, Failure,
 };
 
 /// The reference pad network and the two plans from the bible: the under-specified first load (the one
@@ -49,13 +49,17 @@ fn network() -> CryoNetwork {
 fn the_underspecified_chilldown_cavitates_and_the_specified_one_does_not() {
     let net = network();
 
-    let under = net.simulate(&ChillPlan::underspecified(), 0.50, 60.0).expect("a valid plan runs");
+    let under = net
+        .simulate(&ChillPlan::underspecified(), 0.50, 60.0)
+        .expect("a valid plan runs");
     let (failure, _t) = under
         .failure
         .expect("the under-specified load must cavitate: that is the bible's failure");
     assert_eq!(failure, Failure::Cavitation);
 
-    let specified = net.simulate(&ChillPlan::specified(), 0.50, 60.0).expect("a valid plan runs");
+    let specified = net
+        .simulate(&ChillPlan::specified(), 0.50, 60.0)
+        .expect("a valid plan runs");
     assert!(
         specified.failure.is_none(),
         "the specified chilldown must survive; it cavitated at {:?}",
@@ -74,7 +78,9 @@ fn the_failure_turns_on_the_pump_inlet_vapour_fraction() {
     use odderon_astro::cryo::CAVITATION_THRESHOLD;
 
     let net = network();
-    let under = net.simulate(&ChillPlan::underspecified(), 0.50, 60.0).unwrap();
+    let under = net
+        .simulate(&ChillPlan::underspecified(), 0.50, 60.0)
+        .unwrap();
     let specified = net.simulate(&ChillPlan::specified(), 0.50, 60.0).unwrap();
 
     assert!(
@@ -109,8 +115,14 @@ fn the_same_input_log_reproduces_the_failure_bit_for_bit() {
     let a = net.simulate(&plan, 0.50, 120.0).unwrap();
     let b = net.simulate(&plan, 0.50, 120.0).unwrap();
 
-    assert_eq!(a, b, "the same input log must reproduce the same outcome exactly");
-    assert_eq!(a.failure, b.failure, "and the failure, in particular, must be identical");
+    assert_eq!(
+        a, b,
+        "the same input log must reproduce the same outcome exactly"
+    );
+    assert_eq!(
+        a.failure, b.failure,
+        "and the failure, in particular, must be identical"
+    );
 }
 
 /// Reproducibility across *seek times*: the failure time is a function of the log, so stopping the run
@@ -124,7 +136,9 @@ fn the_failure_time_does_not_depend_on_how_long_the_run_is_allowed_to_go() {
     let short = net.simulate(&plan, 0.50, 30.0).unwrap();
     let long = net.simulate(&plan, 0.50, 300.0).unwrap();
 
-    let (_, t_short) = short.failure.expect("the under-specified load fails within 30 s");
+    let (_, t_short) = short
+        .failure
+        .expect("the under-specified load fails within 30 s");
     let (_, t_long) = long.failure.expect("and within 300 s");
 
     // The failure is a property of the fill entering the line, so it occurs at the same simulated time

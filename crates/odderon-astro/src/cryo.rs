@@ -458,7 +458,8 @@ impl CryoNetwork {
 
         // The subcooling margin the incoming liquid starts with, at the tank's initial state. This is the
         // energy the liquid can absorb before it flashes; the line's residual heat is spent against it.
-        let margin = subcooling_margin_j_per_kg(self.initial_temperature_k, self.initial_pressure_kpa)?;
+        let margin =
+            subcooling_margin_j_per_kg(self.initial_temperature_k, self.initial_pressure_kpa)?;
         let flash = flash_fraction(q_res, margin)?;
 
         // The tank's temperature rises as the line's heat and the flashed vapour are absorbed. A simple
@@ -494,7 +495,10 @@ impl CryoNetwork {
             // Gating on flow is not a detail: without it the model reports cavitation from a cold, empty
             // line, which is the failure state rather than a run. The first crossing is the failure time;
             // later crossings are the same event.
-            if d_mass > 0.0 && failure.is_none() && inlet_vapour_fraction > CAVITATION_THRESHOLD.value {
+            if d_mass > 0.0
+                && failure.is_none()
+                && inlet_vapour_fraction > CAVITATION_THRESHOLD.value
+            {
                 failure = Some((Failure::Cavitation, t));
             }
 
@@ -530,14 +534,9 @@ impl CryoNetwork {
     /// was recorded. This is the property the P1 gate rests on, and the reason the wreck is examinable at
     /// all -- a reader can take the `chill_s`, `bleeds`, `fill_rate_kg_per_s` and `window_s` on the wreck
     /// and re-run them to confirm the failure.
-    pub fn wreck(
-        &self,
-        plan: &ChillPlan,
-        fill_rate_kg_per_s: f64,
-        window_s: f64,
-    ) -> Option<Wreck> {
+    pub fn wreck(&self, plan: &ChillPlan, fill_rate_kg_per_s: f64, window_s: f64) -> Option<Wreck> {
         let outcome = self.simulate(plan, fill_rate_kg_per_s, window_s)?;
-        let (_, failure_time_s) = outcome.failure?;   // `None` here means the run did not fail: no wreck.
+        let (_, failure_time_s) = outcome.failure?; // `None` here means the run did not fail: no wreck.
         let q_res = chilldown_residual_heat(plan)?;
         Some(Wreck {
             chill_s: plan.chill_s,
