@@ -72,7 +72,11 @@ check("the kernel export list names every pad export the page calls", (src) => {
   const needed = [...src.slice(nl, src.indexOf("];", nl)).matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
   const padExports = ["pad_failure_time", "pad_inlet_vapour_fraction", "pad_is_wreck", "pad_liquid_kg",
     "pad_pressure_kpa", "pad_temperature_k", "pad_vapour_pressure_kpa",
-    "pad_chilldown_residual_heat", "pad_flash_fraction"];
+    "pad_chilldown_residual_heat", "pad_flash_fraction",
+    // P2: The Mark -- the ghost twin, the one arrow, and the design hash.
+    "pad_ghost_twin_actual", "pad_ghost_twin_divergence",
+    "pad_attribution_which", "pad_attribution_sensitivity_chill", "pad_attribution_sensitivity_bleeds",
+    "pad_design_hash"];
   const missing = padExports.filter((n) => !needed.includes(n));
   if (missing.length) throw new Error("pad exports missing from the contract: " + missing.join(", "));
 });
@@ -193,6 +197,89 @@ check("the debrief is rendered beside the wreck", (src) => {
   }
 });
 
+// --- 2d: P2 -- the grease pencil, ghost twin, one arrow, Akashi ----------------------------------------
+
+check("the page places a grease-pencil mark (the player's expectation)", (src) => {
+  // §6.1: the mark is the player's expectation, recorded before the fill. The page must have a place-mark
+  // function that stores the expected value -- a pure input, not a reading. A page with no mark control
+  // has no Loop of Consequence to fire.
+  if (!/function placeMark/.test(src) || !/padState\.mark/.test(src)) {
+    throw new Error("the page has no grease-pencil mark: no placeMark() storing padState.mark");
+  }
+});
+
+check("the page clears a grease-pencil mark", (src) => {
+  // The mark is optional: clearing it must reset the ghost twin and the arrow, so a cleared mark does not
+  // leave stale readings behind. A page that clears the mark but keeps the ghost is showing a prediction
+  // error for a prediction that no longer exists.
+  const m = src.match(/function clearMark\([^)]*\)\s*\{([\s\S]*?)\n\}/);
+  if (!m) throw new Error("the page has no clearMark() function");
+  if (!/padState\.mark = null/.test(m[1]) || !/padState\.ghost = null/.test(m[1])) {
+    throw new Error("clearMark() does not reset the mark and the ghost twin");
+  }
+});
+
+check("the page computes the ghost twin from the kernel, not from its own arithmetic", (src) => {
+  // §6.2: the ghost twin is the kernel's computation. The page must call the ghost twin exports (actual
+  // and divergence), not compute δ itself. A page that subtracts its own actual from the mark is a page
+  // telling itself what it expected -- the same defect as a page computing its own temperature.
+  const m = src.match(/function computeGhostTwin\([^)]*\)\s*\{([\s\S]*?)\n\}/);
+  if (!m) throw new Error("the page has no computeGhostTwin() function");
+  const body = m[1];
+  if (!/k\.pad_ghost_twin_actual\s*\(/.test(body) || !/k\.pad_ghost_twin_divergence\s*\(/.test(body)) {
+    throw new Error("computeGhostTwin() does not read both ghost twin exports from the kernel");
+  }
+});
+
+check("the page reads the one arrow from the kernel's attribution", (src) => {
+  // §6.2: the one arrow is the kernel's sensitivity analysis. The page must call the attribution exports
+  // (the verdict and both sensitivities), not name the contributor itself. A page that hardcodes which
+  // input is responsible is a lecture, not an attribution.
+  const m = src.match(/function computeGhostTwin\([^)]*\)\s*\{([\s\S]*?)\n\}/);
+  if (!m) throw new Error("the page has no computeGhostTwin() function");
+  const body = m[1];
+  for (const ex of ["pad_attribution_which", "pad_attribution_sensitivity_chill",
+    "pad_attribution_sensitivity_bleeds"]) {
+    if (!new RegExp("k\\." + ex + "\\s*\\(").test(body)) {
+      throw new Error(`computeGhostTwin() does not call k.${ex}(); the arrow must come from the kernel`);
+    }
+  }
+});
+
+check("the ghost twin is rendered after a fill", (src) => {
+  // The Loop of Consequence fires end-to-end: a fill with a mark produces the ghost twin. The page must
+  // call computeGhostTwin() after a run when a mark is placed, so the divergence is visible.
+  const m = src.match(/function runPad\([^)]*\)\s*\{([\s\S]*?)\n\}/);
+  if (!m) throw new Error("the page has no runPad() function");
+  if (!/computeGhostTwin\s*\(/.test(m[1])) {
+    throw new Error("runPad() does not compute the ghost twin after a fill");
+  }
+});
+
+check("the page exports an Akashi entry as a self-contained report", (src) => {
+  // §4.4: the Akashi entry is the product. The page must have an export function that generates a
+  // report from the kernel's readings (design hash, ghost twin, arrow, wreck) -- not a stub.
+  const m = src.match(/function exportAkashi\([^)]*\)\s*\{([\s\S]*?)\n\}/);
+  if (!m) throw new Error("the page has no exportAkashi() function");
+  const body = m[1];
+  if (!/pad_design_hash/.test(body)) {
+    throw new Error("exportAkashi() does not read the design hash from the kernel");
+  }
+  if (!/Blob/.test(body) || !/download/.test(body)) {
+    throw new Error("exportAkashi() does not produce a downloadable report");
+  }
+});
+
+check("the Akashi entry is stamped with an epoch counter", (src) => {
+  // Two exports of the same input log must be distinguishable. The epoch is a page counter that
+  // increments per export, so the report's identity is (design hash, epoch, input log).
+  const m = src.match(/function exportAkashi\([^)]*\)\s*\{([\s\S]*?)\n\}/);
+  if (!m) throw new Error("the page has no exportAkashi() function");
+  if (!/akashiEpoch/.test(m[1])) {
+    throw new Error("exportAkashi() does not use an epoch counter");
+  }
+});
+
 // --- 3: the kernel's failure, measured from the binary ------------------------------------------------
 
 /**
@@ -256,15 +343,84 @@ function verifyPad(ex) {
     problems.push("a NaN fill rate was answered with a number instead of refused");
   }
 
+  // --- P2: The Mark -- the ghost twin, the one arrow, the design hash ----------------------------------
+
+  // THE GHOST TWIN: the divergence is actual - expected. The under-specified plan flashes to ~1.0; marking
+  // below that produces a positive δ, marking above produces a negative one. The sign and magnitude must
+  // be the arithmetic difference, measured from the binary, not a page-side guess.
+  const gtActual = ex.pad_ghost_twin_actual(5.0, 0, 0.5, 0.50, 60.0);
+  const gtDiv = ex.pad_ghost_twin_divergence(5.0, 0, 0.5, 0.50, 60.0);
+  if (!(Number.isFinite(gtActual) && Number.isFinite(gtDiv))) {
+    problems.push(`the ghost twin was refused for a valid mark (actual=${gtActual}, divergence=${gtDiv})`);
+  } else if (Math.abs(gtDiv - (gtActual - 0.5)) > 1e-9) {
+    problems.push(`the ghost twin divergence ${gtDiv} is not actual (${gtActual}) minus expected (0.5)`);
+  }
+  // A negative divergence: marking above the actual.
+  const gtDivHigh = ex.pad_ghost_twin_divergence(5.0, 0, gtActual + 0.1, 0.50, 60.0);
+  if (!(gtDivHigh < 0)) {
+    problems.push(`a mark above the actual produced a non-negative divergence (${gtDivHigh})`);
+  }
+  // A non-finite mark is refused.
+  if (Number.isFinite(ex.pad_ghost_twin_actual(5.0, 0, NaN, 0.50, 60.0))) {
+    problems.push("a NaN mark was answered with a number instead of refused");
+  }
+  // The ghost twin is reproducible.
+  if (ex.pad_ghost_twin_actual(5.0, 0, 0.5, 0.50, 60.0) !== gtActual ||
+      ex.pad_ghost_twin_divergence(5.0, 0, 0.5, 0.50, 60.0) !== gtDiv) {
+    problems.push("the ghost twin is not reproducible from the same mark and plan");
+  }
+
+  // THE ONE ARROW: an interior-flash plan (chill_s=60, bleeds=0) produces a live arrow. The under-specified
+  // plan flashes to 1.0 (the rail), where the arrow correctly points at nothing. The arrow names the larger
+  // of the two sensitivities, and both must be non-negative and finite.
+  const arrowWhich = ex.pad_attribution_which(60.0, 0, 0.1, 0.50, 60.0);
+  const arrowChill = ex.pad_attribution_sensitivity_chill(60.0, 0, 0.1, 0.50, 60.0);
+  const arrowBleeds = ex.pad_attribution_sensitivity_bleeds(60.0, 0, 0.1, 0.50, 60.0);
+  if (arrowWhich === 0) {
+    problems.push("the interior-flash plan produced no arrow; a divergent mark must attribute");
+  } else if (arrowWhich === 1) {
+    if (!(arrowChill > arrowBleeds)) {
+      problems.push(`the arrow says chill time but bleeds sensitivity (${arrowBleeds}) is larger (${arrowChill})`);
+    }
+  } else if (arrowWhich === 2) {
+    if (!(arrowBleeds > arrowChill)) {
+      problems.push(`the arrow says bleeds but chill sensitivity (${arrowChill}) is larger (${arrowBleeds})`);
+    }
+  } else {
+    problems.push(`the arrow returned an unknown verdict: ${arrowWhich}`);
+  }
+  // The rail plan (flash=1.0) produces no arrow: the needle does not respond to the plan at the rail.
+  const railWhich = ex.pad_attribution_which(5.0, 0, 0.5, 0.50, 60.0);
+  if (railWhich !== 0) {
+    problems.push(`the rail plan produced an arrow (${railWhich}); it must point at nothing`);
+  }
+  // The arrow is reproducible.
+  if (ex.pad_attribution_which(60.0, 0, 0.1, 0.50, 60.0) !== arrowWhich) {
+    problems.push("the one arrow is not reproducible from the same mark and plan");
+  }
+
+  // THE DESIGN HASH: deterministic and non-zero. An Akashi entry is stamped with it.
+  const hash1 = ex.pad_design_hash();
+  const hash2 = ex.pad_design_hash();
+  if (hash1 !== hash2) {
+    problems.push(`the design hash is not deterministic: ${hash1} vs ${hash2}`);
+  }
+  if (hash1 === 0) {
+    problems.push("the design hash is the zero value; it must not be");
+  }
+
   if (problems.length) throw new Error("pad boundary disagrees with the claim: " + problems.join("; "));
-  return `under-specified fails at ${underT} s, specified survives, inlet ${underFrac} vs ${specFrac}, reproducible`;
+  return `under-specified fails at ${underT} s, specified survives, inlet ${underFrac} vs ${specFrac}, ` +
+    `ghost twin δ=${gtDiv}, arrow=${arrowWhich}, design hash=${hash1}, reproducible`;
 }
 
 /** `--selftest`: prove `verifyPad` accepts a correct boundary and rejects the ways it can be wrong. */
 function selftest() {
-  // A shim, not the kernel: it has the three properties `verifyPad` checks -- the under-specified plan
-  // fails, the specified one survives, and a non-finite fill rate is refused (NaN, not a number). It is
-  // *honest shim behaviour* rather than a pretend network, which is the distinction that matters here.
+  // A shim, not the kernel: it has the properties `verifyPad` checks -- the under-specified plan fails,
+  // the specified one survives, a non-finite fill rate is refused, the ghost twin divergence is
+  // actual minus expected, the one arrow names the larger sensitivity, and the design hash is
+  // deterministic. It is *honest shim behaviour* rather than a pretend network, which is the distinction
+  // that matters here.
   const good = {
     pad_failure_time: (chill, bleeds, fill, t) => {
       if (!Number.isFinite(fill)) return NaN;
@@ -273,6 +429,27 @@ function selftest() {
     pad_inlet_vapour_fraction: (chill, bleeds) => (chill < 60 && bleeds === 0 ? 1.0 : 0.0),
     pad_is_wreck: (chill, bleeds, fill) => (Number.isFinite(fill) && chill < 60 && bleeds === 0 ? 1 : 0),
     pad_vapour_pressure_kpa: (t) => (Math.abs(t - 90.188) < 1e-9 ? 101.325 : 200.0),
+    // P2: the ghost twin. The under-specified plan's actual is 1.0; the divergence is actual - expected.
+    pad_ghost_twin_actual: (chill, bleeds, expected, fill, t) => {
+      if (!Number.isFinite(expected) || !Number.isFinite(fill)) return NaN;
+      return chill < 60 && bleeds === 0 ? 1.0 : 0.0;
+    },
+    pad_ghost_twin_divergence: (chill, bleeds, expected, fill, t) => {
+      if (!Number.isFinite(expected) || !Number.isFinite(fill)) return NaN;
+      const actual = chill < 60 && bleeds === 0 ? 1.0 : 0.0;
+      return actual - expected;
+    },
+    // P2: the one arrow. The interior-flash plan (chill>=60) attributes to bleeds (sensitivity 0.3 > 0.01);
+    // the rail plan (chill<60) produces no arrow.
+    pad_attribution_which: (chill, bleeds, expected, fill, t) => {
+      if (!Number.isFinite(expected) || !Number.isFinite(fill)) return 0;
+      if (chill >= 60) return 2; // bleeds
+      return 0; // rail: no arrow
+    },
+    pad_attribution_sensitivity_chill: () => 0.01,
+    pad_attribution_sensitivity_bleeds: () => 0.3,
+    // P2: the design hash is deterministic and non-zero.
+    pad_design_hash: () => 1234567890123456789,
   };
   const results = [];
   try {
@@ -307,6 +484,49 @@ function selftest() {
     results.push(["an unreproducible failure is rejected", false]);
   } catch {
     results.push(["an unreproducible failure is rejected", true]);
+  }
+
+  // P2: a ghost twin whose divergence is NOT actual minus expected -- the page would be reading a
+  // prediction error that is not the gap between the mark and the needle.
+  const wrongDiv = {
+    ...good,
+    pad_ghost_twin_divergence: (chill, bleeds, expected, fill, t) => 0.0,
+  };
+  try {
+    verifyPad(wrongDiv);
+    results.push(["a ghost twin divergence that is not actual-expected is rejected", false]);
+  } catch {
+    results.push(["a ghost twin divergence that is not actual-expected is rejected", true]);
+  }
+
+  // P2: a one arrow that names the wrong input -- the larger sensitivity is bleeds, but the arrow says
+  // chill time. The attribution would point the player at the wrong lever.
+  const wrongArrow = { ...good, pad_attribution_which: () => 1 };
+  try {
+    verifyPad(wrongArrow);
+    results.push(["a one arrow that names the wrong input is rejected", false]);
+  } catch {
+    results.push(["a one arrow that names the wrong input is rejected", true]);
+  }
+
+  // P2: a rail plan that produces an arrow. The needle is pinned at the rail; an arrow there points at
+  // nothing and is decoration, not attribution.
+  const railArrow = { ...good, pad_attribution_which: () => 2 };
+  try {
+    verifyPad(railArrow);
+    results.push(["a rail plan that produces an arrow is rejected", false]);
+  } catch {
+    results.push(["a rail plan that produces an arrow is rejected", true]);
+  }
+
+  // P2: a non-deterministic design hash. An Akashi entry stamped with a changing hash cannot be told
+  // apart from one produced by a different kernel version.
+  const unstableHash = { ...good, pad_design_hash: () => Math.random() * 1e18 | 0 };
+  try {
+    verifyPad(unstableHash);
+    results.push(["a non-deterministic design hash is rejected", false]);
+  } catch {
+    results.push(["a non-deterministic design hash is rejected", true]);
   }
 
   let bad = 0;

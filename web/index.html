@@ -203,6 +203,13 @@
   </div>
   <button id="pad-fill">fill the line</button>
   <button id="pad-reset">reset to the checklist</button>
+  <div class="row"><span>grease mark (inlet vapour)</span><span id="m-pad-mark">—</span></div>
+  <div class="pad-inputs">
+    <label>mark where the needle settles <input id="pad-mark" type="number" min="0" max="1" step="0.1" value=""></label>
+    <button id="pad-mark-place">place mark</button>
+    <button id="pad-mark-clear">clear mark</button>
+  </div>
+  <div id="pad-ghost" class="muted"></div>
   <div class="row"><span>pump inlet vapour</span><span id="m-pad-frac">—</span></div>
   <div class="row"><span>residual heat</span><span id="m-pad-heat">—</span></div>
   <div class="row"><span>liquid in tank</span><span id="m-pad-liquid">—</span></div>
@@ -213,6 +220,14 @@
   <div class="row"><span>wrecks on the stand</span><span id="m-pad-wrecks">0</span></div>
   <div id="pad-stand" class="muted">nothing on the stand yet. a failed fill leaves a wreck here.</div>
   <div id="pad-debrief" class="muted">no wreck to debrief yet. a failed fill leaves a wreck, and the debrief explains it.</div>
+
+  <div class="sep"></div>
+  <h3>akashi entry</h3>
+  <div class="muted" id="akashi-intro">mark an expectation, fill the line, and export the Loop of Consequence as a self-contained report.</div>
+  <div class="row"><span>design hash</span><span id="m-akashi-hash">—</span></div>
+  <div class="row"><span>epoch</span><span id="m-akashi-epoch">—</span></div>
+  <button id="akashi-export">export akashi entry</button>
+  <div id="akashi-note" class="muted"></div>
 
   <div id="note" class="muted"></div>
 </div>
@@ -1322,10 +1337,16 @@ async function loadKernel() {
                     // checklist fails the same way every run. These are the exports the clipboard reads.
                     'pad_failure_time', 'pad_inlet_vapour_fraction', 'pad_is_wreck',
                     'pad_liquid_kg', 'pad_pressure_kpa', 'pad_temperature_k',
-                    'pad_vapour_pressure_kpa', 'pad_chilldown_residual_heat', 'pad_flash_fraction'];
+                    'pad_vapour_pressure_kpa', 'pad_chilldown_residual_heat', 'pad_flash_fraction',
+                    // P2: The Mark. The grease-pencil mark's ghost twin (actual + divergence δ), the
+                    // one-arrow attribution (verdict + two sensitivities), and the Akashi design hash.
+                    'pad_ghost_twin_actual', 'pad_ghost_twin_divergence',
+                    'pad_attribution_which', 'pad_attribution_sensitivity_chill',
+                    'pad_attribution_sensitivity_bleeds', 'pad_design_hash'];
     const missing = needed.filter((n) => typeof ex[n] !== 'function');
     if (missing.length) throw new Error('module missing exports: ' + missing.join(', '));
     kernelState.module = ex;
+    updateAkashiHash();
     kernelState.status = 'wasm';
     return ex;
   } catch (e) {
@@ -1462,6 +1483,19 @@ const padState = {
   // The wreck the debrief is currently explaining. -1 means none selected (the debrief explains the most
   // recent wreck, or prompts if there is none). Selecting a wreck on the stand makes its debrief appear.
   selectedWreck: -1,
+  // THE GREASE MARK. The player's expectation, recorded before the fill: where they think the inlet
+  // vapour fraction will settle. `null` means no mark placed -- the Loop of Consequence can fire without
+  // a prediction, but a mark is what makes δ visible. The mark is a pure input: it is not a reading.
+  mark: null,
+  // THE GHOST TWIN and ONE ARROW, from the last fill. `null` when no mark was placed or the fill was
+  // refused. The ghost twin carries the actual reading and the divergence δ; the arrow names the plan
+  // input that most contributes to δ. Both are computed by the kernel, not by the page.
+  ghost: null,
+  arrow: null,
+  // The Akashi epoch counter: one entry per export, so two exports of the same input log are
+  // distinguishable. Pure page state -- the kernel's design hash is the version stamp, the epoch is the
+  // session counter.
+  akashiEpoch: 0,
 };
 
 /// The under-specified checklist the bible's first load starts from: a short chill, no purges. This is the
@@ -1512,6 +1546,21 @@ function runPad() {
   }
 
   updatePadHud();
+
+  // THE GHOST TWIN, IF A MARK IS PLACED. The mark is the player's expectation; the fill is the
+  // consequence. If both are present, the kernel computes the divergence δ and the one arrow. This is
+  // the Loop of Consequence firing: expectation → consequence → prediction error.
+  if (padState.mark) {
+    computeGhostTwin();
+  } else {
+    padState.ghost = null;
+    padState.arrow = null;
+    const ge = $('pad-ghost');
+    if (ge) {
+      ge.textContent = 'no mark placed. place a mark before the fill to see the divergence.';
+      ge.className = 'muted';
+    }
+  }
 }
 
 /// Populate the pad rows and the verdict from `padState`.
@@ -1666,6 +1715,224 @@ function renderDebrief() {
     '<div class="debrief-head">debrief · wreck ' + (idx + 1) + '</div>' +
     '<div class="debrief-cause">' + d.cause + '</div>' +
     '<div class="debrief-remedy">' + d.remedy + '</div>';
+}
+
+// =============================================================================================
+// P2: The Mark -- grease pencil, ghost twin, one arrow, Akashi
+// =============================================================================================
+//
+// The Loop of Consequence (`GAME-DESIGN-BIBLE.md` §6.1, §6.2, §4.4): the player commits an expectation
+// (the grease-pencil mark), the kernel runs the real model, and the gap between the mark and the actual
+// is the reward prediction error δ. The ghost twin shows the mark against the actual; the one arrow
+// names the plan input that most contributes to the divergence; the Akashi entry is the deterministic
+// record of the whole loop.
+//
+// Every reading here comes from the kernel. The page places the mark (a pure input) and renders what
+// the kernel computes -- it never derives δ or the arrow itself, because a page that computed its own
+// divergence would be a page telling itself what it expected.
+
+/// Place a grease-pencil mark on the inlet vapour fraction gauge.
+///
+/// The mark is the player's expectation, recorded before the fill. It is a pure input: the page stores
+/// the value the player typed and asks the kernel for the ghost twin when the fill runs. A mark outside
+/// [0, 1] is refused -- the inlet vapour fraction is a fraction, and a mark outside its own gauge's
+/// range is a mark with no meaning.
+function placeMark() {
+  const raw = $('pad-mark').value;
+  if (raw === '' || raw === null) {
+    $('pad-ghost').textContent = 'enter a value between 0 and 1 to place a mark.';
+    $('pad-ghost').className = 'muted';
+    return;
+  }
+  const expected = Number(raw);
+  if (!Number.isFinite(expected) || expected < 0.0 || expected > 1.0) {
+    $('pad-ghost').textContent = 'a mark must be a fraction between 0 and 1.';
+    $('pad-ghost').className = 'muted warn';
+    return;
+  }
+  padState.mark = {
+    expected,
+    chillS: padState.chillS,
+    bleeds: padState.bleeds,
+  };
+  $('m-pad-mark').textContent = expected.toFixed(2);
+  $('pad-ghost').textContent =
+    'mark placed at ' + expected.toFixed(2) + '. fill the line to see the divergence.';
+  $('pad-ghost').className = 'muted';
+  // If a fill has already run, recompute the ghost twin so the mark is not stale.
+  if (padState.ran) {
+    computeGhostTwin();
+  }
+}
+
+/// Clear the grease-pencil mark. The Loop of Consequence can fire without a mark -- the wreck still
+/// records the consequence -- but a cleared mark means no δ and no arrow.
+function clearMark() {
+  padState.mark = null;
+  padState.ghost = null;
+  padState.arrow = null;
+  $('m-pad-mark').textContent = '—';
+  $('pad-ghost').textContent = 'mark cleared. place a new mark before the fill to see a divergence.';
+  $('pad-ghost').className = 'muted';
+}
+
+/// Compute the ghost twin and the one arrow from the kernel, for the current mark and plan.
+///
+/// Called after a fill (if a mark is placed) and when a mark is placed after a fill. Both the ghost
+/// twin and the arrow are kernel computations: the page reads the actual and the divergence from the
+/// wasm exports, and the arrow verdict from the kernel's own sensitivity analysis.
+function computeGhostTwin() {
+  const k = kernelState.module;
+  const mark = padState.mark;
+  const ghostEl = $('pad-ghost');
+  if (!k || !mark) {
+    padState.ghost = null;
+    padState.arrow = null;
+    if (mark) {
+      ghostEl.textContent = 'the wasm kernel is not built; the ghost twin needs it.';
+      ghostEl.className = 'muted warn';
+    }
+    return;
+  }
+  const chillS = mark.chillS;
+  const bleeds = mark.bleeds;
+  const actual = k.pad_ghost_twin_actual(chillS, bleeds, mark.expected, PAD_FILL_RATE, PAD_WINDOW_S);
+  const divergence = k.pad_ghost_twin_divergence(chillS, bleeds, mark.expected, PAD_FILL_RATE, PAD_WINDOW_S);
+  if (!Number.isFinite(actual) || !Number.isFinite(divergence)) {
+    padState.ghost = null;
+    padState.arrow = null;
+    ghostEl.textContent = 'the ghost twin could not be computed for this mark and plan.';
+    ghostEl.className = 'muted warn';
+    return;
+  }
+  padState.ghost = { actual, divergence };
+
+  // THE ONE ARROW. The kernel names the plan input that most contributes to the divergence. The page
+  // renders the verdict and the two sensitivities, so the arrow is grounded in numbers rather than a
+  // fixed string.
+  const which = k.pad_attribution_which(chillS, bleeds, mark.expected, PAD_FILL_RATE, PAD_WINDOW_S);
+  const sensChill = k.pad_attribution_sensitivity_chill(chillS, bleeds, mark.expected, PAD_FILL_RATE, PAD_WINDOW_S);
+  const sensBleeds = k.pad_attribution_sensitivity_bleeds(chillS, bleeds, mark.expected, PAD_FILL_RATE, PAD_WINDOW_S);
+  padState.arrow = { which, sensChill, sensBleeds };
+
+  // Render the ghost twin: the mark (yellow ghost) against the actual (steel needle), and the arrow.
+  const arrowName = which === 1 ? 'chill time' : (which === 2 ? 'purge cycles' : 'none');
+  const sign = divergence >= 0 ? '+' : '';
+  let html =
+    '<div class="ghost-head">ghost twin · mark ' + mark.expected.toFixed(2) +
+    ' · actual ' + actual.toFixed(3) + ' · δ ' + sign + divergence.toFixed(3) + '</div>';
+  if (which !== 0) {
+    html +=
+      '<div class="ghost-arrow">one arrow → ' + arrowName +
+      ' <span class="muted">(sensitivity ' +
+      (which === 1 ? sensChill.toFixed(4) : sensBleeds.toFixed(4)) +
+      ' vs ' + (which === 1 ? sensBleeds.toFixed(4) : sensChill.toFixed(4)) + ')</span></div>';
+  } else {
+    html += '<div class="ghost-arrow">no arrow: the needle is at a rail, so it does not respond to the plan.</div>';
+  }
+  ghostEl.className = '';
+  ghostEl.innerHTML = html;
+}
+
+/// Export the Akashi entry: a self-contained HTML report of the Loop of Consequence.
+///
+/// The report is the product (§4.4): it embeds the design hash, the epoch, the input log, the mark, the
+/// ghost twin (predicted vs actual), the one arrow, and the wreck. It is generated from the kernel's
+/// readings, not authored -- the player is never required to read it, but it is the record that makes
+/// the work verifiable.
+function exportAkashi() {
+  const k = kernelState.module;
+  if (!k) {
+    $('akashi-note').textContent = 'the wasm kernel is not built; the Akashi entry needs it.';
+    return;
+  }
+  if (!padState.ran) {
+    $('akashi-note').textContent = 'fill the line first; the Akashi entry records a run.';
+    return;
+  }
+  const chillS = padState.chillS;
+  const bleeds = padState.bleeds;
+  const hash = k.pad_design_hash();
+  padState.akashiEpoch += 1;
+  const epoch = padState.akashiEpoch;
+
+  const mark = padState.mark;
+  const ghost = padState.ghost;
+  const arrow = padState.arrow;
+  const wreck = padState.wrecks.length > 0
+    ? padState.wrecks[padState.wrecks.length - 1] : null;
+
+  const markStr = mark ? mark.expected.toFixed(3) : 'none';
+  const ghostStr = ghost
+    ? 'actual ' + ghost.actual.toFixed(3) + ', δ ' + ghost.divergence.toFixed(3)
+    : 'no mark, no ghost twin';
+  const arrowStr = arrow
+    ? (arrow.which === 1 ? 'chill time' : (arrow.which === 2 ? 'purge cycles' : 'none'))
+    : 'none';
+  const wreckStr = wreck
+    ? 'cavitated at ' + wreck.failureTime.toFixed(1) + ' s'
+    : 'ran clean (no wreck)';
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Odderon Akashi Entry · epoch ${epoch}</title>
+<style>
+  body { font-family: monospace; background: #0e1116; color: #c8d4e0; margin: 2em; line-height: 1.5; }
+  h1 { font-size: 1.3em; color: #e0a040; }
+  h2 { font-size: 1em; color: #8aa0b8; margin-top: 1.5em; border-bottom: 1px solid #2a3642; padding-bottom: 4px; }
+  table { border-collapse: collapse; margin: 8px 0; }
+  td { padding: 2px 12px 2px 0; }
+  td:first-child { color: #8aa0b8; }
+  .muted { color: #6a7a8a; }
+</style>
+</head>
+<body>
+<h1>Odderon Akashi Entry</h1>
+<p class="muted">deterministic record of one Loop of Consequence, generated from the kernel.</p>
+
+<h2>identity</h2>
+<table>
+  <tr><td>design hash</td><td>${hash}</td></tr>
+  <tr><td>epoch</td><td>${epoch}</td></tr>
+</table>
+
+<h2>input log</h2>
+<table>
+  <tr><td>chill time</td><td>${chillS.toFixed(1)} s</td></tr>
+  <tr><td>purge cycles</td><td>${bleeds}</td></tr>
+  <tr><td>fill rate</td><td>${PAD_FILL_RATE.toFixed(2)} kg/s</td></tr>
+  <tr><td>fill window</td><td>${PAD_WINDOW_S.toFixed(1)} s</td></tr>
+</table>
+
+<h2>the mark and the ghost twin</h2>
+<table>
+  <tr><td>grease mark</td><td>${markStr}</td></tr>
+  <tr><td>ghost twin</td><td>${ghostStr}</td></tr>
+  <tr><td>one arrow</td><td>${arrowStr}</td></tr>
+</table>
+
+<h2>consequence</h2>
+<table>
+  <tr><td>wreck</td><td>${wreckStr}</td></tr>
+</table>
+
+<p class="muted">verification: re-run the input log above through the kernel to confirm every reading.</p>
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'akashi-epoch-' + epoch + '-hash-' + hash + '.html';
+  a.click();
+  URL.revokeObjectURL(url);
+  $('m-akashi-hash').textContent = hash.toString();
+  $('m-akashi-epoch').textContent = epoch;
+  $('akashi-note').textContent =
+    'akashi entry exported: epoch ' + epoch + ', design hash ' + hash + '.';
 }
 
 /// Simulated seconds since the curtain last moved, from the page clock and the stated rate.
@@ -3110,6 +3377,24 @@ $('pad-reset').addEventListener('click', () => {
 // The checklist values are shown as the player edits them, so the input log is visible before a fill.
 $('pad-chill').addEventListener('input', () => { $('m-pad-chill').textContent = $('pad-chill').value || '—'; });
 $('pad-bleeds').addEventListener('input', () => { $('m-pad-bleeds').textContent = $('pad-bleeds').value || '—'; });
+
+// THE GREASE PENCIL. Place a mark (the player's expectation) before the fill; clear it to fire the
+// loop without a prediction. The mark is a pure input -- the kernel computes the divergence.
+$('pad-mark-place').addEventListener('click', () => { placeMark(); });
+$('pad-mark-clear').addEventListener('click', () => { clearMark(); });
+
+// THE AKASHI EXPORT. Generates a self-contained HTML report of the Loop of Consequence from the
+// kernel's readings. The report is the product: deterministic, verifiable, offline-readable.
+$('akashi-export').addEventListener('click', () => { exportAkashi(); });
+
+// The Akashi design hash is shown as soon as the kernel is built, so the version stamp is visible
+// before any entry is exported.
+function updateAkashiHash() {
+  const k = kernelState.module;
+  if (k && Number.isFinite(k.pad_design_hash())) {
+    $('m-akashi-hash').textContent = k.pad_design_hash().toString();
+  }
+}
 
 $('measure').addEventListener('click', async () => {
   // `measureFrame` is async now: it yields frames waiting for the timer queries to report. Handing its

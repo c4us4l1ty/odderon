@@ -637,6 +637,124 @@ pub extern "C" fn pad_is_wreck(chill_s: f64, bleeds: u32, fill_rate: f64, window
     u32::from(net.is_wreck(&plan, fill_rate, window_s))
 }
 
+// --- P2: The Mark -------------------------------------------------------------------------------
+//
+// The grease-pencil mark, the ghost twin, the one-arrow attribution, and the Akashi design hash.
+// These extend the P1 pad into the Loop of Consequence (`GAME-DESIGN-BIBLE.md` §6.1, §6.2, §4.4):
+// the player commits an expectation (the mark), the kernel runs the real model, and the gap between
+// the mark and the actual is the reward prediction error δ.
+//
+// The wasm C ABI only supports scalar returns, so each field of the ghost twin and the attribution
+// is a separate export -- the same shape as the P1 pad accessors above. A refused computation (a
+// non-finite expected value or a non-finite plan) crosses as `NaN` in every float field and `0` in
+// every integer field, the same convention the P1 exports use.
+
+/// The kernel's actual inlet vapour fraction for a grease-pencil mark's plan.
+///
+/// `expected` is the value the player marked; the actual is computed from the same plan, so the
+/// divergence is a function of the mark and the plan, not of when the run happens. `NaN` if the
+/// expected value is non-finite or the plan is refused.
+#[unsafe(no_mangle)]
+pub extern "C" fn pad_ghost_twin_actual(
+    chill_s: f64,
+    bleeds: u32,
+    expected: f64,
+    fill_rate: f64,
+    window_s: f64,
+) -> f64 {
+    let net = odderon_astro::cryo::CryoNetwork::reference();
+    let plan = odderon_astro::cryo::ChillPlan { chill_s, bleeds };
+    let mark = odderon_astro::cryo::Mark::inlet(plan, expected);
+    odderon_astro::cryo::ghost_twin(&mark, &net, fill_rate, window_s)
+        .map(|g| g.actual)
+        .unwrap_or(f64::NAN)
+}
+
+/// The ghost twin's divergence δ = actual - expected, for a grease-pencil mark.
+///
+/// `NaN` if the ghost twin could not be computed (a non-finite expected value or a refused plan).
+#[unsafe(no_mangle)]
+pub extern "C" fn pad_ghost_twin_divergence(
+    chill_s: f64,
+    bleeds: u32,
+    expected: f64,
+    fill_rate: f64,
+    window_s: f64,
+) -> f64 {
+    let net = odderon_astro::cryo::CryoNetwork::reference();
+    let plan = odderon_astro::cryo::ChillPlan { chill_s, bleeds };
+    let mark = odderon_astro::cryo::Mark::inlet(plan, expected);
+    odderon_astro::cryo::ghost_twin(&mark, &net, fill_rate, window_s)
+        .map(|g| g.divergence)
+        .unwrap_or(f64::NAN)
+}
+
+/// The one-arrow attribution verdict for a grease-pencil mark.
+///
+/// 0 = none (no divergence, or the flash is clamped at a rail), 1 = chill time, 2 = bleeds. The
+/// arrow names the plan input that most contributes to the divergence between the mark and the
+/// actual reading.
+#[unsafe(no_mangle)]
+pub extern "C" fn pad_attribution_which(
+    chill_s: f64,
+    bleeds: u32,
+    expected: f64,
+    fill_rate: f64,
+    window_s: f64,
+) -> u32 {
+    let net = odderon_astro::cryo::CryoNetwork::reference();
+    let plan = odderon_astro::cryo::ChillPlan { chill_s, bleeds };
+    let mark = odderon_astro::cryo::Mark::inlet(plan, expected);
+    match odderon_astro::cryo::attribution(&mark, &net, fill_rate, window_s).which {
+        odderon_astro::cryo::Attribution::None => 0,
+        odderon_astro::cryo::Attribution::ChillTime => 1,
+        odderon_astro::cryo::Attribution::Bleeds => 2,
+    }
+}
+
+/// |∂actual/∂chill_s|, the sensitivity of the actual reading to chill time, for a grease-pencil mark.
+///
+/// `NaN` if the attribution could not be computed.
+#[unsafe(no_mangle)]
+pub extern "C" fn pad_attribution_sensitivity_chill(
+    chill_s: f64,
+    bleeds: u32,
+    expected: f64,
+    fill_rate: f64,
+    window_s: f64,
+) -> f64 {
+    let net = odderon_astro::cryo::CryoNetwork::reference();
+    let plan = odderon_astro::cryo::ChillPlan { chill_s, bleeds };
+    let mark = odderon_astro::cryo::Mark::inlet(plan, expected);
+    odderon_astro::cryo::attribution(&mark, &net, fill_rate, window_s).sensitivity_chill
+}
+
+/// |∂actual/∂bleeds|, the sensitivity of the actual reading to purge cycles, for a grease-pencil mark.
+///
+/// `NaN` if the attribution could not be computed.
+#[unsafe(no_mangle)]
+pub extern "C" fn pad_attribution_sensitivity_bleeds(
+    chill_s: f64,
+    bleeds: u32,
+    expected: f64,
+    fill_rate: f64,
+    window_s: f64,
+) -> f64 {
+    let net = odderon_astro::cryo::CryoNetwork::reference();
+    let plan = odderon_astro::cryo::ChillPlan { chill_s, bleeds };
+    let mark = odderon_astro::cryo::Mark::inlet(plan, expected);
+    odderon_astro::cryo::attribution(&mark, &net, fill_rate, window_s).sensitivity_bleeds
+}
+
+/// The deterministic design hash of the pad kernel's constants.
+///
+/// An Akashi entry is stamped with this so a reader can tell which kernel version produced it. It is
+/// a pure function: the same kernel produces the same hash on every platform, every run.
+#[unsafe(no_mangle)]
+pub extern "C" fn pad_design_hash() -> u64 {
+    odderon_astro::cryo::design_hash()
+}
+
 #[cfg(test)]
 mod tests {
     // The ABI is a contract a host can violate with a single bad number, and two of the values it can
