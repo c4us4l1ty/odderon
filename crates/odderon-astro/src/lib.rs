@@ -113,6 +113,14 @@ pub mod j2;
 /// those rules to keep in step.
 pub mod thermal;
 
+/// A one-dimensional cryogenic fluid network and the failure it makes reproducible: the P1 pad, where an
+/// under-specified chilldown leaves enough heat in the line that the pump cavitates. See [`cryo::ChillPlan`]
+/// and [`cryo::CryoNetwork::simulate`].
+///
+/// Not astrodynamics, for the same reason [`thermal`] is here. It is a pure function of the input log and
+/// `t`, so the failure it produces is reproducible rather than a story about when the run happened.
+pub mod cryo;
+
 /// Gravitational parameters, km³/s².
 ///
 /// Values from the IAU/JPL published constants. They are *data*, not physics: a body's `mu` is a
