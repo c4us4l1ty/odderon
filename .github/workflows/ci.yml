@@ -161,6 +161,11 @@ jobs:
       - name: orbit boundary (exports agree with physics)
         run: node tools/check-orbit.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
 
+      # The pad's P1 gate, against the same binary: the under-specified chilldown cavitates, the specified
+      # one survives, and the same input log reproduces the same failure time. Static half in `shell-claims`.
+      - name: pad boundary (a reproducible failure from the input log)
+        run: node tools/check-pad.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
+
       - name: stage wasm artifacts
         run: |
           mkdir -p dist
@@ -282,6 +287,12 @@ jobs:
       # job it is guarding. A test whose failing branch has never executed has not been shown to fail.
       - name: orbit verifier self-test (accepts good exports, rejects bad)
         run: node tools/check-orbit.mjs --selftest
+
+      - name: the pad drives the kernel and defaults to the under-specified first load
+        run: node tools/check-pad.mjs
+
+      - name: pad verifier self-test (accepts good exports, rejects bad)
+        run: node tools/check-pad.mjs --selftest
       # On 2026-11-24 this job failed on a condition the page handles correctly: the optional wasm
       # artifact is absent on a clean checkout, the browser logs a 404, and `tools/screenshot.mjs` treats
       # any console error as an untrustworthy frame. The capture now exempts that one error -- but only
