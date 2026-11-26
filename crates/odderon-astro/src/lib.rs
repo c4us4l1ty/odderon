@@ -129,6 +129,17 @@ pub mod cryo;
 /// the surface-relative readings that turn an orbit into a flight. See [`rocket::rocket_flight`].
 pub mod rocket;
 
+/// The mission economy and the Esse calibration score.
+///
+/// Not astrodynamics in the orbital sense, for the same reason [`cryo`], [`thermal`], [`rocket`] and
+/// [`lighttime`] are here: `odderon-astro` is the only `no_std` crate in the workspace, gated by the
+/// same kernel rules, and the mission economy is a pure function of the work a contract asks for
+/// (§12.1) while the Esse score is a proper scoring rule over a committed prediction (§4.3). The
+/// achieved Δv is read through [`rocket::rocket_flight`], so the score is a function of the same
+/// physics the flight is. See [`mission::contract_price`], [`mission::log_score`],
+/// [`mission::crps`].
+pub mod mission;
+
 /// Light-time and the comms link: the delay a signal takes to cross the distance between two
 /// positions, and the arrival time it predicts.
 ///

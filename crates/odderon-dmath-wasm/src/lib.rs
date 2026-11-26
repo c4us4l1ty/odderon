@@ -1323,6 +1323,83 @@ pub extern "C" fn mail_arrival_s(
     }
 }
 
+// =============================================================================================
+// The mission economy and Esse (P5: the career core, bible §3.2 / §4.3 / §12.1)
+// =============================================================================================
+//
+// `odderon_astro::mission` is the career core of the kernel: the economy (§12.1 — "money is
+// physics, not a difficulty knob") and the Esse calibration score (§4.3 — proper scoring rules,
+// never accuracy %). These exports are the seam the page's mission loop reads through.
+//
+// The economy: a contract's price is a pure function of the work it asks for — the Δv budget, the
+// mass, the risk, the window — computed here from pinned constants. The page holds no price formula
+// and no price constant; a verifier, given the contract's parameters, calls `contract_price` and
+// gets the same number the panel shows. That is what makes "money is physics" testable.
+//
+// Esse: the two proper scoring rules the mission loop's PREDICT beat commits to. `log_score` for a
+// categorical call (a probability the mission meets its Δv budget), `crps` for an interval
+// prediction (a predicted Δv range). Both are proper — the expected score is minimised by the true
+// distribution — so hedging and over-claiming are both punished, which is the property accuracy %
+// lacks and the reason the bible forbids it.
+//
+// `achieved_dv` reads the Δv the mission actually spent through the rocket kernel, so the score is
+// a function of the same physics the flight is. A refused launch yields `NaN`: a mission that
+// never flew has no achieved Δv, and the score of a prediction against it is a refusal.
+//
+// Every function is a pure function of its arguments: the same inputs give the same output on every
+// platform, every run. That determinism is the P3 replay claim, and it is what makes an Esse score
+// recomputable from a verified replay (§4.3 rule 4).
+
+/// The contract price for a mission, in mission credits (MCU).
+///
+/// A pure function of the work the contract asks for (§12.1): the Δv budget, the payload mass, the
+/// risk, and the window. `NaN` if any input is non-finite or if the Δv, mass, or window is
+/// non-positive or the risk is negative -- a refusal, not an answer.
+#[unsafe(no_mangle)]
+pub extern "C" fn contract_price(dv_km_s: f64, mass_kg: f64, risk: f64, window_days: f64) -> f64 {
+    odderon_astro::mission::contract_price(dv_km_s, mass_kg, risk, window_days)
+}
+
+/// The Δv a mission actually achieved, km/s, for an authored launch.
+///
+/// The burnout velocity the rocket imparts, read through the rocket kernel so a refused launch yields
+/// `NaN` rather than a number. `NaN` if the launch is refused.
+#[unsafe(no_mangle)]
+pub extern "C" fn achieved_dv(lat: f64, az: f64, el: f64, v: f64) -> f64 {
+    odderon_astro::mission::achieved_dv_km_s(lat, az, el, v)
+}
+
+/// The log score of a categorical prediction (§4.3).
+///
+/// `predicted_p` is the probability the player committed, in `[0,1]`; `occurred` is `1` if the
+/// outcome occurred, `0` if not. **Lower is better**: `0` is a perfect, certain, correct call.
+/// `NaN` if `p` is non-finite or outside `[0,1]`; `+∞` if the player claimed certainty and was
+/// wrong (the honest score for that, not a refusal).
+#[unsafe(no_mangle)]
+pub extern "C" fn log_score(predicted_p: f64, occurred: u32) -> f64 {
+    odderon_astro::mission::log_score(predicted_p, occurred)
+}
+
+/// The continuous ranked probability score of an interval prediction (§4.3).
+///
+/// `predicted_lo` and `predicted_hi` are the committed interval; `actual` is the achieved value.
+/// **Lower is better**: `0` is a degenerate point prediction exactly at the outcome. `NaN` if any
+/// input is non-finite or if the interval has non-positive width -- a refusal, not a score.
+#[unsafe(no_mangle)]
+pub extern "C" fn crps(predicted_lo: f64, predicted_hi: f64, actual: f64) -> f64 {
+    odderon_astro::mission::crps(predicted_lo, predicted_hi, actual)
+}
+
+/// The deterministic design hash of the mission economy's constants.
+///
+/// Pins the price model's reference point, exponents, and base price, so a replay bundle or an
+/// Akashi entry can detect a stale economy kernel. A pure function: the same kernel produces the
+/// same hash on every platform, every run.
+#[unsafe(no_mangle)]
+pub extern "C" fn mission_design_hash() -> u64 {
+    odderon_astro::mission::mission_design_hash()
+}
+
 #[cfg(test)]
 mod tests {
     // The ABI is a contract a host can violate with a single bad number, and two of the values it can
