@@ -343,7 +343,10 @@ fn the_wreck_is_reproducible_from_its_input_log() {
     let plan = ChillPlan::underspecified();
     let a = net.wreck(&plan, 0.50, 120.0).unwrap();
     let b = net.wreck(&plan, 0.50, 120.0).unwrap();
-    assert_eq!(a, b, "the same input log must reproduce the same wreck exactly");
+    assert_eq!(
+        a, b,
+        "the same input log must reproduce the same wreck exactly"
+    );
 }
 
 /// The wreck and the predicate agree: `is_wreck` is exactly `wreck().is_some()`. A predicate that disagreed
@@ -353,7 +356,10 @@ fn the_wreck_is_reproducible_from_its_input_log() {
 fn the_wreck_predicate_agrees_with_the_wreck_record() {
     let net = network();
     for (chill, bleeds) in [(5.0, 0), (12.0, 1), (300.0, 3), (60.0, 0), (0.0, 0)] {
-        let plan = ChillPlan { chill_s: chill, bleeds };
+        let plan = ChillPlan {
+            chill_s: chill,
+            bleeds,
+        };
         assert_eq!(
             net.is_wreck(&plan, 0.50, 60.0),
             net.wreck(&plan, 0.50, 60.0).is_some(),

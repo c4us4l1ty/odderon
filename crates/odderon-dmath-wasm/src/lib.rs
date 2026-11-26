@@ -548,7 +548,12 @@ pub extern "C" fn pad_flash_fraction(q_res: f64, margin: f64) -> f64 {
 /// pump cavitates, the test article dies -- is a function of the input log, and this returns the instant it
 /// happens. The same `(chill_s, bleeds, fill_rate, elapsed_s)` returns the same value on every platform.
 #[unsafe(no_mangle)]
-pub extern "C" fn pad_failure_time(chill_s: f64, bleeds: u32, fill_rate: f64, elapsed_s: f64) -> f64 {
+pub extern "C" fn pad_failure_time(
+    chill_s: f64,
+    bleeds: u32,
+    fill_rate: f64,
+    elapsed_s: f64,
+) -> f64 {
     let net = odderon_astro::cryo::CryoNetwork::reference();
     let plan = odderon_astro::cryo::ChillPlan { chill_s, bleeds };
     match net.simulate(&plan, fill_rate, elapsed_s) {
@@ -565,7 +570,12 @@ pub extern "C" fn pad_failure_time(chill_s: f64, bleeds: u32, fill_rate: f64, el
 /// Carried because a run that *did not* fail still shows how close it came, and "how close" is the quantity
 /// the cavitation predicate reads.
 #[unsafe(no_mangle)]
-pub extern "C" fn pad_inlet_vapour_fraction(chill_s: f64, bleeds: u32, fill_rate: f64, elapsed_s: f64) -> f64 {
+pub extern "C" fn pad_inlet_vapour_fraction(
+    chill_s: f64,
+    bleeds: u32,
+    fill_rate: f64,
+    elapsed_s: f64,
+) -> f64 {
     let net = odderon_astro::cryo::CryoNetwork::reference();
     let plan = odderon_astro::cryo::ChillPlan { chill_s, bleeds };
     net.simulate(&plan, fill_rate, elapsed_s)
@@ -585,7 +595,12 @@ pub extern "C" fn pad_liquid_kg(chill_s: f64, bleeds: u32, fill_rate: f64, elaps
 
 /// Tank pressure at the end of the run, kPa. `NaN` if the run is refused.
 #[unsafe(no_mangle)]
-pub extern "C" fn pad_pressure_kpa(chill_s: f64, bleeds: u32, fill_rate: f64, elapsed_s: f64) -> f64 {
+pub extern "C" fn pad_pressure_kpa(
+    chill_s: f64,
+    bleeds: u32,
+    fill_rate: f64,
+    elapsed_s: f64,
+) -> f64 {
     let net = odderon_astro::cryo::CryoNetwork::reference();
     let plan = odderon_astro::cryo::ChillPlan { chill_s, bleeds };
     net.simulate(&plan, fill_rate, elapsed_s)
@@ -595,7 +610,12 @@ pub extern "C" fn pad_pressure_kpa(chill_s: f64, bleeds: u32, fill_rate: f64, el
 
 /// Tank temperature at the end of the run, K. `NaN` if the run is refused.
 #[unsafe(no_mangle)]
-pub extern "C" fn pad_temperature_k(chill_s: f64, bleeds: u32, fill_rate: f64, elapsed_s: f64) -> f64 {
+pub extern "C" fn pad_temperature_k(
+    chill_s: f64,
+    bleeds: u32,
+    fill_rate: f64,
+    elapsed_s: f64,
+) -> f64 {
     let net = odderon_astro::cryo::CryoNetwork::reference();
     let plan = odderon_astro::cryo::ChillPlan { chill_s, bleeds };
     net.simulate(&plan, fill_rate, elapsed_s)
