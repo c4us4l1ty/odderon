@@ -148,6 +148,51 @@ check("the wreck stand is rendered, not merely stored", (src) => {
   }
 });
 
+// --- 2c: the debrief is the consolidation step, grounded in the wreck ----------------------------------
+
+check("the page debriefs a wreck, grounded in the wreck's own numbers", (src) => {
+  // The bible's consolidation step after a productive failure. It must be derived from the wreck -- reading
+  // its residual heat, inlet fraction and failure time -- not a fixed string that says the same thing for
+  // every wreck. A debrief that does not reference the wreck it explains is instruction dressed as a
+  // diagnosis, and does not consolidate anything.
+  const m = src.match(/function debriefWreck\([^)]*\)\s*\{([\s\S]*?)\n\}/);
+  if (!m) throw new Error("the page has no debriefWreck() function");
+  const body = m[1];
+  for (const field of ["residualHeat", "inletFraction", "failureTime"]) {
+    if (!new RegExp("\\b" + field + "\\b").test(body)) {
+      throw new Error(`the debrief does not read the wreck's ${field}; it must be grounded in the wreck`);
+    }
+  }
+});
+
+check("the debrief explains the cause and the remedy", (src) => {
+  // A debrief that only says what happened is a status line. It must say why (the cause) and what to do
+  // (the remedy) -- the two halves of a consolidation.
+  const m = src.match(/function debriefWreck\([^)]*\)\s*\{([\s\S]*?)\n\}/);
+  if (!m) throw new Error("the page has no debriefWreck() function");
+  if (!/cause/.test(m[1]) || !/remedy/.test(m[1])) {
+    throw new Error("the debrief does not state both a cause and a remedy");
+  }
+});
+
+check("the debrief's remedy is verified by the kernel, not asserted", (src) => {
+  // The remedy must be a checklist the kernel says runs clean -- derived by calling pad_is_wreck -- rather
+  // than a suggestion the page invents. The same pure function that produced the failure verifies the fix,
+  // so the debrief cannot recommend something that would wreck again.
+  const m = src.match(/function suggestCleanChecklist\([^)]*\)\s*\{([\s\S]*?)\n\}/);
+  if (!m) throw new Error("the page has no suggestCleanChecklist() function");
+  if (!/k\.pad_is_wreck\s*\(/.test(m[1])) {
+    throw new Error("the remedy is not verified by pad_is_wreck(); it must come from the kernel");
+  }
+});
+
+check("the debrief is rendered beside the wreck", (src) => {
+  // A debrief computed but never shown consolidates nothing. It must be rendered for the selected wreck.
+  if (!/function renderDebrief/.test(src) || !/pad-debrief/.test(src)) {
+    throw new Error("the debrief is not rendered");
+  }
+});
+
 // --- 3: the kernel's failure, measured from the binary ------------------------------------------------
 
 /**
