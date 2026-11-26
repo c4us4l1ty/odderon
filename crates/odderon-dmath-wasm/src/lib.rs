@@ -865,6 +865,156 @@ pub extern "C" fn rocket_design_hash() -> u64 {
     odderon_astro::rocket::rocket_design_hash()
 }
 
+// =============================================================================================
+// The orbit mission: ground-station pass prediction
+// =============================================================================================
+//
+// `odderon_astro::observe` (ground stations) and `odderon_astro::passes` (pass prediction) are the
+// deepest, most-validated part of the astro kernel -- 18 and 17 tests respectively, each keyed to a
+// measured number -- and until now **no pixel ever read them**. The page had an orbiting body and no
+// way to answer the question every orbital mission starts with: *when will it be over my station?*
+// These exports are the seam.
+//
+// The mission is fixed (the reference orbit) and the player authors the ground station: geodetic
+// latitude and longitude. The kernel predicts the next pass of the orbiting body over that station --
+// rise, culmination, set, maximum elevation, minimum range, rise/set azimuth -- searching from
+// `from` (the orbit clock, seconds past the reference epoch) onward. The returned times are absolute
+// seconds past the same epoch, so the page's orbit clock and the pass window share one timeline.
+//
+// Every reading is a pure function of `(lat, lon, from)`: the same station and time give the same pass
+// on every platform, every run. That is the P3 replay claim, and it is what makes the prediction
+// checkable from outside Rust.
+//
+// A pass that does not exist is reported as `exists = 0` with `NaN` readings; a question that cannot
+// be answered honestly -- a site the ellipsoid refuses, or a search window too short for the orbit --
+// is `exists = 2`. Both are refusals, not answers, the same rule the rocket's verdict follows.
+
+/// Minimum elevation, degrees, for a period to count as a pass. The standard link-feasibility mask:
+/// a 10° mask avoids low-elevation passes whose geometry is poor. For 400 km this is the difference
+/// between a 398 s pass and a 652 s one at the horizon.
+const PASS_MASK_DEG: f64 = 10.0;
+
+/// How far ahead to search for the next pass, seconds. Six hours covers roughly two reference-orbit
+/// periods -- comfortably past the guaranteed scan window, so `Ok(None)` means "no pass in six hours"
+/// and not "the search was too short to look properly."
+const PASS_WINDOW_S: f64 = 21_600.0;
+
+/// The scan step, seconds. Must be at most the orbit's minimum pass duration; 30 s steps clean over
+/// no pass for this orbit while keeping the search cheap enough to run on a station edit.
+const PASS_STEP_S: f64 = 30.0;
+
+/// `0` = no pass, `1` = a pass was found, `2` = the question could not be answered honestly.
+fn pass_status(lat: f64, lon: f64, from: f64) -> u32 {
+    match next_pass_window(lat, lon, from) {
+        Ok(Some(_)) => 1,
+        Ok(None) => 0,
+        Err(_) => 2,
+    }
+}
+
+/// The next pass window for the authored station, searched from `from`.
+///
+/// The site is built through the kernel's own `Site::from_geodetic` (which solves the ellipsoid
+/// properly, with `up` as the geodetic normal) and the search through `passes::next_pass` (which
+/// includes the oblateness). Composing the two here rather than re-deriving the geometry keeps the
+/// prediction identical to the one the astro tests validated.
+fn next_pass_window(
+    lat: f64,
+    lon: f64,
+    from: f64,
+) -> Result<Option<odderon_astro::passes::PassWindow>, u32> {
+    let site = odderon_astro::observe::Site::from_geodetic(
+        &odderon_astro::catalogue::EARTH,
+        lat,
+        lon,
+        0.0,
+    )
+    .map_err(|_| 2u32)?;
+    odderon_astro::passes::next_pass(
+        &odderon_astro::catalogue::EARTH,
+        &site,
+        &odderon_astro::catalogue::EARTH_FRAME,
+        &reference_state(),
+        0.0,
+        odderon_astro::mu::EARTH,
+        PASS_MASK_DEG,
+        from,
+        PASS_WINDOW_S,
+        PASS_STEP_S,
+    )
+    .map_err(|_| 2u32)
+}
+
+/// `1` if the orbiting body passes over the authored station after `from`, else `0` (no pass) or `2`
+/// (the question could not be answered). The gate the page reads before believing any field.
+#[unsafe(no_mangle)]
+pub extern "C" fn pass_next_exists(lat: f64, lon: f64, from: f64) -> u32 {
+    pass_status(lat, lon, from)
+}
+
+/// Seconds past the reference epoch when the pass rises above the mask, or `NaN` if there is no pass.
+#[unsafe(no_mangle)]
+pub extern "C" fn pass_next_rise_s(lat: f64, lon: f64, from: f64) -> f64 {
+    match next_pass_window(lat, lon, from) {
+        Ok(Some(w)) => w.rise,
+        _ => f64::NAN,
+    }
+}
+
+/// Seconds past the reference epoch of maximum elevation, refined inside the pass. Never a sample time.
+#[unsafe(no_mangle)]
+pub extern "C" fn pass_next_culmination_s(lat: f64, lon: f64, from: f64) -> f64 {
+    match next_pass_window(lat, lon, from) {
+        Ok(Some(w)) => w.culmination,
+        _ => f64::NAN,
+    }
+}
+
+/// Seconds past the reference epoch when the pass sets below the mask, or `NaN` if there is no pass.
+#[unsafe(no_mangle)]
+pub extern "C" fn pass_next_set_s(lat: f64, lon: f64, from: f64) -> f64 {
+    match next_pass_window(lat, lon, from) {
+        Ok(Some(w)) => w.set,
+        _ => f64::NAN,
+    }
+}
+
+/// Maximum elevation during the pass, degrees. Always above the mask by construction.
+#[unsafe(no_mangle)]
+pub extern "C" fn pass_next_max_elevation_deg(lat: f64, lon: f64, from: f64) -> f64 {
+    match next_pass_window(lat, lon, from) {
+        Ok(Some(w)) => w.max_elevation_deg,
+        _ => f64::NAN,
+    }
+}
+
+/// Closest approach during the pass, km. Always below the orbit's altitude by construction.
+#[unsafe(no_mangle)]
+pub extern "C" fn pass_next_min_range_km(lat: f64, lon: f64, from: f64) -> f64 {
+    match next_pass_window(lat, lon, from) {
+        Ok(Some(w)) => w.min_range_km,
+        _ => f64::NAN,
+    }
+}
+
+/// Azimuth at rise, degrees clockwise from north.
+#[unsafe(no_mangle)]
+pub extern "C" fn pass_next_rise_az_deg(lat: f64, lon: f64, from: f64) -> f64 {
+    match next_pass_window(lat, lon, from) {
+        Ok(Some(w)) => w.rise_azimuth_deg,
+        _ => f64::NAN,
+    }
+}
+
+/// Azimuth at set, degrees clockwise from north.
+#[unsafe(no_mangle)]
+pub extern "C" fn pass_next_set_az_deg(lat: f64, lon: f64, from: f64) -> f64 {
+    match next_pass_window(lat, lon, from) {
+        Ok(Some(w)) => w.set_azimuth_deg,
+        _ => f64::NAN,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     // The ABI is a contract a host can violate with a single bad number, and two of the values it can

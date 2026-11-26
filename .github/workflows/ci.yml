@@ -173,6 +173,13 @@ jobs:
       - name: rocket boundary (suborbital, bound radial, reproducible)
         run: node tools/check-rocket.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
 
+      # The orbit mission's P3 boundary, against the same binary: a station inside the inclination band
+      # has a pass (rise < culmination < set, elevation above the mask, range below the orbit), the
+      # window is reproducible, and a station outside the band is honestly refused -- the replay gate.
+      # Static half in `shell-claims`.
+      - name: orbit-mission boundary (a predicted pass, honestly refused outside the band)
+        run: node tools/check-orbit-mission.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
+
       - name: stage wasm artifacts
         run: |
           mkdir -p dist
@@ -311,6 +318,16 @@ jobs:
 
       - name: rocket verifier self-test (accepts good exports, rejects bad)
         run: node tools/check-rocket.mjs --selftest
+
+      # P3 Block 5: the orbit mission. The page must read the ground-station pass prediction from the
+      # kernel's `pass_next_*` exports -- no local pass solver, no local site or elevation geometry, no
+      # substitute schedule when the kernel is absent. This is the gate that makes the orbital mission's
+      # prediction mechanically the kernel's own, the same way check-orbit and check-rocket guard theirs.
+      - name: the orbit mission predicts passes from the kernel, not from a JS solver
+        run: node tools/check-orbit-mission.mjs
+
+      - name: orbit-mission verifier self-test (accepts good exports, rejects bad)
+        run: node tools/check-orbit-mission.mjs --selftest
       # On 2026-11-24 this job failed on a condition the page handles correctly: the optional wasm
       # artifact is absent on a clean checkout, the browser logs a 404, and `tools/screenshot.mjs` treats
       # any console error as an untrustworthy frame. The capture now exempts that one error -- but only
