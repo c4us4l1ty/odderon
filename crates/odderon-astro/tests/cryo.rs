@@ -297,3 +297,77 @@ fn an_empty_fill_produces_no_failure() {
     assert_eq!(out.liquid_kg, 0.0);
     assert!(out.failure.is_none(), "an empty fill must not cavitate");
 }
+
+// =============================================================================================
+// 7. The wreck: a failed run, kept examinable
+// =============================================================================================
+
+/// A failing plan produces a wreck; a clean one does not. The bible's rule is that the wreckage is always
+/// examinable -- never cut to black on failure -- so a failed run must leave a record, and a clean run must
+/// leave none. Inventing a wreck for a clean run would be the same lie as a temperature for a missing kernel.
+#[test]
+fn a_failed_run_leaves_a_wreck_and_a_clean_run_leaves_none() {
+    let net = network();
+    let wreck = net
+        .wreck(&ChillPlan::underspecified(), 0.50, 60.0)
+        .expect("the under-specified load leaves a wreck on the stand");
+    assert!(wreck.failure_time_s >= 0.0);
+
+    let clean = net.wreck(&ChillPlan::specified(), 0.50, 60.0);
+    assert!(clean.is_none(), "a clean run must leave no wreck to examine");
+}
+
+/// THE WRECK CARRIES THE INPUT LOG. A wreck that does not say what was run is a verdict, not a record: a
+/// reader cannot look at *why* it failed or re-simulate it. The wreck must carry the checklist that
+/// produced it so it is self-describing and reproducible from itself.
+#[test]
+fn the_wreck_carries_the_input_log_that_produced_it() {
+    let net = network();
+    let plan = ChillPlan { chill_s: 12.0, bleeds: 1 };
+    let wreck = net.wreck(&plan, 0.50, 90.0).expect("this plan cavitates");
+    assert_eq!(wreck.chill_s, 12.0);
+    assert_eq!(wreck.bleeds, 1);
+    assert_eq!(wreck.fill_rate_kg_per_s, 0.50);
+    assert_eq!(wreck.window_s, 90.0);
+    assert!(wreck.failure_time_s >= 0.0);
+    assert!(wreck.inlet_vapour_fraction > 0.0);
+    assert!(wreck.residual_heat_j_per_kg > 0.0);
+}
+
+/// THE WRECK IS REPRODUCIBLE. The same input log, asked for twice, returns the same wreck bit-for-bit. This
+/// is the P1 gate applied to the wreck itself: a wreck that depends on when it was recorded is a story, not
+/// a record.
+#[test]
+fn the_wreck_is_reproducible_from_its_input_log() {
+    let net = network();
+    let plan = ChillPlan::underspecified();
+    let a = net.wreck(&plan, 0.50, 120.0).unwrap();
+    let b = net.wreck(&plan, 0.50, 120.0).unwrap();
+    assert_eq!(a, b, "the same input log must reproduce the same wreck exactly");
+}
+
+/// The wreck and the predicate agree: `is_wreck` is exactly `wreck().is_some()`. A predicate that disagreed
+/// with the record it summarises would let the page decide a run left a wreck when the record says it did
+/// not -- or the reverse.
+#[test]
+fn the_wreck_predicate_agrees_with_the_wreck_record() {
+    let net = network();
+    for (chill, bleeds) in [(5.0, 0), (12.0, 1), (300.0, 3), (60.0, 0), (0.0, 0)] {
+        let plan = ChillPlan { chill_s: chill, bleeds };
+        assert_eq!(
+            net.is_wreck(&plan, 0.50, 60.0),
+            net.wreck(&plan, 0.50, 60.0).is_some(),
+            "is_wreck disagreed with wreck() for chill={chill} bleeds={bleeds}",
+        );
+    }
+}
+
+/// A refused run has no wreck. A non-finite input is a run that never happened; answering `true` for it
+/// would record a failure that was never reached.
+#[test]
+fn a_refused_run_leaves_no_wreck() {
+    let net = network();
+    let plan = ChillPlan::underspecified();
+    assert!(net.wreck(&plan, f64::NAN, 60.0).is_none());
+    assert!(!net.is_wreck(&plan, f64::NAN, 60.0));
+}

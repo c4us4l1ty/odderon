@@ -369,6 +369,34 @@ pub struct RunOutcome {
     pub failure: Option<(Failure, f64)>,
 }
 
+/// A failed cryo load, kept as a record: the input log that produced it and the state it failed into.
+///
+/// This is the **wreck**, and the bible's rule is that it is always examinable -- never cut to black on
+/// failure. A wreck is not a boolean: it carries the checklist that was run (`chill_s`, `bleeds`, the fill
+/// rate and the window) alongside the failure, so a reader can look at *why* it failed and re-simulate the
+/// same input log to confirm it fails the same way. That is what makes it a record rather than a verdict.
+///
+/// A `Wreck` exists only for a run that actually failed (cavitated). A run that ran clean has no wreck --
+/// there is nothing to examine, and inventing one would be the same lie as a temperature for a missing
+/// kernel. `CryoNetwork::wreck` returns `None` for a clean run and for a refused one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Wreck {
+    /// The input log: the chill time the checklist specified, s.
+    pub chill_s: f64,
+    /// The input log: the purge cycles the checklist specified.
+    pub bleeds: u32,
+    /// The input log: the fill rate, kg/s.
+    pub fill_rate_kg_per_s: f64,
+    /// The input log: the fill window, simulated seconds.
+    pub window_s: f64,
+    /// The simulated time at which the pump first cavitated, s.
+    pub failure_time_s: f64,
+    /// The pump inlet vapour fraction that decided it, dimensionless 0–1.
+    pub inlet_vapour_fraction: f64,
+    /// The residual heat left in the line after the chilldown, J/kg. The cause, carried on the wreck.
+    pub residual_heat_j_per_kg: f64,
+}
+
 // =============================================================================================
 // The network and its simulation
 // =============================================================================================
@@ -491,5 +519,44 @@ impl CryoNetwork {
             pump_inlet_vapour_fraction: flash,
             failure,
         })
+    }
+
+    /// The **wreck** of a cryo load: the record of a run that failed, carrying the input log that produced
+    /// it and the state it failed into. `None` for a run that ran clean or was refused -- there is no wreck
+    /// to examine in either case, and returning one would be inventing a failure.
+    ///
+    /// A pure function of the input log, exactly like [`simulate`]: the same checklist returns the same
+    /// wreck (or `None`), so a wreck is reproducible from its input log rather than a story about when it
+    /// was recorded. This is the property the P1 gate rests on, and the reason the wreck is examinable at
+    /// all -- a reader can take the `chill_s`, `bleeds`, `fill_rate_kg_per_s` and `window_s` on the wreck
+    /// and re-run them to confirm the failure.
+    pub fn wreck(
+        &self,
+        plan: &ChillPlan,
+        fill_rate_kg_per_s: f64,
+        window_s: f64,
+    ) -> Option<Wreck> {
+        let outcome = self.simulate(plan, fill_rate_kg_per_s, window_s)?;
+        let (_, failure_time_s) = outcome.failure?;   // `None` here means the run did not fail: no wreck.
+        let q_res = chilldown_residual_heat(plan)?;
+        Some(Wreck {
+            chill_s: plan.chill_s,
+            bleeds: plan.bleeds,
+            fill_rate_kg_per_s,
+            window_s,
+            failure_time_s,
+            inlet_vapour_fraction: outcome.pump_inlet_vapour_fraction,
+            residual_heat_j_per_kg: q_res,
+        })
+    }
+
+    /// Does this input log produce a wreck? The predicate the page uses to decide whether a fill leaves
+    /// something on the stand to examine.
+    ///
+    /// A pure function of the input log, so the same checklist answers the same way every run. A refused
+    /// run (a non-finite input) is not a wreck -- it is a run that never happened, and answering `true` for
+    /// it would be the same lie as a temperature for a missing kernel.
+    pub fn is_wreck(&self, plan: &ChillPlan, fill_rate_kg_per_s: f64, window_s: f64) -> bool {
+        self.wreck(plan, fill_rate_kg_per_s, window_s).is_some()
     }
 }

@@ -70,7 +70,7 @@ check("the kernel export list names every pad export the page calls", (src) => {
   const nl = src.indexOf("const needed =");
   if (nl < 0) throw new Error("page has no `const needed =` export contract");
   const needed = [...src.slice(nl, src.indexOf("];", nl)).matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
-  const padExports = ["pad_failure_time", "pad_inlet_vapour_fraction", "pad_liquid_kg",
+  const padExports = ["pad_failure_time", "pad_inlet_vapour_fraction", "pad_is_wreck", "pad_liquid_kg",
     "pad_pressure_kpa", "pad_temperature_k", "pad_vapour_pressure_kpa",
     "pad_chilldown_residual_heat", "pad_flash_fraction"];
   const missing = padExports.filter((n) => !needed.includes(n));
@@ -111,6 +111,43 @@ check("the fill button runs the pad", (src) => {
   }
 });
 
+// --- 2b: the wreck is recorded and examinable ---------------------------------------------------------
+
+check("the page asks the kernel whether a fill leaves a wreck", (src) => {
+  // The wreck is the kernel's decision, not the page's: the page must call pad_is_wreck() rather than
+  // deciding on its own that a run failed. A page that invents a wreck from its own arithmetic is the same
+  // defect as a page that invents a temperature.
+  if (!/k\.pad_is_wreck\s*\(/.test(src)) {
+    throw new Error("the page does not call pad_is_wreck(); the wreck must come from the kernel");
+  }
+});
+
+check("a failed fill is recorded as an examinable wreck", (src) => {
+  // The bible's rule: the wreckage is always examinable, never cut to black on failure. The page must keep
+  // a wreck record that carries the input log (so it is reproducible from itself), pushed when the kernel
+  // says the run is a wreck.
+  if (!/padState\.wrecks\.push\(/.test(src)) {
+    throw new Error("the page does not record wrecks on the stand");
+  }
+  // The record must carry the input log: chill, bleeds, fill rate and window, so a reader can re-simulate
+  // it. A wreck that only carries a verdict is not examinable.
+  const push = src.match(/padState\.wrecks\.push\(\{([\s\S]{0,400}?)\}\)/);
+  if (!push) throw new Error("the wreck record is not a pushed object");
+  for (const field of ["chillS", "bleeds", "fillRate", "window", "failureTime"]) {
+    if (!new RegExp("\\b" + field + "\\b").test(push[1])) {
+      throw new Error(`the wreck record does not carry ${field}; it must carry the input log`);
+    }
+  }
+});
+
+check("the wreck stand is rendered, not merely stored", (src) => {
+  // A wreck kept in a variable and never shown is a record nobody can examine. The stand must be rendered
+  // from the wreck list.
+  if (!/function renderStand/.test(src) || !/pad-stand/.test(src)) {
+    throw new Error("the wreck stand is not rendered");
+  }
+});
+
 // --- 3: the kernel's failure, measured from the binary ------------------------------------------------
 
 /**
@@ -147,6 +184,22 @@ function verifyPad(ex) {
     problems.push(`the same log gave two failure times: ${a} vs ${b}`);
   }
 
+  // THE WRECK PREDICATE agrees with the failure: a run is a wreck exactly when it cavitated. A predicate
+  // that disagreed with the failure it summarises would let the page record a wreck for a clean run -- or
+  // miss one for a failed run.
+  const wreckUnder = ex.pad_is_wreck(5.0, 0, 0.50, 60.0);
+  const wreckSpec = ex.pad_is_wreck(300.0, 3, 0.50, 60.0);
+  if (wreckUnder !== 1) problems.push(`the under-specified load is not a wreck (pad_is_wreck=${wreckUnder})`);
+  if (wreckSpec !== 0) problems.push(`the specified load is a wreck (pad_is_wreck=${wreckSpec})`);
+  // ...and it is reproducible from the input log, like the failure itself.
+  if (ex.pad_is_wreck(5.0, 0, 0.50, 120.0) !== ex.pad_is_wreck(5.0, 0, 0.50, 120.0)) {
+    problems.push("pad_is_wreck is not reproducible from the input log");
+  }
+  // A refused run is not a wreck: a run that never happened leaves nothing to examine.
+  if (ex.pad_is_wreck(5.0, 0, NaN, 60.0) !== 0) {
+    problems.push("a NaN fill rate was recorded as a wreck");
+  }
+
   // The saturation curve anchors at the normal boiling point: one atmosphere, by construction.
   const pAtNbp = ex.pad_vapour_pressure_kpa(90.188);
   if (Math.abs(pAtNbp - 101.325) > 1e-9) {
@@ -173,6 +226,7 @@ function selftest() {
       return chill < 60 && bleeds === 0 ? 0.0 : -1.0;
     },
     pad_inlet_vapour_fraction: (chill, bleeds) => (chill < 60 && bleeds === 0 ? 1.0 : 0.0),
+    pad_is_wreck: (chill, bleeds, fill) => (Number.isFinite(fill) && chill < 60 && bleeds === 0 ? 1 : 0),
     pad_vapour_pressure_kpa: (t) => (Math.abs(t - 90.188) < 1e-9 ? 101.325 : 200.0),
   };
   const results = [];

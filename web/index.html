@@ -100,6 +100,10 @@
   #pad-fill:active, #pad-reset:active { background: #27384a; }
   #pad-reset { margin-top: 4px; font-size: 11px; color: #9fb0c0; }
   #pad-note { margin-top: 5px; font-size: 11px; line-height: 1.4; }
+  #pad-stand { margin-top: 6px; font-size: 11px; line-height: 1.4; max-height: 180px; overflow-y: auto; }
+  .wreck { margin-bottom: 5px; padding: 5px 6px; border-radius: 5px; background: #151b22; border: 1px solid #2a3642; }
+  .wreck-head { color: #ff8a80; font-variant-numeric: tabular-nums; }
+  .wreck-log { color: #7d8b9c; margin-top: 2px; font-variant-numeric: tabular-nums; }
   .scales { display: flex; gap: 4px; margin-top: 6px; }
   .scales button {
     flex: 1; padding: 6px 4px; border-radius: 5px; cursor: pointer;
@@ -199,6 +203,9 @@
   <div class="row"><span>pressure</span><span id="m-pad-pressure">—</span></div>
   <div class="row big" id="m-pad-verdict">—</div>
   <div id="pad-note" class="muted"></div>
+
+  <div class="row"><span>wrecks on the stand</span><span id="m-pad-wrecks">0</span></div>
+  <div id="pad-stand" class="muted">nothing on the stand yet. a failed fill leaves a wreck here.</div>
 
   <div id="note" class="muted"></div>
 </div>
@@ -1306,7 +1313,7 @@ async function loadKernel() {
                     // The pad. P1's gate is a reproducible failure from the input log: the clipboard
                     // drives the chilldown, the kernel returns whether the pump cavitates, and the same
                     // checklist fails the same way every run. These are the exports the clipboard reads.
-                    'pad_failure_time', 'pad_inlet_vapour_fraction',
+                    'pad_failure_time', 'pad_inlet_vapour_fraction', 'pad_is_wreck',
                     'pad_liquid_kg', 'pad_pressure_kpa', 'pad_temperature_k',
                     'pad_vapour_pressure_kpa', 'pad_chilldown_residual_heat', 'pad_flash_fraction'];
     const missing = needed.filter((n) => typeof ex[n] !== 'function');
@@ -1439,6 +1446,12 @@ const padState = {
   liquidKg: NaN,
   pressureKpa: NaN,
   ran: false,
+  // THE STAND. Every failed fill leaves a wreck here -- the input log and the state it failed into -- so
+  // the wreckage is always examinable rather than cut away. A wreck is a record, not a verdict: it carries
+  // exactly what was run, so a reader can re-simulate it and confirm the failure. The stand accumulates;
+  // it is not cleared by a later clean run, because a wreck that happened is not undone by a run that did
+  // not.
+  wrecks: [],
 };
 
 /// The under-specified checklist the bible's first load starts from: a short chill, no purges. This is the
@@ -1472,6 +1485,21 @@ function runPad() {
   padState.liquidKg = k.pad_liquid_kg(chillS, bleeds, PAD_FILL_RATE, PAD_WINDOW_S);
   padState.pressureKpa = k.pad_pressure_kpa(chillS, bleeds, PAD_FILL_RATE, PAD_WINDOW_S);
   padState.ran = true;
+
+  // THE WRECK, RECORDED. If this input log produces a wreck -- the pump cavitated -- the failed run is
+  // added to the stand as an examinable record: the input log that produced it plus the state it failed
+  // into. The kernel decides whether it is a wreck (`pad_is_wreck`), so the page does not invent one; and
+  // the record is the same pure function of the log, so it is reproducible from itself.
+  if (k.pad_is_wreck(chillS, bleeds, PAD_FILL_RATE, PAD_WINDOW_S)) {
+    padState.wrecks.push({
+      chillS, bleeds,
+      fillRate: PAD_FILL_RATE,
+      window: PAD_WINDOW_S,
+      failureTime: padState.failureTime,
+      inletFraction: padState.inletFraction,
+      residualHeat: padState.residualHeat,
+    });
+  }
 
   updatePadHud();
 }
@@ -1514,6 +1542,35 @@ function updatePadHud() {
       'the pump lost prime at ' + padState.failureTime.toFixed(1) + ' s of simulated fill: the line was ' +
       'too warm, the cryogen flashed, and the test article has no flow. the wreck stays on the stand.';
   }
+
+  // THE STAND, RENDERED. Every wreck is an examinable record: the input log that produced it and the state
+  // it failed into. A wreck is shown with its checklist and its failure, so a reader can see WHY it failed
+  // and re-run the same log to confirm it. The stand is not cleared by a later clean run.
+  renderStand();
+}
+
+/// Render the wreck stand: one examinable record per failed fill, oldest first.
+///
+/// Each wreck is self-describing -- it carries the chill time, purge cycles, fill rate and window it was
+/// run with, plus the failure -- so the record is reproducible from itself. This is the bible's "the
+/// wreckage is always examinable": the failure is shown, not cut away.
+function renderStand() {
+  const el = $('pad-stand');
+  if (!el) return;
+  const wrecks = padState.wrecks;
+  $('m-pad-wrecks').textContent = wrecks.length;
+  if (wrecks.length === 0) {
+    el.textContent = 'nothing on the stand yet. a failed fill leaves a wreck here.';
+    el.className = 'muted';
+    return;
+  }
+  el.className = '';
+  el.innerHTML = wrecks.map((w, i) =>
+    '<div class="wreck">' +
+    '<div class="wreck-head">wreck ' + (i + 1) + ' · cavitated at ' + w.failureTime.toFixed(1) + ' s</div>' +
+    '<div class="wreck-log">chill ' + w.chillS.toFixed(0) + ' s · ' + w.bleeds + ' purge' +
+    (w.bleeds === 1 ? '' : 's') + ' · inlet vapour ' + w.inletFraction.toFixed(3) + '</div>' +
+    '</div>').join('');
 }
 
 /// Simulated seconds since the curtain last moved, from the page clock and the stated rate.

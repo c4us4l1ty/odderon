@@ -603,6 +603,20 @@ pub extern "C" fn pad_temperature_k(chill_s: f64, bleeds: u32, fill_rate: f64, e
         .unwrap_or(f64::NAN)
 }
 
+/// Non-zero if this input log produces a **wreck** -- a failed cryo load, kept as a record on the stand.
+///
+/// The wreck is the bible's "the wreckage is always examinable": a failed run leaves a record (the input
+/// log and the state it failed into) rather than being cut away. This is the predicate the page uses to
+/// decide whether a fill leaves something to examine. `u32` rather than `bool` because `bool` is not a
+/// C-ABI type; a refused run (a non-finite input) is NOT a wreck, so it returns 0 rather than recording a
+/// failure that was never reached.
+#[unsafe(no_mangle)]
+pub extern "C" fn pad_is_wreck(chill_s: f64, bleeds: u32, fill_rate: f64, window_s: f64) -> u32 {
+    let net = odderon_astro::cryo::CryoNetwork::reference();
+    let plan = odderon_astro::cryo::ChillPlan { chill_s, bleeds };
+    u32::from(net.is_wreck(&plan, fill_rate, window_s))
+}
+
 #[cfg(test)]
 mod tests {
     // The ABI is a contract a host can violate with a single bad number, and two of the values it can
