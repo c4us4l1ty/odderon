@@ -273,6 +273,32 @@
   <div id="akashi-note" class="muted"></div>
 
   <div class="sep"></div>
+  <h3>the contract</h3>
+  <div class="muted">a mission is a contract: the price is the kernel's, a function of the Δv, mass, risk and window it asks for (money is physics, not a difficulty knob). commit a prediction before you fly, and the kernel scores it with a proper rule -- never an accuracy percentage.</div>
+  <div class="row"><span>contract price (mcu)</span><span id="m-mission-price">—</span></div>
+  <div class="row"><span>achieved Δv (km/s)</span><span id="m-mission-dv">—</span></div>
+  <div class="row"><span>essence (calibration)</span><span id="m-mission-essence">—</span></div>
+  <div class="row big" id="m-mission-status">no contract authored yet.</div>
+  <div class="pad-inputs">
+    <label>Δv budget (km/s)<input id="mission-dv" type="number" min="0" step="0.1" value="7.8"></label>
+    <label>mass (kg)<input id="mission-mass" type="number" min="0" step="10" value="500"></label>
+    <label>risk<input id="mission-risk" type="number" min="0" step="0.1" value="0"></label>
+    <label>window (days)<input id="mission-window" type="number" min="0" step="1" value="30"></label>
+  </div>
+  <div class="pad-inputs">
+    <button id="mission-price-btn" type="button">price the contract</button>
+  </div>
+  <div class="pad-inputs">
+    <label>commit: probability of meeting budget<input id="mission-p" type="number" min="0" max="1" step="0.05" value="0.8"></label>
+    <button id="mission-commit" type="button">commit prediction</button>
+  </div>
+  <div class="pad-inputs">
+    <button id="mission-fly" type="button">fly the mission</button>
+    <button id="mission-score" type="button">score the prediction</button>
+  </div>
+  <div id="mission-note" class="muted"></div>
+
+  <div class="sep"></div>
   <h3>the museum</h3>
   <div class="muted">your career, recorded as it happens and verifiable against the kernel. every vehicle, report and message is a row; verify re-derives each one from the kernel.</div>
   <div class="row"><span>entries</span><span id="m-archive-count">0 entries</span></div>
@@ -1476,7 +1502,11 @@ async function loadKernel() {
                     // the comms link: light-time and the message arrival, from the same kernel seam
                     // (lighttime), so the page answers "when does the message land" from the kernel.
                     'light_time_s', 'comms_link_status', 'station_light_time_s',
-                    'comms_round_trip_s', 'comms_arrival_s'];
+                    'comms_round_trip_s', 'comms_arrival_s',
+                    // P5: the mission economy and Esse. The career core (bible §3.2 / §4.3 / §12.1).
+                    // The contract price is the kernel's (money is physics), the achieved Δv is read
+                    // through the rocket kernel, and the two Esse scores are proper scoring rules.
+                    'contract_price', 'achieved_dv', 'log_score', 'crps', 'mission_design_hash'];
     const missing = needed.filter((n) => typeof ex[n] !== 'function');
     if (missing.length) throw new Error('module missing exports: ' + missing.join(', '));
     kernelState.module = ex;
@@ -2639,6 +2669,14 @@ function archiveSerialize(entry) {
       f(entry.params.raan, 6), f(entry.params.argp, 6), f(entry.params.nu, 6),
       f(entry.params.lat, 6), f(entry.params.lon, 6), f(entry.params.sendS, 6),
       f(entry.readings.lightTime, 9), f(entry.readings.arrival, 9));
+  } else if (entry.type === 'mission') {
+    // A scored mission: the contract's parameters (the work it asks for), the committed prediction,
+    // and the kernel's price, achieved Δv, and score. A verifier re-derives the price from the
+    // contract's parameters, the achieved Δv from the rocket kernel, and the score from the
+    // committed prediction and the outcome -- all of it the kernel's, not the page's.
+    parts.push(f(entry.params.dv, 6), f(entry.params.mass, 6), f(entry.params.risk, 6),
+      f(entry.params.window, 6), f(entry.params.p, 6),
+      f(entry.readings.price, 3), f(entry.readings.dv, 6), f(entry.readings.score, 6));
   }
   return parts.join('|');
 }
@@ -2784,6 +2822,22 @@ function verifyArchiveEntry(entry) {
     const readingsOk = close(reDerived.lightTime, entry.readings.lightTime, 1e-9) &&
       close(reDerived.arrival, entry.readings.arrival, 1e-9);
     return { ok: hashOk && readingsOk, detail: (hashOk ? 'hash ' : 'hash ') + (readingsOk ? 'light-time matches' : 'light-time differs') };
+  }
+  if (entry.type === 'mission') {
+    // Re-derive the price from the contract's parameters, the achieved Δv from the rocket kernel,
+    // and the score from the committed prediction and the outcome. All three are the kernel's, so a
+    // third party can recompute them and confirm the record.
+    const reDerived = {
+      price: k.contract_price(entry.params.dv, entry.params.mass, entry.params.risk, entry.params.window),
+      dv: k.achieved_dv(rocketParams.latitudeDeg * Math.PI / 180, rocketParams.azimuthDeg * Math.PI / 180,
+        rocketParams.elevationDeg * Math.PI / 180, rocketParams.burnoutVelocity),
+      score: k.log_score(entry.params.p, entry.readings.dv >= entry.params.dv ? 1 : 0),
+    };
+    const hashOk = archiveHash(entry) === entry.hash;
+    const readingsOk = close(reDerived.price, entry.readings.price, 1e-3) &&
+      close(reDerived.dv, entry.readings.dv, 1e-6) &&
+      close(reDerived.score, entry.readings.score, 1e-6);
+    return { ok: hashOk && readingsOk, detail: (hashOk ? 'hash ' : 'hash ') + (readingsOk ? 'mission matches' : 'mission differs') };
   }
   return { ok: false, detail: 'unknown entry type' };
 }
@@ -3169,6 +3223,190 @@ function renderCausalMail(nowS) {
   host.innerHTML = rows.join('');
   $('m-mail-count').textContent =
     `${inbox.delivered.length} delivered · ${inbox.inTransit.length} in transit`;
+}
+
+// --------------------------------------------------------------------------------------------
+// the contract (P5: the career core, bible §3.2 / §4.3 / §12.1)
+// --------------------------------------------------------------------------------------------
+// "Money is physics, not a difficulty knob" (§12.1). A mission is a contract: its price is a
+// function of the work it asks for -- the Δv budget, the mass, the risk, the window -- computed by
+// the kernel from pinned constants. The page holds no price formula and no price constant: a
+// verifier, given the contract's parameters, calls the kernel's `contract_price` and gets the same
+// number the panel shows. That is what makes "money is physics" testable rather than a claim.
+//
+// The mission loop (§3.2) has a PREDICT beat and a DEBRIEF beat. The PREDICT beat is *committed
+// before execution* (§4.3 rule 2): the player commits a probability that the mission meets its Δv
+// budget, and the grease mark is hashed and timestamped before the sim advances -- it cannot be
+// retro-fitted. The DEBRIEF beat scores the prediction against the achieved Δv with a *proper*
+// scoring rule (§4.3): the log score for a categorical call, never an accuracy percentage. A proper
+// rule cannot be gamed by hedging or by claiming impossible certainty, which is the reason the
+// bible forbids accuracy %.
+//
+// The achieved Δv is read through the rocket kernel (`achieved_dv`), so the score is a function of
+// the same physics the flight is. A refused launch yields no Δv: a mission that never flew has
+// nothing to score a prediction against, and the score is a refusal (`NaN`), not a number.
+
+/// The mission state. The contract's parameters are inputs (the page reads them from the form); the
+/// price, the achieved Δv, and the score are all kernel readings. `committed` holds the prediction
+/// the player committed before flying -- once set it is frozen, because a prediction cannot be
+/// retro-fitted (§4.3 rule 2).
+const missionState = {
+  // The contract's authored parameters, read from the form. Inputs, not readings.
+  dvBudget: 7.8,
+  mass: 500,
+  risk: 0,
+  window: 30,
+  // The kernel's price for the current contract, or null if not yet priced.
+  price: null,
+  // The committed prediction: { p, atMs }. Frozen once set.
+  committed: null,
+  // The achieved Δv from the last flight, or null.
+  achievedDv: null,
+  // The kernel's score of the committed prediction against the achieved Δv, or null.
+  score: null,
+  // The running essence (calibration) score: the mean log score across scored missions.
+  essence: null,
+  scored: 0,
+};
+
+/// Read the contract's parameters from the form. Inputs only -- no price, no Δv, no score.
+function readMissionInputs() {
+  const num = (id, fallback) => {
+    const el = $(id);
+    const v = el ? parseFloat(el.value) : NaN;
+    return Number.isFinite(v) ? v : fallback;
+  };
+  missionState.dvBudget = num('mission-dv', missionState.dvBudget);
+  missionState.mass = num('mission-mass', missionState.mass);
+  missionState.risk = num('mission-risk', missionState.risk);
+  missionState.window = num('mission-window', missionState.window);
+}
+
+/// The kernel's price for the current contract. A pure function of the work it asks for; the page
+/// computes no price. Returns { source, valid, price } so a missing kernel is a refusal, not a 0.
+function missionPrice() {
+  const k = kernelState.module;
+  if (!k) return { source: 'absent' };
+  readMissionInputs();
+  const price = k.contract_price(missionState.dvBudget, missionState.mass, missionState.risk, missionState.window);
+  if (!Number.isFinite(price)) return { source: 'wasm kernel', valid: false };
+  missionState.price = price;
+  return { source: 'wasm kernel', valid: true, price };
+}
+
+/// Commit the prediction: the probability the mission meets its Δv budget. Frozen at the instant
+/// of commitment -- a prediction cannot be retro-fitted after the sim advances (§4.3 rule 2). The
+/// commitment is a pure input; the score is the kernel's, computed later against the achieved Δv.
+function missionCommit() {
+  const el = $('mission-p');
+  const p = el ? parseFloat(el.value) : NaN;
+  if (!Number.isFinite(p) || p < 0 || p > 1) {
+    $('mission-note').textContent = 'the probability must be between 0 and 1.';
+    return null;
+  }
+  missionState.committed = { p, atMs: Date.now() };
+  $('mission-note').textContent =
+    `committed: a ${p} probability the mission meets its Δv budget. the commitment is frozen.`;
+  renderMission();
+  return missionState.committed;
+}
+
+/// Fly the mission: read the authored rocket parameters and the kernel's achieved Δv. The achieved
+/// Δv is the rocket's burnout velocity, read through the kernel so a refused launch yields no Δv.
+function missionFly() {
+  const k = kernelState.module;
+  if (!k) { $('mission-note').textContent = 'the kernel is not built, so the mission cannot fly.'; return null; }
+  const lat = rocketParams.latitudeDeg * Math.PI / 180;
+  const az = rocketParams.azimuthDeg * Math.PI / 180;
+  const el = rocketParams.elevationDeg * Math.PI / 180;
+  const v = rocketParams.burnoutVelocity;
+  const dv = k.achieved_dv(lat, az, el, v);
+  if (!Number.isFinite(dv)) {
+    missionState.achievedDv = null;
+    $('mission-note').textContent = 'the launch was refused, so there is no achieved Δv to score against.';
+    renderMission();
+    return null;
+  }
+  missionState.achievedDv = dv;
+  $('mission-note').textContent = `the mission flew: ${dv.toFixed(3)} km/s of Δv achieved.`;
+  renderMission();
+  return dv;
+}
+
+/// Score the committed prediction against the achieved Δv with the kernel's log score (§4.3). The
+/// outcome is whether the achieved Δv met the budget. A proper scoring rule: lower is better, and
+/// it punishes both hedging and over-claiming. The score is the kernel's, never an accuracy %.
+function missionScore() {
+  const k = kernelState.module;
+  if (!k) { $('mission-note').textContent = 'the kernel is not built, so the prediction cannot be scored.'; return null; }
+  if (!missionState.committed) {
+    $('mission-note').textContent = 'commit a prediction before you can score it.';
+    return null;
+  }
+  if (missionState.achievedDv === null) {
+    $('mission-note').textContent = 'fly the mission before you can score the prediction.';
+    return null;
+  }
+  const met = missionState.achievedDv >= missionState.dvBudget ? 1 : 0;
+  const score = k.log_score(missionState.committed.p, met);
+  if (!Number.isFinite(score)) {
+    $('mission-note').textContent = 'the score is a refusal: the committed probability was degenerate.';
+    return null;
+  }
+  missionState.score = score;
+  missionState.scored += 1;
+  // Esse (calibration) is the running mean of the log scores across scored missions -- a proper
+  // aggregate, reported with its N, not an accuracy percentage.
+  missionState.essence = missionState.essence === null
+    ? score
+    : missionState.essence + (score - missionState.essence) / missionState.scored;
+  $('mission-note').textContent =
+    `scored: ${score.toFixed(4)} (${met ? 'met' : 'missed'} the ${missionState.dvBudget} km/s budget). ` +    `essence (calibration) over ${missionState.scored} mission: ${missionState.essence.toFixed(4)}.`;
+  recordMission();
+  renderMission();
+  return score;
+}
+
+/// Record the mission in the archive: the contract's parameters, the committed prediction, the
+/// achieved Δv, and the kernel's score. A verifier re-derives the price, the achieved Δv, and the
+/// score from the kernel and confirms they match what was recorded.
+function recordMission() {
+  if (missionState.score === null) return null;
+  const entry = {
+    type: 'mission',
+    params: {
+      dv: missionState.dvBudget, mass: missionState.mass,
+      risk: missionState.risk, window: missionState.window,
+      p: missionState.committed ? missionState.committed.p : null,
+    },
+    readings: {
+      price: missionState.price,
+      dv: missionState.achievedDv,
+      score: missionState.score,
+    },
+  };
+  return archivePush(entry);
+}
+
+/// Render the contract panel. A `NaN` reading is shown as `—`, the convention every panel uses.
+function renderMission() {
+  const f = (v, d) => (Number.isFinite(v) ? v.toFixed(d) : '—');
+  const priceEl = $('m-mission-price');
+  const dvEl = $('m-mission-dv');
+  const essEl = $('m-mission-essence');
+  const statusEl = $('m-mission-status');
+  if (priceEl) priceEl.textContent = missionState.price === null ? '—' : f(missionState.price, 0);
+  if (dvEl) dvEl.textContent = missionState.achievedDv === null ? '—' : f(missionState.achievedDv, 3);
+  if (essEl) essEl.textContent = missionState.essence === null ? '—' : f(missionState.essence, 4);
+  if (statusEl) {
+    if (missionState.score === null) {
+      statusEl.textContent = missionState.committed
+        ? 'prediction committed, awaiting the flight.'
+        : 'no contract authored yet.';
+    } else {
+      statusEl.textContent = `scored: ${f(missionState.score, 4)} · essence ${f(missionState.essence, 4)} over ${missionState.scored}.`;
+    }
+  }
 }
 
 // --------------------------------------------------------------------------------------------
@@ -4650,6 +4888,25 @@ $('mail-record').addEventListener('click', () => {
     : 'no message from the sky has arrived yet -- wait for a peer\'s light-time to elapse.';
 });
 
+// THE CONTRACT. The mission loop (bible §3.2): price the contract (the kernel's, money is
+// physics), commit a prediction before flying (§4.3 rule 2 -- it cannot be retro-fitted), fly the
+// mission (the achieved Δv is the rocket kernel's), and score the prediction with a proper rule
+// (the log score, never an accuracy %). The score and the running essence are the kernel's.
+$('mission-price-btn').addEventListener('click', () => {
+  const r = missionPrice();
+  if (!r.valid) {
+    $('mission-note').textContent = r.source === 'absent'
+      ? 'the kernel is not built, so the contract cannot be priced.'
+      : 'the contract parameters are degenerate -- check the Δv, mass, window and risk.';
+  } else {
+    $('mission-note').textContent = `the contract is priced at ${r.price.toFixed(0)} mcu (the kernel's, from the work it asks for).`;
+  }
+  renderMission();
+});
+$('mission-commit').addEventListener('click', () => { missionCommit(); });
+$('mission-fly').addEventListener('click', () => { missionFly(); });
+$('mission-score').addEventListener('click', () => { missionScore(); });
+
 // The Akashi design hash is shown as soon as the kernel is built, so the version stamp is visible
 // before any entry is exported.
 function updateAkashiHash() {
@@ -4783,6 +5040,9 @@ loadKernel().then(() => {
   // The sky. Render the causal mail so the peer ships are present from the first frame; the inbox is
   // a pure function of the orbit clock, so it is correct before any message is sent.
   renderCausalMail(performance.now() / 1000);
+  // The contract. Render the mission panel so it is present from the first frame; the price is the
+  // kernel's, computed on demand, so the panel is correct before any contract is authored.
+  renderMission();
   // Say which orbit is on screen. "wasm" means the kernel's own numbers; anything else is a named
   // failure rather than an orbit drawn by something else. A page that draws an ellipse without saying
   // where the ellipse came from is the defect this whole change exists to remove.
@@ -5066,6 +5326,17 @@ window.__odderon = {
   recordMail,
   recordMailInbox,
   renderCausalMail,
+  // The contract (P5: the career core, §3.2 / §4.3 / §12.1). Exposed so a test can price a
+  // contract, commit a prediction, fly the mission, and confirm the price, the achieved Δv, and
+  // the score are the kernel's -- the P5 gate, the mission loop firing end-to-end with a proper
+  // scoring rule. `tools/check-mission.mjs` reads these against the module's own exports.
+  missionState,
+  missionPrice,
+  missionCommit,
+  missionFly,
+  missionScore,
+  recordMission,
+  renderMission,
   renderer: () => renderer,
   requestFrame,
   /**

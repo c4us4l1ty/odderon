@@ -206,6 +206,13 @@ jobs:
       - name: causal mail boundary (the light-time is the kernel's, measured between real positions)
         run: node tools/check-causal-mail.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
 
+      # The mission economy and Esse boundary, against the same binary: the contract price is a pure
+      # function of the work (pinned at the reference point, rising with each factor, refusing
+      # degenerate inputs), the achieved Δv is the rocket kernel's, and the log score and CRPS are
+      # proper scoring rules. Static half in `shell-claims`.
+      - name: mission boundary (the economy and Esse scores are the kernel's, proper and physical)
+        run: node tools/check-mission.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
+
       - name: stage wasm artifacts
         run: |
           mkdir -p dist
@@ -393,6 +400,14 @@ jobs:
 
       - name: causal mail verifier self-test (sound inbox, recorded mail verifies)
         run: node tools/check-causal-mail.mjs --selftest
+
+      # The mission loop (P5: the career core). The contract price is the kernel's (money is
+      # physics), the prediction is committed before execution, Esse is a proper scoring rule (never
+      # an accuracy %), and a scored mission is recorded and verifiable against the kernel.
+      - name: "the contract - the economy and Esse, checked"
+        run: node tools/check-mission.mjs
+      - name: mission verifier self-test (price, commit, score, verification sound)
+        run: node tools/check-mission.mjs --selftest
       # On 2026-11-24 this job failed on a condition the page handles correctly: the optional wasm
       # artifact is absent on a clean checkout, the browser logs a 404, and `tools/screenshot.mjs` treats
       # any console error as an untrustworthy frame. The capture now exempts that one error -- but only

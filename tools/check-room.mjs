@@ -67,7 +67,10 @@ if (checks.every(([t]) => t === "ok  ")) ok("the page depends on all four room e
 // The presenter must not own the physics. These are the numbers that would mean it does.
 const forbidden = [
   [/\b0\.60\b/, "0.60", "SHGC"],
-  [/\b0\.05\b(?!\s*\))/, "0.05", "the curtain's SHGC"],
+  // 0.05 is the closed-curtain SHGC. The negative lookbehinds keep the scan on the page's JS: a
+  // `0.05` inside an HTML attribute (e.g. an input's `step="0.05"`) is markup, not a presenter
+  // that re-derived the physics. The lookahead keeps a `0.05)` call argument from a false hit.
+  [/(?<!=")(?<!=')\b0\.05\b(?!\s*\))/, "0.05", "the curtain's SHGC"],
   [/\b1440\b/, "1440", "the open-window solar gain"],
   [/\b800\b\s*\*\s*3/, "800 * 3", "irradiance x glazing area"],
   [/\bCOP\b/, "COP", "a COP"],

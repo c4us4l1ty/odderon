@@ -26,7 +26,8 @@
     "check:lighttime": "node tools/check-lighttime.mjs",
     "check:archive": "node tools/check-archive.mjs",
     "check:protege": "node tools/check-protege.mjs",
-    "check:causal-mail": "node tools/check-causal-mail.mjs"
+    "check:causal-mail": "node tools/check-causal-mail.mjs",
+    "check:mission": "node tools/check-mission.mjs"
   },
   "devDependencies": {
     "@sparticuz/chromium": "131.0.0",
