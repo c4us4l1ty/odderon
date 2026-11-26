@@ -517,7 +517,10 @@ fn the_ghost_twin_is_reproducible() {
 
     let a = ghost_twin(&mark, &net, 0.50, 60.0).unwrap();
     let b = ghost_twin(&mark, &net, 0.50, 60.0).unwrap();
-    assert_eq!(a, b, "the same mark and plan must produce the same ghost twin exactly");
+    assert_eq!(
+        a, b,
+        "the same mark and plan must produce the same ghost twin exactly"
+    );
 }
 
 /// A non-finite expected value is refused: a mark with no meaning is not a prediction.
@@ -591,7 +594,10 @@ fn the_one_arrow_is_reproducible() {
 
     let a = attribution(&mark, &net, 0.50, 60.0);
     let b = attribution(&mark, &net, 0.50, 60.0);
-    assert_eq!(a, b, "the same mark and plan must produce the same attribution exactly");
+    assert_eq!(
+        a, b,
+        "the same mark and plan must produce the same attribution exactly"
+    );
 }
 
 /// A mark that agrees with the actual produces no arrow: a zero gap points nowhere.
@@ -624,7 +630,10 @@ fn a_mark_that_agrees_with_the_actual_produces_no_arrow() {
 fn the_design_hash_is_deterministic() {
     let a = design_hash();
     let b = design_hash();
-    assert_eq!(a, b, "the design hash must be a pure function of the constants");
+    assert_eq!(
+        a, b,
+        "the design hash must be a pure function of the constants"
+    );
     assert_ne!(a, 0, "the design hash must not be the zero value");
 }
 
@@ -641,7 +650,10 @@ fn the_akashi_entry_is_deterministic_and_self_consistent() {
 
     let a = akashi_entry(&net, 7, &plan, 0.50, 60.0, Some(&mark)).expect("a valid entry");
     let b = akashi_entry(&net, 7, &plan, 0.50, 60.0, Some(&mark)).expect("a valid entry");
-    assert_eq!(a, b, "the same inputs must produce the same Akashi entry exactly");
+    assert_eq!(
+        a, b,
+        "the same inputs must produce the same Akashi entry exactly"
+    );
 
     // The design hash is the kernel's, not a caller-supplied value.
     assert_eq!(a.design_hash, design_hash());
@@ -677,7 +689,10 @@ fn the_akashi_entry_carries_the_loop_of_consequence() {
     let mark = Mark::inlet(plan, 0.1);
     let entry = akashi_entry(&net, 1, &plan, 0.50, 60.0, Some(&mark)).unwrap();
     assert!(entry.mark.is_some(), "an entry with a mark must carry it");
-    assert!(entry.ghost.is_some(), "an entry with a mark must carry the ghost twin");
+    assert!(
+        entry.ghost.is_some(),
+        "an entry with a mark must carry the ghost twin"
+    );
     assert!(
         entry.ghost.unwrap().divergence != 0.0,
         "the ghost twin must carry a non-zero divergence for a divergent mark",
@@ -687,7 +702,10 @@ fn the_akashi_entry_carries_the_loop_of_consequence() {
         Attribution::None,
         "an entry with a divergent mark must carry an attribution",
     );
-    assert!(entry.wreck.is_some(), "the plan cavitates, so the entry must carry a wreck");
+    assert!(
+        entry.wreck.is_some(),
+        "the plan cavitates, so the entry must carry a wreck"
+    );
 
     // Without a mark: the consequence still fires, but there is no prediction to compare against.
     let entry_no_mark = akashi_entry(&net, 2, &plan, 0.50, 60.0, None).unwrap();
@@ -698,5 +716,8 @@ fn the_akashi_entry_carries_the_loop_of_consequence() {
         Attribution::None,
         "no mark means no attribution",
     );
-    assert!(entry_no_mark.wreck.is_some(), "the wreck fires regardless of whether a mark was placed");
+    assert!(
+        entry_no_mark.wreck.is_some(),
+        "the wreck fires regardless of whether a mark was placed"
+    );
 }
