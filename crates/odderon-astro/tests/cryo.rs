@@ -463,9 +463,7 @@ fn a_refused_run_leaves_no_wreck() {
 // 8. The Mark: grease pencil, ghost twin, one arrow, Akashi
 // =============================================================================================
 
-use odderon_astro::cryo::{
-    akashi_entry, attribution, design_hash, ghost_twin, Attribution, Mark,
-};
+use odderon_astro::cryo::{akashi_entry, attribution, design_hash, ghost_twin, Attribution, Mark};
 
 /// The ghost twin's divergence is the reward prediction error: actual minus expected.
 ///
@@ -497,7 +495,8 @@ fn the_ghost_twin_divergence_is_actual_minus_expected() {
     assert_eq!(low.actual, actual);
 
     let high_mark = Mark::inlet(plan, actual + 0.1);
-    let high = ghost_twin(&high_mark, &net, 0.50, 60.0).expect("a valid mark produces a ghost twin");
+    let high =
+        ghost_twin(&high_mark, &net, 0.50, 60.0).expect("a valid mark produces a ghost twin");
     assert!(
         high.divergence < 0.0,
         "a mark above the actual must produce a negative divergence, got {}",

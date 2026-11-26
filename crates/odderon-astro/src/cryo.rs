@@ -647,7 +647,12 @@ pub struct GhostTwin {
 ///
 /// Returns `None` if the plan is refused (a non-finite chill time) or the expected value is non-finite,
 /// because a ghost twin with a missing side is not a ghost twin -- it is a number with no comparison.
-pub fn ghost_twin(mark: &Mark, net: &CryoNetwork, fill_rate_kg_per_s: f64, window_s: f64) -> Option<GhostTwin> {
+pub fn ghost_twin(
+    mark: &Mark,
+    net: &CryoNetwork,
+    fill_rate_kg_per_s: f64,
+    window_s: f64,
+) -> Option<GhostTwin> {
     if !is_finite(mark.expected) {
         return None;
     }
@@ -715,7 +720,12 @@ pub struct AttributionResult {
 ///
 /// A non-finite or refused plan returns `Attribution::None` with zero sensitivities: there is no
 /// divergence to attribute because there is no actual reading to compare against.
-pub fn attribution(mark: &Mark, net: &CryoNetwork, fill_rate_kg_per_s: f64, window_s: f64) -> AttributionResult {
+pub fn attribution(
+    mark: &Mark,
+    net: &CryoNetwork,
+    fill_rate_kg_per_s: f64,
+    window_s: f64,
+) -> AttributionResult {
     let Some(ghost) = ghost_twin(mark, net, fill_rate_kg_per_s, window_s) else {
         return AttributionResult {
             which: Attribution::None,
@@ -738,16 +748,17 @@ pub fn attribution(mark: &Mark, net: &CryoNetwork, fill_rate_kg_per_s: f64, wind
             };
         }
     };
-    let margin = match subcooling_margin_j_per_kg(net.initial_temperature_k, net.initial_pressure_kpa) {
-        Some(m) => m,
-        None => {
-            return AttributionResult {
-                which: Attribution::None,
-                sensitivity_chill: 0.0,
-                sensitivity_bleeds: 0.0,
-            };
-        }
-    };
+    let margin =
+        match subcooling_margin_j_per_kg(net.initial_temperature_k, net.initial_pressure_kpa) {
+            Some(m) => m,
+            None => {
+                return AttributionResult {
+                    which: Attribution::None,
+                    sensitivity_chill: 0.0,
+                    sensitivity_bleeds: 0.0,
+                };
+            }
+        };
     let flash = match flash_fraction(q_res, margin) {
         Some(f) => f,
         None => {
