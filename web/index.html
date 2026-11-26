@@ -222,6 +222,22 @@
   <div id="pad-debrief" class="muted">no wreck to debrief yet. a failed fill leaves a wreck, and the debrief explains it.</div>
 
   <div class="sep"></div>
+  <h2>the sounding rocket</h2>
+  <div class="muted" id="rocket-intro">author a launch: latitude, azimuth, elevation and burnout velocity. the inherited launch reaches ~59 km, short of space.</div>
+  <div class="pad-inputs">
+    <label>lat (deg) <input id="rocket-lat" type="number" min="-90" max="90" step="1" value="0"></label>
+    <label>az (deg) <input id="rocket-az" type="number" min="0" max="360" step="1" value="0"></label>
+    <label>el (deg) <input id="rocket-el" type="number" min="0" max="90" step="1" value="45"></label>
+    <label>burnout (km/s) <input id="rocket-vel" type="number" min="0.1" max="20" step="0.1" value="1.5"></label>
+  </div>
+  <button id="rocket-launch">launch</button>
+  <div class="row"><span>apogee (km)</span><span id="m-rocket-apogee">—</span></div>
+  <div class="row"><span>time to apogee (s)</span><span id="m-rocket-apogee-t">—</span></div>
+  <div class="row"><span>impact time (s)</span><span id="m-rocket-impact">—</span></div>
+  <div class="row"><span>ground range (km)</span><span id="m-rocket-range">—</span></div>
+  <div class="row big" id="m-rocket-verdict">—</div>
+
+  <div class="sep"></div>
   <h3>akashi entry</h3>
   <div class="muted" id="akashi-intro">mark an expectation, fill the line, and export the Loop of Consequence as a self-contained report.</div>
   <div class="row"><span>design hash</span><span id="m-akashi-hash">—</span></div>
@@ -319,6 +335,10 @@ uniform float uCurtain;     // 0 = open, 1 = closed; the geometry the light trav
 uniform vec3  uWinC;        // window centre in scene units: the HOLE in the outside wall
 uniform vec2  uWinHalf;     // window half-extent
 uniform float uBodyOn;      // 1 = the kernel gave a body position; 0 = there is no orbit to draw
+uniform vec3  uRocketPath[28]; // the sounding rocket's sampled trajectory, scene units; path is empty when uRocketPathOn = 0
+uniform float uRocketPathOn; // 1 = the kernel gave a trajectory path; 0 = there is no rocket to draw
+uniform vec3  uRocketPos;    // the rocket's current position along the path, scene units
+uniform float uRocketOn;     // 1 = the kernel gave a rocket position; 0 = there is no rocket to draw
 uniform float uRoomTemp;    // zone temperature, K, from the thermal network's own trajectory
 uniform float uSettledOpenK;// the room's settled temperature with the curtain open, K
 uniform vec3  uRoomLo;      // the inside room's inner corner (x, y, z), scene units
@@ -609,11 +629,26 @@ void main() {
     // the opening. It was at z = 18 when the window was in the +z wall; that is behind the camera now.
     float tBox = iBox(ro, rd, vec3(-3.4, 0.0, -8.2), vec3(-2.2, 0.8, -7.0));
     float tBody = (uBodyOn > 0.5) ? iSphere(ro, rd, uOrbitPos, 0.30) : -1.0;
+    // THE ROCKET PATH. The sounding rocket's trajectory, sampled by the page from the kernel and
+    // uploaded as a uniform array of scene-unit points. Each sample is a small sphere, so the path
+    // is the kernel's own trajectory drawn as a trail rather than a curve the shader invented. The
+    // moving rocket is a sphere at its current position along the path. Both are absent (id 0) when
+    // the kernel gave no path or no position -- the same "no substitute" rule the orbit body follows.
+    float tRocket = (uRocketOn > 0.5) ? iSphere(ro, rd, uRocketPos, 0.16) : -1.0;
+    float tPath = -1.0;
+    if (uRocketPathOn > 0.5) {
+      for (int i = 0; i < 28; i++) {
+        float tp = iSphere(ro, rd, uRocketPath[i], 0.055);
+        if (tp > 0.0 && (tPath < 0.0 || tp < tPath)) tPath = tp;
+      }
+    }
     float tb = 1e9;
     int bid = 0;
     if (tGround2 > 0.0 && tGround2 < tb) { tb = tGround2; bid = 4; }
     if (tBox > 0.0 && tBox < tb) { tb = tBox; bid = 5; }
     if (tBody > 0.0 && tBody < tb) { tb = tBody; bid = 6; }
+    if (tPath > 0.0 && tPath < tb) { tb = tPath; bid = 9; }
+    if (tRocket > 0.0 && tRocket < tb) { tb = tRocket; bid = 10; }
     t = tb;
     id = bid;
     if (id == 4) {
@@ -732,6 +767,15 @@ void main() {
     n = (ar.x > ar.y && ar.x > ar.z) ? vec3(sign(rel.x), 0.0, 0.0)
       : (ar.y > ar.z)                ? vec3(0.0, sign(rel.y), 0.0)
                                      : vec3(0.0, 0.0, sign(rel.z));
+  } else if (id == 9) {
+    // The rocket's trajectory path: a cool trail, dimmer than the rocket so the moving craft reads
+    // against it. Same geometry rule as the body -- a sphere the ray hit, normal pointing back.
+    albedo = vec3(0.45, 0.62, 0.85);
+    n = normalize(p - uRocketPath[0]);
+  } else if (id == 10) {
+    // The rocket itself: a bright, warm craft, the brightest thing outside so it is the eye's focus.
+    albedo = vec3(0.95, 0.78, 0.45);
+    n = normalize(p - uRocketPos);
   } else {
     albedo = vec3(0.72, 0.74, 0.78);
     n = normalize(p - uOrbitPos);
@@ -1004,6 +1048,10 @@ const U = {
   roomLo: gl.getUniformLocation(prog, 'uRoomLo'),
   roomHi: gl.getUniformLocation(prog, 'uRoomHi'),
   bodyOn: gl.getUniformLocation(prog, 'uBodyOn'),
+  rocketPath: gl.getUniformLocation(prog, 'uRocketPath'),
+  rocketPathOn: gl.getUniformLocation(prog, 'uRocketPathOn'),
+  rocketPos: gl.getUniformLocation(prog, 'uRocketPos'),
+  rocketOn: gl.getUniformLocation(prog, 'uRocketOn'),
   roomTemp: gl.getUniformLocation(prog, 'uRoomTemp'),
   settledOpenK: gl.getUniformLocation(prog, 'uSettledOpenK'),
 };
@@ -1342,7 +1390,15 @@ async function loadKernel() {
                     // one-arrow attribution (verdict + two sensitivities), and the Akashi design hash.
                     'pad_ghost_twin_actual', 'pad_ghost_twin_divergence',
                     'pad_attribution_which', 'pad_attribution_sensitivity_chill',
-                    'pad_attribution_sensitivity_bleeds', 'pad_design_hash'];
+                    'pad_attribution_sensitivity_bleeds', 'pad_design_hash',
+                    // P3: The Sounding Rocket. The gate to leave P3 is bit-identical replay in a second
+                    // browser, and these are the exports that make the trajectory a pure function of the
+                    // authored launch parameters and t: the position at time t, the surface-relative
+                    // readings (apogee, impact time, range), the verdict, and the design hash.
+                    'rocket_state_x', 'rocket_state_y', 'rocket_state_z',
+                    'rocket_apogee_km', 'rocket_time_to_apogee_s',
+                    'rocket_impact_time_s', 'rocket_range_km',
+                    'rocket_verdict', 'rocket_design_hash'];
     const missing = needed.filter((n) => typeof ex[n] !== 'function');
     if (missing.length) throw new Error('module missing exports: ' + missing.join(', '));
     kernelState.module = ex;
@@ -2056,7 +2112,171 @@ function orbitVelocity(tSeconds) {
   return [k.orbit_velocity_x(tSeconds), k.orbit_velocity_y(tSeconds), k.orbit_velocity_z(tSeconds)];
 }
 
-// ---------------------------------------------------------------------------------------------
+// =============================================================================================
+// The sounding rocket: a suborbital flight the player authors
+// =============================================================================================
+//
+// P3's gate is *bit-identical replay in a second browser*. The rocket is the smallest thing that can
+// falsify it: the trajectory is a pure function of the authored launch parameters and `t`, produced by
+// the same `propagate` that flies the orbital body. The page holds NO rocket constant of its own --
+// every number (apogee, impact time, range, verdict, position) comes from the kernel, the same rule
+// the room and the pad follow.
+//
+// The authored launch parameters are the four numbers the player sets: latitude, azimuth, elevation
+// (all degrees, converted to radians at the boundary), and burnout velocity (km/s). There is no
+// working default: the inherited launch reaches only ~59 km, short of the Kármán line, and the player
+// authors the parameters to reach space. That is the authorship mechanic.
+
+/// How many points the trajectory path is sampled into, for the shader. A fixed count so the uniform
+/// array has a fixed size; the kernel's trajectory is continuous, the path is a polyline through it.
+const ROCKET_PATH_SAMPLES = 28;
+
+/// The authored launch parameters, in the units the player edits: degrees and km/s.
+const rocketParams = {
+  latitudeDeg: 0.0,
+  azimuthDeg: 0.0,
+  elevationDeg: 45.0,
+  burnoutVelocity: 1.5,
+};
+
+/// The rocket's flight clock. Simulated seconds since launch; advances with the page clock and wraps
+/// at the flight duration, so the flight replays. `NaN` until the kernel has computed a duration.
+const rocketClock = {
+  elapsedS: 0.0,
+  scale: 1.0,        // simulated seconds per real second; set from the flight duration below
+  durationS: NaN,    // the flight's total duration (impact time, or apogee+apogee for orbital)
+  lastLaunchMs: 0,   // performance.now() ms at the last (re)launch
+};
+
+/// The rocket's current position at simulated time `tSeconds`, in scene units -- the same transform
+/// (tilt + SCENE_KM scale + view offset) the orbit body uses, so the rocket flies through the same
+/// sky the orbit traverses. Returns `null` when the kernel is absent or the launch is refused, the
+/// same "no substitute" rule `orbitPosition` follows.
+function rocketPosition(tSeconds) {
+  const k = kernelState.module;
+  if (!k) return null;
+  const lat = rocketParams.latitudeDeg * Math.PI / 180;
+  const az = rocketParams.azimuthDeg * Math.PI / 180;
+  const el = rocketParams.elevationDeg * Math.PI / 180;
+  const v = rocketParams.burnoutVelocity;
+  const x = k.rocket_state_x(lat, az, el, v, tSeconds);
+  const y = k.rocket_state_y(lat, az, el, v, tSeconds);
+  const z = k.rocket_state_z(lat, az, el, v, tSeconds);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null;
+  // The kernel's frame is Earth-centred; the page wants the same tilt the orbit uses so the rocket
+  // reads as flying through the same scene. Presentation only -- the kernel has no opinion about it.
+  const inc = 0.55, yaw = 0.9;
+  const xi = x, yi = y * Math.cos(inc), zi = z + y * Math.sin(inc);
+  const xr = xi * Math.cos(yaw) - yi * Math.sin(yaw);
+  const yr = xi * Math.sin(yaw) + yi * Math.cos(yaw);
+  return [xr * SCENE_KM, 2.9 + yr * SCENE_KM, 9.0 + zi * SCENE_KM];
+}
+
+/// The rocket's surface-relative readings for the authored parameters, from the kernel.
+/// Returns an object with the raw numbers; `NaN` fields mean the reading does not apply (e.g. no
+/// impact for an orbital or escaping flight). A refused launch returns a `refused: true` object.
+function rocketReadings() {
+  const k = kernelState.module;
+  if (!k) return { source: 'unavailable' };
+  const lat = rocketParams.latitudeDeg * Math.PI / 180;
+  const az = rocketParams.azimuthDeg * Math.PI / 180;
+  const el = rocketParams.elevationDeg * Math.PI / 180;
+  const v = rocketParams.burnoutVelocity;
+  const verdict = k.rocket_verdict(lat, az, el, v);
+  return {
+    source: 'wasm kernel',
+    verdict: verdict,
+    apogeeKm: k.rocket_apogee_km(lat, az, el, v),
+    timeToApogeeS: k.rocket_time_to_apogee_s(lat, az, el, v),
+    impactTimeS: k.rocket_impact_time_s(lat, az, el, v),
+    rangeKm: k.rocket_range_km(lat, az, el, v),
+  };
+}
+
+/// Sample the rocket's full trajectory into a flat Float32Array of scene-unit points, for the shader's
+/// path uniform. The path runs from launch (t=0) to the end of the flight. Returns `null` when the
+/// kernel is absent or the launch is refused -- no substitute path is ever drawn.
+function rocketTrajectory() {
+  const k = kernelState.module;
+  if (!k) return null;
+  const lat = rocketParams.latitudeDeg * Math.PI / 180;
+  const az = rocketParams.azimuthDeg * Math.PI / 180;
+  const el = rocketParams.elevationDeg * Math.PI / 180;
+  const v = rocketParams.burnoutVelocity;
+  const verdict = k.rocket_verdict(lat, az, el, v);
+  if (verdict === 3) return null;                 // refused
+  // The flight duration: impact time for suborbital, twice apogee time for orbital, nothing for escape.
+  const impact = k.rocket_impact_time_s(lat, az, el, v);
+  const apogee = k.rocket_time_to_apogee_s(lat, az, el, v);
+  const dur = Number.isFinite(impact) ? impact : (Number.isFinite(apogee) ? 2 * apogee : 0);
+  if (!Number.isFinite(dur) || dur <= 0) return null;
+  const pts = new Float32Array(ROCKET_PATH_SAMPLES * 3);
+  for (let i = 0; i < ROCKET_PATH_SAMPLES; i++) {
+    const t = (i / (ROCKET_PATH_SAMPLES - 1)) * dur;
+    const p = rocketPosition(t);
+    if (!p) { pts.fill(0); return null; }
+    pts[i * 3] = p[0]; pts[i * 3 + 1] = p[1]; pts[i * 3 + 2] = p[2];
+  }
+  return pts;
+}
+
+/// Advance the rocket clock by `realMs` and return the rocket's current scene position. The clock
+/// advances with the page clock and CLAMPS at the flight duration -- the rocket flies once, reaches
+/// its impact (or apogee for orbital), and holds there until the player re-launches. The duration is
+/// recomputed from the kernel each time the parameters change. Returns `null` when the kernel is
+/// absent or the flight has no duration (refused / escape).
+function advanceRocket(realMs) {
+  const readings = rocketReadings();
+  if (readings.source !== 'wasm kernel') return null;
+  const dur = Number.isFinite(readings.impactTimeS) ? readings.impactTimeS
+    : (Number.isFinite(readings.timeToApogeeS) ? 2 * readings.timeToApogeeS : NaN);
+  rocketClock.durationS = dur;
+  if (!Number.isFinite(dur) || dur <= 0) return null;
+  // A flight that completes in a few hundred seconds is too fast to watch at 1x; scale it so the
+  // whole flight plays over ~12 real seconds. Named, not hidden, and recomputed from the duration.
+  rocketClock.scale = dur / 12.0;
+  rocketClock.elapsedS += (realMs / 1000.0) * rocketClock.scale;
+  // Clamp, not wrap: the rocket flies once and holds at the end. The player re-authors and re-launches.
+  if (rocketClock.elapsedS > dur) rocketClock.elapsedS = dur;
+  return rocketPosition(rocketClock.elapsedS);
+}
+
+/// Re-launch: reset the rocket clock to zero so the flight plays from the start again. Called when the
+/// player edits the launch parameters or presses launch -- the authorship action.
+function relaunchRocket() {
+  rocketClock.elapsedS = 0.0;
+  rocketClock.lastLaunchMs = performance.now();
+}
+
+/// Refresh the rocket's HUD readings from the kernel. Every number comes from the kernel; the page
+/// never invents a rocket reading. A `NaN` reading is shown as `—`, the same convention the pad uses.
+function refreshRocket() {
+  const r = rocketReadings();
+  if (r.source !== 'wasm kernel') {
+    $('m-rocket-apogee').textContent = '—';
+    $('m-rocket-apogee-t').textContent = '—';
+    $('m-rocket-impact').textContent = '—';
+    $('m-rocket-range').textContent = '—';
+    $('m-rocket-verdict').textContent = 'kernel not built';
+    return;
+  }
+  const fmt = (v, d) => Number.isFinite(v) ? v.toFixed(d) : '—';
+  $('m-rocket-apogee').textContent = fmt(r.apogeeKm, 1);
+  $('m-rocket-apogee-t').textContent = fmt(r.timeToApogeeS, 1);
+  $('m-rocket-impact').textContent = fmt(r.impactTimeS, 1);
+  $('m-rocket-range').textContent = fmt(r.rangeKm, 1);
+  // The verdict is the player's headline: did the authored parameters reach space, orbit, or escape?
+  const names = ['suborbital', 'orbital', 'escape', 'refused'];
+  let label = names[r.verdict] || '—';
+  if (r.verdict === 0 && Number.isFinite(r.apogeeKm) && r.apogeeKm >= 100) {
+    label = 'suborbital · reached space';
+  } else if (r.verdict === 0) {
+    label = 'suborbital · short of space';
+  }
+  $('m-rocket-verdict').textContent = label;
+}
+
+// --------------------------------------------------------------------------------------------
 // the draw
 // ---------------------------------------------------------------------------------------------
 
@@ -2088,6 +2308,7 @@ const cache = {
   // The zone temperature the cached image was shaded at. See `cacheInvalidated()`: without this the
   // clock advances, the panel counts up, and every frame presents the ORIGINAL picture back.
   lastRoomTempK: NaN,
+  lastRocketPos: null,
   // measured at runtime, not asserted
   lastFullShadeMs: NaN,
   lastBlitMs: NaN,
@@ -2141,7 +2362,7 @@ function cacheResize(w, h) {
 }
 
 // What invalidates the cache. Kept as one predicate so the list cannot drift from the comment above.
-function cacheInvalidated(sun) {
+function cacheInvalidated(sun, rocketPos) {
   if (!cache.valid) return true;
   // THE GRAIN IS PART OF THE IMAGE, SO THE FRAME INDEX INVALIDATES THE CACHE.
   //
@@ -2199,6 +2420,16 @@ function cacheInvalidated(sun) {
   }
   if (!cache.lastSun || Math.abs(sun[0] - cache.lastSun[0]) > 1e-6 ||
       Math.abs(sun[1] - cache.lastSun[1]) > 1e-6 || Math.abs(sun[2] - cache.lastSun[2]) > 1e-6) return true;
+  // THE ROCKET'S POSITION IS PART OF THE IMAGE, AND A MOVING CRAFT MUST RE-SHADE. A rocket flying
+  // along its path is a dynamic event; a rocket held at impact (or absent) is static and keeps the
+  // cache valid. The comparison is against the last position actually drawn, so a rocket that has not
+  // moved does not force a shade. NaN-safe: a missing rocket (null) is not a change.
+  if (rocketPos && cache.lastRocketPos) {
+    if (Math.abs(rocketPos[0] - cache.lastRocketPos[0]) > 1e-4 ||
+        Math.abs(rocketPos[1] - cache.lastRocketPos[1]) > 1e-4 ||
+        Math.abs(rocketPos[2] - cache.lastRocketPos[2]) > 1e-4) return true;
+  } else if (rocketPos && !cache.lastRocketPos) return true;
+  else if (!rocketPos && cache.lastRocketPos) return true;
   return false;
 }
 
@@ -2245,6 +2476,11 @@ function drawFrame(nowMs) {
   // When the kernel is missing this is a position far outside the scene rather than a substitute orbit:
   // the body disappears and the HUD says why, while the rest of the frame is shaded honestly.
   const satPos = orbitPosition(nowMs / 1000);
+  // The rocket: advance its clock, sample its trajectory, and compute its current position. All three
+  // come from the kernel; nothing here invents a rocket. When the kernel is absent both are null and
+  // the uniforms below turn the path and craft off -- the same no-substitute rule the orbit follows.
+  const rocketPos = advanceRocket(nowMs - (rocketClock.lastLaunchMs || nowMs));
+  const rocketPath = rocketTrajectory();
 
   gl.viewport(0, 0, canvas.width, canvas.height);
   cacheResize(canvas.width, canvas.height);
@@ -2258,7 +2494,7 @@ function drawFrame(nowMs) {
   // --------------------------------------------------------------------------------------------
   let path = 'blit';
 
-  if (cacheInvalidated(sun)) {
+  if (cacheInvalidated(sun, rocketPos)) {
     const a = performance.now();
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, cache.fbo);
@@ -2288,6 +2524,13 @@ function drawFrame(nowMs) {
     // substitute. The previous scene drew a sphere at (0,0,0) whenever the kernel was absent, which is a
     // satellite at the bottom of a room -- a picture asserting something the kernel never said.
     gl.uniform1f(U.bodyOn, satPos === null ? 0.0 : 1.0);
+    // THE ROCKET. The path is the kernel's sampled trajectory (a uniform array); the craft is the
+    // rocket's current position along it. Both turn off when the kernel gave nothing -- no substitute
+    // rocket is ever drawn where the kernel is silent.
+    gl.uniform1f(U.rocketPathOn, rocketPath ? 1.0 : 0.0);
+    if (rocketPath) gl.uniform3fv(U.rocketPath, rocketPath);
+    gl.uniform1f(U.rocketOn, rocketPos ? 1.0 : 0.0);
+    if (rocketPos) gl.uniform3fv(U.rocketPos, rocketPos);
     gl.uniform1i(U.taps, state.shadowTaps);
     gl.uniform1f(U.simple, state.simpleGeometry);
 
@@ -2306,6 +2549,7 @@ function drawFrame(nowMs) {
     cache.lastTaps = state.shadowTaps;
     cache.lastSimple = state.simpleGeometry;
     cache.lastRoomTempK = roomState.temperatureK;
+    cache.lastRocketPos = rocketPos ? [rocketPos[0], rocketPos[1], rocketPos[2]] : null;
     cache.fullShades++;
     cache.lastFullShadeMs = performance.now() - a;
     path = 'shade';
@@ -3383,6 +3627,30 @@ $('pad-bleeds').addEventListener('input', () => { $('m-pad-bleeds').textContent 
 $('pad-mark-place').addEventListener('click', () => { placeMark(); });
 $('pad-mark-clear').addEventListener('click', () => { clearMark(); });
 
+// THE SOUNDING ROCKET. The player authors the four launch parameters; every edit re-reads the kernel
+// and re-launches, so the HUD shows what the authored parameters actually produce. The launch button
+// resets the flight clock so the flight plays from the start. No rocket constant lives in the page.
+function readRocketInputs() {
+  rocketParams.latitudeDeg = parseFloat($('rocket-lat').value);
+  rocketParams.azimuthDeg = parseFloat($('rocket-az').value);
+  rocketParams.elevationDeg = parseFloat($('rocket-el').value);
+  rocketParams.burnoutVelocity = parseFloat($('rocket-vel').value);
+}
+$('rocket-launch').addEventListener('click', () => {
+  readRocketInputs();
+  relaunchRocket();
+  refreshRocket();
+});
+// Editing any parameter re-authors the launch: re-read, re-launch, re-read the readings. The readings
+// are a pure function of the parameters, so the HUD updates immediately with no flight needed.
+['rocket-lat', 'rocket-az', 'rocket-el', 'rocket-vel'].forEach((id) => {
+  $(id).addEventListener('input', () => {
+    readRocketInputs();
+    relaunchRocket();
+    refreshRocket();
+  });
+});
+
 // THE AKASHI EXPORT. Generates a self-contained HTML report of the Loop of Consequence from the
 // kernel's readings. The report is the product: deterministic, verifiable, offline-readable.
 $('akashi-export').addEventListener('click', () => { exportAkashi(); });
@@ -3499,6 +3767,10 @@ loadKernel().then(() => {
   // the first thing the panel shows is the productive failure -- and it is reproducible: the same
   // checklist, run again, fails the same way.
   runPad();
+  // The sounding rocket, from the same kernel. The inherited launch parameters are the default, so
+  // the panel shows the almost-working flight the player must diagnose -- and the readings are a pure
+  // function of the parameters, so the HUD is correct before any launch is pressed.
+  refreshRocket();
   // Say which orbit is on screen. "wasm" means the kernel's own numbers; anything else is a named
   // failure rather than an orbit drawn by something else. A page that draws an ellipse without saying
   // where the ellipse came from is the defect this whole change exists to remove.
@@ -3723,6 +3995,16 @@ window.__odderon = {
   orbitPosition,
   orbitVelocity,
   orbitDiag,
+  // The sounding rocket, exposed so a test can ask the page what the authored parameters produce and
+  // confirm the rendered trajectory is the kernel's own -- the P3 replay gate. `tools/check-rocket.mjs`
+  // reads these against the module's own exports and against the panel.
+  rocketParams,
+  rocketReadings,
+  rocketPosition,
+  rocketTrajectory,
+  advanceRocket,
+  relaunchRocket,
+  refreshRocket,
   renderer: () => renderer,
   requestFrame,
   /**

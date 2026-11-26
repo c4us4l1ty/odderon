@@ -121,6 +121,14 @@ pub mod thermal;
 /// `t`, so the failure it produces is reproducible rather than a story about when the run happened.
 pub mod cryo;
 
+/// The sounding rocket: a suborbital trajectory from a surface launch.
+///
+/// Not astrodynamics in the orbital sense, for the same reason [`cryo`] and [`thermal`] are here:
+/// `odderon-astro` is the only `no_std` crate in the workspace, gated by the same kernel rules,
+/// and the rocket is Kepler mechanics — the same [`propagate`] that flies the orbital body — plus
+/// the surface-relative readings that turn an orbit into a flight. See [`rocket::rocket_flight`].
+pub mod rocket;
+
 /// Gravitational parameters, km³/s².
 ///
 /// Values from the IAU/JPL published constants. They are *data*, not physics: a body's `mu` is a
