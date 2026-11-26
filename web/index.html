@@ -281,6 +281,18 @@
   </div>
   <div id="m-archive-list"></div>
 
+  <div class="sep"></div>
+  <h3>the junior</h3>
+  <div class="muted">the junior replays your failures from the archive and asks you to diagnose them. the correct diagnosis is the kernel's own -- answering well records a self-explanation and builds trust.</div>
+  <div class="row"><span>trust</span><span id="m-protege-rep">0</span></div>
+  <div class="row big" id="m-protege-status">the junior has no error of yours to replay yet.</div>
+  <div class="row"><span>noticed</span><span id="m-protege-notice">the junior has nothing to flag.</span></div>
+  <div class="pad-inputs">
+    <button id="protege-ask" type="button">ask the junior</button>
+  </div>
+  <div id="m-protege-options"></div>
+  <div id="m-protege-note" class="muted"></div>
+
   <div id="note" class="muted"></div>
 </div>
 
@@ -2608,6 +2620,9 @@ function archiveSerialize(entry) {
   } else if (entry.type === 'comms') {
     parts.push(f(entry.params.lat, 6), f(entry.params.lon, 6), f(entry.params.sendS, 6));
     parts.push(f(entry.readings.oneWay, 9), f(entry.readings.roundTrip, 9), f(entry.readings.arrival, 9));
+  } else if (entry.type === 'briefing') {
+    // A self-explanation: the diagnosis the protégé was briefed on, and the error entry it is about.
+    parts.push(entry.params.of, f(entry.params.id, 0), entry.params.errHash, entry.readings.diagnosis);
   }
   return parts.join('|');
 }
@@ -2728,6 +2743,15 @@ function verifyArchiveEntry(entry) {
       close(reDerived.arrival, entry.readings.arrival, 1e-9);
     return { ok: hashOk && readingsOk, detail: (hashOk ? 'hash ' : 'hash ') + (readingsOk ? 'readings match' : 'readings differ') };
   }
+  if (entry.type === 'briefing') {
+    const hashOk = archiveHash(entry) === entry.hash;
+    // Re-derive the diagnosis from the error entry the briefing is about: the diagnosis is a
+    // function of the kernel's readings for that entry, so a third party can recompute it.
+    const err = archive.find((e) => e.id === entry.params.id);
+    const reDerived = (err && err.type === 'vehicle') ? protegeDiagnosis(err) : null;
+    const readingsOk = reDerived === entry.readings.diagnosis;
+    return { ok: hashOk && readingsOk, detail: (hashOk ? 'hash ' : 'hash ') + (readingsOk ? 'diagnosis matches' : 'diagnosis differs') };
+  }
   return { ok: false, detail: 'unknown entry type' };
 }
 
@@ -2781,6 +2805,174 @@ function renderArchive() {
   });
   host.innerHTML = rows.join('');
   $('m-archive-count').textContent = archive.length + ' entries';
+}
+
+// --------------------------------------------------------------------------------------------
+// the protégé (P4: learning by teaching)
+// --------------------------------------------------------------------------------------------
+// Promotion gives you a junior. They replay YOUR errors from the archive -- "the sim replays your
+// last week's error pattern" -- and ask you to diagnose them with a selection from your own
+// reasoning. The correct diagnosis is the kernel's own, derived from the readings the kernel already
+// produced for the entry; answering well produces an Akashi sub-entry, a reputation gain, and a
+// self-explanation event recorded in the archive. They also notice what you missed: a record that
+// does not verify against the kernel, which is the "give" that keeps them from being a burden.
+
+const protegeState = {
+  active: false,   // whether a question is pending
+  reputation: 0,   // correct briefings
+  current: null,   // the pending question
+  notice: null,    // a mismatched record the protégé points at
+};
+
+/// The distractor palette: plausible-sounding wrong diagnoses, fixed so a question is reproducible.
+/// The correct one is inserted by the kernel-driven diagnosis function, never chosen by chance.
+const PROTEGE_DISTRACTORS = [
+  'the nozzle expansion ratio was wrong',
+  'the fuel mix was off by a percent',
+  'the telemetry was misread',
+  'the launch window was missed',
+  'the ground station was mis-sited',
+];
+
+/// The kernel-driven correct diagnosis for a vehicle: a pure function of the kernel's own readings
+/// (the verdict and apogee it produced), never a page constant. The protégé's question is "why did
+/// this go wrong?", and the answer is what the kernel says -- so a third party can re-derive it from
+/// the same readings. Returns null for an entry that is not a vehicle.
+function protegeDiagnosis(entry) {
+  if (!entry || entry.type !== 'vehicle') return null;
+  const v = entry.readings.verdict;
+  const apogee = entry.readings.apogee;
+  if (v === 3) return 'the launch was refused by the kernel -- the parameters were out of range';
+  if (v === 2) return 'the parameters exceeded escape velocity';
+  if (v === 1) return 'the parameters reached orbit';
+  if (v === 0) {
+    if (Number.isFinite(apogee) && apogee >= 100) return 'suborbital -- reached space but not orbit';
+    return 'burnout velocity too low to reach the Kármán line';
+  }
+  return null;
+}
+
+/// The entry the protégé replays: the most recent FAILED vehicle launch -- the player's own error.
+/// A pure, deterministic selection over the archive (most recent first), never a fabricated scenario.
+/// "They make the mistake you made last week, because the sim replays your last week's error pattern."
+function protegeErrorEntry() {
+  for (let i = archive.length - 1; i >= 0; i--) {
+    const e = archive[i];
+    if (e.type !== 'vehicle') continue;
+    const v = e.readings.verdict;
+    const apogee = e.readings.apogee;
+    if (v === 3) return e;                                   // refused
+    if (v === 0 && (!Number.isFinite(apogee) || apogee < 100)) return e; // short of the Kármán line
+  }
+  return null;
+}
+
+/// The one-line question the protégé asks, describing the error they are replaying.
+function protegeQuestion(err) {
+  const names = ['suborbital', 'orbital', 'escape', 'refused'];
+  return `the junior replays your ${names[err.readings.verdict] || 'launch'} from lat ${err.params.lat}, el ${err.params.el}, v ${err.params.v} km/s -- why did it go wrong?`;
+}
+
+/// Ask the protégé a question: pick the most recent failed launch, build the diagnosis options with
+/// the kernel-driven correct answer among fixed distractors, and present them. The option order is a
+/// deterministic rotation by the entry's hash, so the same error presents the same way every time.
+function protegeAsk() {
+  const err = protegeErrorEntry();
+  if (!err) {
+    protegeState.active = false;
+    protegeState.current = null;
+    renderProtege();
+    return null;
+  }
+  const correct = protegeDiagnosis(err);
+  const distractors = PROTEGE_DISTRACTORS.filter((d) => d !== correct).slice(0, 3);
+  const options = [correct, ...distractors];
+  const pos = parseInt(err.hash.slice(0, 2), 16) % options.length;
+  const rotated = options.slice(pos).concat(options.slice(0, pos));
+  protegeState.active = true;
+  protegeState.current = {
+    entry: err,
+    question: protegeQuestion(err),
+    options: rotated,
+    correct: correct,
+    correctIndex: rotated.indexOf(correct),
+  };
+  renderProtege();
+  return protegeState.current;
+}
+
+/// Answer the protégé's question with a selection (the option index). A correct selection -- the one
+/// that matches the kernel's own diagnosis -- produces a reputation gain and a self-explanation
+/// event recorded in the archive; a wrong one means the junior will make the mistake back to you.
+function protegeAnswer(idx) {
+  if (!protegeState.active || !protegeState.current) return { ok: false, detail: 'no question pending' };
+  const q = protegeState.current;
+  const correct = idx === q.correctIndex;
+  if (correct) {
+    protegeState.reputation += 1;
+    recordBriefing(q.entry, q.correct);
+    protegeState.active = false;
+    protegeState.current = null;
+    renderProtege();
+    return { ok: true, detail: 'self-explanation recorded; the junior now understands the failure.' };
+  }
+  protegeState.active = false;
+  protegeState.current = null;
+  renderProtege();
+  return { ok: false, detail: 'the junior will make this mistake back to you.' };
+}
+
+/// Record a self-explanation: the Akashi sub-entry the protégé briefing produces. It references the
+/// error entry it is about and the diagnosis, both of which verification can re-derive.
+function recordBriefing(errorEntry, diagnosis) {
+  const entry = {
+    type: 'briefing',
+    params: { of: errorEntry.type, id: errorEntry.id, errHash: errorEntry.hash },
+    readings: { diagnosis: diagnosis },
+  };
+  return archivePush(entry);
+}
+
+/// What the protégé noticed you missed: the most recent record that does not verify against the
+/// kernel. The "give" that keeps them from being a burden -- they see the mismatch you did not.
+function protegeNotice() {
+  for (let i = archive.length - 1; i >= 0; i--) {
+    if (archive[i].verified === false) return archive[i];
+  }
+  return null;
+}
+
+/// Render the protégé panel: the notice, the status, and the answer options. A `NaN` reading is
+/// shown as `—`, the same convention every other panel uses.
+function renderProtege() {
+  const status = $('m-protege-status');
+  const list = $('m-protege-options');
+  if (!status) return;
+  const notice = protegeNotice();
+  protegeState.notice = notice;
+  $('m-protege-notice').textContent = notice
+    ? `the junior noticed: ${notice.type} entry ${notice.id} does not verify against the kernel.`
+    : 'the junior has nothing to flag.';
+  $('m-protege-rep').textContent = protegeState.reputation;
+  if (!protegeState.active || !protegeState.current) {
+    status.textContent = protegeErrorEntry()
+      ? 'the junior is waiting to ask about your last failure.'
+      : 'the junior has no error of yours to replay yet -- fly a vehicle that falls short.';
+    if (list) list.innerHTML = '';
+    return;
+  }
+  const q = protegeState.current;
+  status.textContent = q.question;
+  if (list) {
+    list.innerHTML = q.options.map((o, i) =>
+      `<button class="protege-opt" data-i="${i}" type="button">${o}</button>`).join('');
+    list.querySelectorAll('.protege-opt').forEach((b) => {
+      b.onclick = () => {
+        const r = protegeAnswer(parseInt(b.dataset.i, 10));
+        $('m-protege-note').textContent = r.detail;
+      };
+    });
+  }
 }
 
 // --------------------------------------------------------------------------------------------
@@ -4234,6 +4426,14 @@ $('archive-verify').addEventListener('click', () => {
     : `verified ${r.ok} of ${r.total} archive entries against the kernel.`;
 });
 
+// THE JUNIOR. Ask the protégé to replay the player's most recent failure and pose the diagnosis
+// question. The correct answer is the kernel's own; answering records a self-explanation in the
+// archive and builds trust.
+$('protege-ask').addEventListener('click', () => {
+  const q = protegeAsk();
+  $('m-protege-note').textContent = q ? 'the junior is waiting for your diagnosis.' : 'the junior has no failure of yours to replay yet.';
+});
+
 // The Akashi design hash is shown as soon as the kernel is built, so the version stamp is visible
 // before any entry is exported.
 function updateAkashiHash() {
@@ -4361,6 +4561,9 @@ loadKernel().then(() => {
   // The museum. Render the archive (empty until the player acts) so the gallery is present from the
   // first frame; entries are appended as the career events happen.
   renderArchive();
+  // The junior. Render the protégé panel so it is present from the first frame; a question appears
+  // when the player asks and there is a failure in the archive to replay.
+  renderProtege();
   // Say which orbit is on screen. "wasm" means the kernel's own numbers; anything else is a named
   // failure rather than an orbit drawn by something else. A page that draws an ellipse without saying
   // where the ellipse came from is the defect this whole change exists to remove.
@@ -4622,6 +4825,16 @@ window.__odderon = {
   verifyArchive,
   verifyArchiveEntry,
   renderArchive,
+  // The junior (P4: learning by teaching). Exposed so a test can ask the protégé to replay an
+  // error, answer, and confirm the diagnosis is the kernel's own and the self-explanation is
+  // recorded -- the P4 gate. `tools/check-protege.mjs` reads these against the module's exports.
+  protegeState,
+  protegeDiagnosis,
+  protegeErrorEntry,
+  protegeAsk,
+  protegeAnswer,
+  protegeNotice,
+  renderProtege,
   renderer: () => renderer,
   requestFrame,
   /**

@@ -194,6 +194,12 @@ jobs:
       - name: archive boundary (the exports the archive verifies against are physical)
         run: node tools/check-archive.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
 
+      # The protégé's boundary, against the same binary: the diagnosis branches on the kernel's own
+      # rocket readings (verdict, apogee), and the inherited launch is suborbital and short of the
+      # Kármán line -- exactly the error the junior replays. Static half in `shell-claims`.
+      - name: protégé boundary (the diagnosis branches on physical kernel readings)
+        run: node tools/check-protege.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
+
       - name: stage wasm artifacts
         run: |
           mkdir -p dist
@@ -362,6 +368,15 @@ jobs:
 
       - name: archive verifier self-test (sound hash, catches tampering)
         run: node tools/check-archive.mjs --selftest
+
+      # P4: the junior. The protégé must replay a real archive error, pose the kernel-driven diagnosis
+      # as the correct answer, record a verifiable self-explanation, and notice a record that does not
+      # verify. This is the gate that makes "learning by teaching" mechanical rather than a label.
+      - name: the junior replays your errors and the diagnosis is the kernel's
+        run: node tools/check-protege.mjs
+
+      - name: protégé verifier self-test (sound diagnosis, briefings verify)
+        run: node tools/check-protege.mjs --selftest
       # On 2026-11-24 this job failed on a condition the page handles correctly: the optional wasm
       # artifact is absent on a clean checkout, the browser logs a 404, and `tools/screenshot.mjs` treats
       # any console error as an untrustworthy frame. The capture now exempts that one error -- but only
