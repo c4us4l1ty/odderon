@@ -755,6 +755,116 @@ pub extern "C" fn pad_design_hash() -> u64 {
     odderon_astro::cryo::design_hash()
 }
 
+// =============================================================================================
+// The sounding rocket: a suborbital flight from a surface launch
+// =============================================================================================
+//
+// `odderon_astro::rocket` is a pure function of the authored launch parameters and `t`, so these exports
+// are stateless accessors over it -- the same shape as the room and pad exports above. The four launch
+// parameters cross the ABI as scalars (the C ABI cannot return a struct), and a refusal (a non-finite
+// or non-positive launch) crosses as `NaN` in every float field and `0` in the verdict, the same
+// convention the pad uses.
+//
+// The trajectory itself is the gate to leave P3: bit-identical replay in a second browser. The position
+// at time `t` is the same on every platform, every run, for the same parameters -- which is what makes
+// that claim checkable from outside Rust. The readings (apogee, impact time, range, verdict) are the
+// numbers the player reads to judge the flight the parameters produce.
+
+/// Build a [`LaunchParams`] from the four scalar launch inputs the page authors.
+///
+/// The single place the four ABI arguments become a kernel struct, so the eight accessors below cannot
+/// describe four different launches.
+fn launch_params(lat: f64, az: f64, el: f64, v: f64) -> odderon_astro::rocket::LaunchParams {
+    odderon_astro::rocket::LaunchParams {
+        latitude_rad: lat,
+        azimuth_rad: az,
+        elevation_rad: el,
+        burnout_velocity_km_s: v,
+    }
+}
+
+/// `x` of the rocket position at time `t` seconds after launch, km.
+///
+/// The rocket's position at time `t`, for the authored launch. `NaN` if the launch is refused (a
+/// non-finite or non-positive parameter) or the trajectory has not been modelled at that time.
+#[unsafe(no_mangle)]
+pub extern "C" fn rocket_state_x(lat: f64, az: f64, el: f64, v: f64, t: f64) -> f64 {
+    odderon_astro::rocket::rocket_state_at(&launch_params(lat, az, el, v), t)
+        .r
+        .x
+}
+
+/// `y` of the rocket position, km. See [`rocket_state_x`].
+#[unsafe(no_mangle)]
+pub extern "C" fn rocket_state_y(lat: f64, az: f64, el: f64, v: f64, t: f64) -> f64 {
+    odderon_astro::rocket::rocket_state_at(&launch_params(lat, az, el, v), t)
+        .r
+        .y
+}
+
+/// `z` of the rocket position, km. See [`rocket_state_x`].
+#[unsafe(no_mangle)]
+pub extern "C" fn rocket_state_z(lat: f64, az: f64, el: f64, v: f64, t: f64) -> f64 {
+    odderon_astro::rocket::rocket_state_at(&launch_params(lat, az, el, v), t)
+        .r
+        .z
+}
+
+/// Apogee altitude above the surface, km, for the authored launch.
+///
+/// `NaN` if the launch is refused or the trajectory escapes (no apogee).
+#[unsafe(no_mangle)]
+pub extern "C" fn rocket_apogee_km(lat: f64, az: f64, el: f64, v: f64) -> f64 {
+    odderon_astro::rocket::rocket_flight(&launch_params(lat, az, el, v)).apogee_km
+}
+
+/// Seconds from launch to apogee, for the authored launch. `NaN` if refused or escaping.
+#[unsafe(no_mangle)]
+pub extern "C" fn rocket_time_to_apogee_s(lat: f64, az: f64, el: f64, v: f64) -> f64 {
+    odderon_astro::rocket::rocket_flight(&launch_params(lat, az, el, v)).time_to_apogee_s
+}
+
+/// Seconds from launch to surface impact, for the authored launch.
+///
+/// `NaN` if refused, escaping, or orbital (no impact).
+#[unsafe(no_mangle)]
+pub extern "C" fn rocket_impact_time_s(lat: f64, az: f64, el: f64, v: f64) -> f64 {
+    odderon_astro::rocket::rocket_flight(&launch_params(lat, az, el, v)).impact_time_s
+}
+
+/// Ground range from launch to impact, km, for the authored launch.
+///
+/// `NaN` if refused, escaping, or orbital (no impact). A vertical launch has zero range.
+#[unsafe(no_mangle)]
+pub extern "C" fn rocket_range_km(lat: f64, az: f64, el: f64, v: f64) -> f64 {
+    odderon_astro::rocket::rocket_flight(&launch_params(lat, az, el, v)).range_km
+}
+
+/// The flight verdict for the authored launch, as a `u32`.
+///
+/// 0 = Suborbital, 1 = Orbital, 2 = Escape, 3 = Refused. `u32` rather than `bool` because `bool` is
+/// not a C-ABI type; a refused launch (a non-finite or non-positive parameter) returns 3, so a host
+/// can distinguish "no flight" from "a flight of some kind".
+#[unsafe(no_mangle)]
+pub extern "C" fn rocket_verdict(lat: f64, az: f64, el: f64, v: f64) -> u32 {
+    match odderon_astro::rocket::rocket_flight(&launch_params(lat, az, el, v)).verdict {
+        odderon_astro::rocket::RocketVerdict::Suborbital => 0,
+        odderon_astro::rocket::RocketVerdict::Orbital => 1,
+        odderon_astro::rocket::RocketVerdict::Escape => 2,
+        odderon_astro::rocket::RocketVerdict::Refused => 3,
+    }
+}
+
+/// The deterministic design hash of the rocket kernel's constants.
+///
+/// Pins the Kármán line, Earth's radius, and Earth's gravitational parameter, so a replay bundle or
+/// Akashi entry can detect a stale kernel. A pure function: the same kernel produces the same hash on
+/// every platform, every run.
+#[unsafe(no_mangle)]
+pub extern "C" fn rocket_design_hash() -> u64 {
+    odderon_astro::rocket::rocket_design_hash()
+}
+
 #[cfg(test)]
 mod tests {
     // The ABI is a contract a host can violate with a single bad number, and two of the values it can

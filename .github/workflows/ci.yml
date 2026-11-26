@@ -166,6 +166,13 @@ jobs:
       - name: pad boundary (a reproducible failure from the input log)
         run: node tools/check-pad.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
 
+      # The rocket's P3 boundary, against the same binary: the inherited launch is suborbital and short
+      # of the Kármán line, the impact time returns the craft to the surface, a radial launch is bound
+      # by energy (not misclassified as escape), and the readings are reproducible -- the replay gate.
+      # Static half in `shell-claims`.
+      - name: rocket boundary (suborbital, bound radial, reproducible)
+        run: node tools/check-rocket.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
+
       - name: stage wasm artifacts
         run: |
           mkdir -p dist
@@ -293,6 +300,17 @@ jobs:
 
       - name: pad verifier self-test (accepts good exports, rejects bad)
         run: node tools/check-pad.mjs --selftest
+
+      # P3 Block 4: the sounding rocket. The page must render the trajectory from the kernel's
+      # `rocket_state_*` exports and read every number from the kernel -- no local solver, no local
+      # `mu`, no substitute trajectory when the kernel is absent. This is the gate that makes the P3
+      # replay claim (bit-identical trajectory from the authored parameters) mechanically true rather
+      # than a label on a stub, the same way check-orbit guards the orbit.
+      - name: the rocket flies from the kernel, not from a JS trajectory
+        run: node tools/check-rocket.mjs
+
+      - name: rocket verifier self-test (accepts good exports, rejects bad)
+        run: node tools/check-rocket.mjs --selftest
       # On 2026-11-24 this job failed on a condition the page handles correctly: the optional wasm
       # artifact is absent on a clean checkout, the browser logs a 404, and `tools/screenshot.mjs` treats
       # any console error as an untrustworthy frame. The capture now exempts that one error -- but only
