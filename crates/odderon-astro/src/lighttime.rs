@@ -91,4 +91,3 @@ pub fn arrival_s(send_s: f64, from: crate::Vec3, to: crate::Vec3) -> Option<f64>
         }
     })
 }
-

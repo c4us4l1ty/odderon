@@ -24,7 +24,10 @@ fn light_time_is_distance_over_c() {
     let from = Vec3::new(0.0, 0.0, 0.0);
     let to = Vec3::new(SPEED_OF_LIGHT_KM_S, 0.0, 0.0);
     let t = light_time_s(from, to).expect("one light-second of distance");
-    assert!(fabs(t - 1.0) < 1e-9, "light time {t} should be exactly 1.0 s");
+    assert!(
+        fabs(t - 1.0) < 1e-9,
+        "light time {t} should be exactly 1.0 s"
+    );
 }
 
 #[test]
@@ -63,7 +66,10 @@ fn round_trip_is_twice_one_way() {
     let to = Vec3::new(2_000.0, 0.0, 0.0);
     let one = light_time_s(from, to).expect("one way");
     let round = round_trip_s(from, to).expect("round trip");
-    assert!(fabs(round - 2.0 * one) < 1e-12, "round trip {round} != 2 x {one}");
+    assert!(
+        fabs(round - 2.0 * one) < 1e-12,
+        "round trip {round} != 2 x {one}"
+    );
 }
 
 #[test]
@@ -92,7 +98,10 @@ fn coincident_positions_are_refused() {
     // A zero distance is not a zero-second delay a signal "arrives" in: no signal can travel no
     // distance, and reporting 0.0 would be a confident wrong answer.
     let p = Vec3::new(5_000.0, 1_000.0, 2_000.0);
-    assert!(light_time_s(p, p).is_none(), "coincident positions must refuse");
+    assert!(
+        light_time_s(p, p).is_none(),
+        "coincident positions must refuse"
+    );
     assert!(round_trip_s(p, p).is_none());
     assert!(arrival_s(0.0, p, p).is_none());
 }
@@ -134,5 +143,8 @@ fn light_time_at_a_realistic_orbital_distance() {
     let station = Vec3::new(radius::EARTH, 0.0, 0.0);
     let body = Vec3::new(radius::EARTH + 300.0, 0.0, 0.0);
     let t = light_time_s(station, body).expect("a 300 km separation");
-    assert!(t > 0.001 && t < 0.002, "light time {t} should be ~1 ms for 300 km");
+    assert!(
+        t > 0.001 && t < 0.002,
+        "light time {t} should be ~1 ms for 300 km"
+    );
 }

@@ -1070,13 +1070,8 @@ fn comms_status(lat: f64, lon: f64, from: f64) -> u32 {
 
 /// Whether the geodetic site itself could not be built (the ellipsoid refused it).
 fn site_is_refused(lat: f64, lon: f64) -> bool {
-    odderon_astro::observe::Site::from_geodetic(
-        &odderon_astro::catalogue::EARTH,
-        lat,
-        lon,
-        0.0,
-    )
-    .is_err()
+    odderon_astro::observe::Site::from_geodetic(&odderon_astro::catalogue::EARTH, lat, lon, 0.0)
+        .is_err()
 }
 
 /// The one-way light time from the authored ground station to the orbiting body, seconds, at orbit
