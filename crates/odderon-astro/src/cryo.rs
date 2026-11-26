@@ -90,7 +90,8 @@ pub const LOX_GAS_CONSTANT: f64 = 8.314_462_618 / 0.031_998_8;
 pub const LOX_LATENT_HEAT: Quantity = Quantity {
     value: 213_000.0,
     prov: Prov::Assumed {
-        basis: "LOX latent heat at the NBP, ~213 kJ/kg; treated as constant by the saturation curve",
+        basis:
+            "LOX latent heat at the NBP, ~213 kJ/kg; treated as constant by the saturation curve",
     },
     sigma: 5_000.0,
 };
@@ -155,7 +156,8 @@ pub const BLEED_FRACTION: Quantity = Quantity {
 pub const CAVITATION_THRESHOLD: Quantity = Quantity {
     value: 0.02,
     prov: Prov::Assumed {
-        basis: "pump inlet vapour fraction at which a centrifugal pump loses prime; calibrated, not measured",
+        basis:
+            "pump inlet vapour fraction at which a centrifugal pump loses prime; calibrated, not measured",
     },
     sigma: 0.01,
 };
@@ -234,13 +236,19 @@ impl ChillPlan {
     /// obvious value the tests can point at, the way [`thermal::Zone::curtain_closed`] names the closed
     /// room.
     pub fn underspecified() -> ChillPlan {
-        ChillPlan { chill_s: 5.0, bleeds: 0 }
+        ChillPlan {
+            chill_s: 5.0,
+            bleeds: 0,
+        }
     }
 
     /// A correctly specified chill: enough time for the line to approach its floor, and bleeds to carry the
     /// residual heat out. The plan that is supposed to *survive*.
     pub fn specified() -> ChillPlan {
-        ChillPlan { chill_s: 300.0, bleeds: 3 }
+        ChillPlan {
+            chill_s: 300.0,
+            bleeds: 3,
+        }
     }
 }
 
