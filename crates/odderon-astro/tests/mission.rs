@@ -135,7 +135,7 @@ fn log_score_is_a_proper_rule_against_the_platform() {
     // platform's own ln so a sign or branch error in the kernel is caught, not just its shape.
     let p = 0.7;
     assert!(
-        (log_score(p, 1) + (p as f64).ln()).abs() < 1e-12,
+        (log_score(p, 1) + p.ln()).abs() < 1e-12,
         "log_score(p,1) should be -ln(p)"
     );
     assert!(
