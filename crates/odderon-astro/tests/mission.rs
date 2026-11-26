@@ -23,8 +23,8 @@
 //! down, so a failure says which of the two disagreed.
 
 use odderon_astro::mission::{
-    achieved_dv_km_s, contract_price, crps, log_score, mission_design_hash,
-    DV_REF_KM_S, MASS_REF_KG, PRICE_BASE_MCU, WINDOW_REF_DAYS,
+    achieved_dv_km_s, contract_price, crps, log_score, mission_design_hash, DV_REF_KM_S,
+    MASS_REF_KG, PRICE_BASE_MCU, WINDOW_REF_DAYS,
 };
 
 // --------------------------------------------------------------------------------------------
@@ -37,17 +37,32 @@ fn price_is_pinned_at_the_reference_point() {
     // This pins the model's calibration, not just its shape: a verifier who changes any constant
     // changes the hash and this number, and both are detectable.
     let p = contract_price(DV_REF_KM_S, MASS_REF_KG, 0.0, WINDOW_REF_DAYS);
-    assert!((p - PRICE_BASE_MCU).abs() < 1e-9 * PRICE_BASE_MCU, "price {p} != base {PRICE_BASE_MCU}");
+    assert!(
+        (p - PRICE_BASE_MCU).abs() < 1e-9 * PRICE_BASE_MCU,
+        "price {p} != base {PRICE_BASE_MCU}"
+    );
 }
 
 #[test]
 fn price_rises_with_each_factor_of_work() {
     // §12.1: "contract prices derive from Δv, mass, risk and time". Each factor raises the price.
     let base = contract_price(7.8, 500.0, 0.0, 30.0);
-    assert!(contract_price(9.0, 500.0, 0.0, 30.0) > base, "more Δv should cost more");
-    assert!(contract_price(7.8, 800.0, 0.0, 30.0) > base, "more mass should cost more");
-    assert!(contract_price(7.8, 500.0, 1.0, 30.0) > base, "more risk should cost more");
-    assert!(contract_price(7.8, 500.0, 0.0, 10.0) > base, "a shorter window should cost more");
+    assert!(
+        contract_price(9.0, 500.0, 0.0, 30.0) > base,
+        "more Δv should cost more"
+    );
+    assert!(
+        contract_price(7.8, 800.0, 0.0, 30.0) > base,
+        "more mass should cost more"
+    );
+    assert!(
+        contract_price(7.8, 500.0, 1.0, 30.0) > base,
+        "more risk should cost more"
+    );
+    assert!(
+        contract_price(7.8, 500.0, 0.0, 10.0) > base,
+        "a shorter window should cost more"
+    );
 }
 
 #[test]
@@ -119,8 +134,14 @@ fn log_score_is_a_proper_rule_against_the_platform() {
     // The log score is -ln(p) on a correct call, -ln(1-p) on a wrong one. Computed against the
     // platform's own ln so a sign or branch error in the kernel is caught, not just its shape.
     let p = 0.7;
-    assert!((log_score(p, 1) + (p as f64).ln()).abs() < 1e-12, "log_score(p,1) should be -ln(p)");
-    assert!((log_score(p, 0) + (1.0 - p).ln()).abs() < 1e-12, "log_score(p,0) should be -ln(1-p)");
+    assert!(
+        (log_score(p, 1) + (p as f64).ln()).abs() < 1e-12,
+        "log_score(p,1) should be -ln(p)"
+    );
+    assert!(
+        (log_score(p, 0) + (1.0 - p).ln()).abs() < 1e-12,
+        "log_score(p,0) should be -ln(1-p)"
+    );
 }
 
 #[test]
@@ -136,7 +157,10 @@ fn crps_is_zero_at_a_tight_interval_around_the_outcome() {
     // to the outcome is 0. A tight interval containing the outcome scores near zero.
     let eps = 1e-6;
     let s = crps(5.0 - eps, 5.0 + eps, 5.0);
-    assert!(s >= 0.0 && s < eps, "tight interval score {s} should be near 0");
+    assert!(
+        s >= 0.0 && s < eps,
+        "tight interval score {s} should be near 0"
+    );
 }
 
 #[test]
