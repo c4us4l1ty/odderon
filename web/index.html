@@ -238,6 +238,21 @@
   <div class="row big" id="m-rocket-verdict">—</div>
 
   <div class="sep"></div>
+  <h2>the orbit mission</h2>
+  <div class="muted" id="pass-intro">author a ground station: the orbiting body passes over it on a schedule the kernel predicts. move the station and the next pass changes.</div>
+  <div class="pad-inputs">
+    <label>station lat (deg) <input id="pass-lat" type="number" min="-90" max="90" step="1" value="0"></label>
+    <label>station lon (deg) <input id="pass-lon" type="number" min="-180" max="180" step="1" value="0"></label>
+  </div>
+  <div class="row big" id="m-pass-status">—</div>
+  <div class="row"><span>rise (s)</span><span id="m-pass-rise">—</span></div>
+  <div class="row"><span>culmination (s)</span><span id="m-pass-culmination">—</span></div>
+  <div class="row"><span>max elevation (deg)</span><span id="m-pass-max-elev">—</span></div>
+  <div class="row"><span>min range (km)</span><span id="m-pass-min-range">—</span></div>
+  <div class="row"><span>rise azimuth (deg)</span><span id="m-pass-rise-az">—</span></div>
+  <div class="row"><span>set azimuth (deg)</span><span id="m-pass-set-az">—</span></div>
+
+  <div class="sep"></div>
   <h3>akashi entry</h3>
   <div class="muted" id="akashi-intro">mark an expectation, fill the line, and export the Loop of Consequence as a self-contained report.</div>
   <div class="row"><span>design hash</span><span id="m-akashi-hash">—</span></div>
@@ -335,6 +350,7 @@ uniform float uCurtain;     // 0 = open, 1 = closed; the geometry the light trav
 uniform vec3  uWinC;        // window centre in scene units: the HOLE in the outside wall
 uniform vec2  uWinHalf;     // window half-extent
 uniform float uBodyOn;      // 1 = the kernel gave a body position; 0 = there is no orbit to draw
+uniform float uBodyPass;    // 1 = the kernel predicts the body is over the authored ground station now; 0 = not in a pass
 uniform vec3  uRocketPath[28]; // the sounding rocket's sampled trajectory, scene units; path is empty when uRocketPathOn = 0
 uniform float uRocketPathOn; // 1 = the kernel gave a trajectory path; 0 = there is no rocket to draw
 uniform vec3  uRocketPos;    // the rocket's current position along the path, scene units
@@ -777,7 +793,11 @@ void main() {
     albedo = vec3(0.95, 0.78, 0.45);
     n = normalize(p - uRocketPos);
   } else {
-    albedo = vec3(0.72, 0.74, 0.78);
+    // The orbiting body. When the kernel predicts it is over the authored ground station right now
+    // (uBodyPass), it warms and brightens -- the satellite "lights up" during its predicted pass.
+    // The colour is a function of the kernel's pass window, not a constant: the same pass state gives
+    // the same body on every platform, which is the replay claim P3 is gated on.
+    albedo = mix(vec3(0.72, 0.74, 0.78), vec3(1.0, 0.82, 0.50), uBodyPass);
     n = normalize(p - uOrbitPos);
   }
 
@@ -1048,6 +1068,7 @@ const U = {
   roomLo: gl.getUniformLocation(prog, 'uRoomLo'),
   roomHi: gl.getUniformLocation(prog, 'uRoomHi'),
   bodyOn: gl.getUniformLocation(prog, 'uBodyOn'),
+  bodyPass: gl.getUniformLocation(prog, 'uBodyPass'),
   rocketPath: gl.getUniformLocation(prog, 'uRocketPath'),
   rocketPathOn: gl.getUniformLocation(prog, 'uRocketPathOn'),
   rocketPos: gl.getUniformLocation(prog, 'uRocketPos'),
@@ -1398,7 +1419,14 @@ async function loadKernel() {
                     'rocket_state_x', 'rocket_state_y', 'rocket_state_z',
                     'rocket_apogee_km', 'rocket_time_to_apogee_s',
                     'rocket_impact_time_s', 'rocket_range_km',
-                    'rocket_verdict', 'rocket_design_hash'];
+                    'rocket_verdict', 'rocket_design_hash',
+                    // P3 Block 5: The Orbit. The ground-station pass prediction. The kernel's observe
+                    // and passes modules are the deepest astro work; these exports are the seam that
+                    // lets the page answer "when will the orbiting body be over my station?" from the
+                    // kernel rather than a local solver.
+                    'pass_next_exists', 'pass_next_rise_s', 'pass_next_culmination_s',
+                    'pass_next_set_s', 'pass_next_max_elevation_deg', 'pass_next_min_range_km',
+                    'pass_next_rise_az_deg', 'pass_next_set_az_deg'];
     const missing = needed.filter((n) => typeof ex[n] !== 'function');
     if (missing.length) throw new Error('module missing exports: ' + missing.join(', '));
     kernelState.module = ex;
@@ -2276,6 +2304,129 @@ function refreshRocket() {
   $('m-rocket-verdict').textContent = label;
 }
 
+// =============================================================================================
+// The orbit mission: ground-station pass prediction
+// =============================================================================================
+//
+// P3 Block 5. The orbiting body is already rendered from the kernel; what this adds is the question
+// every orbital mission starts with -- *when will it be over my station?* The kernel's
+// `observe` (ground stations) and `passes` (pass prediction) modules are the deepest, most-validated
+// part of the astro kernel, and until now no pixel read them. The player authors a ground station
+// (geodetic latitude and longitude); the kernel predicts the next pass of the orbiting body over it.
+//
+// The page holds NO pass constant and solves NOTHING: every number (rise, culmination, set, maximum
+// elevation, minimum range, azimuths) comes from the kernel, the same rule the room, the pad and the
+// rocket follow. The same station and orbit clock give the same pass on every platform, which is the
+// P3 replay claim. A station with no pass in the window is reported as "no pass", not invented.
+
+/// The authored ground station, in the units the player edits: degrees.
+const groundStation = {
+  latitudeDeg: 0.0,
+  longitudeDeg: 0.0,
+};
+
+/// The cached next pass, recomputed when the station changes or the current pass ends. The orbit
+/// clock (`nowMs / 1000`, the same timeline the orbit body is rendered on) decides when a pass is
+/// "now": the body is highlighted while the clock is inside `[rise, set]`.
+const passCache = {
+  exists: 0,        // 0 no pass, 1 found, 2 could not be answered
+  rise: NaN,        // seconds past the reference epoch
+  culmination: NaN,
+  set: NaN,
+  maxElevation: NaN,
+  minRange: NaN,
+  riseAzimuth: NaN,
+  setAzimuth: NaN,
+  stationLat: null, // the station these were computed for, so a station edit is detectable
+  stationLon: null,
+  valid: false,
+};
+
+/// The next pass readings for the authored station, searched from the current orbit clock. Every
+/// number is a kernel call; the page never computes a pass. Returns `{ source }` when the kernel is
+/// absent, the same contract `rocketReadings` follows.
+function passReadings(nowMs) {
+  const k = kernelState.module;
+  if (!k) return { source: 'absent' };
+  const lat = groundStation.latitudeDeg * Math.PI / 180;
+  const lon = groundStation.longitudeDeg * Math.PI / 180;
+  const from = nowMs / 1000;
+  const exists = k.pass_next_exists(lat, lon, from);
+  if (exists !== 1) {
+    return { source: 'wasm kernel', exists, valid: false };
+  }
+  return {
+    source: 'wasm kernel',
+    exists: 1,
+    valid: true,
+    rise: k.pass_next_rise_s(lat, lon, from),
+    culmination: k.pass_next_culmination_s(lat, lon, from),
+    set: k.pass_next_set_s(lat, lon, from),
+    maxElevation: k.pass_next_max_elevation_deg(lat, lon, from),
+    minRange: k.pass_next_min_range_km(lat, lon, from),
+    riseAzimuth: k.pass_next_rise_az_deg(lat, lon, from),
+    setAzimuth: k.pass_next_set_az_deg(lat, lon, from),
+  };
+}
+
+/// Recompute the cached pass and refresh the HUD. Called when the station changes (debounced) and
+/// when the orbit clock passes the end of the current pass, so the "next pass" never goes stale.
+function refreshPass(nowMs) {
+  const r = passReadings(nowMs);
+  if (r.source !== 'wasm kernel' || !r.valid) {
+    passCache.exists = r.exists ?? 0;
+    passCache.valid = false;
+    passCache.rise = NaN; passCache.culmination = NaN; passCache.set = NaN;
+    passCache.maxElevation = NaN; passCache.minRange = NaN;
+    passCache.riseAzimuth = NaN; passCache.setAzimuth = NaN;
+  } else {
+    passCache.exists = 1;
+    passCache.valid = true;
+    passCache.rise = r.rise;
+    passCache.culmination = r.culmination;
+    passCache.set = r.set;
+    passCache.maxElevation = r.maxElevation;
+    passCache.minRange = r.minRange;
+    passCache.riseAzimuth = r.riseAzimuth;
+    passCache.setAzimuth = r.setAzimuth;
+  }
+  passCache.stationLat = groundStation.latitudeDeg;
+  passCache.stationLon = groundStation.longitudeDeg;
+  refreshPassHud();
+}
+
+/// Refresh the pass HUD from the cache. A `NaN` reading is shown as `—`, the same convention the pad
+/// and the rocket use. The verdict line is the player's headline: is there a pass, and when.
+function refreshPassHud() {
+  const fmt = (v, d) => Number.isFinite(v) ? v.toFixed(d) : '—';
+  if (!passCache.valid) {
+    $('m-pass-status').textContent = passCache.exists === 2 ? 'station refused' : 'no pass in window';
+    $('m-pass-rise').textContent = '—';
+    $('m-pass-culmination').textContent = '—';
+    $('m-pass-max-elev').textContent = '—';
+    $('m-pass-min-range').textContent = '—';
+    $('m-pass-rise-az').textContent = '—';
+    $('m-pass-set-az').textContent = '—';
+    return;
+  }
+  $('m-pass-status').textContent = 'pass predicted';
+  $('m-pass-rise').textContent = fmt(passCache.rise, 0);
+  $('m-pass-culmination').textContent = fmt(passCache.culmination, 0);
+  $('m-pass-max-elev').textContent = fmt(passCache.maxElevation, 1);
+  $('m-pass-min-range').textContent = fmt(passCache.minRange, 0);
+  $('m-pass-rise-az').textContent = fmt(passCache.riseAzimuth, 1);
+  $('m-pass-set-az').textContent = fmt(passCache.setAzimuth, 1);
+}
+
+/// Debounced refresh: the pass search is a real computation (the kernel scans the window), so a
+/// slider drag should not recompute on every input event. A short trailing delay keeps the HUD live
+/// without re-running the search dozens of times a second.
+let passRefreshTimer = null;
+function debouncedRefreshPass(nowMs) {
+  if (passRefreshTimer) clearTimeout(passRefreshTimer);
+  passRefreshTimer = setTimeout(() => { passRefreshTimer = null; refreshPass(nowMs); }, 120);
+}
+
 // --------------------------------------------------------------------------------------------
 // the draw
 // ---------------------------------------------------------------------------------------------
@@ -2309,6 +2460,7 @@ const cache = {
   // clock advances, the panel counts up, and every frame presents the ORIGINAL picture back.
   lastRoomTempK: NaN,
   lastRocketPos: null,
+  lastBodyPass: 0,
   // measured at runtime, not asserted
   lastFullShadeMs: NaN,
   lastBlitMs: NaN,
@@ -2362,7 +2514,7 @@ function cacheResize(w, h) {
 }
 
 // What invalidates the cache. Kept as one predicate so the list cannot drift from the comment above.
-function cacheInvalidated(sun, rocketPos) {
+function cacheInvalidated(sun, rocketPos, bodyPass) {
   if (!cache.valid) return true;
   // THE GRAIN IS PART OF THE IMAGE, SO THE FRAME INDEX INVALIDATES THE CACHE.
   //
@@ -2430,6 +2582,10 @@ function cacheInvalidated(sun, rocketPos) {
         Math.abs(rocketPos[2] - cache.lastRocketPos[2]) > 1e-4) return true;
   } else if (rocketPos && !cache.lastRocketPos) return true;
   else if (!rocketPos && cache.lastRocketPos) return true;
+  // THE BODY'S APPEARANCE DEPENDS ON THE PASS STATE, AND A TOGGLE MUST RE-SHADE. When the kernel
+  // predicts the body is over the station (bodyPass 1) it glows; the cached image was shaded at the
+  // last state. A change from 0 to 1 or back forces a re-shade so the highlight is never stale.
+  if (bodyPass !== cache.lastBodyPass) return true;
   return false;
 }
 
@@ -2481,6 +2637,16 @@ function drawFrame(nowMs) {
   // the uniforms below turn the path and craft off -- the same no-substitute rule the orbit follows.
   const rocketPos = advanceRocket(nowMs - (rocketClock.lastLaunchMs || nowMs));
   const rocketPath = rocketTrajectory();
+  // The orbit mission: the orbit clock is the same timeline the orbit body is rendered on. Re-query
+  // the pass when the station changed or the current pass has ended, so the "next pass" never goes
+  // stale. The highlight is a cheap comparison against the cached window -- no search per frame.
+  const orbitClockS = nowMs / 1000;
+  if (passCache.stationLat !== groundStation.latitudeDeg ||
+      passCache.stationLon !== groundStation.longitudeDeg ||
+      (passCache.valid && orbitClockS > passCache.set)) {
+    refreshPass(nowMs);
+  }
+  const bodyPass = (passCache.valid && orbitClockS >= passCache.rise && orbitClockS <= passCache.set) ? 1 : 0;
 
   gl.viewport(0, 0, canvas.width, canvas.height);
   cacheResize(canvas.width, canvas.height);
@@ -2494,7 +2660,7 @@ function drawFrame(nowMs) {
   // --------------------------------------------------------------------------------------------
   let path = 'blit';
 
-  if (cacheInvalidated(sun, rocketPos)) {
+  if (cacheInvalidated(sun, rocketPos, bodyPass)) {
     const a = performance.now();
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, cache.fbo);
@@ -2524,6 +2690,9 @@ function drawFrame(nowMs) {
     // substitute. The previous scene drew a sphere at (0,0,0) whenever the kernel was absent, which is a
     // satellite at the bottom of a room -- a picture asserting something the kernel never said.
     gl.uniform1f(U.bodyOn, satPos === null ? 0.0 : 1.0);
+    // THE PASS HIGHLIGHT. The body warms and brightens when the kernel predicts it is over the
+    // authored ground station right now. A function of the kernel's pass window, never a constant.
+    gl.uniform1f(U.bodyPass, bodyPass);
     // THE ROCKET. The path is the kernel's sampled trajectory (a uniform array); the craft is the
     // rocket's current position along it. Both turn off when the kernel gave nothing -- no substitute
     // rocket is ever drawn where the kernel is silent.
@@ -2550,6 +2719,7 @@ function drawFrame(nowMs) {
     cache.lastSimple = state.simpleGeometry;
     cache.lastRoomTempK = roomState.temperatureK;
     cache.lastRocketPos = rocketPos ? [rocketPos[0], rocketPos[1], rocketPos[2]] : null;
+    cache.lastBodyPass = bodyPass;
     cache.fullShades++;
     cache.lastFullShadeMs = performance.now() - a;
     path = 'shade';
@@ -3651,6 +3821,20 @@ $('rocket-launch').addEventListener('click', () => {
   });
 });
 
+// THE ORBIT MISSION. The player authors the ground station; every edit re-reads the kernel's pass
+// prediction. The search is a real computation, so the refresh is debounced -- the HUD stays live
+// without re-running the scan on every slider tick. No pass constant lives in the page.
+function readGroundStation() {
+  groundStation.latitudeDeg = parseFloat($('pass-lat').value);
+  groundStation.longitudeDeg = parseFloat($('pass-lon').value);
+}
+['pass-lat', 'pass-lon'].forEach((id) => {
+  $(id).addEventListener('input', () => {
+    readGroundStation();
+    debouncedRefreshPass(performance.now());
+  });
+});
+
 // THE AKASHI EXPORT. Generates a self-contained HTML report of the Loop of Consequence from the
 // kernel's readings. The report is the product: deterministic, verifiable, offline-readable.
 $('akashi-export').addEventListener('click', () => { exportAkashi(); });
@@ -3771,6 +3955,10 @@ loadKernel().then(() => {
   // the panel shows the almost-working flight the player must diagnose -- and the readings are a pure
   // function of the parameters, so the HUD is correct before any launch is pressed.
   refreshRocket();
+  // The orbit mission, from the same kernel. The default ground station is on the equator, inside the
+  // orbit's inclination band, so the panel shows a real predicted pass immediately -- and the readings
+  // are a pure function of the station and the orbit clock, so the HUD is correct before any edit.
+  refreshPass(performance.now());
   // Say which orbit is on screen. "wasm" means the kernel's own numbers; anything else is a named
   // failure rather than an orbit drawn by something else. A page that draws an ellipse without saying
   // where the ellipse came from is the defect this whole change exists to remove.
@@ -4005,6 +4193,14 @@ window.__odderon = {
   advanceRocket,
   relaunchRocket,
   refreshRocket,
+  // The orbit mission, exposed so a test can ask the page what the authored ground station's next
+  // pass is and confirm the highlight is the kernel's own -- the P3 replay gate. `tools/check-orbit-mission.mjs`
+  // reads these against the module's own exports and against the panel.
+  groundStation,
+  passCache,
+  passReadings,
+  refreshPass,
+  refreshPassHud,
   renderer: () => renderer,
   requestFrame,
   /**
