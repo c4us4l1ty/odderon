@@ -24,7 +24,8 @@
     "check:rocket": "node tools/check-rocket.mjs",
     "check:orbit-mission": "node tools/check-orbit-mission.mjs",
     "check:lighttime": "node tools/check-lighttime.mjs",
-    "check:archive": "node tools/check-archive.mjs"
+    "check:archive": "node tools/check-archive.mjs",
+    "check:protege": "node tools/check-protege.mjs"
   },
   "devDependencies": {
     "@sparticuz/chromium": "131.0.0",
