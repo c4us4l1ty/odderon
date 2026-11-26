@@ -1193,19 +1193,43 @@ fn station_position(lat: f64, lon: f64, from: f64) -> Option<odderon_astro::Vec3
 /// `x` of a peer ship's position, propagated from its orbital elements by `dt` seconds past the
 /// reference epoch, km. `NaN` when the elements do not describe a finite conic. See [`peer_state`].
 #[unsafe(no_mangle)]
-pub extern "C" fn peer_pos_x(p: f64, e: f64, i: f64, raan: f64, argp: f64, nu: f64, dt: f64) -> f64 {
+pub extern "C" fn peer_pos_x(
+    p: f64,
+    e: f64,
+    i: f64,
+    raan: f64,
+    argp: f64,
+    nu: f64,
+    dt: f64,
+) -> f64 {
     peer_state(p, e, i, raan, argp, nu, dt).map(|s| s.r.x).unwrap_or(f64::NAN)
 }
 
 /// `y` of a peer ship's position, km. See [`peer_pos_x`].
 #[unsafe(no_mangle)]
-pub extern "C" fn peer_pos_y(p: f64, e: f64, i: f64, raan: f64, argp: f64, nu: f64, dt: f64) -> f64 {
+pub extern "C" fn peer_pos_y(
+    p: f64,
+    e: f64,
+    i: f64,
+    raan: f64,
+    argp: f64,
+    nu: f64,
+    dt: f64,
+) -> f64 {
     peer_state(p, e, i, raan, argp, nu, dt).map(|s| s.r.y).unwrap_or(f64::NAN)
 }
 
 /// `z` of a peer ship's position, km. See [`peer_pos_x`].
 #[unsafe(no_mangle)]
-pub extern "C" fn peer_pos_z(p: f64, e: f64, i: f64, raan: f64, argp: f64, nu: f64, dt: f64) -> f64 {
+pub extern "C" fn peer_pos_z(
+    p: f64,
+    e: f64,
+    i: f64,
+    raan: f64,
+    argp: f64,
+    nu: f64,
+    dt: f64,
+) -> f64 {
     peer_state(p, e, i, raan, argp, nu, dt).map(|s| s.r.z).unwrap_or(f64::NAN)
 }
 
