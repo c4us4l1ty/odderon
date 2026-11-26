@@ -272,6 +272,15 @@
   <button id="akashi-export">export akashi entry</button>
   <div id="akashi-note" class="muted"></div>
 
+  <div class="sep"></div>
+  <h3>the museum</h3>
+  <div class="muted">your career, recorded as it happens and verifiable against the kernel. every vehicle, report and message is a row; verify re-derives each one from the kernel.</div>
+  <div class="row"><span>entries</span><span id="m-archive-count">0 entries</span></div>
+  <div class="pad-inputs">
+    <button id="archive-verify" type="button">verify the archive</button>
+  </div>
+  <div id="m-archive-list"></div>
+
   <div id="note" class="muted"></div>
 </div>
 
@@ -2037,6 +2046,9 @@ function exportAkashi() {
   $('m-akashi-epoch').textContent = epoch;
   $('akashi-note').textContent =
     'akashi entry exported: epoch ' + epoch + ', design hash ' + hash + '.';
+  // THE ARCHIVE. The report is a career artifact; record it (epoch + kernel design hash) the moment
+  // it is exported, so the museum holds every report in the order it was written.
+  recordReport();
 }
 
 /// Simulated seconds since the curtain last moved, from the page clock and the stated rate.
@@ -2294,6 +2306,10 @@ function advanceRocket(realMs) {
 function relaunchRocket() {
   rocketClock.elapsedS = 0.0;
   rocketClock.lastLaunchMs = performance.now();
+  // THE ARCHIVE. A launch is a career event: record the vehicle, its design and the kernel's
+  // verdict, the moment it is flown. "A museum cannot be retro-fitted" -- the record is built here,
+  // not assembled afterward. A refused launch is still recorded: the archive is what was attempted.
+  recordVehicle();
 }
 
 /// Refresh the rocket's HUD readings from the kernel. Every number comes from the kernel; the page
@@ -2546,12 +2562,225 @@ function sendComms(nowMs) {
   commsState.sendS = sendS;
   commsState.arrivalS = r.arrival;
   refreshCommsHud();
+  // THE ARCHIVE. A sent message is a career event; record the station, the send time and the
+  // kernel's light-time and arrival the moment it is sent.
+  recordComms();
 }
 
 let commsRefreshTimer = null;
 function debouncedRefreshComms(nowMs) {
   if (commsRefreshTimer) clearTimeout(commsRefreshTimer);
   commsRefreshTimer = setTimeout(() => { commsRefreshTimer = null; refreshComms(nowMs); }, 120);
+}
+
+// --------------------------------------------------------------------------------------------
+// the archive (P4 Block 7: the museum of your work)
+// --------------------------------------------------------------------------------------------
+// The archive is a deterministic, append-only ledger of the player's career. Every discrete event
+// -- a vehicle launched, a report exported, a message sent -- is recorded the moment it happens,
+// with the kernel's own readings and a content hash. "A museum cannot be retro-fitted": the record
+// is built as the work is done, not assembled afterward from a save.
+//
+// The archive is VERIFIABLE, which is the P4 gate ("someone else can verify your work"): a third
+// party can re-derive every entry's readings from the kernel and recompute the hash, and both must
+// agree. The hash is a pure function of the entry's physics (type + params + readings), not of the
+// timestamp or the sequence number, so the same entry hashes the same on every platform -- the
+// replay claim.
+
+const archive = [];
+let archiveSeq = 0;
+
+/// Canonical serialization of an archive entry's PHYSICS: fixed field order, fixed number
+/// formatting. The id and epoch are labels, not physics, so they are excluded -- the hash is a
+/// fingerprint of the work, reproducible across time and platform.
+function archiveSerialize(entry) {
+  // BigInt-safe: the design hash crosses the wasm ABI as a u64, which JS sees as a BigInt, not a
+  // Number. Serialize it as its decimal string so it is part of the hash rather than collapsing to
+  // 'nan' and making every vehicle hash identical.
+  const f = (v, d) => (typeof v === 'bigint' ? v.toString() : (Number.isFinite(v) ? v.toFixed(d) : 'nan'));
+  const parts = [entry.type];
+  if (entry.type === 'vehicle') {
+    parts.push(f(entry.params.lat, 6), f(entry.params.az, 6), f(entry.params.el, 6), f(entry.params.v, 6));
+    parts.push(f(entry.readings.verdict, 0), f(entry.readings.apogee, 6),
+      f(entry.readings.impact, 6), f(entry.readings.range, 6), f(entry.readings.hash, 0));
+  } else if (entry.type === 'report') {
+    parts.push(f(entry.params.epoch, 0), f(entry.readings.hash, 0));
+  } else if (entry.type === 'comms') {
+    parts.push(f(entry.params.lat, 6), f(entry.params.lon, 6), f(entry.params.sendS, 6));
+    parts.push(f(entry.readings.oneWay, 9), f(entry.readings.roundTrip, 9), f(entry.readings.arrival, 9));
+  }
+  return parts.join('|');
+}
+
+/// Deterministic content hash (FNV-1a, 32-bit) over the canonical serialization. A pure function of
+/// the entry's physics, so a verifier can recompute it independently of when or where it runs.
+function archiveHash(entry) {
+  let h = 0x811c9dc5;
+  const str = archiveSerialize(entry);
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return ('0000000' + h.toString(16)).slice(-8);
+}
+
+/// Stamp an entry with its hash and push it onto the ledger. The hash is computed from the entry's
+/// physics, so it is the record's integrity stamp -- a verifier recomputes it and confirms it.
+function archivePush(entry) {
+  entry.id = ++archiveSeq;
+  entry.epoch = Date.now();
+  entry.hash = archiveHash(entry);
+  entry.verified = null;
+  archive.push(entry);
+  renderArchive();
+  return entry;
+}
+
+/// Record a vehicle launch. The readings are the kernel's, captured at launch; the design hash is the
+/// kernel's own version stamp. A launch the kernel refused is still recorded -- the archive is a
+/// record of what was attempted, not only what worked.
+function recordVehicle() {
+  const r = rocketReadings();
+  if (r.source !== 'wasm kernel') return null;
+  const k = kernelState.module;
+  const entry = {
+    type: 'vehicle',
+    params: {
+      lat: rocketParams.latitudeDeg, az: rocketParams.azimuthDeg,
+      el: rocketParams.elevationDeg, v: rocketParams.burnoutVelocity,
+    },
+    readings: {
+      verdict: r.verdict, apogee: r.apogeeKm, impact: r.impactTimeS, range: r.rangeKm,
+      hash: k.rocket_design_hash(),
+    },
+  };
+  return archivePush(entry);
+}
+
+/// Record an Akashi report export. The design hash is the kernel's; the epoch is the report's own.
+function recordReport() {
+  const k = kernelState.module;
+  if (!k) return null;
+  const entry = {
+    type: 'report',
+    params: { epoch: padState.akashiEpoch },
+    readings: { hash: k.pad_design_hash() },
+  };
+  return archivePush(entry);
+}
+
+/// Record a comms send. The light-time and arrival are the kernel's, captured at the send instant.
+function recordComms() {
+  const r = commsReadings(commsState.sendS);
+  if (r.source !== 'wasm kernel' || !r.valid) return null;
+  const entry = {
+    type: 'comms',
+    params: { lat: groundStation.latitudeDeg, lon: groundStation.longitudeDeg, sendS: commsState.sendS },
+    readings: { oneWay: r.oneWay, roundTrip: r.roundTrip, arrival: r.arrival },
+  };
+  return archivePush(entry);
+}
+
+/// Re-derive an entry's readings from the kernel and confirm they match what was recorded. This is
+/// the P4 gate made mechanical: "someone else can verify your work" means a third party, given the
+/// entry's params, can call the kernel and get the same numbers. Also recomputes the hash and
+/// confirms the record's integrity. Returns { ok, detail }.
+function verifyArchiveEntry(entry) {
+  const k = kernelState.module;
+  if (!k) return { ok: false, detail: 'kernel not built' };
+  if (entry.type === 'vehicle') {
+    const lat = entry.params.lat * Math.PI / 180;
+    const az = entry.params.az * Math.PI / 180;
+    const el = entry.params.el * Math.PI / 180;
+    const v = entry.params.v;
+    const reDerived = {
+      verdict: k.rocket_verdict(lat, az, el, v),
+      apogee: k.rocket_apogee_km(lat, az, el, v),
+      impact: k.rocket_impact_time_s(lat, az, el, v),
+      range: k.rocket_range_km(lat, az, el, v),
+      hash: k.rocket_design_hash(),
+    };
+    const hashOk = archiveHash(entry) === entry.hash;
+    const readingsOk = close(reDerived.verdict, entry.readings.verdict, 0) &&
+      close(reDerived.apogee, entry.readings.apogee, 1e-6) &&
+      close(reDerived.impact, entry.readings.impact, 1e-6) &&
+      close(reDerived.range, entry.readings.range, 1e-6) &&
+      reDerived.hash === entry.readings.hash;
+    return { ok: hashOk && readingsOk, detail: (hashOk ? 'hash ' : 'hash ') + (readingsOk ? 'readings match' : 'readings differ') };
+  }
+  if (entry.type === 'report') {
+    const hashOk = archiveHash(entry) === entry.hash;
+    const readingsOk = k.pad_design_hash() === entry.readings.hash;
+    return { ok: hashOk && readingsOk, detail: (hashOk ? 'hash ' : 'hash ') + (readingsOk ? 'hash matches' : 'hash differs') };
+  }
+  if (entry.type === 'comms') {
+    const lat = entry.params.lat * Math.PI / 180;
+    const lon = entry.params.lon * Math.PI / 180;
+    const from = entry.params.sendS;
+    const reDerived = {
+      oneWay: k.station_light_time_s(lat, lon, from),
+      roundTrip: k.comms_round_trip_s(lat, lon, from),
+      arrival: k.comms_arrival_s(lat, lon, from),
+    };
+    const hashOk = archiveHash(entry) === entry.hash;
+    const readingsOk = close(reDerived.oneWay, entry.readings.oneWay, 1e-9) &&
+      close(reDerived.roundTrip, entry.readings.roundTrip, 1e-9) &&
+      close(reDerived.arrival, entry.readings.arrival, 1e-9);
+    return { ok: hashOk && readingsOk, detail: (hashOk ? 'hash ' : 'hash ') + (readingsOk ? 'readings match' : 'readings differ') };
+  }
+  return { ok: false, detail: 'unknown entry type' };
+}
+
+/// NaN-safe float comparison: two non-finite values are equal only if both are NaN (no reading),
+/// and a finite value is equal to itself within tolerance.
+function close(a, b, tol) {
+  if (Number.isFinite(a) && Number.isFinite(b)) return Math.abs(a - b) <= tol;
+  return !Number.isFinite(a) && !Number.isFinite(b);
+}
+
+/// Verify every entry in the archive and refresh the gallery. The archive is only as good as its
+/// verifiability: an entry that cannot be re-derived from the kernel is a record nobody can trust.
+function verifyArchive() {
+  let ok = 0;
+  for (const entry of archive) {
+    const v = verifyArchiveEntry(entry);
+    entry.verified = v.ok;
+    entry.verifyDetail = v.detail;
+    if (v.ok) ok++;
+  }
+  renderArchive();
+  return { ok, total: archive.length };
+}
+
+/// Render the museum gallery: the archive as a place. Each entry is a row -- its type, a one-line
+/// summary of the work, the content hash, and whether it verified against the kernel. The gallery is
+/// the archive made visible; `verifyArchive()` is what makes it trustworthy. A `NaN` reading is
+/// shown as `—`, the same convention every other panel uses.
+function renderArchive() {
+  const host = $('m-archive-list');
+  if (!host) return;
+  if (archive.length === 0) {
+    host.innerHTML = '<div class="muted">the museum is empty -- launch a vehicle, export a report, or send a message, and it is recorded here.</div>';
+    $('m-archive-count').textContent = '0 entries';
+    return;
+  }
+  const f = (v, d) => (Number.isFinite(v) ? v.toFixed(d) : '—');
+  const rows = archive.map((e) => {
+    let summary = '';
+    if (e.type === 'vehicle') {
+      const names = ['suborbital', 'orbital', 'escape', 'refused'];
+      summary = `lat ${f(e.params.lat, 1)} az ${f(e.params.az, 1)} el ${f(e.params.el, 1)} v ${f(e.params.v, 2)} km/s · ${names[e.readings.verdict] || '—'} · apogee ${f(e.readings.apogee, 1)} km`;
+    } else if (e.type === 'report') {
+      summary = `akashi epoch ${e.params.epoch} · design hash ${e.readings.hash}`;
+    } else if (e.type === 'comms') {
+      summary = `station ${f(e.params.lat, 1)}, ${f(e.params.lon, 1)} · sent ${f(e.params.sendS, 1)} s · one-way ${f(e.readings.oneWay * 1000, 1)} ms`;
+    }
+    const verified = e.verified === true ? '<span class="ok">verified</span>'
+      : (e.verified === false ? '<span class="bad">mismatch</span>' : '<span class="muted">unverified</span>');
+    return `<div class="archive-row"><span class="archive-type">${e.type}</span><span class="archive-sum">${summary}</span><span class="archive-hash">${e.hash}</span><span class="archive-ver">${verified}</span></div>`;
+  });
+  host.innerHTML = rows.join('');
+  $('m-archive-count').textContent = archive.length + ' entries';
 }
 
 // --------------------------------------------------------------------------------------------
@@ -3995,6 +4224,16 @@ $('comms-send').addEventListener('click', () => { sendComms(performance.now()); 
 // kernel's readings. The report is the product: deterministic, verifiable, offline-readable.
 $('akashi-export').addEventListener('click', () => { exportAkashi(); });
 
+// THE MUSEUM VERIFY. Re-derives every archive entry from the kernel and refreshes the gallery. This
+// is the P4 gate made a button: "someone else can verify your work" means each record can be checked
+// against the kernel that produced it, not trusted on the page's say-so.
+$('archive-verify').addEventListener('click', () => {
+  const r = verifyArchive();
+  $('note').textContent = r.total === 0
+    ? 'the archive is empty; launch a vehicle, export a report, or send a message first.'
+    : `verified ${r.ok} of ${r.total} archive entries against the kernel.`;
+});
+
 // The Akashi design hash is shown as soon as the kernel is built, so the version stamp is visible
 // before any entry is exported.
 function updateAkashiHash() {
@@ -4119,6 +4358,9 @@ loadKernel().then(() => {
   // shows the kernel's one-way and round-trip light-times immediately -- a pure function of the
   // station and the orbit clock, so the HUD is correct before any message is sent.
   refreshComms(performance.now());
+  // The museum. Render the archive (empty until the player acts) so the gallery is present from the
+  // first frame; entries are appended as the career events happen.
+  renderArchive();
   // Say which orbit is on screen. "wasm" means the kernel's own numbers; anything else is a named
   // failure rather than an orbit drawn by something else. A page that draws an ellipse without saying
   // where the ellipse came from is the defect this whole change exists to remove.
@@ -4369,6 +4611,17 @@ window.__odderon = {
   refreshComms,
   refreshCommsHud,
   sendComms,
+  // The archive (P4 Block 7: the museum). Exposed so a test can record events, verify the ledger
+  // against the kernel, and confirm the gallery renders -- the P4 gate, "someone else can verify
+  // your work". `tools/check-archive.mjs` reads these against the module's own exports.
+  archive,
+  archiveHash,
+  recordVehicle,
+  recordReport,
+  recordComms,
+  verifyArchive,
+  verifyArchiveEntry,
+  renderArchive,
   renderer: () => renderer,
   requestFrame,
   /**
