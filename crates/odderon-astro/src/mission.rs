@@ -154,14 +154,18 @@ pub fn achieved_dv_km_s(lat: f64, az: f64, el: f64, v: f64) -> f64 {
 /// `NaN` if `p` is non-finite or outside `[0,1]`, or if `occurred` is not `0` or `1` -- a refusal,
 /// not a score.
 pub fn log_score(predicted_p: f64, occurred: u32) -> f64 {
-    if !is_finite(predicted_p) || predicted_p < 0.0 || predicted_p > 1.0 {
+    if !is_finite(predicted_p) || !(0.0..=1.0).contains(&predicted_p) {
         return f64::NAN;
     }
     // Guard the degenerate certainties: p = 0 with occurred, or p = 1 without, is an infinite
     // penalty -- the honest score for claiming certainty and being wrong. Return it as infinity
     // rather than NaN, because it is a real (if extreme) score, not a refusal. The other
     // degenerate pair (p = 1 and occurred, p = 0 and not) is a perfect 0.
-    let p_if = if occurred == 1 { predicted_p } else { 1.0 - predicted_p };
+    let p_if = if occurred == 1 {
+        predicted_p
+    } else {
+        1.0 - predicted_p
+    };
     if p_if == 0.0 {
         return f64::INFINITY;
     }
