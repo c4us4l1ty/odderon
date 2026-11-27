@@ -28,7 +28,8 @@
     "check:protege": "node tools/check-protege.mjs",
     "check:causal-mail": "node tools/check-causal-mail.mjs",
     "check:mission": "node tools/check-mission.mjs",
-    "check:essence": "node tools/check-essence.mjs"
+    "check:essence": "node tools/check-essence.mjs",
+    "check:anomaly": "node tools/check-anomaly.mjs"
   },
   "devDependencies": {
     "@sparticuz/chromium": "131.0.0",
