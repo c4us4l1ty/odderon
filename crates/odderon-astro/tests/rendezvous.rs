@@ -188,9 +188,7 @@ fn window_refuses_nan_theta() {
 #[test]
 fn window_refuses_out_of_range_theta() {
     assert!(rendezvous_window_s(R_LEO, R_GEO, -0.1, MU).is_nan());
-    assert!(
-        rendezvous_window_s(R_LEO, R_GEO, 2.0 * std::f64::consts::PI, MU).is_nan()
-    );
+    assert!(rendezvous_window_s(R_LEO, R_GEO, 2.0 * std::f64::consts::PI, MU).is_nan());
 }
 
 /// Same-orbit rendezvous has no window (no relative motion).
