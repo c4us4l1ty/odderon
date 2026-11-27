@@ -164,8 +164,12 @@ pub fn doppler_factor_from_vecs(
     ly: f64,
     lz: f64,
 ) -> Option<f64> {
-    if !(vx.is_finite() && vy.is_finite() && vz.is_finite()
-        && lx.is_finite() && ly.is_finite() && lz.is_finite())
+    if !(vx.is_finite()
+        && vy.is_finite()
+        && vz.is_finite()
+        && lx.is_finite()
+        && ly.is_finite()
+        && lz.is_finite())
     {
         return None;
     }

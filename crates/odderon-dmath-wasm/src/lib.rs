@@ -1425,8 +1425,7 @@ pub extern "C" fn doppler_factor_from_vecs(
     ly: f64,
     lz: f64,
 ) -> f64 {
-    odderon_astro::lightcone::doppler_factor_from_vecs(vx, vy, vz, lx, ly, lz)
-        .unwrap_or(f64::NAN)
+    odderon_astro::lightcone::doppler_factor_from_vecs(vx, vy, vz, lx, ly, lz).unwrap_or(f64::NAN)
 }
 
 /// The inverse-square attenuation: the fraction of transmitted signal power that survives at
