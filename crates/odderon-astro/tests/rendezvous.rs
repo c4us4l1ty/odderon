@@ -38,7 +38,10 @@ fn transfer_dv_breakdown_leo_to_geo() {
     let total_expected = dv_dep_expected + dv_arr_expected;
     let dv = rendezvous_transfer_dv(R_LEO, R_GEO, MU);
     let rel = (dv - total_expected).abs() / total_expected;
-    assert!(rel < 1e-10, "dv = {dv}, expected {total_expected}, rel = {rel}");
+    assert!(
+        rel < 1e-10,
+        "dv = {dv}, expected {total_expected}, rel = {rel}"
+    );
 }
 
 /// The transfer time: half the period of the transfer ellipse. Reference: 19048.5 s.
@@ -103,7 +106,10 @@ fn transfer_dv_symmetric() {
 #[test]
 fn phase_angle_inward_is_negative() {
     let phi = rendezvous_phase_angle(R_GEO, R_LEO, MU);
-    assert!(phi < 0.0, "inward phase angle should be negative, got {phi}");
+    assert!(
+        phi < 0.0,
+        "inward phase angle should be negative, got {phi}"
+    );
 }
 
 /// NaN input is refused, not answered.
@@ -134,7 +140,10 @@ fn transfer_dv_refuses_bad_mu() {
 fn window_open_now() {
     let phi = rendezvous_phase_angle(R_LEO, R_GEO, MU);
     let t = rendezvous_window_s(R_LEO, R_GEO, phi, MU);
-    assert!(t.abs() < 1e-6, "window should be 0 at the required lead, got {t}");
+    assert!(
+        t.abs() < 1e-6,
+        "window should be 0 at the required lead, got {t}"
+    );
 }
 
 /// The window from a zero lead angle: the target is directly ahead, so the chaser (in the lower,
@@ -179,7 +188,9 @@ fn window_refuses_nan_theta() {
 #[test]
 fn window_refuses_out_of_range_theta() {
     assert!(rendezvous_window_s(R_LEO, R_GEO, -0.1, MU).is_nan());
-    assert!(rendezvous_window_s(R_LEO, R_GEO, 2.0 * std::f64::consts::PI, MU).is_nan());
+    assert!(
+        rendezvous_window_s(R_LEO, R_GEO, 2.0 * std::f64::consts::PI, MU).is_nan()
+    );
 }
 
 /// Same-orbit rendezvous has no window (no relative motion).
