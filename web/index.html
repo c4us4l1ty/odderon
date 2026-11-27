@@ -102,6 +102,7 @@
   #pad-note { margin-top: 5px; font-size: 11px; line-height: 1.4; }
   #pad-stand { margin-top: 6px; font-size: 11px; line-height: 1.4; max-height: 180px; overflow-y: auto; }
   .wreck { margin-bottom: 5px; padding: 5px 6px; border-radius: 5px; background: #151b22; border: 1px solid #2a3642; }
+  .museum-canvas { width: 100%; max-width: 480px; height: auto; border-radius: 6px; background: #151b22; border: 1px solid #2a3642; display: block; margin-top: 6px; }
   .wreck-head { color: #ff8a80; font-variant-numeric: tabular-nums; }
   .wreck-log { color: #7d8b9c; margin-top: 2px; font-variant-numeric: tabular-nums; }
   .wreck { cursor: pointer; }
@@ -364,6 +365,11 @@
     <button id="archive-verify" type="button">verify the archive</button>
   </div>
   <div id="m-archive-list"></div>
+  <div class="sep"></div>
+  <div class="row"><span>gallery</span><span id="m-museum-count">0 exhibits</span></div>
+  <div class="row"><span>design hash</span><span id="m-museum-hash">—</span></div>
+  <canvas id="m-museum-canvas" width="480" height="360" class="museum-canvas"></canvas>
+  <div class="muted">the gallery grows as your career grows: each exhibit sits at its kernel-computed position in the spiral, sized and rotated by the kernel's own layout rule. the same archive produces the same gallery on every platform.</div>
 
   <div class="sep"></div>
   <h3>the junior</h3>
@@ -1581,7 +1587,11 @@ async function loadKernel() {
                     // cap, and the rack rule are the kernel's -- the page writes the mission's raw
                     // facts and a sensor reading into the kernel's memory and reads the results back.
                     'anomaly_from_mission', 'drawer_can_open', 'elo_expected', 'elo_update',
-                    'rack_compile', 'rack_fires', 'anomaly_design_hash'];
+                    'rack_compile', 'rack_fires', 'anomaly_design_hash',
+                    // Block 7: the museum. The gallery layout is the kernel's -- the page writes
+                    // the archive's entry descriptors into linear memory and reads the exhibit
+                    // positions back. Same archive, same gallery, on every platform (§11.4).
+                    'museum_layout', 'museum_exhibit_kind', 'museum_design_hash'];
     const missing = needed.filter((n) => typeof ex[n] !== 'function');
     if (missing.length) throw new Error('module missing exports: ' + missing.join(', '));
     kernelState.module = ex;
@@ -2833,6 +2843,7 @@ function archivePush(entry) {
   archive.push(entry);
   saveArchive();
   renderArchive();
+  renderMuseum();
   return entry;
 }
 
@@ -2995,6 +3006,7 @@ function verifyArchive() {
     if (v.ok) ok++;
   }
   renderArchive();
+  renderMuseum();
   return { ok, total: archive.length };
 }
 
@@ -3033,6 +3045,252 @@ function renderArchive() {
   });
   host.innerHTML = rows.join('');
   $('m-archive-count').textContent = archive.length + ' entries';
+}
+
+// --------------------------------------------------------------------------------------------
+// the museum gallery (Block 7: the archive as a place, bible §11.4)
+// --------------------------------------------------------------------------------------------
+//
+// The museum is the archive made physical. The kernel owns the LAYOUT — where each exhibit sits
+// in the spiral, how big it is, which way it faces — and the page owns the RENDERING of the
+// parametric geometry. The same archive produces the same gallery on every platform, which is
+// what makes it verifiable: a stranger who loads the archive and calls the kernel's museum_layout
+// walks the same aisles the player walked.
+//
+// The page maps each archive entry to an EntryDesc (kind, size, orient, id), writes them into
+// linear memory, calls museum_layout, and reads the exhibits back. It holds no placement rule of
+// its own — the spiral, the scale curve, and the rotation mapping are all the kernel's.
+
+/// Map an archive entry type to a museum exhibit kind code. The codes are the kernel's stable
+/// identifiers (0 = Vehicle, 1 = Wreck, 2 = Report, 3 = Comms, 4 = Mail, 5 = Mission, 6 = Briefing).
+function museumKindCode(entryType) {
+  switch (entryType) {
+    case 'vehicle': return 0;
+    case 'comms': return 3;
+    case 'mail': return 4;
+    case 'mission': return 5;
+    case 'briefing': return 6;
+    // Reports are the Akashi export; they are exhibit kind 2.
+    case 'report': return 2;
+    default: return 0;
+  }
+}
+
+/// Map an archive entry to a kernel EntryDesc: kind, a size reading, an orientation reading, and
+/// the archive sequence number. The size reading determines the display scale (apogee for a
+/// vehicle, failure time for a wreck, etc.); the orientation reading determines the display
+/// rotation (launch azimuth for a vehicle).
+function museumEntryDesc(entry) {
+  let size = 0.0;
+  let orient = 0.0;
+  if (entry.type === 'vehicle') {
+    size = entry.readings.apogee || 0.0;
+    orient = (entry.params.az || 0.0) * Math.PI / 180;
+  } else if (entry.type === 'comms') {
+    size = entry.readings.oneWay || 0.0;
+    orient = 0.0;
+  } else if (entry.type === 'mail') {
+    size = entry.readings.lightTime || 0.0;
+    orient = 0.0;
+  } else if (entry.type === 'mission') {
+    size = entry.readings.dv || 0.0;
+    orient = 0.0;
+  } else if (entry.type === 'briefing') {
+    size = entry.id || 0.0;
+    orient = 0.0;
+  } else if (entry.type === 'report') {
+    size = entry.id || 0.0;
+    orient = 0.0;
+  }
+  return { kind: museumKindCode(entry.type), size, orient, id: entry.id };
+}
+
+/// Read the museum gallery layout from the kernel. Maps each archive entry to an EntryDesc,
+/// writes the descriptors into linear memory, calls museum_layout, and reads the exhibits back.
+/// Returns { source, valid, exhibits } or { source: 'absent' } when the kernel is not loaded.
+function museumGallery() {
+  const k = kernelState.module;
+  if (!k || !k.memory) return { source: 'absent' };
+  const n = archive.length;
+  if (n === 0) return { source: 'wasm kernel', valid: true, exhibits: [] };
+
+  // Write the entry descriptors into linear memory past the data segments.
+  const mem = k.memory;
+  const pageBytes = 65536;
+  const descFloats = 4;       // [kind, size, orient, id] per entry
+  const exhibitFloats = 6;    // [x, z, scale, rotation, kind, id] per exhibit
+  const need = n * descFloats + n * exhibitFloats;
+  const base = mem.buffer.byteLength;
+  const pages = Math.ceil(need / pageBytes);
+  if (pages > 0) {
+    try { mem.grow(pages); } catch (err) { return { source: 'wasm kernel', valid: false, reason: 'memory' }; }
+  }
+  const dv = new DataView(mem.buffer);
+  const descOff = base;
+  const outOff = descOff + n * descFloats * 8;
+
+  for (let i = 0; i < n; i++) {
+    const d = museumEntryDesc(archive[i]);
+    const b = descOff + i * descFloats * 8;
+    dv.setFloat64(b, d.kind, true);
+    dv.setFloat64(b + 8, d.size, true);
+    dv.setFloat64(b + 16, d.orient, true);
+    dv.setFloat64(b + 24, d.id, true);
+  }
+
+  const count = k.museum_layout(descOff, n, outOff);
+  if (count !== n) return { source: 'wasm kernel', valid: false, reason: 'layout refused' };
+
+  const exhibits = [];
+  for (let i = 0; i < n; i++) {
+    const b = outOff + i * exhibitFloats * 8;
+    exhibits.push({
+      x: dv.getFloat64(b, true),
+      z: dv.getFloat64(b + 8, true),
+      scale: dv.getFloat64(b + 16, true),
+      rotation: dv.getFloat64(b + 24, true),
+      kind: Math.round(dv.getFloat64(b + 32, true)),
+      id: Math.round(dv.getFloat64(b + 40, true)),
+    });
+  }
+  return { source: 'wasm kernel', valid: true, exhibits };
+}
+
+/// The exhibit kind name for a code, from the kernel. 0 = Vehicle, 1 = Wreck, 2 = Report,
+/// 3 = Comms, 4 = Mail, 5 = Mission, 6 = Briefing. -1 for an unknown code.
+const MUSEUM_KIND_NAMES = ['vehicle', 'wreck', 'report', 'comms', 'mail', 'mission', 'briefing'];
+function museumKindName(code) {
+  return MUSEUM_KIND_NAMES[code] || 'unknown';
+}
+
+/// Draw the museum gallery on its canvas. Each exhibit is a small parametric shape at its
+/// kernel-computed position, sized by the kernel's scale and rotated by the kernel's rotation.
+/// The page holds no placement rule — it reads the kernel's positions and draws.
+function renderMuseum() {
+  const canvas = $('m-museum-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  const g = museumGallery();
+  if (g.source === 'absent' || !g.valid) {
+    ctx.fillStyle = '#888';
+    ctx.font = '12px monospace';
+    ctx.fillText('the kernel is not loaded; the gallery needs the wasm kernel.', 12, 20);
+    $('m-museum-count').textContent = '0 exhibits';
+    $('m-museum-hash').textContent = '—';
+    return;
+  }
+
+  const exhibits = g.exhibits;
+  $('m-museum-count').textContent = exhibits.length + ' exhibits';
+  const hash = k_museumHash();
+  $('m-museum-hash').textContent = hash ? '0x' + hash.toString(16) : '—';
+
+  if (exhibits.length === 0) {
+    ctx.fillStyle = '#888';
+    ctx.font = '12px monospace';
+    ctx.fillText('the museum is empty -- record something and the gallery grows.', 12, 20);
+    return;
+  }
+
+  // The gallery centre is the canvas centre. The spiral radius is in gallery metres; map it to
+  // canvas pixels with a scale that fits the largest exhibit in the canvas.
+  const cx = W / 2, cy = H / 2;
+  // The largest possible radius for n exhibits: base + (n-1) * step.
+  const maxRadius = 4.0 + (exhibits.length - 1) * 0.8;
+  const pxPerM = Math.min(W, H) / (2 * maxRadius * 1.4);
+
+  // Draw the gallery floor: a subtle radial gradient.
+  const grad = ctx.createRadialGradient(cx, cy, 4, cx, cy, Math.max(W, H) / 2);
+  grad.addColorStop(0, 'rgba(60, 50, 40, 0.4)');
+  grad.addColorStop(1, 'rgba(20, 18, 15, 0.1)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Draw the spiral guide line (dashed, faint) so the layout is visible.
+  ctx.strokeStyle = 'rgba(120, 100, 80, 0.3)';
+  ctx.setLineDash([3, 4]);
+  ctx.beginPath();
+  for (let i = 0; i < exhibits.length; i++) {
+    const ex = exhibits[i];
+    const px = cx + ex.x * pxPerM;
+    const py = cy + ex.z * pxPerM;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Draw each exhibit: a parametric shape at its position, sized and rotated by the kernel.
+  for (const ex of exhibits) {
+    const px = cx + ex.x * pxPerM;
+    const py = cy + ex.z * pxPerM;
+    const r = 4 + ex.scale * 8; // base radius 4px, scaled by the kernel's scale
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.rotate(ex.rotation);
+
+    // The shape is parametric — a simple geometric primitive per kind. No assets, no textures.
+    const kind = ex.kind;
+    ctx.fillStyle = kind === 0 ? '#d4a574'    // vehicle: warm wood
+      : kind === 1 ? '#8a5a3a'                // wreck: scorched brown
+      : kind === 2 ? '#7a9ab0'                // report: cool blue
+      : kind === 3 ? '#9ab07a'                // comms: green
+      : kind === 4 ? '#b0a070'                // mail: muted gold
+      : kind === 5 ? '#a07090'                // mission: purple
+      : '#808080';                            // briefing: grey
+    ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+    ctx.lineWidth = 1;
+
+    if (kind === 0 || kind === 1) {
+      // A rocket stack: a tall rectangle with a pointed top.
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.4, r * 0.8);
+      ctx.lineTo(-r * 0.4, -r * 0.2);
+      ctx.lineTo(0, -r);
+      ctx.lineTo(r * 0.4, -r * 0.2);
+      ctx.lineTo(r * 0.4, r * 0.8);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    } else if (kind === 2 || kind === 6) {
+      // A report or briefing: a flat page.
+      ctx.fillRect(-r * 0.6, -r * 0.7, r * 1.2, r * 1.4);
+      ctx.strokeRect(-r * 0.6, -r * 0.7, r * 1.2, r * 1.4);
+    } else {
+      // Comms, mail, mission: a diamond.
+      ctx.beginPath();
+      ctx.moveTo(0, -r);
+      ctx.lineTo(r * 0.7, 0);
+      ctx.lineTo(0, r);
+      ctx.lineTo(-r * 0.7, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // The entry id label, drawn after the rotation so it stays upright.
+    ctx.fillStyle = 'rgba(200, 190, 170, 0.7)';
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('#' + ex.id, px, py + r + 10);
+  }
+
+  // Draw the centre marker.
+  ctx.fillStyle = 'rgba(180, 160, 130, 0.5)';
+  ctx.beginPath();
+  ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+/// The museum design hash, read from the kernel. Cached per render call.
+function k_museumHash() {
+  const k = kernelState.module;
+  if (!k) return null;
+  try { return k.museum_design_hash(); } catch (e) { return null; }
 }
 
 // --------------------------------------------------------------------------------------------
@@ -5852,6 +6110,7 @@ loadKernel().then(() => {
   // The museum. Render the archive (empty until the player acts) so the gallery is present from the
   // first frame; entries are appended as the career events happen.
   renderArchive();
+  renderMuseum();
   // The junior. Render the protégé panel so it is present from the first frame; a question appears
   // when the player asks and there is a failure in the archive to replay.
   renderProtege();

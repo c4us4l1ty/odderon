@@ -253,6 +253,9 @@ jobs:
       - name: anomaly drawer + rack boundary (the drawer, E_an, and rack are the kernel's)
         run: node tools/check-anomaly.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
 
+      - name: museum gallery boundary (the gallery layout is the kernel's)
+        run: node tools/check-museum.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
+
       - name: stage wasm artifacts
         run: |
           mkdir -p dist
@@ -497,6 +500,18 @@ jobs:
         run: node tools/check-anomaly.mjs
       - name: anomaly drawer + rack verifier self-test (open, cap, resolve, rack sound)
         run: node tools/check-anomaly.mjs --selftest
+      # Block 7: the museum. The gallery layout is the kernel's -- the page writes the archive's
+      # entry descriptors into linear memory and reads the exhibit positions back. The gate checks
+      # that the page computes no placement rule (no golden angle, no spiral, no scale curve), that
+      # it requires every museum export, that a missing kernel hides the gallery rather than
+      # substituting a layout, and that the gallery readings come from the kernel. The wasm half
+      # verifies the layout invariants: the spiral grows outward, the scale maps through the sqrt
+      # curve and is clamped, the rotation is the orientation or zero, the kind codes round-trip,
+      # and the design hash is deterministic.
+      - name: "the museum - the gallery layout, checked"
+        run: node tools/check-museum.mjs
+      - name: museum gallery verifier self-test (grow, scale, rotation, hash)
+        run: node tools/check-museum.mjs --selftest
       # On 2026-11-24 this job failed on a condition the page handles correctly: the optional wasm
       # artifact is absent on a clean checkout, the browser logs a 404, and `tools/screenshot.mjs` treats
       # any console error as an untrustworthy frame. The capture now exempts that one error -- but only
