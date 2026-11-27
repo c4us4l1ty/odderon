@@ -1239,6 +1239,54 @@ pub extern "C" fn peer_pos_z(
         .unwrap_or(f64::NAN)
 }
 
+/// `x` of a peer ship's velocity, km/s. `NaN` when the state cannot be built. See [`peer_pos_x`].
+#[unsafe(no_mangle)]
+pub extern "C" fn peer_vel_x(
+    p: f64,
+    e: f64,
+    i: f64,
+    raan: f64,
+    argp: f64,
+    nu: f64,
+    dt: f64,
+) -> f64 {
+    peer_state(p, e, i, raan, argp, nu, dt)
+        .map(|s| s.v.x)
+        .unwrap_or(f64::NAN)
+}
+
+/// `y` of a peer ship's velocity, km/s. `NaN` when the state cannot be built. See [`peer_pos_x`].
+#[unsafe(no_mangle)]
+pub extern "C" fn peer_vel_y(
+    p: f64,
+    e: f64,
+    i: f64,
+    raan: f64,
+    argp: f64,
+    nu: f64,
+    dt: f64,
+) -> f64 {
+    peer_state(p, e, i, raan, argp, nu, dt)
+        .map(|s| s.v.y)
+        .unwrap_or(f64::NAN)
+}
+
+/// `z` of a peer ship's velocity, km/s. `NaN` when the state cannot be built. See [`peer_pos_x`].
+#[unsafe(no_mangle)]
+pub extern "C" fn peer_vel_z(
+    p: f64,
+    e: f64,
+    i: f64,
+    raan: f64,
+    argp: f64,
+    nu: f64,
+    dt: f64,
+) -> f64 {
+    peer_state(p, e, i, raan, argp, nu, dt)
+        .map(|s| s.v.z)
+        .unwrap_or(f64::NAN)
+}
+
 /// `x` of the authored ground station's inertial position at `from`, km. `NaN` when the site cannot
 /// be built. See [`station_position`].
 #[unsafe(no_mangle)]
@@ -1349,12 +1397,36 @@ pub extern "C" fn causal_reachable(r_km: f64, dt_s: f64) -> u32 {
     }
 }
 
+/// The Euclidean magnitude of a displacement vector given its Cartesian components, in km.
+/// `NaN` for non-finite components or a non-finite magnitude.
+#[unsafe(no_mangle)]
+pub extern "C" fn signal_distance_km(dx: f64, dy: f64, dz: f64) -> f64 {
+    odderon_astro::lightcone::signal_distance_km(dx, dy, dz).unwrap_or(f64::NAN)
+}
+
 /// The relativistic Doppler factor: `f_received / f_emitted` for a source moving at
 /// `v_km_s` relative to the observer, with the signal at angle `theta_rad` to the velocity
 /// vector. `NaN` for non-finite inputs or a velocity at or above the speed of light.
 #[unsafe(no_mangle)]
 pub extern "C" fn doppler_factor(v_km_s: f64, theta_rad: f64) -> f64 {
     odderon_astro::lightcone::doppler_factor(v_km_s, theta_rad).unwrap_or(f64::NAN)
+}
+
+/// The relativistic Doppler factor computed directly from a velocity vector and a line-of-sight
+/// direction vector, so the caller supplies raw geometry and the kernel owns every trigonometric
+/// and relativistic step. `NaN` for non-finite components, zero magnitudes, or a speed at or above
+/// the speed of light. See `doppler_factor` for the formula.
+#[unsafe(no_mangle)]
+pub extern "C" fn doppler_factor_from_vecs(
+    vx: f64,
+    vy: f64,
+    vz: f64,
+    lx: f64,
+    ly: f64,
+    lz: f64,
+) -> f64 {
+    odderon_astro::lightcone::doppler_factor_from_vecs(vx, vy, vz, lx, ly, lz)
+        .unwrap_or(f64::NAN)
 }
 
 /// The inverse-square attenuation: the fraction of transmitted signal power that survives at

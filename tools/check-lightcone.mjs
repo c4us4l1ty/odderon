@@ -18,9 +18,9 @@
  *      formula, no local inverse-square. The failure mode is "someone re-adds a local causal model",
  *      which no runtime probe can see.
  *
- *   2. THE PAGE REQUIRES EVERY LIGHT-CONE EXPORT. The page must reference all five kernel accessors:
- *      `light_cone_radius_km`, `causal_reachable`, `doppler_factor`, `signal_power_ratio`, and
- *      `lightcone_design_hash`. A partial build fails at load.
+ *   2. THE PAGE REQUIRES EVERY LIGHT-CONE EXPORT. The page must reference all kernel accessors:
+ *      `light_cone_radius_km`, `causal_reachable`, `doppler_factor_from_vecs`, `signal_distance_km`,
+ *      `signal_power_ratio`, and `lightcone_design_hash`. A partial build fails at load.
  *
  *   3. NO SILENT FALLBACK. `lightconeReadings` must return a named source when the kernel is absent,
  *      and the panel must show `—` rather than a fabricated causal structure.
@@ -66,11 +66,14 @@ check("no local causal math in the page", (src) => {
   const patterns = [
     [/light_cone_radius\s*\([^)]*\)\s*=[^;]*Math\./, "a hand-computed light-cone radius"],
     [/causal_reachable\s*\([^)]*\)\s*=[^;]*Math\./, "a hand-computed reachability"],
-    [/doppler_factor\s*\([^)]*\)\s*=[^;]*Math\./, "a hand-computed Doppler factor"],
+    [/doppler_factor_from_vecs\s*\([^)]*\)\s*=[^;]*Math\./, "a hand-computed Doppler factor"],
     [/signal_power_ratio\s*\([^)]*\)\s*=[^;]*Math\./, "a hand-computed signal power"],
     [/299_?792/, "a hard-coded speed of light"],
     [/SPEED_OF_LIGHT/i, "a speed-of-light constant"],
     [/Math\.pow\s*\([^)]*2\s*\)/, "a local inverse-square"],
+    [/Math\.sqrt\s*\([^)]*dx[^)]*\)/, "a local distance magnitude"],
+    [/Math\.atan2\s*\(/, "a local Doppler angle"],
+    [/Math\.sqrt\s*\([^)]*orbit_mu[^)]*\)/, "a local orbital velocity"],
   ];
   const hits = patterns.filter(([re]) => re.test(src)).map(([, why]) => why);
   if (hits.length) throw new Error("page still computes the causal structure itself: " + hits.join("; "));
@@ -80,7 +83,8 @@ check("the page requires every light-cone export", (src) => {
   const needed = [
     "light_cone_radius_km",
     "causal_reachable",
-    "doppler_factor",
+    "doppler_factor_from_vecs",
+    "signal_distance_km",
     "signal_power_ratio",
     "lightcone_design_hash",
   ];
@@ -102,7 +106,7 @@ check("the light-cone readings come from the kernel, not a local formula", (src)
   const m = src.match(/function lightconeReadings\s*\([^)]*\)\s*\{([\s\S]*?)\n\}/);
   if (!m) throw new Error("lightconeReadings not found");
   const body = m[1];
-  for (const accessor of ["light_cone_radius_km", "causal_reachable", "doppler_factor", "signal_power_ratio"]) {
+  for (const accessor of ["light_cone_radius_km", "causal_reachable", "doppler_factor_from_vecs", "signal_distance_km", "signal_power_ratio"]) {
     if (!body.includes(accessor)) {
       throw new Error(`lightconeReadings does not call ${accessor}`);
     }
@@ -122,6 +126,8 @@ function verifyExports(ex) {
     "light_cone_radius_km",
     "causal_reachable",
     "doppler_factor",
+    "doppler_factor_from_vecs",
+    "signal_distance_km",
     "signal_power_ratio",
     "lightcone_design_hash",
   ];
@@ -175,6 +181,39 @@ function verifyExports(ex) {
   if (!Number.isFinite(fZero)) problems.push("zero-velocity Doppler is not finite");
   else if (Math.abs(fZero - 1.0) > 1e-12) problems.push(`zero-velocity Doppler = ${fZero}, want 1.0`);
 
+  // Signal distance: Euclidean magnitude from components.
+  const dUnit = ex.signal_distance_km(1.0, 0.0, 0.0);
+  if (!Number.isFinite(dUnit) || Math.abs(dUnit - 1.0) > 1e-12) problems.push(`signal_distance of unit vector = ${dUnit}, want 1.0`);
+  const dPyth = ex.signal_distance_km(3.0, 4.0, 12.0);
+  if (!Number.isFinite(dPyth) || Math.abs(dPyth - 13.0) > 1e-12) problems.push(`signal_distance 3-4-12 = ${dPyth}, want 13.0`);
+
+  // Doppler from vectors: approaching is a blueshift, receding is a redshift, transverse is the
+  // relativistic redshift. Must agree with the scalar form for the same geometry.
+  const fVecApproach = ex.doppler_factor_from_vecs(v, 0.0, 0.0, 1.0, 0.0, 0.0);
+  if (!Number.isFinite(fVecApproach)) problems.push("vector Doppler approaching is not finite");
+  else if (Math.abs(fVecApproach - fApproachExpected) > 1e-12) problems.push(`vector approaching Doppler = ${fVecApproach}, want ${fApproachExpected}`);
+  else if (fVecApproach <= 1.0) problems.push("vector approaching is not a blueshift");
+
+  const fVecRecede = ex.doppler_factor_from_vecs(v, 0.0, 0.0, -1.0, 0.0, 0.0);
+  if (!Number.isFinite(fVecRecede)) problems.push("vector Doppler receding is not finite");
+  else if (Math.abs(fVecRecede - fRecedeExpected) > 1e-12) problems.push(`vector receding Doppler = ${fVecRecede}, want ${fRecedeExpected}`);
+  else if (fVecRecede >= 1.0) problems.push("vector receding is not a redshift");
+
+  const fVecTrans = ex.doppler_factor_from_vecs(v, 0.0, 0.0, 0.0, 1.0, 0.0);
+  if (!Number.isFinite(fVecTrans)) problems.push("vector Doppler transverse is not finite");
+  else if (Math.abs(fVecTrans - fTransExpected) > 1e-12) problems.push(`vector transverse Doppler = ${fVecTrans}, want ${fTransExpected}`);
+
+  // Vector Doppler: zero velocity is no shift (factor 1, matching the scalar form).
+  const fVecZero = ex.doppler_factor_from_vecs(0.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+  if (!Number.isFinite(fVecZero)) problems.push("vector zero-velocity Doppler is not finite");
+  else if (Math.abs(fVecZero - 1.0) > 1e-12) problems.push(`vector zero-velocity Doppler = ${fVecZero}, want 1.0`);
+
+  // Vector Doppler: a velocity at c is refused.
+  if (Number.isFinite(ex.doppler_factor_from_vecs(C, 0.0, 0.0, 1.0, 0.0, 0.0))) problems.push("vector velocity at c is not refused");
+
+  // Causal reachability: a negative distance must be refused (bug fix).
+  if (ex.causal_reachable(-1.0, 1.0) !== 0) problems.push("a negative distance is accepted as reachable");
+
   // Doppler: a velocity at c is refused.
   if (Number.isFinite(ex.doppler_factor(C, 0.0))) problems.push("velocity at c is not refused");
 
@@ -219,12 +258,28 @@ function selftest() {
   // implementation's internals.
   const good = {
     light_cone_radius_km: (dt) => (dt > 0 && Number.isFinite(dt) ? C * dt : NaN),
-    causal_reachable: (r, dt) => (Number.isFinite(r) && Number.isFinite(dt) && dt > 0 ? (r <= C * dt ? 1 : 0) : 0),
+    causal_reachable: (r, dt) => (Number.isFinite(r) && r > 0 && Number.isFinite(dt) && dt > 0 ? (r <= C * dt ? 1 : 0) : 0),
     doppler_factor: (v, theta) => {
       if (!Number.isFinite(v) || !Number.isFinite(theta)) return NaN;
       const beta = v / C;
       if (beta >= 1) return NaN;
       return Math.sqrt(1 - beta * beta) / (1 - beta * Math.cos(theta));
+    },
+    doppler_factor_from_vecs: (vx, vy, vz, lx, ly, lz) => {
+      if (![vx, vy, vz, lx, ly, lz].every(Number.isFinite)) return NaN;
+      const vMag = Math.sqrt(vx * vx + vy * vy + vz * vz);
+      if (!Number.isFinite(vMag)) return NaN;
+      if (vMag === 0.0) return 1.0;
+      const losMag = Math.sqrt(lx * lx + ly * ly + lz * lz);
+      if (!Number.isFinite(losMag) || losMag === 0.0) return NaN;
+      const cosTheta = (vx * lx + vy * ly + vz * lz) / (vMag * losMag);
+      const beta = vMag / C;
+      if (beta >= 1) return NaN;
+      return Math.sqrt(1 - beta * beta) / (1 - beta * cosTheta);
+    },
+    signal_distance_km: (dx, dy, dz) => {
+      if (![dx, dy, dz].every(Number.isFinite)) return NaN;
+      return Math.sqrt(dx * dx + dy * dy + dz * dz);
     },
     signal_power_ratio: (d, dr) => (d > 0 && dr > 0 && Number.isFinite(d) && Number.isFinite(dr) ? Math.pow(dr / d, 2) : NaN),
     lightcone_design_hash: () => 0xcbf29ce484222325,
@@ -254,6 +309,15 @@ function selftest() {
     results.push(["a reachability that accepts everything is rejected", false]);
   } catch {
     results.push(["a reachability that accepts everything is rejected", true]);
+  }
+
+  // The exact bug this round found: a negative distance accepted as reachable.
+  const wrongNegDist = { ...good, causal_reachable: (r, dt) => (Number.isFinite(r) && Number.isFinite(dt) && dt > 0 ? (r <= C * dt ? 1 : 0) : 0) };
+  try {
+    verifyExports(wrongNegDist);
+    results.push(["a reachability that accepts negative distance is rejected", false]);
+  } catch {
+    results.push(["a reachability that accepts negative distance is rejected", true]);
   }
 
   // A Doppler factor that is not a blueshift for an approaching source is not the kernel's.
