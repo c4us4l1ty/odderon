@@ -372,6 +372,18 @@
   <div class="muted">the gallery grows as your career grows: each exhibit sits at its kernel-computed position in the spiral, sized and rotated by the kernel's own layout rule. the same archive produces the same gallery on every platform.</div>
 
   <div class="sep"></div>
+  <h3>the survey</h3>
+  <div class="muted">the sky is a survey backend, not a table. the kernel validates the request and the reply; the star data lives in the page's memory and never enters the binary. a cone search returns only what falls inside it, and the release rule is the kernel's.</div>
+  <div class="row"><span>cone</span><span id="m-survey-cone">—</span></div>
+  <div class="row"><span>stars</span><span id="m-survey-count">—</span></div>
+  <div class="row"><span>truncated</span><span id="m-survey-trunc">—</span></div>
+  <div class="row"><span>admits</span><span id="m-survey-admits">—</span></div>
+  <div class="row"><span>design hash</span><span id="m-survey-hash">—</span></div>
+  <div class="pad-inputs">
+    <button id="survey-search" type="button">search the cone</button>
+  </div>
+
+  <div class="sep"></div>
   <h3>the junior</h3>
   <div class="muted">the junior replays your failures from the archive and asks you to diagnose them. the correct diagnosis is the kernel's own -- answering well records a self-explanation and builds trust.</div>
   <div class="row"><span>trust</span><span id="m-protege-rep">0</span></div>
@@ -1591,7 +1603,12 @@ async function loadKernel() {
                     // Block 7: the museum. The gallery layout is the kernel's -- the page writes
                     // the archive's entry descriptors into linear memory and reads the exhibit
                     // positions back. Same archive, same gallery, on every platform (§11.4).
-                    'museum_layout', 'museum_exhibit_kind', 'museum_design_hash'];
+                    'museum_layout', 'museum_exhibit_kind', 'museum_design_hash',
+                    // Block 8: the survey seam. The cone search, the release-admission rule, and
+                    // the design hash are the kernel's -- the page writes star records into linear
+                    // memory and reads the matches back. The kernel validates the request and the
+                    // reply; the backend data never enters the binary (DATA-LICENSING.md §3.3).
+                    'survey_cone_search', 'survey_admits', 'survey_design_hash'];
     const missing = needed.filter((n) => typeof ex[n] !== 'function');
     if (missing.length) throw new Error('module missing exports: ' + missing.join(', '));
     kernelState.module = ex;
@@ -2844,6 +2861,7 @@ function archivePush(entry) {
   saveArchive();
   renderArchive();
   renderMuseum();
+  renderSurvey();
   return entry;
 }
 
@@ -3007,6 +3025,7 @@ function verifyArchive() {
   }
   renderArchive();
   renderMuseum();
+  renderSurvey();
   return { ok, total: archive.length };
 }
 
@@ -3291,6 +3310,125 @@ function k_museumHash() {
   const k = kernelState.module;
   if (!k) return null;
   try { return k.museum_design_hash(); } catch (e) { return null; }
+}
+
+// --------------------------------------------------------------------------------------------
+// the survey seam (Block 8: the sky as a backend, not a table)
+// --------------------------------------------------------------------------------------------
+// The kernel defines the `Survey` trait and validates the request and the reply; it ships no star
+// data and holds no catalogue. The page owns a small synthetic backend -- a fixed set of star
+// records in a flat f64 array -- and passes it to the kernel through linear memory. The same
+// records, searched by the same kernel, return the same matches on every platform.
+//
+// A star record is 10 f64: id, direction (x, y, z), distance (value, sigma), magnitude (value,
+// sigma), proper motion (value, sigma). A non-positive or non-finite sigma makes the kernel's
+// `Quantity` unknown, not zero.
+
+const SURVEY_STAR_FLOATS = 10;
+const SURVEY_MAX_N = 256;
+
+// A small synthetic star field. Deliberately not a real catalogue: the kernel ships none, and a
+// fixture agrees with the code that wrote it. The point is the seam, not the sky.
+const SURVEY_STARS = [
+  // id,         x,          y,          z,          dist,   dist_sig,  mag,   mag_sig,  pm,     pm_sig
+  [1,           0.866,      0.500,      0.000,      12.0,   0.3,       4.2,   0.02,     NaN,    NaN],
+  [2,           0.707,      0.707,      0.000,      48.0,   1.5,       6.1,   0.05,     NaN,    NaN],
+  [3,           0.500,      0.866,      0.000,      120.0,  8.0,       7.8,   0.10,     NaN,    NaN],
+  [4,           0.000,      0.000,      1.000,      8.0,    0.1,       3.5,   0.01,     NaN,    NaN],
+  [5,          -0.866,      0.500,      0.000,      55.0,   2.0,       5.5,   0.03,     NaN,    NaN],
+  [6,           0.000,      1.000,      0.000,      200.0,  15.0,      8.5,   0.15,     NaN,    NaN],
+  [7,           0.316,      0.949,      0.000,      35.0,   0.8,       5.0,   0.04,     NaN,    NaN],
+  [8,          -0.500,     -0.866,      0.000,      90.0,   6.0,       7.2,   0.08,     NaN,    NaN],
+];
+
+// Build the flat f64 star buffer from SURVEY_STARS. Returns a Float64Array the kernel can read.
+function surveyStarBuffer() {
+  const buf = new Float64Array(SURVEY_STARS.length * SURVEY_STAR_FLOATS);
+  for (let i = 0; i < SURVEY_STARS.length; i++) {
+    const s = SURVEY_STARS[i];
+    const base = i * SURVEY_STAR_FLOATS;
+    for (let j = 0; j < SURVEY_STAR_FLOATS; j++) {
+      buf[base + j] = s[j];
+    }
+  }
+  return buf;
+}
+
+// Run a cone search through the kernel. Returns { count, stars, truncated, error }.
+function surveyConeSearch(raRad, decRad, radiusRad) {
+  const k = kernelState.module;
+  if (!k) return { count: -1, stars: [], truncated: false, error: 'kernel not loaded' };
+  const stars = surveyStarBuffer();
+  const out = new Float64Array(SURVEY_MAX_N * SURVEY_STAR_FLOATS);
+  try {
+    const n = k.survey_cone_search(
+      stars.byteOffset, stars.length / SURVEY_STAR_FLOATS,
+      raRad, decRad, radiusRad,
+      out.byteOffset, SURVEY_MAX_N
+    );
+    if (n < 0) return { count: n, stars: [], truncated: false, error: 'kernel error ' + n };
+    const result = [];
+    for (let i = 0; i < n; i++) {
+      const base = i * SURVEY_STAR_FLOATS;
+      result.push({
+        id: out[base],
+        x: out[base + 1], y: out[base + 2], z: out[base + 3],
+        distance: out[base + 4], distanceSigma: out[base + 5],
+        magnitude: out[base + 6], magnitudeSigma: out[base + 7],
+      });
+    }
+    return { count: n, stars: result, truncated: false, error: null };
+  } catch (e) {
+    return { count: -1, stars: [], truncated: false, error: String(e) };
+  }
+}
+
+// Whether the kernel's release rule admits a backend with the given redistributable flag.
+function surveyAdmits(redistributable, isRelease) {
+  const k = kernelState.module;
+  if (!k) return null;
+  try { return k.survey_admits(redistributable ? 1 : 0, isRelease ? 1 : 0) === 1; }
+  catch (e) { return null; }
+}
+
+/// The survey design hash, read from the kernel.
+function k_surveyHash() {
+  const k = kernelState.module;
+  if (!k) return null;
+  try { return k.survey_design_hash(); } catch (e) { return null; }
+}
+
+// Render the survey panel. Called after the kernel is loaded.
+function renderSurvey() {
+  const $count = $('m-survey-count');
+  if (!$count) return;
+  const k = kernelState.module;
+  if (!k) {
+    $('m-survey-cone').textContent = '—';
+    $count.textContent = '—';
+    $('m-survey-trunc').textContent = '—';
+    $('m-survey-admits').textContent = '—';
+    $('m-survey-hash').textContent = '—';
+    return;
+  }
+  const hash = k_surveyHash();
+  $('m-survey-hash').textContent = hash ? '0x' + hash.toString(16) : '—';
+  // Run a default cone: centre on the first star, radius 0.3 rad (~17 deg).
+  const ra = Math.atan2(SURVEY_STARS[0][2], SURVEY_STARS[0][1]);
+  const dec = Math.asin(SURVEY_STARS[0][2]);
+  const r = surveyConeSearch(ra, dec, 0.3);
+  if (r.error) {
+    $count.textContent = 'error: ' + r.error;
+    return;
+  }
+  $('m-survey-cone').textContent = '0.30 rad';
+  $count.textContent = r.count + ' stars';
+  $('m-survey-trunc').textContent = r.truncated ? 'yes' : 'no';
+  const admitsDev = surveyAdmits(true, false);
+  const admitsRel = surveyAdmits(true, true);
+  $('m-survey-admits').textContent = admitsDev !== null
+    ? 'dev:' + (admitsDev ? 'yes' : 'no') + ' rel:' + (admitsRel ? 'yes' : 'no')
+    : '—';
 }
 
 // --------------------------------------------------------------------------------------------
@@ -5940,6 +6078,19 @@ $('mail-record').addEventListener('click', () => {
     : 'no message from the sky has arrived yet -- wait for a peer\'s light-time to elapse.';
 });
 
+// THE SURVEY. Search the cone through the kernel: the page writes star records into linear memory,
+// the kernel validates the request and the reply, and returns only the stars inside the cone. The
+// button re-runs the default search and reports the count and whether the backend was truncated.
+$('survey-search').addEventListener('click', () => {
+  const ra = Math.atan2(SURVEY_STARS[0][2], SURVEY_STARS[0][1]);
+  const dec = Math.asin(SURVEY_STARS[0][2]);
+  const r = surveyConeSearch(ra, dec, 0.3);
+  $('note').textContent = r.error
+    ? 'survey error: ' + r.error
+    : `cone search returned ${r.count} star(s); truncated: ${r.truncated ? 'yes' : 'no'}.`;
+  renderSurvey();
+});
+
 // THE CONTRACT. The mission loop (bible §3.2): price the contract (the kernel's, money is
 // physics), commit a prediction before flying (§4.3 rule 2 -- it cannot be retro-fitted), fly the
 // mission (the achieved Δv is the rocket kernel's), and score the prediction with a proper rule
@@ -6111,6 +6262,7 @@ loadKernel().then(() => {
   // first frame; entries are appended as the career events happen.
   renderArchive();
   renderMuseum();
+  renderSurvey();
   // The junior. Render the protégé panel so it is present from the first frame; a question appears
   // when the player asks and there is a failure in the archive to replay.
   renderProtege();
@@ -6450,6 +6602,16 @@ window.__odderon = {
   renderAnomaly,
   renderRack,
   anomalyState,
+  // The survey seam (Block 8: the sky as a backend, not a table). Exposed so a test can write
+  // star records into linear memory, ask the kernel to search a cone, and confirm the matches,
+  // the release-admission rule, and the design hash are the kernel's -- not the page's.
+  SURVEY_STARS,
+  SURVEY_STAR_FLOATS,
+  surveyStarBuffer,
+  surveyConeSearch,
+  surveyAdmits,
+  k_surveyHash,
+  renderSurvey,
   renderer: () => renderer,
   requestFrame,
   /**

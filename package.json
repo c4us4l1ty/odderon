@@ -31,7 +31,8 @@
     "check:lightcone": "node tools/check-lightcone.mjs",
     "check:mission": "node tools/check-mission.mjs",
     "check:essence": "node tools/check-essence.mjs",
-    "check:anomaly": "node tools/check-anomaly.mjs"
+    "check:anomaly": "node tools/check-anomaly.mjs",
+    "check:survey": "node tools/check-survey.mjs"
   },
   "devDependencies": {
     "@sparticuz/chromium": "131.0.0",
