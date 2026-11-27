@@ -203,6 +203,15 @@ pub mod lighttime;
 /// structure of the sky looks like, not just how long a signal takes. See [`lightcone::light_cone_radius_km`].
 pub mod lightcone;
 
+/// The museum gallery layout: where each archive exhibit sits.
+///
+/// Not physics — the museum (`GAME-DESIGN-BIBLE.md` §11.4) is the archive made physical, and the
+/// layout of its gallery is a deterministic placement rule. It lives in the kernel because the same
+/// archive must produce the same gallery on every platform: a verifier who loads the archive and
+/// calls [`museum::museum_layout`] walks the same aisles the player walked. The page owns the
+/// rendering of the geometry; the kernel owns where each exhibit sits.
+pub mod museum;
+
 /// Gravitational parameters, km³/s².
 ///
 /// Values from the IAU/JPL published constants. They are *data*, not physics: a body's `mu` is a

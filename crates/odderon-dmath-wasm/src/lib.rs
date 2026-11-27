@@ -1894,6 +1894,126 @@ pub extern "C" fn anomaly_design_hash() -> u64 {
     odderon_astro::anomaly::anomaly_design_hash()
 }
 
+// =============================================================================================
+// The museum gallery (Block 7: the archive as a place, bible §11.4)
+// =============================================================================================
+//
+// The museum is the archive made physical: a gallery that grows as the career grows. The kernel
+// owns the LAYOUT — where each exhibit sits, how big it is, which way it faces — and the page owns
+// the RENDERING of the parametric geometry. The same archive produces the same gallery on every
+// platform, which is what makes it verifiable: a stranger who loads the archive and calls
+// `museum_layout` walks the same aisles the player walked.
+//
+// The layout crosses the ABI as a buffer call (the same shape as `essence_summary` and
+// `anomaly_from_mission`), because an exhibit is a struct and a struct cannot be a return value in
+// a `no_std` cdylib with no allocator. The page writes one entry descriptor per archive entry into
+// linear memory, the kernel computes the layout, and writes the exhibits back into caller-provided
+// memory. All `unsafe` is confined to this ABI boundary; the kernel module stays `forbid(unsafe_code)`.
+//
+// The layouts, so a host and the gate agree:
+//   * `museum_layout` reads `n` entry descriptors from `desc_off` (each 4 f64: `[kind, size,
+//     orient, id]`) and writes `n` exhibits to `out_off` (each 6 f64: `[x, z, scale, rotation,
+//     kind, id]`). Returns `n` on success, 0 if `n` exceeds the bound or a pointer is out of bounds.
+//   * `museum_exhibit_kind` maps an exhibit kind code to a name index (0 = Vehicle, 1 = Wreck,
+//     2 = Report, 3 = Comms, 4 = Mail, 5 = Mission, 6 = Briefing, -1 for unknown).
+//   * `museum_design_hash` pins the gallery's layout constants.
+
+/// The maximum number of exhibits a single layout call accepts. Bounded in practice by the archive
+/// size; beyond this the call refuses (returns 0) rather than reading past a sane bound.
+const MUSEUM_MAX_N: usize = 256;
+
+/// The number of f64 per entry descriptor in linear memory: `[kind, size, orient, id]`.
+const MUSEUM_DESC_FLOATS: usize = 4;
+
+/// The number of f64 per exhibit in linear memory: `[x, z, scale, rotation, kind, id]`.
+const MUSEUM_EXHIBIT_FLOATS: usize = 6;
+
+/// Read `n` entry descriptors from linear memory at `desc_off` into a fixed-size stack array.
+/// `None` if `n` exceeds the bound or the pointer would read out of bounds.
+///
+/// # Safety
+///
+/// The caller must guarantee `desc_off` points to `n * MUSEUM_DESC_FLOATS` f64 in linear memory.
+fn read_museum_descs(desc_off: u32, n: u32) -> Option<[odderon_astro::museum::EntryDesc; MUSEUM_MAX_N]> {
+    let n = n as usize;
+    if n > MUSEUM_MAX_N {
+        return None;
+    }
+    // SAFETY: bounded by the caller's guarantee, checked against MUSEUM_MAX_N above.
+    let raw = unsafe { core::slice::from_raw_parts(desc_off as *const f64, n * MUSEUM_DESC_FLOATS) };
+    let mut arr = [odderon_astro::museum::EntryDesc { kind: 0, size: 0.0, orient: 0.0, id: 0 }; MUSEUM_MAX_N];
+    let mut i = 0;
+    while i < n {
+        let base = i * MUSEUM_DESC_FLOATS;
+        arr[i] = odderon_astro::museum::EntryDesc {
+            kind: raw[base] as u8,
+            size: raw[base + 1],
+            orient: raw[base + 2],
+            id: raw[base + 3] as u32,
+        };
+        i += 1;
+    }
+    Some(arr)
+}
+
+/// Compute the museum gallery layout for `n` archive entries.
+///
+/// Reads `n` entry descriptors from linear memory at `desc_off` (each 4 f64:
+/// `[kind, size, orient, id]`) and writes `n` exhibits to `out_off` (each 6 f64:
+/// `[x, z, scale, rotation, kind, id]`). Returns `n` on success, 0 if `n` exceeds the bound or a
+/// pointer was out of bounds.
+///
+/// The layout is a pure function of the entry descriptors: the same entries, in the same order,
+/// produce the same gallery on every platform, every run.
+#[unsafe(no_mangle)]
+pub extern "C" fn museum_layout(desc_off: u32, n: u32, out_off: u32) -> u32 {
+    let descs = match read_museum_descs(desc_off, n) {
+        Some(d) => d,
+        None => return 0,
+    };
+    let n = n as usize;
+    let mut exhibits = [odderon_astro::museum::Exhibit { x: 0.0, z: 0.0, scale: 0.0, rotation: 0.0, kind: 0, id: 0 }; MUSEUM_MAX_N];
+    let count = odderon_astro::museum::museum_layout(&descs[..n], &mut exhibits);
+    // SAFETY: the caller guarantees `out_off` points to `count * MUSEUM_EXHIBIT_FLOATS` f64.
+    let out = unsafe { core::slice::from_raw_parts_mut(out_off as *mut f64, count * MUSEUM_EXHIBIT_FLOATS) };
+    let mut i = 0;
+    while i < count {
+        let base = i * MUSEUM_EXHIBIT_FLOATS;
+        let e = exhibits[i];
+        out[base] = e.x;
+        out[base + 1] = e.z;
+        out[base + 2] = e.scale;
+        out[base + 3] = e.rotation;
+        out[base + 4] = e.kind as f64;
+        out[base + 5] = e.id as f64;
+        i += 1;
+    }
+    count as u32
+}
+
+/// Map an exhibit kind code to a name index for display.
+///
+/// 0 = Vehicle, 1 = Wreck, 2 = Report, 3 = Comms, 4 = Mail, 5 = Mission, 6 = Briefing. Returns
+/// -1 for a code this kernel does not know, so a future kind added by an older page is visible
+/// rather than silently mislabelled.
+#[unsafe(no_mangle)]
+pub extern "C" fn museum_exhibit_kind(code: u32) -> i32 {
+    match odderon_astro::museum::ExhibitKind::from_code(code as u8) {
+        Some(kind) => kind.code() as i32,
+        None => -1,
+    }
+}
+
+/// The deterministic design hash of the museum layout's constants.
+///
+/// Folds in the golden angle, the base radius, the radial step, and the scale bounds, so a replay
+/// bundle or a verifier can detect a stale gallery layout. A pure function: the same kernel
+/// produces the same hash on every platform, every run.
+#[unsafe(no_mangle)]
+pub extern "C" fn museum_design_hash() -> u64 {
+    odderon_astro::museum::museum_design_hash()
+}
+
 #[cfg(test)]
 mod tests {
     // The ABI is a contract a host can violate with a single bad number, and two of the values it can
