@@ -3437,10 +3437,11 @@ function lightconeReadings(nowS) {
     const dopplerLosX = r.stationPos.x - r.peerPos.x;
     const dopplerLosY = r.stationPos.y - r.peerPos.y;
     const dopplerLosZ = r.stationPos.z - r.peerPos.z;
+    const p = peerP(peer);
     doppler = k.doppler_factor_from_vecs(
-      k.peer_vel_x(peer.p, peer.e, peer.i, peer.raan, peer.argp, peer.nu, sendS),
-      k.peer_vel_y(peer.p, peer.e, peer.i, peer.raan, peer.argp, peer.nu, sendS),
-      k.peer_vel_z(peer.p, peer.e, peer.i, peer.raan, peer.argp, peer.nu, sendS),
+      k.peer_vel_x(p, peer.e, peer.i, peer.raan, peer.argp, peer.nu, sendS),
+      k.peer_vel_y(p, peer.e, peer.i, peer.raan, peer.argp, peer.nu, sendS),
+      k.peer_vel_z(p, peer.e, peer.i, peer.raan, peer.argp, peer.nu, sendS),
       dopplerLosX, dopplerLosY, dopplerLosZ,
     );
     break;
