@@ -213,6 +213,13 @@ jobs:
       - name: mission boundary (the economy and Esse scores are the kernel's, proper and physical)
         run: node tools/check-mission.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
 
+      # The Esse career ledger boundary, against the same binary: a calibrated career's reliability
+      # curve sits on the diagonal with zero bias, a biased one is off it with a signed bias, the
+      # rating is provisional below N=30 and measured at N>=30, and a poisoned or empty ledger refuses
+      # with NaN. Static half in `shell-claims`.
+      - name: essence ledger boundary (the calibration curve is the kernel's, proper and physical)
+        run: node tools/check-essence.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
+
       - name: stage wasm artifacts
         run: |
           mkdir -p dist
@@ -408,6 +415,14 @@ jobs:
         run: node tools/check-mission.mjs
       - name: mission verifier self-test (price, commit, score, verification sound)
         run: node tools/check-mission.mjs --selftest
+
+      # The Esse career ledger (P5 Block 9: the calibration rating). The aggregate is a reliability
+      # curve, not a running mean (§4.3 rule 1); it is recomputable from the mission log (§4.3 rule
+      # 4); it is provisional until N >= 30; it is reported with N, a 95% interval, and the bias.
+      - name: "the ledger - the Esse calibration rating, checked"
+        run: node tools/check-essence.mjs
+      - name: essence ledger verifier self-test (log, curve, refusal sound)
+        run: node tools/check-essence.mjs --selftest
       # On 2026-11-24 this job failed on a condition the page handles correctly: the optional wasm
       # artifact is absent on a clean checkout, the browser logs a 404, and `tools/screenshot.mjs` treats
       # any console error as an untrustworthy frame. The capture now exempts that one error -- but only

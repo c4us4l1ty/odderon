@@ -1400,6 +1400,125 @@ pub extern "C" fn mission_design_hash() -> u64 {
     odderon_astro::mission::mission_design_hash()
 }
 
+// =============================================================================================
+// The Esse career ledger (P5: the career core, bible §4.3)
+// =============================================================================================
+//
+// `odderon_astro::essence` aggregates a career's scored predictions into the `E_cal` rating §4.3
+// defines: a reliability curve (predicted probability binned against observed frequency), N, a 95%
+// interval, and the §2.2(a) bias. [`mission`] scores one prediction; these exports aggregate the
+// sequence.
+//
+// **Why these exports fill buffers, unlike the orbit exports.** The orbit case is a function of a
+// *scalar* (`dt`) with scalar outputs, so scalar exports were natural and the `unsafe` allowance
+// stayed on `#[no_mangle]` alone. The Esse ledger is a function of an *array* — a career's prediction
+// log — and an array cannot cross the ABI as a return value in a `no_std` cdylib with no allocator.
+// So the host writes the predictions into linear memory and these exports read them, compute, and
+// write the result back into caller-provided memory. The `unsafe` pointer reads and writes are
+// confined to this ABI boundary; the kernel module (`odderon_astro::essence`) is `forbid(unsafe_code)`
+// and stays a pure function of a slice. There is no hidden state: each call is a pure function of the
+// caller's buffer, which is what keeps the rating recomputable from a verified replay (§4.3 rule 4).
+//
+// The layouts, so a host and the gate agree:
+//   * `essence_summary` writes 7 f64: `[n, mean_log_score, brier, bias, ci95_lo, ci95_hi, provisional]`
+//     (provisional as 0.0/1.0). Returns 7, or 0 if the read or write was out of bounds.
+//   * `essence_reliability` writes `BIN_COUNT * 4` f64, per bin in order: `[center, predicted,
+//     observed, count]`. Returns BIN_COUNT, or 0 on failure.
+// A return of 0 means the call refused — an over-large `n` or an out-of-bounds pointer — and the
+// host must treat it as a refusal, not read a partial result.
+
+/// The maximum number of predictions a single ledger call accepts. A career log is bounded in
+/// practice; beyond this the call refuses (returns 0) rather than reading past a sane bound.
+const ESSENCE_MAX_N: usize = 256;
+
+/// The number of f64 the summary export writes: n, mean, brier, bias, ci_lo, ci_hi, provisional.
+const ESSENCE_SUMMARY_FLOATS: usize = 7;
+
+/// Read `n` `(predicted_p, occurred)` pairs from linear memory at `p_off` / `occ_off` into a
+/// fixed-size stack array. `None` if `n` exceeds the bound or the pointers would read out of bounds.
+///
+/// # Safety
+///
+/// The caller must guarantee `p_off` points to `n` `f64` and `occ_off` to `n` `u32` in linear memory.
+fn read_predictions(p_off: u32, occ_off: u32, n: u32) -> Option<[(f64, u32); ESSENCE_MAX_N]> {
+    let n = n as usize;
+    if n > ESSENCE_MAX_N {
+        return None;
+    }
+    // SAFETY: bounded by the caller's guarantee, checked against ESSENCE_MAX_N above.
+    let p = unsafe { core::slice::from_raw_parts(p_off as *const f64, n) };
+    // SAFETY: as above, for the u32 outcomes.
+    let occ = unsafe { core::slice::from_raw_parts(occ_off as *const u32, n) };
+    let mut arr = [(0.0f64, 0u32); ESSENCE_MAX_N];
+    for i in 0..n {
+        arr[i] = (p[i], occ[i]);
+    }
+    Some(arr)
+}
+
+/// The `E_cal` scalar summary of a career's predictions (§4.3).
+///
+/// Reads `n` `(predicted_p, occurred)` pairs from linear memory at `p_off` / `occ_off`, aggregates
+/// them, and writes 7 f64 to `out_off`: `[n, mean_log_score, brier, bias, ci95_lo, ci95_hi,
+/// provisional]`. Returns 7 on success, 0 if `n` exceeds the bound or a pointer was out of bounds.
+///
+/// A refusal (empty ledger or a poisoned prediction) is expressed as `NaN` in the computed fields,
+/// not as a 0 — the same rule every other export follows.
+#[unsafe(no_mangle)]
+pub extern "C" fn essence_summary(p_off: u32, occ_off: u32, n: u32, out_off: u32) -> u32 {
+    let preds = match read_predictions(p_off, occ_off, n) {
+        Some(p) => p,
+        None => return 0,
+    };
+    let cal = odderon_astro::essence::essence_cal(&preds[..n as usize]);
+    // SAFETY: the caller guarantees `out_off` points to ESSENCE_SUMMARY_FLOATS f64 in linear memory.
+    let out = unsafe { core::slice::from_raw_parts_mut(out_off as *mut f64, ESSENCE_SUMMARY_FLOATS) };
+    out[0] = cal.n as f64;
+    out[1] = cal.mean_log_score;
+    out[2] = cal.brier;
+    out[3] = cal.bias;
+    out[4] = cal.ci95_lo;
+    out[5] = cal.ci95_hi;
+    out[6] = if cal.provisional { 1.0 } else { 0.0 };
+    ESSENCE_SUMMARY_FLOATS as u32
+}
+
+/// The reliability curve of a career's predictions (§4.3 — "aggregated into a reliability curve, not
+/// an average").
+///
+/// Reads the same `n` pairs as [`essence_summary`] and writes `BIN_COUNT * 4` f64 to `out_off`, one
+/// bin at a time in order from the lowest predicted probability: `[center, predicted, observed,
+/// count]`. Returns `BIN_COUNT` on success, 0 on failure. An empty bin has `NaN` predicted/observed
+/// and a 0 count, so a hole is visible rather than a zero that reads as a measurement.
+#[unsafe(no_mangle)]
+pub extern "C" fn essence_reliability(p_off: u32, occ_off: u32, n: u32, out_off: u32) -> u32 {
+    let preds = match read_predictions(p_off, occ_off, n) {
+        Some(p) => p,
+        None => return 0,
+    };
+    let cal = odderon_astro::essence::essence_cal(&preds[..n as usize]);
+    let bins = odderon_astro::essence::BIN_COUNT;
+    // SAFETY: the caller guarantees `out_off` points to `bins * 4` f64 in linear memory.
+    let out = unsafe { core::slice::from_raw_parts_mut(out_off as *mut f64, bins * 4) };
+    for (i, b) in cal.bins.iter().enumerate() {
+        out[i * 4] = b.center;
+        out[i * 4 + 1] = b.predicted;
+        out[i * 4 + 2] = b.observed;
+        out[i * 4 + 3] = b.count as f64;
+    }
+    bins as u32
+}
+
+/// The deterministic design hash of the Esse aggregation's constants.
+///
+/// Pins the bin count, the provisional threshold, and the interval's critical value, so a replay
+/// bundle or an Akashi entry can detect a stale aggregation kernel. A pure function: the same kernel
+/// produces the same hash on every platform, every run.
+#[unsafe(no_mangle)]
+pub extern "C" fn essence_design_hash() -> u64 {
+    odderon_astro::essence::essence_design_hash()
+}
+
 #[cfg(test)]
 mod tests {
     // The ABI is a contract a host can violate with a single bad number, and two of the values it can

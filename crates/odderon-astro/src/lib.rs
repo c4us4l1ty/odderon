@@ -140,6 +140,16 @@ pub mod rocket;
 /// [`mission::crps`].
 pub mod mission;
 
+/// The Esse career ledger — the calibration rating aggregated across a career.
+///
+/// Not astrodynamics, for the same reason [`mission`], [`cryo`], [`thermal`] and [`rocket`] are here:
+/// `odderon-astro` is the only `no_std` crate in the workspace, gated by the same kernel rules, and
+/// the `E_cal` rating is a pure function of a career's scored predictions (§4.3). [`mission`] scores
+/// a *single* prediction with a proper rule; this module aggregates a *sequence* of them into the
+/// reliability curve §4.3 demands — "aggregated into a reliability curve, **not an average**" — with
+/// N, a 95% interval, and the §2.2(a) competence-mirror bias. See [`essence::essence_cal`].
+pub mod essence;
+
 /// Light-time and the comms link: the delay a signal takes to cross the distance between two
 /// positions, and the arrival time it predicts.
 ///
