@@ -29,7 +29,7 @@
 //!   cheaper, and this module does not compute it — the caller gets the Hohmann answer, which is
 //!   the standard first approximation and the one the bible's "first real rendezvous" calls for.
 
-use odderon_dmath::{fabs, is_finite, sqrt, TAU};
+use odderon_dmath::{TAU, fabs, is_finite, sqrt};
 
 use crate::mu;
 
@@ -70,7 +70,7 @@ pub fn rendezvous_transfer_dv(r_from_km: f64, r_to_km: f64, mu_body: f64) -> f64
     {
         return f64::NAN;
     }
-    if r_from_km == r_to_km {
+    if fabs(r_from_km - r_to_km) < 1e-6 {
         return 0.0;
     }
     let r_sum = r_from_km + r_to_km;
@@ -102,7 +102,7 @@ pub fn rendezvous_transfer_time_s(r_from_km: f64, r_to_km: f64, mu_body: f64) ->
         || r_from_km <= 0.0
         || r_to_km <= 0.0
         || mu_body <= 0.0
-        || r_from_km == r_to_km
+        || fabs(r_from_km - r_to_km) < 1e-6
     {
         return f64::NAN;
     }
@@ -138,7 +138,7 @@ pub fn rendezvous_phase_angle(r_from_km: f64, r_to_km: f64, mu_body: f64) -> f64
         || r_from_km <= 0.0
         || r_to_km <= 0.0
         || mu_body <= 0.0
-        || r_from_km == r_to_km
+        || fabs(r_from_km - r_to_km) < 1e-6
     {
         return f64::NAN;
     }
@@ -172,7 +172,7 @@ pub fn rendezvous_window_s(r_from_km: f64, r_to_km: f64, theta: f64, mu_body: f6
         || r_from_km <= 0.0
         || r_to_km <= 0.0
         || mu_body <= 0.0
-        || r_from_km == r_to_km
+        || fabs(r_from_km - r_to_km) < 1e-6
         || theta < 0.0
         || theta >= TAU
     {
@@ -193,7 +193,7 @@ pub fn rendezvous_window_s(r_from_km: f64, r_to_km: f64, theta: f64, mu_body: f6
 
     if omega_rel == 0.0 {
         // No relative motion (same orbit): the window is now if the lead matches, never otherwise.
-        return if theta == required { 0.0 } else { f64::NAN };
+        return if fabs(theta - required) < 1e-4 { 0.0 } else { f64::NAN };
     }
 
     // The window is open right now: the current lead is at the required lead. A tolerance is used
