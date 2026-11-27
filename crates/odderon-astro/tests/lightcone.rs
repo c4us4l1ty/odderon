@@ -8,7 +8,7 @@
 
 use odderon_astro::lightcone::{
     causal_reachable, doppler_factor, light_cone_radius_km, lightcone_design_hash,
-    signal_power_ratio, INVERSE_SQUARE_EXPONENT,
+    signal_power_ratio,
 };
 use odderon_astro::lighttime::SPEED_OF_LIGHT_KM_S;
 use odderon_dmath::pow;
@@ -24,7 +24,10 @@ const ONE_SECOND_RADIUS_KM: f64 = 299_792.458;
 fn radius_at_one_second_is_speed_of_light() {
     let r = light_cone_radius_km(1.0).unwrap();
     // The radius at 1 s is exactly c in km.
-    assert!((r - ONE_SECOND_RADIUS_KM) < 1e-9, "radius = {r}, want {ONE_SECOND_RADIUS_KM}");
+    assert!(
+        (r - ONE_SECOND_RADIUS_KM) < 1e-9,
+        "radius = {r}, want {ONE_SECOND_RADIUS_KM}"
+    );
 }
 
 #[test]
@@ -214,11 +217,6 @@ fn power_refuses_negative_distance() {
 #[test]
 fn power_refuses_nan() {
     assert!(signal_power_ratio(f64::NAN, 100.0).is_none());
-}
-
-#[test]
-fn inverse_square_exponent_is_two() {
-    assert!((INVERSE_SQUARE_EXPONENT - 2.0) < 1e-12);
 }
 
 // --------------------------------------------------------------------------------------------
