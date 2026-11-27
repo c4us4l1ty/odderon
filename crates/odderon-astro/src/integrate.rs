@@ -156,43 +156,24 @@ pub fn accel_zonal(r: Vec3, mu: f64, j2: f64, j3: f64, j4: f64, equatorial_radiu
     }
 
     // --- J3 term: P₃(s) = (5s³ − 3s)/2 ---
-    // The gradient of −μ J3 Rₑ³ P₃(s) / r⁴ gives a J3 acceleration with components:
-    // a_x, a_y ∝ (15s² − 3) and a_z ∝ (15s⁴ − 12s² + 1)  (derived from −∇U_J3)
+    // From U = −μ/r · [1 − J3(R/r)³P₃(s) − ...], the J3 perturbation potential is
+    // U_J3 = +μ J3 Rₑ³ P₃(s) / r⁴ = +μ J3 Rₑ³ (5s³−3s) / (2r⁴).
+    // The acceleration is a = −∇U_J3. Computing the gradient in Cartesian coordinates
+    // with s = z/r, ∂s/∂x = −sx/r², ∂s/∂z = (1−s²)/r:
+    //
+    // ∂U/∂x = μ J3 Rₑ³ / 2 · [(15s²−3)·(−sx/r²) / r⁴ + (5s³−3s)·(−4x/r⁶)]
+    //       = −μ J3 Rₑ³ x / (2r⁶) · [(15s²−3)·s + 4(5s³−3s)]
+    //       = −μ J3 Rₑ³ x / (2r⁶) · [35s³ − 15s]
+    //       = −μ J3 Rₑ³ x · 5s(7s²−3) / (2r⁶)
+    // a_x = −∂U/∂x = +μ J3 Rₑ³ x · 5s(7s²−3) / (2r⁶)
+    // a_y = same with y.
+    //
+    // ∂U/∂z = μ J3 Rₑ³ / 2 · [(15s²−3)(1−s²)/r / r⁴ + (5s³−3s)·(−4z/r⁶)]
+    //       = −μ J3 Rₑ³ / (2r⁵) · [(15s²−3)(1−s²) − 4s(5s³−3s)]
+    //       = −μ J3 Rₑ³ / (2r⁵) · [−35s⁴ + 30s² − 3]
+    //       = +μ J3 Rₑ³ (35s⁴−30s²+3) / (2r⁵)
+    // a_z = −∂U/∂z = −μ J3 Rₑ³ (35s⁴−30s²+3) / (2r⁵)
     if j3 != 0.0 {
-        // U_J3 = −μ J3 Rₑ³ / r⁴ · P₃(s) = −μ J3 Rₑ³ / (2r⁴) · (5s³ − 3s)
-        // ∂U/∂x: the gradient in Cartesian coordinates, with s = z/r.
-        // The full derivation (Curtis §12.3 / Vallado §8.5) gives:
-        // a_x = −(5/2) J3 μ Rₑ³ / r⁶ · (15s² − 3) · x
-        // a_y = same with y
-        // a_z = −(5/2) J3 μ Rₑ³ / r⁶ · (15s⁴ − 12s² + 1) · r  ... but this needs the r̂ component
-        // Actually: a_J3 = −∇U_J3 where U_J3 = −μ J3 Rₑ³ (5s³−3s) / (2r⁴)
-        // The cleanest form: compute the gradient directly.
-        // ∂s/∂x = −zx/r³ = −sx/r²,  ∂s/∂z = (r²−z²)/r³ = (1−s²)/r
-        // ∂(1/r⁴)/∂x = −4x/r⁶,  ∂(1/r⁴)/∂z = −4z/r⁶
-        // U_J3 = −μ J3 Rₑ³ (5s³−3s) / (2r⁴)
-        // ∂U/∂x = −μ J3 Rₑ³ / 2 · [∂(5s³−3s)/∂x / r⁴ + (5s³−3s) · ∂(1/r⁴)/∂x]
-        //        = −μ J3 Rₑ³ / 2 · [(15s²−3)·(−sx/r²) / r⁴ + (5s³−3s)·(−4x/r⁶)]
-        //        = μ J3 Rₑ³ x / (2r⁶) · [(15s²−3)·s + 4(5s³−3s)]
-        //        = μ J3 Rₑ³ x / (2r⁶) · [15s³−3s + 20s³−12s]
-        //        = μ J3 Rₑ³ x / (2r⁶) · [35s³ − 15s]
-        //        = μ J3 Rₑ³ x · 5s(7s²−3) / (2r⁶)
-        // a_x = −∂U/∂x = −μ J3 Rₑ³ x · 5s(7s²−3) / (2r⁶)
-        //
-        // Similarly for y.
-        // ∂U/∂z = −μ J3 Rₑ³ / 2 · [(15s²−3)·(1−s²)/r / r⁴ + (5s³−3s)·(−4z/r⁶)]
-        //        = −μ J3 Rₑ³ / 2 · [(15s²−3)(1−s²) / r⁵ − 4z(5s³−3s) / r⁶]
-        //        = −μ J3 Rₑ³ / (2r⁶) · [r(15s²−3)(1−s²) − 4z(5s³−3s)]
-        //        = −μ J3 Rₑ³ / (2r⁶) · [r(15s²−3)(1−s²) − 4sr(5s³−3s)]
-        //        = −μ J3 Rₑ³ / (2r⁵) · [(15s²−3)(1−s²) − 4s(5s³−3s)]
-        //        = −μ J3 Rₑ³ / (2r⁵) · [15s²−3−15s⁴+3s² − 20s⁴+12s²]
-        //        = −μ J3 Rₑ³ / (2r⁵) · [−35s⁴+30s²−3]
-        //        = μ J3 Rₑ³ (35s⁴−30s²+3) / (2r⁵)
-        // a_z = −∂U/∂z = −μ J3 Rₑ³ (35s⁴−30s²+3) / (2r⁵)
-        //
-        // The gradient in Cartesian coordinates, with s = z/r and ∂s/∂x = −sx/r²,
-        // ∂s/∂z = (1−s²)/r:
-        //   ∂U/∂x = μ J3 Rₑ³ x · 5s(7s²−3) / (2r⁶)   →  a_x = −∂U/∂x
-        //   ∂U/∂z = −μ J3 Rₑ³ (35s⁴−30s²+3) / (2r⁵)  →  a_z = −∂U/∂z
         let fx = 5.0 * s * (7.0 * s2 - 3.0); // 5s(7s²−3)
         let fz = 35.0 * s4 - 30.0 * s2 + 3.0; // 35s⁴−30s²+3
         let rn6 = rn5 * rn;
@@ -202,29 +183,23 @@ pub fn accel_zonal(r: Vec3, mu: f64, j2: f64, j3: f64, j4: f64, equatorial_radiu
     }
 
     // --- J4 term: P₄(s) = (35s⁴ − 30s² + 3)/8 ---
-    // U_J4 = −μ J4 Rₑ⁴ / r⁵ · P₄(s) = −μ J4 Rₑ⁴ (35s⁴−30s²+3) / (8r⁵)
-    // Gradient: ∂s/∂x = −sx/r², ∂s/∂z = (1−s²)/r
-    // ∂U/∂x = −μ J4 Rₑ⁴ / 8 · [∂(35s⁴−30s²+3)/∂x / r⁵ + (35s⁴−30s²+3) · ∂(1/r⁵)/∂x]
-    //        = −μ J4 Rₑ⁴ / 8 · [(140s³−60s)(−sx/r²) / r⁵ + (35s⁴−30s²+3)(−5x/r⁷)]
-    //        = μ J4 Rₑ⁴ x / (8r⁷) · [(140s³−60s)·s + 5(35s⁴−30s²+3)]
-    //        = μ J4 Rₑ⁴ x / (8r⁷) · [140s⁴−60s² + 175s⁴−150s²+15]
-    //        = μ J4 Rₑ⁴ x / (8r⁷) · [315s⁴ − 210s² + 15]
-    //        = μ J4 Rₑ⁴ x · 15(21s⁴−14s²+1) / (8r⁷)
-    // a_x = −∂U/∂x = −μ J4 Rₑ⁴ x · 15(21s⁴−14s²+1) / (8r⁷)
+    // From U = −μ/r · [... − J4(R/r)⁴P₄(s)], the J4 perturbation potential is
+    // U_J4 = +μ J4 Rₑ⁴ P₄(s) / r⁵ = +μ J4 Rₑ⁴ (35s⁴−30s²+3) / (8r⁵).
+    // The acceleration is a = −∇U_J4. Computing the gradient in Cartesian coordinates
+    // with s = z/r, ∂s/∂x = −sx/r², ∂s/∂z = (1−s²)/r:
     //
-    // ∂U/∂z = −μ J4 Rₑ⁴ / 8 · [(140s³−60s)(1−s²)/r / r⁵ + (35s⁴−30s²+3)(−5z/r⁷)]
-    //        = −μ J4 Rₑ⁴ / 8 · [(140s³−60s)(1−s²) / r⁶ − 5z(35s⁴−30s²+3) / r⁷]
-    //        = −μ J4 Rₑ⁴ / (8r⁷) · [r(140s³−60s)(1−s²) − 5sr(35s⁴−30s²+3)]
-    //        = −μ J4 Rₑ⁴ / (8r⁶) · [(140s³−60s)(1−s²) − 5s(35s⁴−30s²+3)]
-    //        = −μ J4 Rₑ⁴ / (8r⁶) · [140s³−60s−140s⁵+60s³ − 175s⁵+150s³−15s]
-    //        = −μ J4 Rₑ⁴ / (8r⁶) · [−315s⁵ + 350s³ − 75s]
-    //        = μ J4 Rₑ⁴ / (8r⁶) · [315s⁵ − 350s³ + 75s]
-    //        = μ J4 Rₑ⁴ · 5s(63s⁴−70s²+15) / (8r⁶)
+    // ∂U/∂x = μ J4 Rₑ⁴ / 8 · [(140s³−60s)(−sx/r²) / r⁵ + (35s⁴−30s²+3)(−5x/r⁷)]
+    //       = −μ J4 Rₑ⁴ x / (8r⁷) · [(140s³−60s)·s + 5(35s⁴−30s²+3)]
+    //       = −μ J4 Rₑ⁴ x / (8r⁷) · [315s⁴ − 210s² + 15]
+    //       = −μ J4 Rₑ⁴ x · 15(21s⁴−14s²+1) / (8r⁷)
+    // a_x = −∂U/∂x = +μ J4 Rₑ⁴ x · 15(21s⁴−14s²+1) / (8r⁷)
+    // a_y = same with y.
+    //
+    // ∂U/∂z = μ J4 Rₑ⁴ / 8 · [(140s³−60s)(1−s²)/r / r⁵ + (35s⁴−30s²+3)(−5z/r⁷)]
+    //       = −μ J4 Rₑ⁴ / (8r⁶) · [(140s³−60s)(1−s²) − 5s(35s⁴−30s²+3)]
+    //       = −μ J4 Rₑ⁴ / (8r⁶) · [−315s⁵ + 350s³ − 75s]
+    //       = +μ J4 Rₑ⁴ · 5s(63s⁴−70s²+15) / (8r⁶)
     // a_z = −∂U/∂z = −μ J4 Rₑ⁴ · 5s(63s⁴−70s²+15) / (8r⁶)
-    //
-    // Note: the sign convention here is that the acceleration is −∇U. Since U_J4 is
-    // −μ J4 Rₑ⁴ P₄(s) / r⁵ (negative J4 gives positive potential contribution), the
-    // gradient ∂U/∂x is negative, making −∂U/∂x positive — hence the `+` in the code.
     if j4 != 0.0 {
         let rn7 = rn5 * r2;
         let rn6 = rn5 * rn;
@@ -279,11 +254,8 @@ pub fn potential_j2(r: Vec3, mu: f64, j2: f64, equatorial_radius: f64) -> f64 {
 
 /// The J2+J3+J4 contribution to the specific potential energy, km²/s².
 ///
-/// ```text
-/// U_zonal = μ Rₑ² / (2r³) · [J2(3s²−1) + J3·(Rₑ/r)·(5s³−3s)/2·2 + J4·(Rₑ/r)²·(35s⁴−30s²+3)/4·2]
-/// ```
-///
-/// More precisely, the perturbation potential for the signed harmonics is:
+/// The perturbation potential for the signed harmonics, derived from
+/// `U = −μ/r · [1 − J2(R/r)²P₂(s) − J3(R/r)³P₃(s) − J4(R/r)⁴P₄(s)]`:
 ///
 /// ```text
 /// U_J2 =  μ J2 Rₑ² / (2r³) · (3s² − 1)

@@ -6,9 +6,12 @@ A browser simulator of astronautics, astrodynamics and space-company economics t
 laptop with integrated graphics — and produces artifacts a real engineer can audit: a committed
 prediction, a debrief, a technical report, an exported GMAT script or NASA CEA deck.
 
-**Status: built, block by block.** P0–P4 and P5 Blocks 5, 8 and 9 are merged to `main`. Each block
-is a playable MVP: the spine (P0), the pad (P1), the mark (P2), flight and comms (P3), the archive
-(P4), and the failure-design layer — the anomaly drawer, the logic rack and the E_an rating (P5).
+**Status: built, block by block.** P0–P5 are all merged to `main`: the spine (P0), the pad (P1), the
+mark (P2), flight and comms (P3), the archive (P4), and the failure-design layer — the anomaly
+drawer, the logic rack and the E_an rating (P5). P5 now includes the J2+J3+J4 zonal-harmonic
+propagator for the rendezvous case, a Dormand–Prince 5(4) adaptive integrator of the full Earth
+gravitational field (point mass + J2 + J3 + J4), cross-checked to conserve energy and self-consistent
+to under 50 m over 7 days at LEO.
 The kernel is pure `no_std` Rust compiled to WASM; the page is a single `web/index.html`; every
 block ships a CI gate (`tools/check-*.mjs`) that someone else can run.
 
