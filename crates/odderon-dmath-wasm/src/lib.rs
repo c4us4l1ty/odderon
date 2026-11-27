@@ -1472,7 +1472,8 @@ pub extern "C" fn essence_summary(p_off: u32, occ_off: u32, n: u32, out_off: u32
     };
     let cal = odderon_astro::essence::essence_cal(&preds[..n as usize]);
     // SAFETY: the caller guarantees `out_off` points to ESSENCE_SUMMARY_FLOATS f64 in linear memory.
-    let out = unsafe { core::slice::from_raw_parts_mut(out_off as *mut f64, ESSENCE_SUMMARY_FLOATS) };
+    let out =
+        unsafe { core::slice::from_raw_parts_mut(out_off as *mut f64, ESSENCE_SUMMARY_FLOATS) };
     out[0] = cal.n as f64;
     out[1] = cal.mean_log_score;
     out[2] = cal.brier;

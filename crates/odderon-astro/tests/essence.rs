@@ -151,7 +151,10 @@ fn the_interval_brackets_the_mean_and_widens_with_variance() {
     );
     // The interval is mean ± z * standard error, so it is centred on the mean.
     let mid = (wide.ci95_lo + wide.ci95_hi) / 2.0;
-    assert!((mid - wide.mean_log_score).abs() < 1e-9, "the interval is centred on the mean");
+    assert!(
+        (mid - wide.mean_log_score).abs() < 1e-9,
+        "the interval is centred on the mean"
+    );
     assert!((CI95_Z - 1.96).abs() < 1e-12);
 }
 
@@ -183,13 +186,19 @@ fn a_calibrated_forecaster_sits_on_the_diagonal() {
     let cal = essence_cal(&preds);
     assert_eq!(cal.n, BIN_COUNT * 20);
     assert!(!cal.provisional, "n=200 is a measurement, not a claim");
-    assert!(cal.bias.abs() < 1e-12, "a calibrated forecaster has zero bias, got {}", cal.bias);
+    assert!(
+        cal.bias.abs() < 1e-12,
+        "a calibrated forecaster has zero bias, got {}",
+        cal.bias
+    );
     for b in cal.bins {
         assert_eq!(b.count, 20, "each bin holds its 20 predictions");
         assert!(
             (b.predicted - b.observed).abs() < 1e-12,
             "bin at {} is off the diagonal: predicted {} observed {}",
-            b.center, b.predicted, b.observed
+            b.center,
+            b.predicted,
+            b.observed
         );
         assert!(
             (b.predicted - b.center).abs() < 1e-12,
@@ -211,14 +220,21 @@ fn a_biased_forecaster_is_off_the_diagonal_with_a_signed_bias() {
     let cal = essence_cal(&preds);
     assert_eq!(cal.n, 10);
     // predicted 0.9, observed 0.5: bias = +0.4 (over-predicts).
-    assert!((cal.bias - 0.4).abs() < 1e-12, "bias should be +0.4, got {}", cal.bias);
+    assert!(
+        (cal.bias - 0.4).abs() < 1e-12,
+        "bias should be +0.4, got {}",
+        cal.bias
+    );
     // All ten land in the top bin (p=0.9 → bin 9); its observed frequency is 0.5, far below the
     // predicted 0.9 — off the diagonal, below it.
     let top = cal.bins[BIN_COUNT - 1];
     assert_eq!(top.count, 10);
     assert!((top.predicted - 0.9).abs() < 1e-12);
     assert!((top.observed - 0.5).abs() < 1e-12);
-    assert!(top.observed < top.predicted, "the biased curve sits below the diagonal");
+    assert!(
+        top.observed < top.predicted,
+        "the biased curve sits below the diagonal"
+    );
 }
 
 #[test]
@@ -237,7 +253,10 @@ fn the_curve_is_not_a_single_average() {
         let expected = (2 * i + 1) as f64 / (2.0 * BIN_COUNT as f64);
         assert!((c - expected).abs() < 1e-12, "bin {} centre", i);
     }
-    assert!(centers[0] > 0.0 && centers[BIN_COUNT - 1] < 1.0, "centres span the open interval");
+    assert!(
+        centers[0] > 0.0 && centers[BIN_COUNT - 1] < 1.0,
+        "centres span the open interval"
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
