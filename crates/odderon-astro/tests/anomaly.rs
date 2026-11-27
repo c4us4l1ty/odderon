@@ -67,7 +67,12 @@ fn divergence_is_the_absolute_prediction_error() {
     let a = anomaly_from_mission(1, 0.3, 1, 0.0, 30.0).unwrap();
     let expected_divergence = fabs(0.3 - 1.0); // 0.7
     // depth = divergence + risk*weight, clamped: 0.7 + 0 = 0.7.
-    assert!((a.depth - expected_divergence).abs() < 1e-12, "depth {} != divergence {}", a.depth, expected_divergence);
+    assert!(
+        (a.depth - expected_divergence).abs() < 1e-12,
+        "depth {} != divergence {}",
+        a.depth,
+        expected_divergence
+    );
     // And the threshold itself: a divergence exactly at the threshold opens (the check is
     // `divergence < threshold` refuses, so equality passes). predicted = threshold, occurred = 0
     // -> divergence = threshold exactly.
@@ -193,7 +198,16 @@ fn design_hash_pins_every_constant() {
     // constants the hash claims to pin are the ones the module actually uses, so a future edit that
     // changes a constant without updating the hash's mix list would leave this test's expectations
     // stale and visible.
-    let _ = (DRAWER_CAP, ELO_K, ELO_BASE, DIVERGENCE_THRESHOLD, ELO_SCALE, WINDOW_REF_DAYS, RISK_DEPTH_WEIGHT, Op::MAX);
+    let _ = (
+        DRAWER_CAP,
+        ELO_K,
+        ELO_BASE,
+        DIVERGENCE_THRESHOLD,
+        ELO_SCALE,
+        WINDOW_REF_DAYS,
+        RISK_DEPTH_WEIGHT,
+        Op::MAX,
+    );
     // The hash is a pure u64, deterministic and finite.
     let h = anomaly_design_hash();
     assert!(h != 0, "the hash is not the zeroed accumulator");

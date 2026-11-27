@@ -237,6 +237,11 @@ function selftest() {
     "function renderArchive() {}",
     "function renderMission() {}",
     "function renderEssence() {}",
+    // The mission score opens an anomaly in the drawer (P5 Block 5); the drawer is the anomaly
+    // gate's contract, so this gate stubs it as a no-op. The score itself is still the kernel's.
+    "function anomalyLedger() { return { valid: false }; }",
+    "function openAnomaly() {}",
+    "function renderAnomaly() {}",
     "function $(id) { const v = { 'mission-dv': '7.8', 'mission-mass': '500', 'mission-risk': '0', 'mission-window': '30', 'mission-p': '0.8' }[id]; return { value: v === undefined ? '0' : v }; }",
     extract("archiveSerialize"),
     extract("archiveHash"),

@@ -1620,7 +1620,13 @@ pub extern "C" fn elo_update(
 /// success, 0 if the op is invalid or the threshold is non-finite (a refusal — the page must treat
 /// 0 as "the rule did not compile," not read a partial result).
 #[unsafe(no_mangle)]
-pub extern "C" fn rack_compile(sensor: u32, op: u32, threshold: f64, action: u32, out_off: u32) -> u32 {
+pub extern "C" fn rack_compile(
+    sensor: u32,
+    op: u32,
+    threshold: f64,
+    action: u32,
+    out_off: u32,
+) -> u32 {
     let rule = match odderon_astro::anomaly::rack_compile(sensor, op as u8, threshold, action) {
         Some(r) => r,
         None => return 0,
