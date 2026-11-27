@@ -236,6 +236,7 @@ function selftest() {
     "const archive = []; let archiveSeq = 0;",
     "function renderArchive() {}",
     "function renderMuseum() {}",
+    "function renderSurvey() {}",
     "function renderMission() {}",
     "function renderEssence() {}",
     "function saveArchive() {}",

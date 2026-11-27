@@ -2230,18 +2230,15 @@ pub extern "C" fn survey_cone_search(
         redistributable: true,
         dataset: "raw",
     };
-    let mut out_buf = [
-        odderon_astro::survey::Star {
-            id: 0,
-            direction: odderon_astro::survey::Direction {
-                vector: [1.0, 0.0, 0.0],
-            },
-            distance_parsec: odderon_astro::provenance::Quantity::unknown(),
-            magnitude: odderon_astro::provenance::Quantity::unknown(),
-            proper_motion: odderon_astro::provenance::Quantity::unknown(),
-        };
-        SURVEY_MAX_N
-    ];
+    let mut out_buf = [odderon_astro::survey::Star {
+        id: 0,
+        direction: odderon_astro::survey::Direction {
+            vector: [1.0, 0.0, 0.0],
+        },
+        distance_parsec: odderon_astro::provenance::Quantity::unknown(),
+        magnitude: odderon_astro::provenance::Quantity::unknown(),
+        proper_motion: odderon_astro::provenance::Quantity::unknown(),
+    }; SURVEY_MAX_N];
     let cap = out_cap as usize;
     if cap > SURVEY_MAX_N {
         return -1;
@@ -2260,12 +2257,8 @@ pub extern "C" fn survey_cone_search(
     };
     let count = tile.stars.len();
     // SAFETY: the caller guarantees `out_off` points to `count * SURVEY_STAR_FLOATS` f64.
-    let out = unsafe {
-        core::slice::from_raw_parts_mut(
-            out_off as *mut f64,
-            count * SURVEY_STAR_FLOATS,
-        )
-    };
+    let out =
+        unsafe { core::slice::from_raw_parts_mut(out_off as *mut f64, count * SURVEY_STAR_FLOATS) };
     let mut i = 0;
     while i < count {
         let base = i * SURVEY_STAR_FLOATS;
@@ -2298,18 +2291,15 @@ pub extern "C" fn survey_admits(redistributable: u32, is_release: u32) -> i32 {
         odderon_astro::survey::BuildProfile::Development
     };
     let survey = RawSurvey {
-        stars: [
-            odderon_astro::survey::Star {
-                id: 0,
-                direction: odderon_astro::survey::Direction {
-                    vector: [1.0, 0.0, 0.0],
-                },
-                distance_parsec: odderon_astro::provenance::Quantity::unknown(),
-                magnitude: odderon_astro::provenance::Quantity::unknown(),
-                proper_motion: odderon_astro::provenance::Quantity::unknown(),
-            };
-            SURVEY_MAX_N
-        ],
+        stars: [odderon_astro::survey::Star {
+            id: 0,
+            direction: odderon_astro::survey::Direction {
+                vector: [1.0, 0.0, 0.0],
+            },
+            distance_parsec: odderon_astro::provenance::Quantity::unknown(),
+            magnitude: odderon_astro::provenance::Quantity::unknown(),
+            proper_motion: odderon_astro::provenance::Quantity::unknown(),
+        }; SURVEY_MAX_N],
         n: 0,
         redistributable: redistributable != 0,
         dataset: "raw",
