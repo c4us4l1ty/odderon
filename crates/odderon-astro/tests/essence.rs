@@ -60,7 +60,10 @@ fn expected_summary(preds: &[(f64, u32)]) -> (f64, f64, f64) {
 fn empty_ledger_is_a_refusal() {
     let cal = essence_cal(&[]);
     assert_eq!(cal.n, 0);
-    assert!(cal.mean_log_score.is_nan(), "an empty ledger has no mean log score");
+    assert!(
+        cal.mean_log_score.is_nan(),
+        "an empty ledger has no mean log score"
+    );
     assert!(cal.brier.is_nan());
     assert!(cal.bias.is_nan());
     assert!(cal.ci95_lo.is_nan() && cal.ci95_hi.is_nan());
@@ -79,8 +82,14 @@ fn a_poisoned_prediction_refuses_the_whole_rating() {
     // the valid half. A rating with a poisoned entry is not a rating.
     let preds = [(0.8, 1), (1.5, 1)];
     let cal = essence_cal(&preds);
-    assert_eq!(cal.n, 2, "n echoes the input length so the refusal is visible");
-    assert!(cal.mean_log_score.is_nan(), "a poisoned entry refuses the mean");
+    assert_eq!(
+        cal.n, 2,
+        "n echoes the input length so the refusal is visible"
+    );
+    assert!(
+        cal.mean_log_score.is_nan(),
+        "a poisoned entry refuses the mean"
+    );
     assert!(cal.brier.is_nan());
     assert!(cal.bias.is_nan());
     assert!(cal.provisional, "n=2 is below the provisional threshold");
@@ -109,8 +118,14 @@ fn the_mean_brier_and_bias_match_an_independent_computation() {
     // A mixed, realistic career: a spread of probabilities and outcomes, computed against the
     // platform's own ln so a kernel transcendental error is caught, not just the shape.
     let preds: [(f64, u32); 8] = [
-        (0.9, 1), (0.8, 1), (0.7, 0), (0.6, 1),
-        (0.5, 0), (0.4, 0), (0.3, 1), (0.2, 0),
+        (0.9, 1),
+        (0.8, 1),
+        (0.7, 0),
+        (0.6, 1),
+        (0.5, 0),
+        (0.4, 0),
+        (0.3, 1),
+        (0.2, 0),
     ];
     let cal = essence_cal(&preds);
     let (mean, brier, bias) = expected_summary(&preds);
@@ -118,7 +133,10 @@ fn the_mean_brier_and_bias_match_an_independent_computation() {
     assert!((cal.mean_log_score - mean).abs() < 1e-12, "mean log score");
     assert!((cal.brier - brier).abs() < 1e-12, "brier score");
     assert!((cal.bias - bias).abs() < 1e-12, "bias");
-    assert!(cal.provisional, "n=8 is below the threshold, so it is provisional");
+    assert!(
+        cal.provisional,
+        "n=8 is below the threshold, so it is provisional"
+    );
 }
 
 #[test]
