@@ -32,10 +32,19 @@ fn above_threshold_opens_an_anomaly() {
     assert!(!a.resolved, "a freshly opened anomaly is open");
     // divergence 0.8, risk 0 -> depth 0.8 (clamped). telemetry 30/30 = 1.0.
     assert!((a.depth - 0.8).abs() < 1e-12, "depth {} != 0.8", a.depth);
-    assert!((a.telemetry - 1.0).abs() < 1e-12, "telemetry {} != 1.0", a.telemetry);
+    assert!(
+        (a.telemetry - 1.0).abs() < 1e-12,
+        "telemetry {} != 1.0",
+        a.telemetry
+    );
     // elo = ELO_BASE + (0.8 + 0.0) * ELO_SCALE = 1000 + 160 = 1160.
     let expected_elo = ELO_BASE + (0.8 + (1.0 - 1.0)) * ELO_SCALE;
-    assert!((a.elo - expected_elo).abs() < 1e-9, "elo {} != {}", a.elo, expected_elo);
+    assert!(
+        (a.elo - expected_elo).abs() < 1e-9,
+        "elo {} != {}",
+        a.elo,
+        expected_elo
+    );
 }
 
 #[test]
@@ -87,7 +96,11 @@ fn divergence_is_the_absolute_prediction_error() {
 #[test]
 fn drawer_caps_at_five() {
     for count in 0..DRAWER_CAP {
-        assert!(drawer_can_open(count), "count {} should allow opening", count);
+        assert!(
+            drawer_can_open(count),
+            "count {} should allow opening",
+            count
+        );
     }
     assert!(!drawer_can_open(DRAWER_CAP), "the drawer is full at the cap");
     assert!(!drawer_can_open(DRAWER_CAP + 3), "over the cap is refused");
@@ -105,7 +118,11 @@ fn elo_expected_matches_the_formula() {
     // expected = 1/(1 + 1/sqrt(10)) = sqrt(10)/(sqrt(10)+1). Cross-check with the platform's pow.
     let e = elo_expected(1200.0, 1000.0);
     let sqrt10 = pow(10.0, 0.5);
-    assert!((e - sqrt10 / (sqrt10 + 1.0)).abs() < 1e-9, "expected {} != formula", e);
+    assert!(
+        (e - sqrt10 / (sqrt10 + 1.0)).abs() < 1e-9,
+        "expected {} != formula",
+        e
+    );
     // Non-finite refuses.
     assert!(elo_expected(f64::NAN, 1000.0).is_nan());
 }
