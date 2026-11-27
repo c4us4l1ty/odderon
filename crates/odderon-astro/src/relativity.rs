@@ -53,8 +53,8 @@
 //! Each of those is an assertion in `tests/relativity.rs`, with the tolerance written before the
 //! measurement.
 
-use crate::{Elements, mu};
-use odderon_dmath::{PI, pow, sqrt};
+use crate::{mu, Elements};
+use odderon_dmath::{pow, sqrt, PI};
 
 /// Speed of light in vacuum, km/s. Defined by the SI second and the metre, this is exact.
 pub const C_LIGHT: f64 = 299_792.458;
@@ -135,12 +135,7 @@ pub fn schwarzschild_precession_rate(mu: f64, a: f64, e: f64) -> f64 {
 /// * `a` — semi-major axis, km.
 /// * `e` — eccentricity, dimensionless.
 /// * `period_days` — orbital period in days. For Mercury this is [`MERCURY_PERIOD_DAYS`].
-pub fn schwarzschild_advance_per_century_arcsec(
-    mu: f64,
-    a: f64,
-    e: f64,
-    period_days: f64,
-) -> f64 {
+pub fn schwarzschild_advance_per_century_arcsec(mu: f64, a: f64, e: f64, period_days: f64) -> f64 {
     let advance_per_orbit = schwarzschild_advance_per_orbit_arcsec(mu, a, e);
     let orbits_per_century = SECONDS_PER_CENTURY / (period_days * SECONDS_PER_DAY);
     advance_per_orbit * orbits_per_century
