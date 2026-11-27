@@ -212,6 +212,14 @@ pub mod lightcone;
 /// rendering of the geometry; the kernel owns where each exhibit sits.
 pub mod museum;
 
+/// Lambert's problem: given two positions and a time of flight, find the transfer orbit.
+///
+/// The inverse of [`propagate`]: it answers "what velocity at each end gets the body from `r₁` to
+/// `r₂` in the given time", which is the transfer-planning primitive a rendezvous or interplanetary
+/// trajectory needs once the endpoints are chosen. Uses the same universal-variable formulation as
+/// the propagator — one conic type, the same [`stumpff`] functions, the same Lagrange coefficients.
+pub mod lambert;
+
 /// Gravitational parameters, km³/s².
 ///
 /// Values from the IAU/JPL published constants. They are *data*, not physics: a body's `mu` is a
