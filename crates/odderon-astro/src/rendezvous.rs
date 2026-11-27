@@ -198,9 +198,9 @@ pub fn rendezvous_window_s(r_from_km: f64, r_to_km: f64, theta: f64, mu_body: f6
 
     // The window is open right now: the current lead is at the required lead. A tolerance is used
     // because the lead angle arrives from a degree input field, and a degree-rounded value will not
-    // equal the exact radian phase angle. A tolerance of 1e-4 rad (~20 arcseconds) is far below any
-    // practical orbital-mechanics precision and far above the rounding of a two-decimal degree input.
-    if (theta - required).abs() < 1e-4 {
+    // equal the exact radian phase angle. A tolerance of 1e-4 rad (~20 arcseconds) is far below
+    // any practical orbital-mechanics precision and above the rounding of a degree input.
+    if fabs(theta - required) < 1e-4 {
         return 0.0;
     }
 
