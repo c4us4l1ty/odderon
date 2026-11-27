@@ -43,8 +43,7 @@ fn assert_propagation_reaches_target(r1: Vec3, r2: Vec3, dt_s: f64, label: &str)
     assert!(
         !sol.unconverged,
         "{label}: solver did not converge (iterations={}, residual={})",
-        sol.iterations,
-        sol.residual
+        sol.iterations, sol.residual
     );
 
     let state = State::new(r1, sol.v1);
@@ -147,8 +146,16 @@ fn circular_orbit_transfer_recovers_circular_velocity() {
     let e1 = rel_err(&sol.v1, &v1_exp);
     let e2 = rel_err(&sol.v2, &v2_exp);
 
-    assert!(e1 < 1e-8, "v1 error {e1} > 1e-8 (expected {v1_exp:?}, got {:?})", sol.v1);
-    assert!(e2 < 1e-8, "v2 error {e2} > 1e-8 (expected {v2_exp:?}, got {:?})", sol.v2);
+    assert!(
+        e1 < 1e-8,
+        "v1 error {e1} > 1e-8 (expected {v1_exp:?}, got {:?})",
+        sol.v1
+    );
+    assert!(
+        e2 < 1e-8,
+        "v2 error {e2} > 1e-8 (expected {v2_exp:?}, got {:?})",
+        sol.v2
+    );
 }
 
 /// A larger circular-orbit transfer (120°) must also recover the circular velocity.

@@ -115,6 +115,9 @@ pub struct Lambert {
 ///
 /// The caller should check `unconverged` before using the velocities. A solver that returns a
 /// plausible-looking but wrong velocity is worse than one that refuses.
+// `f64::clamp` is not available on the CI toolchain (Rust 1.83); the manual clamp is the
+// portable form and is semantically identical for the [-1, 1] range with finite bounds.
+#[allow(clippy::manual_clamp)]
 pub fn lambert(r1: Vec3, r2: Vec3, dt_s: f64, mu: f64) -> Lambert {
     let r1n = r1.norm();
     let r2n_orig = r2.norm();
@@ -295,8 +298,8 @@ pub fn lambert(r1: Vec3, r2: Vec3, dt_s: f64, mu: f64) -> Lambert {
             continue;
         }
         let chi_plus = sqrt(y_plus / c_plus);
-        let flight_time_plus = (chi_plus * chi_plus * chi_plus * s_plus + a_param * sqrt(y_plus))
-            / sqrt_mu;
+        let flight_time_plus =
+            (chi_plus * chi_plus * chi_plus * s_plus + a_param * sqrt(y_plus)) / sqrt_mu;
 
         let d_dt_dpsi = (flight_time_plus - flight_time) / dpsi;
 
