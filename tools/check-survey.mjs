@@ -161,10 +161,15 @@ function verifyExports(ex) {
   // Search a cone centred on star 0 (RA=0, dec=0), radius 0.5 rad (~28.6 deg).
   // Star 0 is at 0 rad, star 1 at 0.5 rad (on the boundary), star 2 at 0.8 rad (outside).
   // The kernel uses <= radius, so star 1 at exactly 0.5 should be included.
-  const count = ex.survey_cone_search(STAR_OFF, 4, 0.0, 0.0, 0.5, OUT_OFF, 256);
-  if (count < 0) {
-    problems.push(`survey_cone_search returned ${count}, want a non-negative count`);
+  // The return value packs count in the low 16 bits and the truncated flag in bit 16.
+  const raw = ex.survey_cone_search(STAR_OFF, 4, 0.0, 0.0, 0.5, OUT_OFF, 256);
+  if (raw < 0) {
+    problems.push(`survey_cone_search returned ${raw}, want a non-negative count`);
   } else {
+    const count = raw & 0xFFFF;
+    const truncated = (raw & 0x10000) !== 0;
+    if (count !== 2) problems.push(`narrow cone returned ${count} stars, want 2`);
+    if (truncated) problems.push(`narrow cone reported truncated with ${count} stars, want not truncated`);
     // Read back the first star's id.
     const id0 = dv.getFloat64(OUT_OFF + 0, true);
     if (id0 !== 1) problems.push(`first match id = ${id0}, want 1`);
@@ -172,11 +177,28 @@ function verifyExports(ex) {
 
   // A wider cone (1.0 rad, ~57.3 deg) should catch stars 0, 1, 2 but not star 3 (at -1,0,0,
   // which is pi rad away).
-  const countWide = ex.survey_cone_search(STAR_OFF, 4, 0.0, 0.0, 1.0, OUT_OFF, 256);
-  if (countWide < 0) {
-    problems.push(`wide cone returned ${countWide}, want a non-negative count`);
-  } else if (countWide !== 3) {
-    problems.push(`wide cone returned ${countWide} stars, want 3`);
+  const rawWide = ex.survey_cone_search(STAR_OFF, 4, 0.0, 0.0, 1.0, OUT_OFF, 256);
+  if (rawWide < 0) {
+    problems.push(`wide cone returned ${rawWide}, want a non-negative count`);
+  } else {
+    const countWide = rawWide & 0xFFFF;
+    const truncatedWide = (rawWide & 0x10000) !== 0;
+    if (countWide !== 3) {
+      problems.push(`wide cone returned ${countWide} stars, want 3`);
+    }
+    if (truncatedWide) problems.push(`wide cone reported truncated with ${countWide} stars, want not truncated`);
+  }
+
+  // Truncation: a cap of 1 star forces the kernel to stop after the first match and set the
+  // truncated flag. The return value must carry bit 16 while the low 16 bits stay at 1.
+  const rawTrunc = ex.survey_cone_search(STAR_OFF, 4, 0.0, 0.0, 1.0, OUT_OFF, 1);
+  if (rawTrunc < 0) {
+    problems.push(`truncated cone returned ${rawTrunc}, want a non-negative count`);
+  } else {
+    const countTrunc = rawTrunc & 0xFFFF;
+    const truncatedFlag = (rawTrunc & 0x10000) !== 0;
+    if (countTrunc !== 1) problems.push(`truncated cone returned ${countTrunc} stars, want 1`);
+    if (!truncatedFlag) problems.push(`truncated cone did not set the truncated flag`);
   }
 
   // A bad radius (zero) is refused with a negative code.
@@ -205,7 +227,7 @@ function verifyExports(ex) {
   if (h1 === 0) problems.push("design hash is zero");
 
   if (problems.length) throw new Error("boundary disagrees with the survey seam: " + problems.join("; "));
-  return `stars=${count} wide=${countWide} badRadius=${badRadius} badCoord=${badCoord}`;
+  return `stars=${raw} wide=${rawWide} trunc=${rawTrunc} badRadius=${badRadius} badCoord=${badCoord}`;
 }
 
 /** Load a built module and verify it. */
@@ -264,7 +286,10 @@ function selftest() {
         const z = dv.getFloat64(base + 24, true);
         const sep = separation(cx, cy, cz, x, y, z);
         if (sep <= radius) {
-          if (count >= outCap) return -1; // truncated (shim returns error for simplicity)
+          if (count >= outCap) {
+            // Truncated: return the count with bit 16 set, matching the real ABI encoding.
+            return (count | 0x10000);
+          }
           for (let j = 0; j < STAR_FLOATS; j++) {
             dv.setFloat64(outOff + count * STAR_FLOATS * 8 + j * 8, dv.getFloat64(base + j * 8, true), true);
           }
