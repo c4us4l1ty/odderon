@@ -163,6 +163,16 @@ pub mod essence;
 /// rack (§5.5). See [`anomaly::anomaly_from_mission`].
 pub mod anomaly;
 
+/// The protégé's teaching arc: the progression that turns a junior who replays your errors into a
+/// colleague who can catch what you missed.
+///
+/// Not astrodynamics, for the same reason [`mission`], [`essence`], [`cryo`], [`thermal`] and
+/// [`rocket`] are here: `odderon-astro` is the only `no_std`, `forbid(unsafe_code)` crate in the
+/// workspace, gated by the same kernel rules. The arc is a pure function of the reputation count
+/// and the kernel's own readings, so the protégé's tier, question depth, and notice level are
+/// recomputable from a verified replay. See [`protege::protege_tier`].
+pub mod protege;
+
 /// Orbital rendezvous: the Hohmann transfer Δv, the transfer time, the phase angle, and the
 /// rendezvous window that turn two circular orbits into a meeting.
 ///

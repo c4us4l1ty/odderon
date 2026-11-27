@@ -369,8 +369,11 @@
   <h3>the junior</h3>
   <div class="muted">the junior replays your failures from the archive and asks you to diagnose them. the correct diagnosis is the kernel's own -- answering well records a self-explanation and builds trust.</div>
   <div class="row"><span>trust</span><span id="m-protege-rep">0</span></div>
+  <div class="row"><span>tier</span><span id="m-protege-tier">—</span></div>
+  <div class="row"><span>question</span><span id="m-protege-depth">—</span></div>
   <div class="row big" id="m-protege-status">the junior has no error of yours to replay yet.</div>
   <div class="row"><span>noticed</span><span id="m-protege-notice">the junior has nothing to flag.</span></div>
+  <div class="row"><span>design hash</span><span id="m-protege-hash">—</span></div>
   <div class="pad-inputs">
     <button id="protege-ask" type="button">ask the junior</button>
   </div>
@@ -3162,12 +3165,54 @@ function protegeNotice() {
   return null;
 }
 
-/// Render the protégé panel: the notice, the status, and the answer options. A `NaN` reading is
-/// shown as `—`, the same convention every other panel uses.
+/// The protégé's arc readings from the kernel: the tier, the question depth, and the notice
+/// level, all kernel calls. The page computes no tier threshold, holds no arc constant, and shows
+/// `—` when the kernel is absent. The design hash is the kernel's own version stamp for the arc.
+function protegeReadings() {
+  const k = kernelState.module;
+  if (!k) return { source: 'absent' };
+  const tier = k.protege_tier(protegeState.reputation);
+  const err = protegeErrorEntry();
+  const verdict = err ? err.readings.verdict : 0;
+  const apogee = err ? err.readings.apogee : NaN;
+  const depth = k.protege_question_depth(verdict, apogee, tier);
+  const notice = k.protege_notice_level(tier);
+  return {
+    source: 'wasm kernel',
+    tier,
+    depth,
+    notice,
+    hash: k.protege_design_hash(),
+  };
+}
+
+/// The tier label the page shows for a tier code: the kernel's code, mapped to the page's labels.
+/// The mapping is a page concern (presentation), not a kernel constant -- the thresholds live in
+/// the kernel, the labels live here.
+const PROTEGE_TIER_NAMES = ['novice', 'junior', 'analyst', 'peer'];
+/// The question-depth label the page shows for a depth code.
+const PROTEGE_DEPTH_NAMES = ['verdict', 'parameter', 'margin', 'counterfactual'];
+/// The notice-level label the page shows for a notice code.
+const PROTEGE_NOTICE_NAMES = ['nothing', 'mismatched record', 'stale record', 'tampered record'];
+
+/// Render the protégé panel: the arc, the notice, the status, and the answer options. A `NaN`
+/// reading is shown as `—`, the same convention every other panel uses.
 function renderProtege() {
   const status = $('m-protege-status');
   const list = $('m-protege-options');
   if (!status) return;
+  // The arc readings come from the kernel. With no kernel, the arc is absent and the panel shows
+  // `—` rather than a fabricated progression.
+  const arc = protegeReadings();
+  if (arc.source === 'absent') {
+    $('m-protege-tier').textContent = '—';
+    $('m-protege-depth').textContent = '—';
+    $('m-protege-hash').textContent = '—';
+  } else {
+    $('m-protege-tier').textContent = PROTEGE_TIER_NAMES[arc.tier] || '—';
+    $('m-protege-depth').textContent = PROTEGE_DEPTH_NAMES[arc.depth] || '—';
+    $('m-protege-hash').textContent = '0x' + arc.hash.toString(16);
+  }
   const notice = protegeNotice();
   protegeState.notice = notice;
   $('m-protege-notice').textContent = notice
@@ -6016,6 +6061,7 @@ window.__odderon = {
   protegeAsk,
   protegeAnswer,
   protegeNotice,
+  protegeReadings,
   renderProtege,
   // Causal mail (P4: async presence, §11.2). Exposed so a test can read the sky, ask what a peer's
   // message produces, and confirm the arrival is the kernel's light-time -- the P4 gate.
