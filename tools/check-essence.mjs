@@ -157,10 +157,15 @@ function verifyExports(ex) {
 
   const problems = [];
   const mem = ex.memory;
+  // The wasm data segments live at the start of linear memory; the ledger's buffers are written
+  // well past them. The initial memory size is a build detail (1.83.0 and 1.85.0 can differ), so
+  // grow the memory until OFF is comfortably in bounds rather than assuming a fixed page count.
+  const NEED_BYTES = 1 << 20; // 1 MiB
+  while (mem.buffer.byteLength < NEED_BYTES + (1 << 20)) {
+    mem.grow(256);
+  }
   const dv = new DataView(mem.buffer);
-  // Write at a fixed high offset within the existing memory (the wasm data segments live at the
-  // start; 1 MiB is past them and within the default 17-page memory).
-  const OFF = 1048576;
+  const OFF = NEED_BYTES;
   const BIN_COUNT = 10;
 
   const writeLog = (preds) => {
