@@ -96,7 +96,7 @@ fn divergence_is_the_absolute_prediction_error() {
     // platform's own abs so a transcendental error is caught, not just the shape.
     let a = anomaly_from_mission(1, 0.3, 1, 0.0, 30.0).unwrap();
     let expected_divergence = fabs(0.3 - 1.0); // 0.7
-    // depth = divergence + risk*weight, clamped: 0.7 + 0 = 0.7.
+                                               // depth = divergence + risk*weight, clamped: 0.7 + 0 = 0.7.
     assert!(
         (a.depth - expected_divergence).abs() < 1e-12,
         "depth {} != divergence {}",
@@ -181,9 +181,7 @@ fn elo_update_weights_by_depth_and_scarcity() {
 #[test]
 fn elo_update_refuses_invalid_inputs() {
     let a = anomaly_from_mission(1, 0.8, 0, 0.0, 30.0).unwrap();
-    assert!(
-        elo_update(f64::NAN, a.elo, 1, a.depth, a.telemetry).is_nan()
-    );
+    assert!(elo_update(f64::NAN, a.elo, 1, a.depth, a.telemetry).is_nan());
     assert!(
         elo_update(1000.0, a.elo, 1, 1.5, a.telemetry).is_nan(),
         "depth > 1 refuses"

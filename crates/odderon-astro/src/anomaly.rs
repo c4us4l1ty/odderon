@@ -241,7 +241,13 @@ pub fn anomaly_from_mission(
     // The anomaly's Elo strength: a deeper fault behind less telemetry is a stronger opponent.
     let elo = ELO_BASE + (depth + scarcity) * ELO_SCALE;
 
-    Some(Anomaly { source_id, depth, telemetry, elo, resolved: false })
+    Some(Anomaly {
+        source_id,
+        depth,
+        telemetry,
+        elo,
+        resolved: false,
+    })
 }
 
 /// Whether the drawer can open another anomaly, per §7.3: "at most five."
@@ -339,7 +345,12 @@ pub fn rack_compile(sensor: u32, op: u8, threshold: f64, action: u32) -> Option<
     // The sensor and action ids are plain u32s the page interprets; any u32 is a valid id, so there
     // is no range to refuse beyond the type itself. The rule is structurally valid once the op is
     // known and the threshold is finite.
-    Some(RackRule { sensor, op, threshold, action })
+    Some(RackRule {
+        sensor,
+        op,
+        threshold,
+        action,
+    })
 }
 
 /// Evaluate a compiled rack rule against a sensor reading, per §5.5.
