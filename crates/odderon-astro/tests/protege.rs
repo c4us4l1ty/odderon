@@ -82,7 +82,8 @@ fn refused_launch_caps_depth_at_one() {
     // A refused launch has no apogee: the margin and counterfactual questions need an apogee.
     for tier in 2..=3 {
         let depth = protege_question_depth(RocketVerdict::Refused as u32, NAN_APOGEE, tier);
-        assert_eq!(depth, 1,
+        assert_eq!(
+            depth, 1,
             "tier {tier} with a refused launch should give depth 1"
         );
     }
