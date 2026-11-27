@@ -6,8 +6,11 @@ A browser simulator of astronautics, astrodynamics and space-company economics t
 laptop with integrated graphics — and produces artifacts a real engineer can audit: a committed
 prediction, a debrief, a technical report, an exported GMAT script or NASA CEA deck.
 
-**Status: design, restarting from scratch.** No code exists yet. The previous attempt was abandoned;
-this repository contains the thinking that replaces it, not its remains.
+**Status: built, block by block.** P0–P4 and P5 Blocks 5, 8 and 9 are merged to `main`. Each block
+is a playable MVP: the spine (P0), the pad (P1), the mark (P2), flight and comms (P3), the archive
+(P4), and the failure-design layer — the anomaly drawer, the logic rack and the E_an rating (P5).
+The kernel is pure `no_std` Rust compiled to WASM; the page is a single `web/index.html`; every
+block ships a CI gate (`tools/check-*.mjs`) that someone else can run.
 
 **Start here: [`docs/README.md`](docs/README.md)** — the documentation index, in reading order, with an
 authority table for which document decides what.

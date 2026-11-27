@@ -305,6 +305,40 @@
   <div id="mission-note" class="muted"></div>
 
   <div class="sep"></div>
+  <h3>the drawer</h3>
+  <div class="muted">a mission that diverged -- the committed prediction missed the outcome by more than the kernel's floor -- opens an anomaly: a specific, small, real discrepancy that lives here until you root-cause it. the drawer holds at most five; when full, it refuses a sixth until one is closed. resolving one moves your E_an rating by a duel-style Elo, weighted by how deep the fault was hidden and how little telemetry you were given (§7.3, §4).</div>
+  <div class="row"><span>E_an rating</span><span id="m-anomaly-elo">—</span></div>
+  <div class="row"><span>drawer</span><span id="m-anomaly-count">0 / 5 open</span></div>
+  <div class="row big" id="m-anomaly-status">no anomaly opened yet.</div>
+  <div id="m-anomaly-list"></div>
+
+  <div class="sep"></div>
+  <h3>the rack</h3>
+  <div class="muted">automation is a physical object, not a setting (§5.5). wire a rule -- if a sensor crosses a threshold, take an action -- and it compiles into the deterministic tick loop: the same rule and the same reading fire the same action everywhere. the kernel says whether the rule fires; the page owns the loop.</div>
+  <div class="pad-inputs">
+    <label>sensor<input id="rack-sensor" type="number" min="0" step="1" value="0"></label>
+    <label>op
+      <select id="rack-op">
+        <option value="0">&gt;</option>
+        <option value="1">&lt;</option>
+        <option value="2">&gt;=</option>
+        <option value="3">&lt;=</option>
+        <option value="4">==</option>
+        <option value="5">!=</option>
+      </select>
+    </label>
+    <label>threshold<input id="rack-threshold" type="number" step="0.1" value="92"></label>
+    <label>action<input id="rack-action" type="number" min="0" step="1" value="0"></label>
+  </div>
+  <div class="pad-inputs">
+    <button id="rack-compile" type="button">compile the rule</button>
+    <label>reading<input id="rack-reading" type="number" step="0.1" value="95"></label>
+    <button id="rack-fire" type="button">fire the rack</button>
+  </div>
+  <div class="row big" id="m-rack-status">no rule compiled yet.</div>
+  <div id="m-rack-list"></div>
+
+  <div class="sep"></div>
   <h3>the museum</h3>
   <div class="muted">your career, recorded as it happens and verifiable against the kernel. every vehicle, report and message is a row; verify re-derives each one from the kernel.</div>
   <div class="row"><span>entries</span><span id="m-archive-count">0 entries</span></div>
@@ -1516,7 +1550,12 @@ async function loadKernel() {
                     // P5 Block 9: the Esse career ledger. The aggregate is the kernel's -- the
                     // page writes the mission log into the kernel's memory and reads the rating
                     // back. A verifier, given the same log, calls the same exports (§4.3 rule 4).
-                    'essence_summary', 'essence_reliability', 'essence_design_hash'];
+                    'essence_summary', 'essence_reliability', 'essence_design_hash',
+                    // P5 Block 5: the Anomaly Drawer and the logic rack. The E_an rating, the drawer
+                    // cap, and the rack rule are the kernel's -- the page writes the mission's raw
+                    // facts and a sensor reading into the kernel's memory and reads the results back.
+                    'anomaly_from_mission', 'drawer_can_open', 'elo_expected', 'elo_update',
+                    'rack_compile', 'rack_fires', 'anomaly_design_hash'];
     const missing = needed.filter((n) => typeof ex[n] !== 'function');
     if (missing.length) throw new Error('module missing exports: ' + missing.join(', '));
     kernelState.module = ex;
@@ -3375,6 +3414,10 @@ function missionScore() {
   recordMission();
   renderMission();
   renderEssence();
+  // The mission may have diverged enough to open an anomaly in the drawer (§7.3). The kernel derives
+  // the anomaly from the mission's raw facts and the drawer cap is the kernel's; the page only asks
+  // whether it opened. A mission that did not diverge, or a full drawer, opens nothing.
+  openAnomaly();
   return score;
 }
 
@@ -3525,6 +3568,321 @@ function renderEssence() {
   set('m-essence-curve', cells.length
     ? `reliability curve — ${cells.length} bin(s) filled: ${cells.join('  ·  ')}`
     : 'no scored missions yet.');
+}
+
+// --------------------------------------------------------------------------------------------
+// the anomaly drawer and the logic rack (P5 Block 5: §7.3, §7.4, §5.5, §4, §9.2)
+// --------------------------------------------------------------------------------------------
+//
+// The drawer is the failure-design layer. A mission that diverged -- the committed prediction
+// missed the outcome by more than the kernel's floor -- opens an anomaly: a specific, small, real
+// discrepancy that lives in the drawer until it is root-caused. The drawer holds at most five
+// (§7.3); when full, it refuses a sixth until one is closed. Resolving an anomaly moves the E_an
+// rating by a duel-style Elo, weighted by the fault's depth and the telemetry scarcity (§4).
+//
+// The logic rack is the automation layer (§5.5). A rule `IF sensor <op> threshold THEN action`
+// compiles into a deterministic predicate the kernel fires against a sensor reading. The page owns
+// the tick loop and the side effect; the kernel only says whether the rule fires.
+//
+// **Persistence (§9.2): the save is an input log, so it always exists.** The drawer state -- the E_an
+// rating, which anomaly source ids are open, and the compiled rack rules -- is persisted to
+// localStorage and re-read on load. The anomalies themselves are derived from the archive (the
+// verified replay), so the drawer is recomputable: a verifier, given the same mission log, calls the
+// same exports and gets the same anomalies and the same cap refusal. The page computes no Elo and no
+// divergence of its own.
+
+/// The persisted drawer + rack state. The E_an rating, the open anomaly source ids, and the compiled
+/// rack rules. Persisted to localStorage so the save is an input log that always exists (§9.2).
+const ANOMALY_KEY = 'odderon.anomaly';
+const anomalyState = {
+  elo: 1000.0,       // the E_an rating (§4: duel-style Elo)
+  open: [],          // source ids of open anomalies, in the order they were opened
+  rack: [],          // compiled rack rules: { sensor, op, threshold, action }
+};
+
+/// Load the drawer state from localStorage, or leave the defaults if there is nothing yet. A
+/// missing or corrupt save is not an error -- the drawer starts empty, which is a legal entry point.
+function loadAnomalyState() {
+  try {
+    const raw = localStorage.getItem(ANOMALY_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    if (typeof saved.elo === 'number' && Number.isFinite(saved.elo)) anomalyState.elo = saved.elo;
+    if (Array.isArray(saved.open)) {
+      anomalyState.open = saved.open.filter((id) => typeof id === 'number' && Number.isInteger(id));
+    }
+    if (Array.isArray(saved.rack)) {
+      anomalyState.rack = saved.rack.filter((r) =>
+        r && typeof r.sensor === 'number' && typeof r.op === 'number' &&
+        typeof r.threshold === 'number' && typeof r.action === 'number');
+    }
+  } catch (err) {
+    // A corrupt save is refused, not crashed: the drawer starts from its defaults.
+  }
+}
+
+/// Persist the drawer state. The save is the input log, so it is written on every change (§9.2).
+function saveAnomalyState() {
+  try {
+    localStorage.setItem(ANOMALY_KEY, JSON.stringify({
+      elo: anomalyState.elo, open: anomalyState.open, rack: anomalyState.rack,
+    }));
+  } catch (err) {
+    // A storage failure (quota, private mode) is not a game failure: the state lives in memory for
+    // this session, which is the same as any other session that cannot persist.
+  }
+}
+
+/// The anomaly drawer (§7.3, §4): derive the open anomalies from the archive's scored missions and
+/// the page's open list, and read the E_an rating.
+///
+/// The anomalies are the kernel's. The page walks the archive's missions -- each one's committed
+/// probability, outcome, risk, and window -- and calls `anomaly_from_mission` for each. A mission
+/// that did not diverge returns a refusal (0), and is not an anomaly. The open anomalies are the
+/// derived ones whose source id is in the page's `open` list; the rest are closed. The E_an rating
+/// is the page's persisted rating, which the resolution action updates through the kernel.
+///
+/// Returns { source, valid, anomalies, openCount, cap, canOpen } so a missing kernel is a refusal.
+function anomalyLedger() {
+  const k = kernelState.module;
+  if (!k || !k.memory) return { source: 'absent' };
+
+  // Grow the memory past the data segments for the anomaly buffers. The wasm data segments live at
+  // the start; the drawer's buffers are written well past them.
+  const mem = k.memory;
+  const NEED = 1 << 20;
+  while (mem.buffer.byteLength < NEED + (1 << 20)) {
+    try { mem.grow(256); } catch (err) { return { source: 'wasm kernel', valid: false, reason: 'memory' }; }
+  }
+  const dv = new DataView(mem.buffer);
+  const OFF = NEED;
+
+  // Derive an anomaly from a mission entry. Writes the 5-float Anomaly struct and reads it back.
+  const derive = (entry) => {
+    const p = entry.params.p;
+    if (p === null || p === undefined || !Number.isFinite(p)) return null;
+    const met = (entry.readings.dv >= entry.params.dv) ? 1 : 0;
+    const rc = k.anomaly_from_mission(entry.id, p, met, entry.params.risk, entry.params.window, OFF);
+    if (rc !== 5) return null; // the mission did not diverge enough, or an input was invalid
+    return {
+      source_id: Math.round(dv.getFloat64(OFF, true)),
+      depth: dv.getFloat64(OFF + 8, true),
+      telemetry: dv.getFloat64(OFF + 16, true),
+      elo: dv.getFloat64(OFF + 24, true),
+      resolved: dv.getFloat64(OFF + 32, true) === 1,
+    };
+  };
+
+  // Walk the archive's missions in order. Each mission that diverged is a candidate anomaly; the
+  // page's `open` list decides which are still open.
+  const anomalies = [];
+  for (const e of archive) {
+    if (e.type !== 'mission' || !e.params || !e.readings) continue;
+    const a = derive(e);
+    if (!a) continue;
+    a.mission = e;
+    anomalies.push(a);
+  }
+  const open = anomalies.filter((a) => anomalyState.open.includes(a.source_id));
+  const openCount = open.length;
+  const cap = 5; // the kernel's DRAWER_CAP; the cap predicate below is the kernel's, not this number
+  const canOpen = k.drawer_can_open(openCount) === 1;
+
+  return {
+    source: 'wasm kernel', valid: true,
+    anomalies, open, openCount, cap, canOpen,
+    elo: anomalyState.elo,
+  };
+}
+
+/// Open an anomaly from the most recent diverged mission, if the drawer has room (§7.3).
+///
+/// Called after a mission is scored. The page asks the kernel to derive the anomaly from the mission's
+/// raw facts; if the mission diverged and the drawer is not full, the anomaly is opened (its source
+/// id is added to the open list and persisted). If the drawer is full, the anomaly is refused -- the
+/// Zeigarnik budget: the player must close one before opening another. Returns the derived anomaly,
+/// or null if the mission did not diverge or the drawer was full.
+function openAnomaly() {
+  const k = kernelState.module;
+  if (!k || !k.memory) return null;
+  const led = anomalyLedger();
+  if (!led.valid) return null;
+  // The most recent mission in the archive is the one just scored.
+  const last = archive[archive.length - 1];
+  if (!last || last.type !== 'mission') return null;
+  const p = last.params.p;
+  if (p === null || p === undefined || !Number.isFinite(p)) return null;
+  const met = (last.readings.dv >= last.params.dv) ? 1 : 0;
+  const mem = k.memory;
+  const NEED = 1 << 20;
+  while (mem.buffer.byteLength < NEED + (1 << 20)) { try { mem.grow(256); } catch (e) { return null; } }
+  const dv = new DataView(mem.buffer);
+  const OFF = NEED;
+  const rc = k.anomaly_from_mission(last.id, p, met, last.params.risk, last.params.window, OFF);
+  if (rc !== 5) return null; // the mission did not diverge enough
+  const anomaly = {
+    source_id: Math.round(dv.getFloat64(OFF, true)),
+    depth: dv.getFloat64(OFF + 8, true),
+    telemetry: dv.getFloat64(OFF + 16, true),
+    elo: dv.getFloat64(OFF + 24, true),
+  };
+  // The cap is the kernel's: ask it before opening.
+  if (k.drawer_can_open(anomalyState.open.length) !== 1) {
+    renderAnomaly();
+    return null; // the drawer is full -- refuse the sixth
+  }
+  if (!anomalyState.open.includes(anomaly.source_id)) {
+    anomalyState.open.push(anomaly.source_id);
+    saveAnomalyState();
+  }
+  renderAnomaly();
+  return anomaly;
+}
+
+/// Resolve (root-cause) an open anomaly (§7.4, §4). The E_an rating moves by the kernel's duel-style
+/// Elo, weighted by the anomaly's depth and telemetry scarcity. The anomaly is closed and removed
+/// from the drawer. Returns the new rating, or null if the anomaly is not open or the kernel refused.
+function resolveAnomaly(sourceId) {
+  const k = kernelState.module;
+  if (!k) return null;
+  const idx = anomalyState.open.indexOf(sourceId);
+  if (idx < 0) return null; // the anomaly is not open
+  const led = anomalyLedger();
+  if (!led.valid) return null;
+  const a = led.anomalies.find((x) => x.source_id === sourceId);
+  if (!a) return null;
+  // The resolution is a duel: the player's rating faces the anomaly's strength, and a correct
+  // root-cause (outcome 1) moves the rating by the kernel's weighted Elo. The weighting (depth and
+  // telemetry scarcity) is the kernel's, not the page's.
+  const newRating = k.elo_update(anomalyState.elo, a.elo, 1, a.depth, a.telemetry);
+  if (!Number.isFinite(newRating)) return null; // the kernel refused the update
+  anomalyState.elo = newRating;
+  anomalyState.open.splice(idx, 1);
+  saveAnomalyState();
+  renderAnomaly();
+  return newRating;
+}
+
+/// Compile a logic-rack rule from the panel's inputs (§5.5). The rule is the kernel's: the page
+/// validates nothing and computes no predicate -- it hands the raw inputs to `rack_compile` and
+/// stores the compiled rule. Returns the rule, or null if the kernel refused it.
+function rackCompile() {
+  const k = kernelState.module;
+  if (!k || !k.memory) return null;
+  const sensor = parseInt($('rack-sensor').value, 10);
+  const op = parseInt($('rack-op').value, 10);
+  const threshold = parseFloat($('rack-threshold').value);
+  const action = parseInt($('rack-action').value, 10);
+  if (!Number.isInteger(sensor) || !Number.isInteger(op) || !Number.isInteger(action)) return null;
+  if (!Number.isFinite(threshold)) return null;
+  const mem = k.memory;
+  const NEED = 1 << 20;
+  while (mem.buffer.byteLength < NEED + (1 << 20)) { try { mem.grow(256); } catch (e) { return null; } }
+  const dv = new DataView(mem.buffer);
+  const OFF = NEED;
+  const rc = k.rack_compile(sensor, op, threshold, action, OFF);
+  if (rc !== 4) return null; // the kernel refused the rule
+  const rule = {
+    sensor: Math.round(dv.getFloat64(OFF, true)),
+    op: Math.round(dv.getFloat64(OFF + 8, true)),
+    threshold: dv.getFloat64(OFF + 16, true),
+    action: Math.round(dv.getFloat64(OFF + 24, true)),
+  };
+  anomalyState.rack.push(rule);
+  saveAnomalyState();
+  renderRack();
+  return rule;
+}
+
+/// Fire the compiled rack rules against a sensor reading (§5.5). The page owns the tick loop; the
+/// kernel says whether each rule fires. Returns the list of fired actions.
+function rackFire() {
+  const k = kernelState.module;
+  if (!k || !k.memory) return [];
+  const reading = parseFloat($('rack-reading').value);
+  if (!Number.isFinite(reading)) return [];
+  const mem = k.memory;
+  const NEED = 1 << 20;
+  while (mem.buffer.byteLength < NEED + (1 << 20)) { try { mem.grow(256); } catch (e) { return []; } }
+  const dv = new DataView(mem.buffer);
+  const OFF = NEED;
+  const fired = [];
+  for (const rule of anomalyState.rack) {
+    // Write the rule back into memory and ask the kernel whether it fires.
+    dv.setFloat64(OFF, rule.sensor, true);
+    dv.setFloat64(OFF + 8, rule.op, true);
+    dv.setFloat64(OFF + 16, rule.threshold, true);
+    dv.setFloat64(OFF + 24, rule.action, true);
+    if (k.rack_fires(OFF, reading) === 1) fired.push(rule.action);
+  }
+  renderRack(fired);
+  return fired;
+}
+
+/// Render the drawer panel. A `NaN` reading is shown as `—`, the convention every panel uses. The
+/// open anomalies are listed with their depth, telemetry, and Elo strength; the E_an rating and the
+/// cap status are the kernel's.
+function renderAnomaly() {
+  const f = (v, d) => (Number.isFinite(v) ? v.toFixed(d) : '—');
+  const set = (id, txt) => { const el = $(id); if (el) el.textContent = txt; };
+  const led = anomalyLedger();
+  if (!led.valid) {
+    set('m-anomaly-elo', '—');
+    set('m-anomaly-count', '—');
+    set('m-anomaly-status', led.source === 'absent' ? 'the kernel is not built, so there is no drawer.' : 'the drawer refused the mission log.');
+    set('m-anomaly-list', '');
+    return;
+  }
+  set('m-anomaly-elo', f(led.elo, 1));
+  set('m-anomaly-count', `${led.openCount} / ${led.cap} open`);
+  if (led.openCount === 0) {
+    set('m-anomaly-status', led.anomalies.length
+      ? 'all diverged missions are resolved. a new divergence opens one.'
+      : 'no anomaly opened yet. a mission that misses its prediction by more than the floor opens one.');
+  } else if (!led.canOpen) {
+    set('m-anomaly-status', `the drawer is full (${led.openCount} / ${led.cap}). resolve one before opening another.`);
+  } else {
+    set('m-anomaly-status', `${led.openCount} open. the drawer can take ${led.cap - led.openCount} more.`);
+  }
+  const list = $('m-anomaly-list');
+  if (!list) return;
+  if (led.open.length === 0) {
+    list.innerHTML = '';
+    return;
+  }
+  list.innerHTML = led.open.map((a) =>
+    `<div class="row"><span>anomaly #${a.source_id} · depth ${f(a.depth, 2)} · telemetry ${f(a.telemetry, 2)} · elo ${f(a.elo, 0)}</span>` +
+    `<button class="anomaly-resolve" data-id="${a.source_id}" type="button">resolve</button></div>`).join('');
+}
+
+/// Render the rack panel. Lists the compiled rules and, if a fire just happened, the actions that
+/// fired. A `NaN` reading is shown as `—`.
+function renderRack(fired) {
+  const f = (v, d) => (Number.isFinite(v) ? v.toFixed(d) : '—');
+  const set = (id, txt) => { const el = $(id); if (el) el.textContent = txt; };
+  if (!kernelState.module) {
+    set('m-rack-status', 'the kernel is not built, so the rack cannot compile.');
+    set('m-rack-list', '');
+    return;
+  }
+  const ops = ['>', '<', '>=', '<=', '==', '!='];
+  if (anomalyState.rack.length === 0) {
+    set('m-rack-status', 'no rule compiled yet. wire one above and compile it.');
+  } else if (fired) {
+    set('m-rack-status', fired.length
+      ? `fired ${fired.length} rule(s): action(s) ${fired.join(', ')}.`
+      : 'fired no rules: no rule crossed its threshold.');
+  } else {
+    set('m-rack-status', `${anomalyState.rack.length} rule(s) compiled. fire the rack against a reading.`);
+  }
+  const list = $('m-rack-list');
+  if (!list) return;
+  if (anomalyState.rack.length === 0) {
+    list.innerHTML = '';
+    return;
+  }
+  list.innerHTML = anomalyState.rack.map((r, i) =>
+    `<div class="row"><span>rule ${i + 1}: sensor ${r.sensor} ${ops[r.op] || '?'} ${f(r.threshold, 2)} → action ${r.action}</span></div>`).join('');
 }
 
 // --------------------------------------------------------------------------------------------
@@ -5025,6 +5383,30 @@ $('mission-commit').addEventListener('click', () => { missionCommit(); });
 $('mission-fly').addEventListener('click', () => { missionFly(); });
 $('mission-score').addEventListener('click', () => { missionScore(); });
 
+// THE DRAWER AND THE RACK (P5 Block 5). The rack's compile and fire buttons drive the kernel's
+// rack exports; the anomaly resolve buttons are delegated, because the drawer list is rendered
+// dynamically and a per-button listener would not survive a re-render.
+$('rack-compile').addEventListener('click', () => {
+  const r = rackCompile();
+  $('m-rack-status').textContent = r
+    ? `compiled rule: sensor ${r.sensor} ${['>','<','>=','<=','==','!='][r.op]} ${r.threshold} → action ${r.action}.`
+    : 'the kernel refused the rule: check the operator and the threshold.';
+});
+$('rack-fire').addEventListener('click', () => {
+  rackFire();
+});
+// Delegate the anomaly resolve buttons. The drawer list is rebuilt on every render, so a single
+// listener on the list container catches every resolve button without being re-attached.
+$('m-anomaly-list').addEventListener('click', (e) => {
+  const btn = e.target.closest('.anomaly-resolve');
+  if (!btn) return;
+  const id = Number(btn.dataset.id);
+  const r = resolveAnomaly(id);
+  $('m-anomaly-status').textContent = r
+    ? `resolved anomaly #${id}. E_an is now ${r.toFixed(1)} (the kernel's weighted Elo).`
+    : `anomaly #${id} could not be resolved.`;
+});
+
 // The Akashi design hash is shown as soon as the kernel is built, so the version stamp is visible
 // before any entry is exported.
 function updateAkashiHash() {
@@ -5161,6 +5543,12 @@ loadKernel().then(() => {
   // The contract. Render the mission panel so it is present from the first frame; the price is the
   // kernel's, computed on demand, so the panel is correct before any contract is authored.
   renderMission();
+  // The drawer and the rack. Restore the persisted drawer state (§9.2: the save is an input log, so
+  // it always exists) and render both panels from the first frame; the anomalies are derived from
+  // the archive and the rack rules from the persisted state.
+  loadAnomalyState();
+  renderAnomaly();
+  renderRack();
   // Say which orbit is on screen. "wasm" means the kernel's own numbers; anything else is a named
   // failure rather than an orbit drawn by something else. A page that draws an ellipse without saying
   // where the ellipse came from is the defect this whole change exists to remove.
@@ -5460,6 +5848,17 @@ window.__odderon = {
   // reads these against the module's own exports.
   essenceLedger,
   renderEssence,
+  // The drawer and the rack (P5 Block 5: the failure-design and session layer, §7.3/§7.4/§5.5/§4).
+  // Exposed so a test can open an anomaly from a diverged mission, resolve one, compile and fire a
+  // rack rule, and confirm the E_an rating, the cap, and the fire are the kernel's -- the P5 gate.
+  anomalyLedger,
+  openAnomaly,
+  resolveAnomaly,
+  rackCompile,
+  rackFire,
+  renderAnomaly,
+  renderRack,
+  anomalyState,
   renderer: () => renderer,
   requestFrame,
   /**

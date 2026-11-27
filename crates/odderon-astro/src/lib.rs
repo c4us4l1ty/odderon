@@ -150,6 +150,19 @@ pub mod mission;
 /// N, a 95% interval, and the §2.2(a) competence-mirror bias. See [`essence::essence_cal`].
 pub mod essence;
 
+/// The Anomaly Drawer and the logic rack: the failure-design and session-architecture layer
+/// (bible §7.3, §7.4, §5.5, §4, §9.2).
+///
+/// Not astrodynamics, for the same reason [`mission`], [`essence`], [`cryo`], [`thermal`] and
+/// [`rocket`] are here: `odderon-astro` is the only `no_std` crate in the workspace, gated by the
+/// same kernel rules, and the `E_an` rating is a pure function of a mission's divergence (§4:
+/// "Blind, ranked, clocked root-cause resolution. Duel-style Elo per mission; weighted by how deep
+/// the fault was hidden and how little telemetry you were given"). [`mission`] scores a single
+/// prediction and [`essence`] aggregates a career into `E_cal`; this module is the third Esse axis,
+/// built on the Anomaly Drawer (§7.3, capped at five), rescue over restart (§7.4), and the logic
+/// rack (§5.5). See [`anomaly::anomaly_from_mission`].
+pub mod anomaly;
+
 /// Light-time and the comms link: the delay a signal takes to cross the distance between two
 /// positions, and the arrival time it predicts.
 ///

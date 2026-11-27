@@ -220,6 +220,14 @@ jobs:
       - name: essence ledger boundary (the calibration curve is the kernel's, proper and physical)
         run: node tools/check-essence.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
 
+      # The Anomaly Drawer and logic rack boundary, against the same binary: a diverged mission opens
+      # an anomaly with the kernel's depth/telemetry/elo, a non-diverged mission refuses, the drawer
+      # caps at five, the E_an rating moves by the kernel's duel-style Elo (weighted by depth and
+      # telemetry scarcity), the rack compiles valid rules and refuses invalid ones, every operator
+      # fires correctly, and the design hash is stable. Static half in `shell-claims`.
+      - name: anomaly drawer + rack boundary (the drawer, E_an, and rack are the kernel's)
+        run: node tools/check-anomaly.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
+
       - name: stage wasm artifacts
         run: |
           mkdir -p dist
@@ -423,6 +431,16 @@ jobs:
         run: node tools/check-essence.mjs
       - name: essence ledger verifier self-test (log, curve, refusal sound)
         run: node tools/check-essence.mjs --selftest
+
+      # The Anomaly Drawer and logic rack (P5 Block 5: the failure-design and session layer). The
+      # drawer cap is the kernel's (not a page-side rule), the anomaly is derived by the kernel (not
+      # on the page), the E_an rating is the kernel's duel-style Elo (not a page-side formula), the
+      # rack rule is the kernel's predicate (not a page-side comparison), and the drawer persists
+      # across sessions (§9.2 -- the save is an input log).
+      - name: "the drawer and the rack - the anomaly and E_an, checked"
+        run: node tools/check-anomaly.mjs
+      - name: anomaly drawer + rack verifier self-test (open, cap, resolve, rack sound)
+        run: node tools/check-anomaly.mjs --selftest
       # On 2026-11-24 this job failed on a condition the page handles correctly: the optional wasm
       # artifact is absent on a clean checkout, the browser logs a 404, and `tools/screenshot.mjs` treats
       # any console error as an untrustworthy frame. The capture now exempts that one error -- but only

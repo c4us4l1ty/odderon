@@ -1520,6 +1520,162 @@ pub extern "C" fn essence_design_hash() -> u64 {
     odderon_astro::essence::essence_design_hash()
 }
 
+// =============================================================================================
+// The Anomaly Drawer and the logic rack (P5 Block 5: the failure-design and session layer)
+// =============================================================================================
+//
+// `odderon_astro::anomaly` derives the E_an rating from a mission's divergence, caps the drawer at
+// five, and compiles logic-rack rules. These exports are the ABI the page calls:
+//
+// * `anomaly_from_mission` derives an anomaly from a mission's raw facts (the committed prediction,
+//   the outcome, the risk, the window) and writes the `Anomaly` struct to `out_off` as 5 f64:
+//   `[source_id, depth, telemetry, elo, resolved]`. Returns 5 on success, 0 if the mission did not
+//   diverge enough to open an anomaly or an input was invalid.
+// * `drawer_can_open` is the cap predicate: 1 if the drawer can take another anomaly, 0 if full.
+// * `elo_expected` and `elo_update` are the duel-style Elo: `elo_update` returns the new `E_an`
+//   rating, or NaN if the inputs are invalid.
+// * `rack_compile` validates and compiles a rule `IF sensor <op> threshold THEN action`, writing
+//   the `RackRule` to `out_off` as 4 f64: `[sensor, op, threshold, action]`. Returns 4 on success,
+//   0 if the op is invalid or the threshold is non-finite.
+// * `rack_fires` reads a compiled rule back from `rule_off` and evaluates it against `reading`:
+//   1 if the rule fires, 0 if not (or if the reading is NaN).
+// * `anomaly_design_hash` pins the drawer/Elo/rack constants.
+//
+// Like the essence exports, the anomaly and the rack rule cross the ABI as caller-provided buffers
+// because they are array/struct values; the kernel module stays `forbid(unsafe_code)` and pure, and
+// all `unsafe` is confined to this ABI boundary.
+
+/// The number of f64 the `Anomaly` struct occupies in linear memory.
+const ANOMALY_FLOATS: usize = 5;
+/// The number of f64 the `RackRule` struct occupies in linear memory.
+const RACK_RULE_FLOATS: usize = 4;
+
+/// Derive an anomaly from a mission's divergence (§7.3, §4).
+///
+/// Reads the mission's raw facts and writes the `Anomaly` to `out_off` as 5 f64:
+/// `[source_id, depth, telemetry, elo, resolved]`. Returns 5 on success, 0 if the mission did not
+/// diverge enough to open an anomaly or an input was invalid (a refusal — the page must treat 0 as
+/// "no anomaly opened," not read a partial result).
+#[unsafe(no_mangle)]
+pub extern "C" fn anomaly_from_mission(
+    source_id: u32,
+    predicted_p: f64,
+    occurred: u32,
+    risk: f64,
+    window_days: f64,
+    out_off: u32,
+) -> u32 {
+    let a = match odderon_astro::anomaly::anomaly_from_mission(
+        source_id,
+        predicted_p,
+        occurred,
+        risk,
+        window_days,
+    ) {
+        Some(a) => a,
+        None => return 0,
+    };
+    // SAFETY: the caller guarantees `out_off` points to ANOMALY_FLOATS f64 in linear memory.
+    let out = unsafe { core::slice::from_raw_parts_mut(out_off as *mut f64, ANOMALY_FLOATS) };
+    out[0] = a.source_id as f64;
+    out[1] = a.depth;
+    out[2] = a.telemetry;
+    out[3] = a.elo;
+    out[4] = if a.resolved { 1.0 } else { 0.0 };
+    ANOMALY_FLOATS as u32
+}
+
+/// Whether the drawer can open another anomaly (§7.3: at most five). 1 if yes, 0 if full.
+#[unsafe(no_mangle)]
+pub extern "C" fn drawer_can_open(open_count: u32) -> u32 {
+    if odderon_astro::anomaly::drawer_can_open(open_count as usize) {
+        1
+    } else {
+        0
+    }
+}
+
+/// The Elo expected score of `rating` against `opponent` (§4's duel-style Elo). NaN on refusal.
+#[unsafe(no_mangle)]
+pub extern "C" fn elo_expected(rating: f64, opponent: f64) -> f64 {
+    odderon_astro::anomaly::elo_expected(rating, opponent)
+}
+
+/// The weighted `E_an` update from resolving an anomaly (§4). Returns the new rating, or NaN if the
+/// inputs are invalid (a refusal, never a fabricated rating).
+#[unsafe(no_mangle)]
+pub extern "C" fn elo_update(
+    rating: f64,
+    opponent: f64,
+    outcome: u32,
+    depth: f64,
+    telemetry: f64,
+) -> f64 {
+    odderon_astro::anomaly::elo_update(rating, opponent, outcome, depth, telemetry)
+}
+
+/// Compile a logic-rack rule `IF sensor <op> threshold THEN action` (§5.5).
+///
+/// Writes the `RackRule` to `out_off` as 4 f64: `[sensor, op, threshold, action]`. Returns 4 on
+/// success, 0 if the op is invalid or the threshold is non-finite (a refusal — the page must treat
+/// 0 as "the rule did not compile," not read a partial result).
+#[unsafe(no_mangle)]
+pub extern "C" fn rack_compile(
+    sensor: u32,
+    op: u32,
+    threshold: f64,
+    action: u32,
+    out_off: u32,
+) -> u32 {
+    let rule = match odderon_astro::anomaly::rack_compile(sensor, op as u8, threshold, action) {
+        Some(r) => r,
+        None => return 0,
+    };
+    // SAFETY: the caller guarantees `out_off` points to RACK_RULE_FLOATS f64 in linear memory.
+    let out = unsafe { core::slice::from_raw_parts_mut(out_off as *mut f64, RACK_RULE_FLOATS) };
+    out[0] = rule.sensor as f64;
+    out[1] = rule.op as u8 as f64;
+    out[2] = rule.threshold;
+    out[3] = rule.action as f64;
+    RACK_RULE_FLOATS as u32
+}
+
+/// Evaluate a compiled rack rule against a sensor reading (§5.5).
+///
+/// Reads the `RackRule` back from `rule_off` (4 f64: `[sensor, op, threshold, action]`, as written
+/// by [`rack_compile`]) and returns 1 if the rule fires, 0 if not. A NaN reading does not fire. The
+/// rule must have been produced by [`rack_compile`]; a rule written with a different layout is the
+/// caller's bug, not the kernel's.
+#[unsafe(no_mangle)]
+pub extern "C" fn rack_fires(rule_off: u32, reading: f64) -> u32 {
+    // SAFETY: the caller guarantees `rule_off` points to RACK_RULE_FLOATS f64 written by
+    // `rack_compile`.
+    let raw = unsafe { core::slice::from_raw_parts(rule_off as *const f64, RACK_RULE_FLOATS) };
+    let op = match odderon_astro::anomaly::Op::from_code(raw[1] as u8) {
+        Some(op) => op,
+        // A rule whose op code is not a valid operator was never produced by `rack_compile`; treat
+        // it as not firing rather than trapping.
+        None => return 0,
+    };
+    let rule = odderon_astro::anomaly::RackRule {
+        sensor: raw[0] as u32,
+        op,
+        threshold: raw[2],
+        action: raw[3] as u32,
+    };
+    if odderon_astro::anomaly::rack_fires(&rule, reading) {
+        1
+    } else {
+        0
+    }
+}
+
+/// The deterministic design hash of the anomaly/drawer/rack constants.
+#[unsafe(no_mangle)]
+pub extern "C" fn anomaly_design_hash() -> u64 {
+    odderon_astro::anomaly::anomaly_design_hash()
+}
+
 #[cfg(test)]
 mod tests {
     // The ABI is a contract a host can violate with a single bad number, and two of the values it can
