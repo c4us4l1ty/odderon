@@ -265,6 +265,24 @@
   </div>
 
   <div class="sep"></div>
+  <h3>the rendezvous</h3>
+  <div class="muted">two circular orbits, one meeting: the Hohmann transfer Δv, the transfer time, the lead angle the target must have at the burn, and the window until the geometry lines up. all four are the kernel's, not the page's.</div>
+  <div class="pad-inputs">
+    <label>from radius (km) <input id="rendezvous-r1" type="number" min="100" step="100" value="6778"></label>
+    <label>to radius (km) <input id="rendezvous-r2" type="number" min="100" step="100" value="42164"></label>
+  </div>
+  <div class="row big" id="m-rendezvous-status">—</div>
+  <div class="row"><span>transfer Δv (km/s)</span><span id="m-rendezvous-dv">—</span></div>
+  <div class="row"><span>transfer time (s)</span><span id="m-rendezvous-time">—</span></div>
+  <div class="row"><span>phase angle (deg)</span><span id="m-rendezvous-phase">—</span></div>
+  <div class="row"><span>window (s)</span><span id="m-rendezvous-window">—</span></div>
+  <div class="row"><span>design hash</span><span id="m-rendezvous-hash">—</span></div>
+  <div class="pad-inputs">
+    <label>current lead (deg) <input id="rendezvous-theta" type="number" min="0" max="360" step="1" value="0"></label>
+    <button id="rendezvous-compute" type="button">compute transfer</button>
+  </div>
+
+  <div class="sep"></div>
   <h3>akashi entry</h3>
   <div class="muted" id="akashi-intro">mark an expectation, fill the line, and export the Loop of Consequence as a self-contained report.</div>
   <div class="row"><span>design hash</span><span id="m-akashi-hash">—</span></div>
@@ -3361,6 +3379,110 @@ function renderCausalMail(nowS) {
 // the same physics the flight is. A refused launch yields no Δv: a mission that never flew has
 // nothing to score a prediction against, and the score is a refusal (`NaN`), not a number.
 
+// --------------------------------------------------------------------------------------------
+// orbital rendezvous (Block N1: the Hohmann transfer, the phase angle, the window)
+// --------------------------------------------------------------------------------------------
+// "Two circular orbits, one meeting." The kernel owns the transfer Δv, the transfer time, the
+// phase angle the target must have at the burn, and the window until the geometry lines up. The
+// page holds no transfer formula and no Δv constant: every number on the panel is a kernel call,
+// so a verifier who calls the same four functions with the same radii gets the same four numbers.
+
+/// The rendezvous state. The two radii are inputs (read from the form); the Δv, transfer time,
+/// phase angle, and window are all kernel readings. `lastTheta` is the lead angle the player
+/// entered, in radians, so the window computation is reproducible from the panel state alone.
+const rendezvousState = {
+  r1: 6778.137,  // departure orbit radius, km (LEO, 400 km altitude)
+  r2: 42164.0,   // arrival orbit radius, km (GEO)
+  thetaDeg: 0,   // current lead angle, degrees
+  dv: null,
+  transferTimeS: null,
+  phaseDeg: null,
+  windowS: null,
+};
+
+/// Compute the rendezvous readings from the authored radii and the current lead angle. All four
+/// numbers are kernel calls: the page computes no transfer Δv and holds no Hohmann constant. A
+/// kernel that refuses the inputs (non-positive radii, non-finite values) produces `valid: false`,
+/// never a number the panel would print as a transfer plan.
+function rendezvousReadings(r1, r2, thetaDeg) {
+  const k = kernelState.module;
+  if (!k) return { source: 'absent' };
+  const mu = k.orbit_mu();
+  const theta = thetaDeg * Math.PI / 180;
+  const dv = k.rendezvous_transfer_dv(r1, r2, mu);
+  const transferTime = k.rendezvous_transfer_time_s(r1, r2, mu);
+  const phase = k.rendezvous_phase_angle(r1, r2, mu);
+  const window = k.rendezvous_window_s(r1, r2, theta, mu);
+  const valid = Number.isFinite(dv) && Number.isFinite(transferTime) &&
+    Number.isFinite(phase) && Number.isFinite(window);
+  if (!valid) return { source: 'wasm kernel', valid: false };
+  return {
+    source: 'wasm kernel',
+    valid: true,
+    dv,
+    transferTime,
+    phase,
+    window,
+  };
+}
+
+/// Refresh the rendezvous HUD from the current state. A `NaN` reading is shown as `—`, the same
+/// convention every other panel uses. The status line is the headline: whether the transfer is
+/// computable, and if so, whether the window is open now or how long until it opens.
+function renderRendezvous() {
+  const fmt = (v, d) => Number.isFinite(v) ? v.toFixed(d) : '—';
+  // The design hash is the kernel's own version stamp: it pins the rendezvous constants, so a
+  // verifier can detect a stale kernel. Displayed from the kernel, never a page constant.
+  const k = kernelState.module;
+  $('m-rendezvous-hash').textContent = k ? '0x' + k.rendezvous_design_hash().toString(16) : '—';
+  const r = rendezvousState.dv === null
+    ? { source: 'absent', valid: false }
+    : { source: 'wasm kernel', valid: true, dv: rendezvousState.dv, transferTime: rendezvousState.transferTimeS, phase: rendezvousState.phaseDeg, window: rendezvousState.windowS };
+  if (!r.valid) {
+    $('m-rendezvous-status').textContent = 'transfer not computed -- set two orbit radii and press compute.';
+    $('m-rendezvous-dv').textContent = '—';
+    $('m-rendezvous-time').textContent = '—';
+    $('m-rendezvous-phase').textContent = '—';
+    $('m-rendezvous-window').textContent = '—';
+    return;
+  }
+  $('m-rendezvous-dv').textContent = fmt(r.dv, 4);
+  $('m-rendezvous-time').textContent = fmt(r.transferTime, 1);
+  $('m-rendezvous-phase').textContent = fmt(r.phase * 180 / Math.PI, 2);
+  $('m-rendezvous-window').textContent = fmt(r.window, 1);
+  if (r.window <= 0) {
+    $('m-rendezvous-status').textContent = 'the window is open now -- the lead angle matches the transfer geometry.';
+  } else {
+    $('m-rendezvous-status').textContent = `the window opens in ${fmt(r.window, 0)} s (${fmt(r.window / 60, 1)} min).`;
+  }
+}
+
+/// Compute the rendezvous readings from the form and refresh the panel. Reads the two radii and
+/// the lead angle from the inputs, calls the kernel, and stores the readings in `rendezvousState`.
+function computeRendezvous() {
+  const r1 = parseFloat($('rendezvous-r1').value);
+  const r2 = parseFloat($('rendezvous-r2').value);
+  const thetaDeg = parseFloat($('rendezvous-theta').value);
+  rendezvousState.r1 = r1;
+  rendezvousState.r2 = r2;
+  rendezvousState.thetaDeg = thetaDeg;
+  const r = rendezvousReadings(r1, r2, thetaDeg);
+  if (r.source !== 'wasm kernel' || !r.valid) {
+    rendezvousState.dv = null;
+    rendezvousState.transferTimeS = null;
+    rendezvousState.phaseDeg = null;
+    rendezvousState.windowS = null;
+    renderRendezvous();
+    return r;
+  }
+  rendezvousState.dv = r.dv;
+  rendezvousState.transferTimeS = r.transferTime;
+  rendezvousState.phaseDeg = r.phase;
+  rendezvousState.windowS = r.window;
+  renderRendezvous();
+  return r;
+}
+
 /// The mission state. The contract's parameters are inputs (the page reads them from the form); the
 /// price, the achieved Δv, and the score are all kernel readings. `committed` holds the prediction
 /// the player committed before flying -- once set it is frozen, because a prediction cannot be
@@ -5401,6 +5523,7 @@ function readGroundStation() {
 // arrival are the kernel's, computed at the send instant. A send with no computable link is refused
 // rather than stamped with a made-up delay, the same no-substitute rule the orbit and pass follow.
 $('comms-send').addEventListener('click', () => { sendComms(performance.now()); });
+$('rendezvous-compute').addEventListener('click', () => { computeRendezvous(); });
 
 // THE AKASHI EXPORT. Generates a self-contained HTML report of the Loop of Consequence from the
 // kernel's readings. The report is the product: deterministic, verifiable, offline-readable.
@@ -5906,6 +6029,14 @@ window.__odderon = {
   recordMail,
   recordMailInbox,
   renderCausalMail,
+  // Orbital rendezvous (Block N1: the Hohmann transfer). Exposed so a test can compute a transfer
+  // from two radii and a lead angle, and confirm the Δv, transfer time, phase angle, and window are
+  // the kernel's -- not the page's. `tools/check-rendezvous.mjs` reads these against the module's
+  // own exports and against the panel.
+  rendezvousState,
+  rendezvousReadings,
+  renderRendezvous,
+  computeRendezvous,
   // The contract (P5: the career core, §3.2 / §4.3 / §12.1). Exposed so a test can price a
   // contract, commit a prediction, fly the mission, and confirm the price, the achieved Δv, and
   // the score are the kernel's -- the P5 gate, the mission loop firing end-to-end with a proper

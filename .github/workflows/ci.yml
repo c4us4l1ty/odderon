@@ -187,6 +187,14 @@ jobs:
       - name: lighttime boundary (a real light-time, honestly refused for a bad site)
         run: node tools/check-lighttime.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
 
+      # The rendezvous boundary, against the same binary: the LEO-to-GEO Hohmann transfer Δv matches
+      # the textbook value, the transfer time is half the ellipse period, the phase angle is a pure
+      # function of the radius ratio (independent of mu), the window at the required lead is zero, a
+      # same-orbit transfer is refused for time and phase but costs zero Δv, and NaN inputs are refused
+      # -- the replay gate. Static half in `shell-claims`.
+      - name: rendezvous boundary (the Hohmann transfer is the kernel's, physical and reproducible)
+        run: node tools/check-rendezvous.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
+
       # The museum archive's boundary, against the same binary: the archive adds no new kernel exports,
       # it re-derives every entry from the existing ones (rocket verdict, pad design hash, comms
       # light-time). This confirms those exports are present and physical -- a verifiable archive needs
@@ -386,6 +394,16 @@ jobs:
 
       - name: lighttime verifier self-test (accepts good exports, rejects bad)
         run: node tools/check-lighttime.mjs --selftest
+
+      # Block N1: the rendezvous. The page must read the transfer Δv, transfer time, phase angle and
+      # window from the kernel's `rendezvous_*` exports -- no local Hohmann formula, no local
+      # sqrt(mu/r), no substitute plan when the kernel is absent. This is the gate that makes the
+      # rendezvous prediction mechanically the kernel's own, the same way the other P3 gates guard theirs.
+      - name: the rendezvous computes the transfer from the kernel, not from a JS solver
+        run: node tools/check-rendezvous.mjs
+
+      - name: rendezvous verifier self-test (accepts good exports, rejects bad)
+        run: node tools/check-rendezvous.mjs --selftest
 
       # P4 Block 7: the museum. The page must record the career as it happens (vehicle, report, comms)
       # with the kernel's own readings and a physics-only hash, and verification must re-derive every
