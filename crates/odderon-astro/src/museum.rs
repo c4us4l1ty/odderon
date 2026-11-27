@@ -186,7 +186,11 @@ fn scale_from_size(size: f64) -> f64 {
 /// The layout is a pure function of `entries`: the same entries, in the same order, produce the
 /// same gallery on every platform, every run.
 pub fn museum_layout(entries: &[EntryDesc], out: &mut [Exhibit]) -> usize {
-    let n = if entries.len() < out.len() { entries.len() } else { out.len() };
+    let n = if entries.len() < out.len() {
+        entries.len()
+    } else {
+        out.len()
+    };
     let mut i = 0;
     while i < n {
         let e = entries[i];
@@ -334,7 +338,12 @@ mod tests {
     #[test]
     fn spiral_grows_outward() {
         // Later exhibits sit further from the centre.
-        let entries = [vehicle(0, 100.0), vehicle(1, 100.0), vehicle(2, 100.0), vehicle(3, 100.0)];
+        let entries = [
+            vehicle(0, 100.0),
+            vehicle(1, 100.0),
+            vehicle(2, 100.0),
+            vehicle(3, 100.0),
+        ];
         let mut out = [Exhibit {
             x: 0.0,
             z: 0.0,
@@ -387,11 +396,24 @@ mod tests {
             id: 0,
         }; 2];
         let entries = [
-            EntryDesc { kind: 0, size: 100.0, orient: 1.5, id: 0 },
-            EntryDesc { kind: 0, size: 100.0, orient: f64::NAN, id: 1 },
+            EntryDesc {
+                kind: 0,
+                size: 100.0,
+                orient: 1.5,
+                id: 0,
+            },
+            EntryDesc {
+                kind: 0,
+                size: 100.0,
+                orient: f64::NAN,
+                id: 1,
+            },
         ];
         museum_layout(&entries, &mut out);
-        assert!(odderon_dmath::fabs(out[0].rotation - 1.5) < 1e-12, "finite orient must be used");
+        assert!(
+            odderon_dmath::fabs(out[0].rotation - 1.5) < 1e-12,
+            "finite orient must be used"
+        );
         assert_eq!(out[1].rotation, 0.0, "non-finite orient must be zero");
     }
 
@@ -460,8 +482,18 @@ mod tests {
     #[test]
     fn layout_exhibits_carry_their_kind_and_id() {
         let entries = [
-            EntryDesc { kind: ExhibitKind::Vehicle.code(), size: 100.0, orient: 0.0, id: 3 },
-            EntryDesc { kind: ExhibitKind::Wreck.code(), size: 50.0, orient: 0.0, id: 4 },
+            EntryDesc {
+                kind: ExhibitKind::Vehicle.code(),
+                size: 100.0,
+                orient: 0.0,
+                id: 3,
+            },
+            EntryDesc {
+                kind: ExhibitKind::Wreck.code(),
+                size: 50.0,
+                orient: 0.0,
+                id: 4,
+            },
         ];
         let mut out = [Exhibit {
             x: 0.0,
