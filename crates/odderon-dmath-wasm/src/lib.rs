@@ -1945,10 +1945,7 @@ fn read_museum_descs(
     // SAFETY: bounded by the caller's guarantee, checked against MUSEUM_MAX_N above.
     let raw =
         unsafe { core::slice::from_raw_parts(desc_off as *const f64, n * MUSEUM_DESC_FLOATS) };
-    let mut arr = [
-        odderon_astro::museum::EntryDesc { kind: 0, size: 0.0, orient: 0.0, id: 0 };
-        MUSEUM_MAX_N
-    ];
+        let mut arr = [odderon_astro::museum::EntryDesc { kind: 0, size: 0.0, orient: 0.0, id: 0 }; MUSEUM_MAX_N];
     let mut i = 0;
     while i < n {
         let base = i * MUSEUM_DESC_FLOATS;
@@ -1979,10 +1976,22 @@ pub extern "C" fn museum_layout(desc_off: u32, n: u32, out_off: u32) -> u32 {
         None => return 0,
     };
     let n = n as usize;
-    let mut exhibits = [odderon_astro::museum::Exhibit { x: 0.0, z: 0.0, scale: 0.0, rotation: 0.0, kind: 0, id: 0 }; MUSEUM_MAX_N];
+    let mut exhibits = [
+        odderon_astro::museum::Exhibit {
+            x: 0.0,
+            z: 0.0,
+            scale: 0.0,
+            rotation: 0.0,
+            kind: 0,
+            id: 0,
+        };
+        MUSEUM_MAX_N
+    ];
     let count = odderon_astro::museum::museum_layout(&descs[..n], &mut exhibits);
     // SAFETY: the caller guarantees `out_off` points to `count * MUSEUM_EXHIBIT_FLOATS` f64.
-    let out = unsafe { core::slice::from_raw_parts_mut(out_off as *mut f64, count * MUSEUM_EXHIBIT_FLOATS) };
+    let out = unsafe {
+        core::slice::from_raw_parts_mut(out_off as *mut f64, count * MUSEUM_EXHIBIT_FLOATS)
+    };
     let mut i = 0;
     while i < count {
         let base = i * MUSEUM_EXHIBIT_FLOATS;

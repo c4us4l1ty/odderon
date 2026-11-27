@@ -235,6 +235,7 @@ function selftest() {
   const fnSource = [
     "const archive = []; let archiveSeq = 0;",
     "function renderArchive() {}",
+    "function renderMuseum() {}",
     "function renderMission() {}",
     "function renderEssence() {}",
     "function saveArchive() {}",
