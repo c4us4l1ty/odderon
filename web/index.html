@@ -277,7 +277,13 @@
   <div class="muted">a mission is a contract: the price is the kernel's, a function of the Δv, mass, risk and window it asks for (money is physics, not a difficulty knob). commit a prediction before you fly, and the kernel scores it with a proper rule -- never an accuracy percentage.</div>
   <div class="row"><span>contract price (mcu)</span><span id="m-mission-price">—</span></div>
   <div class="row"><span>achieved Δv (km/s)</span><span id="m-mission-dv">—</span></div>
-  <div class="row"><span>essence (calibration)</span><span id="m-mission-essence">—</span></div>
+  <div class="muted" style="margin-top:6px">the Esse ledger (§4.3): the calibration rating aggregated over your scored missions — a reliability curve, not an average. the kernel owns the aggregate; the page writes the mission log and reads the rating back.</div>
+  <div class="row"><span>essence · N</span><span id="m-essence-n">—</span></div>
+  <div class="row"><span>essence · mean log score</span><span id="m-essence-mean">—</span></div>
+  <div class="row"><span>essence · bias</span><span id="m-essence-bias">—</span></div>
+  <div class="row"><span>essence · 95% interval</span><span id="m-essence-ci">—</span></div>
+  <div class="row"><span>essence · status</span><span id="m-essence-prov">—</span></div>
+  <div class="row big" id="m-essence-curve">no scored missions yet.</div>
   <div class="row big" id="m-mission-status">no contract authored yet.</div>
   <div class="pad-inputs">
     <label>Δv budget (km/s)<input id="mission-dv" type="number" min="0" step="0.1" value="7.8"></label>
@@ -1506,7 +1512,11 @@ async function loadKernel() {
                     // P5: the mission economy and Esse. The career core (bible §3.2 / §4.3 / §12.1).
                     // The contract price is the kernel's (money is physics), the achieved Δv is read
                     // through the rocket kernel, and the two Esse scores are proper scoring rules.
-                    'contract_price', 'achieved_dv', 'log_score', 'crps', 'mission_design_hash'];
+                    'contract_price', 'achieved_dv', 'log_score', 'crps', 'mission_design_hash',
+                    // P5 Block 9: the Esse career ledger. The aggregate is the kernel's -- the
+                    // page writes the mission log into the kernel's memory and reads the rating
+                    // back. A verifier, given the same log, calls the same exports (§4.3 rule 4).
+                    'essence_summary', 'essence_reliability', 'essence_design_hash'];
     const missing = needed.filter((n) => typeof ex[n] !== 'function');
     if (missing.length) throw new Error('module missing exports: ' + missing.join(', '));
     kernelState.module = ex;
@@ -3264,8 +3274,9 @@ const missionState = {
   achievedDv: null,
   // The kernel's score of the committed prediction against the achieved Δv, or null.
   score: null,
-  // The running essence (calibration) score: the mean log score across scored missions.
-  essence: null,
+  // The count of missions scored in this session. The Esse ledger's N is not this counter -- it is
+  // the archive's count of scored missions, because the rating is computed from the verified replay
+  // (§4.3 rule 4), not from a session-local tally the page could let drift.
   scored: 0,
 };
 
@@ -3355,15 +3366,15 @@ function missionScore() {
   }
   missionState.score = score;
   missionState.scored += 1;
-  // Esse (calibration) is the running mean of the log scores across scored missions -- a proper
-  // aggregate, reported with its N, not an accuracy percentage.
-  missionState.essence = missionState.essence === null
-    ? score
-    : missionState.essence + (score - missionState.essence) / missionState.scored;
+  // Esse is NOT a running mean the page keeps -- §4.3 rule 1 forbids collapsing calibration into an
+  // average, because an average cannot tell a calibrated forecaster from a lucky one. The rating is
+  // the kernel's reliability curve over the whole mission log, recomputed from the archive (the
+  // verified replay) after this mission is recorded. The page holds no Esse aggregate of its own.
   $('mission-note').textContent =
-    `scored: ${score.toFixed(4)} (${met ? 'met' : 'missed'} the ${missionState.dvBudget} km/s budget). ` +    `essence (calibration) over ${missionState.scored} mission: ${missionState.essence.toFixed(4)}.`;
+    `scored: ${score.toFixed(4)} (${met ? 'met' : 'missed'} the ${missionState.dvBudget} km/s budget). ` +    `the Esse ledger recomputes from the mission log.`;
   recordMission();
   renderMission();
+  renderEssence();
   return score;
 }
 
@@ -3397,16 +3408,123 @@ function renderMission() {
   const statusEl = $('m-mission-status');
   if (priceEl) priceEl.textContent = missionState.price === null ? '—' : f(missionState.price, 0);
   if (dvEl) dvEl.textContent = missionState.achievedDv === null ? '—' : f(missionState.achievedDv, 3);
-  if (essEl) essEl.textContent = missionState.essence === null ? '—' : f(missionState.essence, 4);
+  // The essence rows are the kernel's ledger, rendered by renderEssence() -- not a value the page
+  // keeps. The status line reports the per-mission score; the ledger below reports the career.
   if (statusEl) {
     if (missionState.score === null) {
       statusEl.textContent = missionState.committed
         ? 'prediction committed, awaiting the flight.'
         : 'no contract authored yet.';
     } else {
-      statusEl.textContent = `scored: ${f(missionState.score, 4)} · essence ${f(missionState.essence, 4)} over ${missionState.scored}.`;
+      statusEl.textContent = `scored: ${f(missionState.score, 4)} · the Esse ledger recomputes below.`;
     }
   }
+  renderEssence();
+}
+
+/// The Esse career ledger (§4.3): aggregate the archive's scored missions into the E_cal rating.
+///
+/// The aggregate is the kernel's. The page builds the prediction log from the recorded missions --
+/// each one's committed probability and whether its achieved Δv met its budget -- writes it into the
+/// kernel's linear memory, and reads the summary and the reliability curve back. The page computes no
+/// score and no curve of its own: a verifier, given the same mission log, calls the same exports and
+/// gets the same rating, which is what makes it recomputable (§4.3 rule 4).
+///
+/// Returns { source, valid, ... } so a missing kernel is a refusal, not a 0.
+function essenceLedger() {
+  const k = kernelState.module;
+  if (!k || !k.memory) return { source: 'absent' };
+
+  // The prediction log: each scored mission's (committed probability, outcome). The outcome is
+  // whether the achieved Δv met the budget -- the same predicate missionScore scores against.
+  const preds = [];
+  for (const e of archive) {
+    if (e.type !== 'mission' || !e.readings || !e.params) continue;
+    if (e.readings.score === null || e.readings.score === undefined) continue;
+    const p = e.params.p;
+    if (p === null || p === undefined || !Number.isFinite(p)) continue;
+    const met = (e.readings.dv >= e.params.dv) ? 1 : 0;
+    preds.push([p, met]);
+  }
+  const n = preds.length;
+
+  // Write the predictions into the kernel's memory past its data segments, growing the memory if the
+  // log is large. The buffers are laid out: p[n], occ[n], summary[7], reliability[BIN_COUNT*4].
+  const mem = k.memory;
+  const pageBytes = 65536;
+  const BIN_COUNT = 10;
+  const need = n * 8 + n * 4 + 7 * 8 + BIN_COUNT * 4 * 8;
+  const base = mem.buffer.byteLength;
+  const pages = Math.ceil(need / pageBytes);
+  if (pages > 0) {
+    try { mem.grow(pages); } catch (err) { return { source: 'wasm kernel', valid: false, reason: 'memory' }; }
+  }
+  // The grow replaces the backing buffer, so the DataView is created after it.
+  const dv = new DataView(mem.buffer);
+  const pOff = base;
+  const occOff = base + n * 8;
+  const sumOff = occOff + n * 4;
+  const relOff = sumOff + 7 * 8;
+  for (let i = 0; i < n; i++) {
+    dv.setFloat64(pOff + i * 8, preds[i][0], true);
+    dv.setUint32(occOff + i * 4, preds[i][1], true);
+  }
+  if (k.essence_summary(pOff, occOff, n, sumOff) !== 7) {
+    return { source: 'wasm kernel', valid: false, reason: 'summary refused' };
+  }
+  if (k.essence_reliability(pOff, occOff, n, relOff) !== BIN_COUNT) {
+    return { source: 'wasm kernel', valid: false, reason: 'reliability refused' };
+  }
+  const bins = [];
+  for (let i = 0; i < BIN_COUNT; i++) {
+    const b = relOff + i * 32;
+    bins.push({
+      center: dv.getFloat64(b, true),
+      predicted: dv.getFloat64(b + 8, true),
+      observed: dv.getFloat64(b + 16, true),
+      count: Math.round(dv.getFloat64(b + 24, true)),
+    });
+  }
+  return {
+    source: 'wasm kernel', valid: true,
+    n: Math.round(dv.getFloat64(sumOff, true)),
+    mean: dv.getFloat64(sumOff + 8, true),
+    brier: dv.getFloat64(sumOff + 16, true),
+    bias: dv.getFloat64(sumOff + 24, true),
+    ci95_lo: dv.getFloat64(sumOff + 32, true),
+    ci95_hi: dv.getFloat64(sumOff + 40, true),
+    provisional: dv.getFloat64(sumOff + 48, true) === 1,
+    bins,
+  };
+}
+
+/// Render the Esse ledger rows. A `NaN` reading is shown as `—`, the convention every panel uses. The
+/// reliability curve is rendered as `center: predicted→observed (count)` per non-empty bin; a
+/// calibrated forecaster has predicted ≈ observed in every bin (§4.3).
+function renderEssence() {
+  const f = (v, d) => (Number.isFinite(v) ? v.toFixed(d) : '—');
+  const led = essenceLedger();
+  const set = (id, txt) => { const el = $(id); if (el) el.textContent = txt; };
+  if (!led.valid) {
+    set('m-essence-n', '—');
+    set('m-essence-mean', '—');
+    set('m-essence-bias', '—');
+    set('m-essence-ci', '—');
+    set('m-essence-prov', led.source === 'absent' ? 'no kernel' : 'refused');
+    set('m-essence-curve', led.source === 'absent' ? 'the kernel is not built, so there is no ledger.' : 'the ledger refused the mission log.');
+    return;
+  }
+  set('m-essence-n', String(led.n));
+  set('m-essence-mean', f(led.mean, 4));
+  set('m-essence-bias', f(led.bias, 4));
+  set('m-essence-ci', `${f(led.ci95_lo, 4)} … ${f(led.ci95_hi, 4)}`);
+  set('m-essence-prov', led.provisional ? `provisional (N < 30)` : `measured (N ≥ 30)`);
+  const cells = led.bins
+    .filter((b) => b.count > 0)
+    .map((b) => `${b.center.toFixed(2)}: ${b.predicted.toFixed(2)}→${b.observed.toFixed(2)} (${b.count})`);
+  set('m-essence-curve', cells.length
+    ? `reliability curve — ${cells.length} bin(s) filled: ${cells.join('  ·  ')}`
+    : 'no scored missions yet.');
 }
 
 // --------------------------------------------------------------------------------------------
@@ -5337,6 +5455,11 @@ window.__odderon = {
   missionScore,
   recordMission,
   renderMission,
+  // P5 Block 9: the Esse career ledger. Exposed so a test can feed the archive's mission log and
+  // confirm the rating is the kernel's reliability curve -- not a mean the page keeps. The gate
+  // reads these against the module's own exports.
+  essenceLedger,
+  renderEssence,
   renderer: () => renderer,
   requestFrame,
   /**

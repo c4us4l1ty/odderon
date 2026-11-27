@@ -236,6 +236,7 @@ function selftest() {
     "const archive = []; let archiveSeq = 0;",
     "function renderArchive() {}",
     "function renderMission() {}",
+    "function renderEssence() {}",
     "function $(id) { const v = { 'mission-dv': '7.8', 'mission-mass': '500', 'mission-risk': '0', 'mission-window': '30', 'mission-p': '0.8' }[id]; return { value: v === undefined ? '0' : v }; }",
     extract("archiveSerialize"),
     extract("archiveHash"),
@@ -261,7 +262,10 @@ function selftest() {
     crps: (lo, hi, y) => { const w = hi - lo; return Math.abs(y - (lo + hi) / 2) + w / 6; },
     mission_design_hash: () => 12345n,
   };
-  const missionState = { dvBudget: 7.8, mass: 500, risk: 0, window: 30, price: null, committed: null, achievedDv: null, score: null, essence: null, scored: 0 };
+  // Block 9 removed the page-side running mean: the Esse rating is the kernel reliability curve,
+  // built by the essence ledger from the archive. The score here is the kernel log score; the
+  // ledger shape is the essence gate's contract.
+  const missionState = { dvBudget: 7.8, mass: 500, risk: 0, window: 30, price: null, committed: null, achievedDv: null, score: null, scored: 0 };
   const rocketParams = { latitudeDeg: 0, azimuthDeg: 0, elevationDeg: 30, burnoutVelocity: 7.0 };
   const sandbox = {
     kernelState: { module: shimKernel },
@@ -292,7 +296,8 @@ function selftest() {
   results.push(["the prediction is scored by the kernel", Number.isFinite(score)]);
   // Achieved Δv 7.0 < budget 7.8, so the outcome is "missed": the log score is -ln(1-p).
   results.push(["the score is the proper log score for a miss", Math.abs(score - (-Math.log(1 - 0.8))) < 1e-12]);
-  results.push(["essence is the running mean of the log scores", Math.abs(ms.essence - score) < 1e-12]);
+  // The page keeps no running mean of the Esse rating -- the ledger is the kernel curve.
+  results.push(["the page keeps no running Esse mean", ms.essence === undefined]);
 
   // Record + verify: a scored mission is recorded and verifies against the shim kernel.
   const last = archive[archive.length - 1];
