@@ -356,9 +356,12 @@ try {
   check("an open, settled room shows a temperature and no clock", !before.hasTrajectory && /C/.test(before.row), before.row);
 
   // Close the curtain and watch the clock. The rate claim is measured against WALL time.
+  // A 3 s window, not 1.2 s: the sandbox's event-loop latency can stretch a short
+  // measurement enough to push the implied rate outside a tight tolerance. Three seconds
+  // averages over enough frames that the rate estimate is stable regardless of scheduling jitter.
   const startedAt = Date.now();
   await page.evaluate(() => document.getElementById("curtain").click());
-  await new Promise((r) => setTimeout(r, 1200));
+  await new Promise((r) => setTimeout(r, 3000));
   const mid = await page.evaluate(() => ({
     elapsed: window.__odderon.roomState.elapsedS,
     scale: window.__odderon.roomState.clockScale,
@@ -371,7 +374,7 @@ try {
   check("the clock is running after the curtain closes", mid.elapsed > 10, `${Math.round(mid.elapsed)} s`);
   check(
     "the panel's stated rate is the rate actually applied",
-    Math.abs(impliedRate - mid.scale) / mid.scale < 0.35,
+    Math.abs(impliedRate - mid.scale) / mid.scale < 0.30,
     `measured ${impliedRate.toFixed(0)}x against a stated ${mid.scale}x`,
   );
   // The row says `at 65 s` while the state says 70 s, because the panel is painted on the frame that drew
@@ -643,12 +646,17 @@ try {
 
   // ...and only once it has finished warming does the page go quiet again. This is R2 with the new law:
   // idle is nothing scheduled, and a warming room is not idle.
+  // The loop exits as soon as roomMoving() returns false, but a frame may already be in flight at that
+  // moment. A short stabilization wait lets any in-flight frame complete before measuring idle, so the
+  // assertion tests "nothing scheduled" rather than "nothing scheduled starting right now".
   const warmEnd = await page.evaluate(async () => {
     const o = window.__odderon;
     for (let i = 0; i < 200; i++) {
       if (!o.roomMoving()) break;
       await new Promise((r) => setTimeout(r, 250));
     }
+    // Stabilize: wait for any in-flight frame to land.
+    await new Promise((r) => setTimeout(r, 500));
     return { tK: o.roomState.temperatureK, settled: o.roomState.settledK };
   });
   const openA = await page.evaluate(() => window.__odderon.bench.framesDrawn);
