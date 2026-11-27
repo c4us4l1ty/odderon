@@ -27,8 +27,8 @@
     "check:rendezvous": "node tools/check-rendezvous.mjs",
     "check:protege": "node tools/check-protege.mjs",
     "check:archive": "node tools/check-archive.mjs",
-    "check:protege": "node tools/check-protege.mjs",
     "check:causal-mail": "node tools/check-causal-mail.mjs",
+    "check:lightcone": "node tools/check-lightcone.mjs",
     "check:mission": "node tools/check-mission.mjs",
     "check:essence": "node tools/check-essence.mjs",
     "check:anomaly": "node tools/check-anomaly.mjs"

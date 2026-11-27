@@ -203,6 +203,15 @@ jobs:
       - name: protégé arc boundary (the teaching arc is the kernel's, physical and reproducible)
         run: node tools/check-protege.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
 
+      # The deeper light-cone boundary, against the same binary: the radius at 1 s is exactly the
+      # speed of light in km, the radius scales linearly with time, reachability is the radius
+      # comparison, the Doppler factor matches the three classic cases (approaching = blueshift,
+      # receding = redshift, transverse = relativistic redshift), the inverse-square law gives one at
+      # the reference and 1/d^2 elsewhere, and the design hash is deterministic and non-zero -- the
+      # replay gate. Static half in `shell-claims`.
+      - name: light-cone boundary (the causal structure is the kernel's, physical and reproducible)
+        run: node tools/check-lightcone.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
+
       # The museum archive's boundary, against the same binary: the archive adds no new kernel exports,
       # it re-derives every entry from the existing ones (rocket verdict, pad design hash, comms
       # light-time). This confirms those exports are present and physical -- a verifiable archive needs
@@ -422,6 +431,17 @@ jobs:
 
       - name: protégé arc verifier self-test (accepts good exports, rejects bad)
         run: node tools/check-protege.mjs --selftest
+
+      # Block N4: the deeper light-cone comms. The page must read the light-cone radius, causal
+      # reachability, Doppler shift, and signal attenuation from the kernel's `lightcone_*` exports --
+      # no local speed-of-light constant, no local c*dt, no local Doppler formula, no local
+      # inverse-square. This is the gate that makes the causal structure mechanically the kernel's own,
+      # the same way the other P4 gates guard theirs.
+      - name: the light-cone structure comes from the kernel, not from a JS model
+        run: node tools/check-lightcone.mjs
+
+      - name: light-cone verifier self-test (accepts good exports, rejects bad)
+        run: node tools/check-lightcone.mjs --selftest
 
       # P4 Block 7: the museum. The page must record the career as it happens (vehicle, report, comms)
       # with the kernel's own readings and a physics-only hash, and verification must re-derive every

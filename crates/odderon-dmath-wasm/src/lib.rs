@@ -1324,6 +1324,57 @@ pub extern "C" fn mail_arrival_s(
 }
 
 // =============================================================================================
+// Deeper light-cone comms (Block N4: the causal structure beyond light-time)
+// =============================================================================================
+
+/// The radius of the light cone after `dt_s` seconds, in km: `c * dt_s`.
+///
+/// The region a signal can reach from a point after time `dt_s`. `NaN` for a non-finite or
+/// non-positive time.
+#[unsafe(no_mangle)]
+pub extern "C" fn light_cone_radius_km(dt_s: f64) -> f64 {
+    odderon_astro::lightcone::light_cone_radius_km(dt_s).unwrap_or(f64::NAN)
+}
+
+/// Whether a position at distance `r_km` is within the light cone after `dt_s` seconds.
+///
+/// `1` if reachable (a signal sent now can arrive), `0` if not. `0` for non-finite or
+/// non-positive inputs.
+#[unsafe(no_mangle)]
+pub extern "C" fn causal_reachable(r_km: f64, dt_s: f64) -> u32 {
+    if odderon_astro::lightcone::causal_reachable(r_km, dt_s) {
+        1
+    } else {
+        0
+    }
+}
+
+/// The relativistic Doppler factor: `f_received / f_emitted` for a source moving at
+/// `v_km_s` relative to the observer, with the signal at angle `theta_rad` to the velocity
+/// vector. `NaN` for non-finite inputs or a velocity at or above the speed of light.
+#[unsafe(no_mangle)]
+pub extern "C" fn doppler_factor(v_km_s: f64, theta_rad: f64) -> f64 {
+    odderon_astro::lightcone::doppler_factor(v_km_s, theta_rad).unwrap_or(f64::NAN)
+}
+
+/// The inverse-square attenuation: the fraction of transmitted signal power that survives at
+/// distance `d_km`, relative to the reference distance `d_ref_km`. `NaN` for non-finite or
+/// non-positive distances.
+#[unsafe(no_mangle)]
+pub extern "C" fn signal_power_ratio(d_km: f64, d_ref_km: f64) -> f64 {
+    odderon_astro::lightcone::signal_power_ratio(d_km, d_ref_km).unwrap_or(f64::NAN)
+}
+
+/// The deterministic design hash of the light-cone module's constants.
+///
+/// Folds in the speed of light (reused from `lighttime`, not duplicated) and the inverse-square
+/// exponent, so a replay bundle or an Akashi entry can detect a stale light-cone kernel.
+#[unsafe(no_mangle)]
+pub extern "C" fn lightcone_design_hash() -> u64 {
+    odderon_astro::lightcone::lightcone_design_hash()
+}
+
+// =============================================================================================
 // The mission economy and Esse (P5: the career core, bible §3.2 / §4.3 / §12.1)
 // =============================================================================================
 //
