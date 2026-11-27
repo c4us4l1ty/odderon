@@ -24,6 +24,7 @@
     "check:rocket": "node tools/check-rocket.mjs",
     "check:orbit-mission": "node tools/check-orbit-mission.mjs",
     "check:lighttime": "node tools/check-lighttime.mjs",
+    "check:rendezvous": "node tools/check-rendezvous.mjs",
     "check:archive": "node tools/check-archive.mjs",
     "check:protege": "node tools/check-protege.mjs",
     "check:causal-mail": "node tools/check-causal-mail.mjs",

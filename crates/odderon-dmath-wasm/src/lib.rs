@@ -1401,6 +1401,59 @@ pub extern "C" fn mission_design_hash() -> u64 {
 }
 
 // =============================================================================================
+// Orbital rendezvous (Block N1: the Hohmann transfer, the phase angle, the window)
+// =============================================================================================
+
+/// The total Hohmann transfer Δv between two circular orbits, km/s.
+///
+/// `r_from` and `r_to` are the orbital radii in km; `mu` is the central body's gravitational
+/// parameter in km³/s². The total is the sum of the departure and arrival burn magnitudes. `NaN`
+/// if any input is non-positive or non-finite. `0.0` if the orbits are the same (no transfer
+/// needed).
+#[unsafe(no_mangle)]
+pub extern "C" fn rendezvous_transfer_dv(r_from: f64, r_to: f64, mu: f64) -> f64 {
+    odderon_astro::rendezvous::rendezvous_transfer_dv(r_from, r_to, mu)
+}
+
+/// The half-period of the Hohmann transfer ellipse, seconds.
+///
+/// The time for the transfer burn to carry the vehicle from one circular orbit to the other.
+/// `NaN` if any input is invalid or if the orbits are the same (no transfer to time).
+#[unsafe(no_mangle)]
+pub extern "C" fn rendezvous_transfer_time_s(r_from: f64, r_to: f64, mu: f64) -> f64 {
+    odderon_astro::rendezvous::rendezvous_transfer_time_s(r_from, r_to, mu)
+}
+
+/// The lead angle the target must have at the moment of the transfer burn, radians.
+///
+/// A pure function of the radius ratio (the central-body parameter cancels). Positive for an
+/// outward transfer (target must be ahead), negative for an inward transfer (target must be
+/// behind). `NaN` if any input is invalid or if the orbits are the same.
+#[unsafe(no_mangle)]
+pub extern "C" fn rendezvous_phase_angle(r_from: f64, r_to: f64, mu: f64) -> f64 {
+    odderon_astro::rendezvous::rendezvous_phase_angle(r_from, r_to, mu)
+}
+
+/// The time in seconds until the next rendezvous window, given the current lead angle.
+///
+/// `theta` is the current angular lead of the target over the chaser, in `[0, 2π)` radians.
+/// Returns `0.0` if the window is open now, `NaN` if the inputs are invalid or if the orbits are
+/// the same (no relative motion).
+#[unsafe(no_mangle)]
+pub extern "C" fn rendezvous_window_s(r_from: f64, r_to: f64, theta: f64, mu: f64) -> f64 {
+    odderon_astro::rendezvous::rendezvous_window_s(r_from, r_to, theta, mu)
+}
+
+/// The deterministic design hash of the rendezvous module's constants.
+///
+/// Folds in the bi-elliptic threshold and Earth's gravitational parameter, so a replay bundle or
+/// an Akashi entry can detect a stale rendezvous kernel.
+#[unsafe(no_mangle)]
+pub extern "C" fn rendezvous_design_hash() -> u64 {
+    odderon_astro::rendezvous::rendezvous_design_hash()
+}
+
+// =============================================================================================
 // The Esse career ledger (P5: the career core, bible §4.3)
 // =============================================================================================
 //

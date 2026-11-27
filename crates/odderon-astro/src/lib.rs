@@ -163,6 +163,17 @@ pub mod essence;
 /// rack (§5.5). See [`anomaly::anomaly_from_mission`].
 pub mod anomaly;
 
+/// Orbital rendezvous: the Hohmann transfer Δv, the transfer time, the phase angle, and the
+/// rendezvous window that turn two circular orbits into a meeting.
+///
+/// Not astrodynamics in a new sense — it is Kepler mechanics applied to the transfer problem —
+/// but it lives in this crate for the same reason every other module does: `odderon-astro` is the
+/// only `no_std`, `forbid(unsafe_code)` crate in the workspace, gated by the same kernel rules.
+/// The Hohmann transfer is the textbook minimum-Δv two-burn transfer between co-planar circular
+/// orbits, and it is the two-body foundation the J2-aware rendezvous layer will build on. See
+/// [`rendezvous::rendezvous_transfer_dv`].
+pub mod rendezvous;
+
 /// Light-time and the comms link: the delay a signal takes to cross the distance between two
 /// positions, and the arrival time it predicts.
 ///
