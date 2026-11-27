@@ -66,6 +66,39 @@ use odderon_dmath::{cos, sin, sqrt};
 /// `1.96e-3`, Jupiter `1.47e-2`, the Moon `2.03e-4`.
 pub const EARTH_J2: f64 = 1.082_626_68e-3;
 
+/// J3, the Earth's third zonal harmonic (the "pear-shape" term). Dimensionless, **signed**.
+///
+/// `J3 = −2.5327e-6` for Earth. The sign is negative: the Earth's northern hemisphere is slightly more
+/// massive than the southern, so the gravitational potential is deeper in the north. In the potential
+/// expansion `U = −μ/r · [1 − J2(R/r)²P₂ − J3(R/r)³P₃ − …]`, a negative `J3` makes the `−J3(R/r)³P₃`
+/// term positive where `P₃(sin φ) > 0` (northern hemisphere), deepening the potential there — the
+/// correct physical effect.
+///
+/// J3 is an **odd** harmonic: it breaks the north-south symmetry that J2 preserves. Its secular effect
+/// on the orbit vanishes for circular orbits (a circular orbit spends equal time north and south, so
+/// the effects cancel) and is proportional to eccentricity. Its short-period effect, which the
+/// integrator captures, does not vanish — it produces a small north-south oscillation of the orbit.
+///
+/// The magnitude is roughly 430 times smaller than J2, so J3's contribution to the total field is
+/// small — but over a 7-day LEO propagation it is a measurable part of the residual that the
+/// J2-only secular theory leaves behind.
+pub const EARTH_J3: f64 = -2.532_654_0e-6;
+
+/// J4, the Earth's fourth zonal harmonic. Dimensionless, **signed**.
+///
+/// `J4 = −1.6197e-6` for Earth. Like J2, J4 is an **even** harmonic: it preserves the north-south
+/// symmetry and its secular effect does **not** vanish for circular orbits. It contributes to the
+/// nodal regression and periapsis rotation at the same structural level as J2, but with a coefficient
+/// roughly 670 times smaller.
+///
+/// J4's secular rates are second-order in the potential expansion (the `(R/r)⁴` factor), so its
+/// contribution is small — but it is the leading even-harmonic correction to J2, and including it
+/// alongside J3 in the integrator is what the `CREDIBILITY.md` §3.1 row "J2 + J3 + J4 propagation"
+/// asks for. The target there is a difference under **50 m** over 7 days at LEO, which is the
+/// self-consistency test: the analytic (secular) prediction and the numerical integrator must agree
+/// to that tolerance when the full field is used.
+pub const EARTH_J4: f64 = -1.619_681_4e-6;
+
 /// Earth's equatorial radius, km. The `Rₑ` in the `(Rₑ/p)²` factor.
 pub const EARTH_EQUATORIAL_RADIUS: f64 = crate::radius::EARTH;
 

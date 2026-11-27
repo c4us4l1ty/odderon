@@ -31,7 +31,11 @@
 
 use odderon_dmath::{fabs, is_finite, sqrt, TAU};
 
+use crate::integrate::integrate_zonal;
+use crate::j2::{EARTH_J2, EARTH_J3, EARTH_J4};
 use crate::mu;
+use crate::radius;
+use crate::State;
 
 /// The ratio above which a bi-elliptic transfer is cheaper than a Hohmann transfer. Above this
 /// ratio the Hohmann is no longer the minimum-Δv two-burn transfer, and the caller should know
@@ -242,4 +246,56 @@ pub fn rendezvous_design_hash() -> u64 {
     mix(BI_ELLIPTIC_THRESHOLD);
     mix(mu::EARTH);
     hash
+}
+
+/// Propagate a state through Earth's full zonal field (point mass + J2 + J3 + J4).
+///
+/// This is the numerical-integration counterpart to [`crate::propagate`] (two-body Kepler) and to
+/// the J2-secular rates in [`crate::passes`]. It integrates the real gravitational field through a
+/// Dormand–Prince 5(4) adaptive integrator, which is the level of fidelity a rendezvous needs: the
+/// `CREDIBILITY.md` §3.1 measurement shows the J2-secular approximation is 439 km off after one day,
+/// and the two-body propagation is 539 km off — neither is within the < 50 m target for a rendezvous.
+///
+/// The integrator is the same one cross-checked in `tests/zonal.rs`: energy-conserving, self-consistent
+/// to well under 50 m over 7 days at LEO. `rel_tol` controls the integrator's step-size tolerance;
+/// `1e-12` is the reference value used in the cross-checks.
+///
+/// Returns `None` if `dt` is non-finite or negative, or if `rel_tol` is non-positive (the integrator
+/// refuses rather than producing NaNs). A zero `dt` is valid and returns the initial state unchanged.
+pub fn propagate_zonal(state: &State, dt_s: f64, rel_tol: f64) -> Option<State> {
+    integrate_zonal(
+        state,
+        dt_s,
+        mu::EARTH,
+        EARTH_J2,
+        EARTH_J3,
+        EARTH_J4,
+        radius::EARTH,
+        rel_tol,
+    )
+    .map(|integrated| integrated.state)
+}
+
+/// The position drift between the full zonal field and the two-body propagation, in metres.
+///
+/// Propagates `state` forward by `dt_s` twice: once through the full J2+J3+J4 field
+/// ([`propagate_zonal`]) and once through the two-body Kepler propagation ([`crate::propagate`]).
+/// The Euclidean distance between the two resulting positions, in metres, is the error the
+/// two-body approximation makes over that interval.
+///
+/// This is the measurement that motivates the J2+J3+J4 block: at LEO over one day the two-body
+/// propagation is ~539 km off, and the J2-secular approximation is ~439 km off. Over 7 days the
+/// drift is larger. This function quantifies it for any state and duration.
+///
+/// Returns `NaN` if either propagation fails or the inputs are invalid.
+pub fn zonal_vs_two_body_drift_m(state: &State, dt_s: f64, rel_tol: f64) -> f64 {
+    let zonal = match propagate_zonal(state, dt_s, rel_tol) {
+        Some(s) => s,
+        None => return f64::NAN,
+    };
+    let two_body = crate::propagate(state, dt_s, mu::EARTH);
+    let dx = zonal.r.x - two_body.state.r.x;
+    let dy = zonal.r.y - two_body.state.r.y;
+    let dz = zonal.r.z - two_body.state.r.z;
+    sqrt(dx * dx + dy * dy + dz * dz) * 1000.0
 }

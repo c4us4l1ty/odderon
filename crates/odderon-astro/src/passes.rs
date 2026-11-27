@@ -94,7 +94,9 @@
 //!   one, and it belongs with the ephemeris.
 //! * **No J3 or J4.** The secular rates here are first order in `J2` only. That is the right model for a
 //!   catalogue of coasting bodies and the wrong one for a rendezvous, which needs the full field through an
-//!   integrator — `docs/CREDIBILITY.md` §3.1, row "J2 + J3 + J4 propagation", which is still not started.
+//!   integrator — `docs/CREDIBILITY.md` §3.1, row "J2 + J3 + J4 propagation". The integrator itself
+//!   (`integrate_zonal` in `integrate.rs`) is implemented and cross-checked; this module's pass prediction
+//!   still uses the J2-secular rates, which is the appropriate model for its catalogue use case.
 
 use crate::catalogue::Body;
 use crate::frames::BodyFixed;

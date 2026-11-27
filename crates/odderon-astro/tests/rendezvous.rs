@@ -212,3 +212,115 @@ fn design_hash_nonzero() {
     let h = rendezvous_design_hash();
     assert_ne!(h, 0);
 }
+
+// ---------------------------------------------------------------------------------------------
+// J2 + J3 + J4 propagation (the rendezvous case)
+// ---------------------------------------------------------------------------------------------
+
+use odderon_astro::integrate::integrate_zonal;
+use odderon_astro::j2::{EARTH_J2, EARTH_J3, EARTH_J4};
+use odderon_astro::radius;
+use odderon_astro::rendezvous::{propagate_zonal, zonal_vs_two_body_drift_m};
+use odderon_astro::State;
+use odderon_astro::Vec3;
+
+/// Build a circular LEO state at the given inclination, periapsis on +X.
+fn leo_state(alt_km: f64, incl_deg: f64) -> State {
+    let r = radius::EARTH + alt_km;
+    let vp = (MU / r).sqrt();
+    let incl = std::f64::consts::PI * incl_deg / 180.0;
+    State::new(
+        Vec3::new(r, 0.0, 0.0),
+        Vec3::new(0.0, vp * incl.cos(), vp * incl.sin()),
+    )
+}
+
+/// `propagate_zonal` returns `None` for degenerate input.
+#[test]
+fn propagate_zonal_refuses_degenerate_input() {
+    let s = leo_state(400.0, 51.6);
+    assert!(propagate_zonal(&s, f64::NAN, 1e-12).is_none(), "NaN dt");
+    assert!(propagate_zonal(&s, -1.0, 1e-12).is_none(), "negative dt");
+    assert!(propagate_zonal(&s, 100.0, 0.0).is_none(), "zero tolerance");
+    assert!(
+        propagate_zonal(&s, 100.0, -1e-12).is_none(),
+        "negative tolerance"
+    );
+}
+
+/// A zero-time propagation returns the initial state.
+#[test]
+fn propagate_zonal_zero_time_is_identity() {
+    let s = leo_state(400.0, 51.6);
+    let out = propagate_zonal(&s, 0.0, 1e-12).expect("zero time");
+    assert!((out.r.x - s.r.x).abs() < 1e-9, "position not preserved");
+    assert!((out.r.y - s.r.y).abs() < 1e-9, "position not preserved");
+    assert!((out.r.z - s.r.z).abs() < 1e-9, "position not preserved");
+}
+
+/// `propagate_zonal` agrees with the direct `integrate_zonal` call using Earth's constants.
+///
+/// This is a thin wrapper test: it confirms the wrapper passes the right constants through and
+/// extracts the state correctly.
+#[test]
+fn propagate_zonal_matches_integrate_zonal() {
+    let s = leo_state(400.0, 51.6);
+    let dt = 86_400.0; // one day
+    let wrapped = propagate_zonal(&s, dt, 1e-12).expect("wrapper");
+    let direct = integrate_zonal(
+        &s,
+        dt,
+        MU,
+        EARTH_J2,
+        EARTH_J3,
+        EARTH_J4,
+        radius::EARTH,
+        1e-12,
+    )
+    .expect("direct");
+    assert!((wrapped.r.x - direct.state.r.x).abs() < 1e-9, "x mismatch");
+    assert!((wrapped.r.y - direct.state.r.y).abs() < 1e-9, "y mismatch");
+    assert!((wrapped.r.z - direct.state.r.z).abs() < 1e-9, "z mismatch");
+}
+
+/// The two-body approximation drifts significantly from the full field over one day at LEO.
+///
+/// This is the measurement that motivates the J2+J3+J4 block: the `CREDIBILITY.md` §3.1 baseline
+/// says the two-body propagation is ~539 km off after one day at 400 km / 51.6°. This test confirms
+/// the drift is large (not a rounding artifact) and in the expected direction (the full field and
+/// two-body disagree substantially).
+#[test]
+fn zonal_vs_two_body_drift_is_significant_at_leo() {
+    let s = leo_state(400.0, 51.6);
+    let drift_km = zonal_vs_two_body_drift_m(&s, 86_400.0, 1e-12) / 1000.0;
+    // The two-body drift must be large — hundreds of km, not metres.
+    assert!(
+        drift_km > 50.0,
+        "two-body drift after one day at LEO is only {drift_km:.1} km - \
+         the full field and two-body should disagree by hundreds of km"
+    );
+}
+
+/// The drift grows with time: a week's propagation has more drift than a day's.
+///
+/// This is a monotonicity check. If the drift did not grow, the perturbation would be periodic with
+/// a period shorter than a day, which is not the case for J2/J3/J4 secular effects.
+#[test]
+fn zonal_vs_two_body_drift_grows_with_time() {
+    let s = leo_state(400.0, 51.6);
+    let day_drift = zonal_vs_two_body_drift_m(&s, 86_400.0, 1e-12);
+    let week_drift = zonal_vs_two_body_drift_m(&s, 7.0 * 86_400.0, 1e-12);
+    assert!(
+        week_drift > day_drift,
+        "7-day drift ({week_drift:.1} m) should exceed 1-day drift ({day_drift:.1} m)"
+    );
+}
+
+/// `zonal_vs_two_body_drift_m` returns NaN for invalid input.
+#[test]
+fn zonal_vs_two_body_drift_refuses_degenerate_input() {
+    let s = leo_state(400.0, 51.6);
+    assert!(zonal_vs_two_body_drift_m(&s, f64::NAN, 1e-12).is_nan());
+    assert!(zonal_vs_two_body_drift_m(&s, -1.0, 1e-12).is_nan());
+    assert!(zonal_vs_two_body_drift_m(&s, 100.0, 0.0).is_nan());
+}
