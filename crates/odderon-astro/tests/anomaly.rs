@@ -52,7 +52,10 @@ fn depth_and_scarcity_raise_the_elo() {
     // Same divergence, but a short window (less telemetry) -> higher scarcity -> higher elo.
     let full = anomaly_from_mission(1, 0.8, 0, 0.0, 30.0).unwrap();
     let scarce = anomaly_from_mission(2, 0.8, 0, 0.0, 3.0).unwrap();
-    assert!(scarce.elo > full.elo, "less telemetry is a stronger anomaly");
+    assert!(
+        scarce.elo > full.elo,
+        "less telemetry is a stronger anomaly"
+    );
     assert!(scarce.telemetry < full.telemetry);
     // And a riskier mission hides the fault deeper.
     let risky = anomaly_from_mission(3, 0.8, 0, 1.0, 30.0).unwrap();
@@ -61,12 +64,30 @@ fn depth_and_scarcity_raise_the_elo() {
 
 #[test]
 fn invalid_missions_refuse() {
-    assert!(anomaly_from_mission(1, 1.5, 0, 0.0, 30.0).is_none(), "p outside [0,1] refuses");
-    assert!(anomaly_from_mission(1, f64::NAN, 0, 0.0, 30.0).is_none(), "non-finite p refuses");
-    assert!(anomaly_from_mission(1, 0.8, 2, 0.0, 30.0).is_none(), "occurred not 0/1 refuses");
-    assert!(anomaly_from_mission(1, 0.8, 0, -1.0, 30.0).is_none(), "negative risk refuses");
-    assert!(anomaly_from_mission(1, 0.8, 0, 0.0, 0.0).is_none(), "zero window refuses");
-    assert!(anomaly_from_mission(1, 0.8, 0, 0.0, f64::NAN).is_none(), "non-finite window refuses");
+    assert!(
+        anomaly_from_mission(1, 1.5, 0, 0.0, 30.0).is_none(),
+        "p outside [0,1] refuses"
+    );
+    assert!(
+        anomaly_from_mission(1, f64::NAN, 0, 0.0, 30.0).is_none(),
+        "non-finite p refuses"
+    );
+    assert!(
+        anomaly_from_mission(1, 0.8, 2, 0.0, 30.0).is_none(),
+        "occurred not 0/1 refuses"
+    );
+    assert!(
+        anomaly_from_mission(1, 0.8, 0, -1.0, 30.0).is_none(),
+        "negative risk refuses"
+    );
+    assert!(
+        anomaly_from_mission(1, 0.8, 0, 0.0, 0.0).is_none(),
+        "zero window refuses"
+    );
+    assert!(
+        anomaly_from_mission(1, 0.8, 0, 0.0, f64::NAN).is_none(),
+        "non-finite window refuses"
+    );
 }
 
 #[test]
@@ -102,7 +123,10 @@ fn drawer_caps_at_five() {
             count
         );
     }
-    assert!(!drawer_can_open(DRAWER_CAP), "the drawer is full at the cap");
+    assert!(
+        !drawer_can_open(DRAWER_CAP),
+        "the drawer is full at the cap"
+    );
     assert!(!drawer_can_open(DRAWER_CAP + 3), "over the cap is refused");
 }
 
@@ -144,20 +168,34 @@ fn elo_update_weights_by_depth_and_scarcity() {
     // the harder one moves the rating more.
     let easy = anomaly_from_mission(1, 0.6, 0, 0.0, 30.0).unwrap(); // depth 0.6, telemetry 1.0
     let hard = anomaly_from_mission(2, 0.9, 0, 1.0, 3.0).unwrap(); // depth ~1.0, scarcity ~0.9
-    // Normalize the opponent to the same strength so only the weighting differs.
+                                                                   // Normalize the opponent to the same strength so only the weighting differs.
     let opp = 1100.0;
     let easy_delta = elo_update(1000.0, opp, 1, easy.depth, easy.telemetry) - 1000.0;
     let hard_delta = elo_update(1000.0, opp, 1, hard.depth, hard.telemetry) - 1000.0;
-    assert!(hard_delta > easy_delta, "the harder anomaly moves the rating more");
+    assert!(
+        hard_delta > easy_delta,
+        "the harder anomaly moves the rating more"
+    );
 }
 
 #[test]
 fn elo_update_refuses_invalid_inputs() {
     let a = anomaly_from_mission(1, 0.8, 0, 0.0, 30.0).unwrap();
-    assert!(elo_update(f64::NAN, a.elo, 1, a.depth, a.telemetry).is_nan());
-    assert!(elo_update(1000.0, a.elo, 1, 1.5, a.telemetry).is_nan(), "depth > 1 refuses");
-    assert!(elo_update(1000.0, a.elo, 1, a.depth, -0.1).is_nan(), "telemetry < 0 refuses");
-    assert!(elo_update(1000.0, a.elo, 2, a.depth, a.telemetry).is_nan(), "outcome not 0/1 refuses");
+    assert!(
+        elo_update(f64::NAN, a.elo, 1, a.depth, a.telemetry).is_nan()
+    );
+    assert!(
+        elo_update(1000.0, a.elo, 1, 1.5, a.telemetry).is_nan(),
+        "depth > 1 refuses"
+    );
+    assert!(
+        elo_update(1000.0, a.elo, 1, a.depth, -0.1).is_nan(),
+        "telemetry < 0 refuses"
+    );
+    assert!(
+        elo_update(1000.0, a.elo, 2, a.depth, a.telemetry).is_nan(),
+        "outcome not 0/1 refuses"
+    );
 }
 
 // -------------------------------------------------------------------------------------------
@@ -172,9 +210,15 @@ fn rack_compile_accepts_and_refuses() {
     assert!((ok.threshold - 92.0).abs() < 1e-12);
     assert_eq!(ok.action, 3);
     // An unknown op refuses.
-    assert!(rack_compile(0, 6, 92.0, 3).is_none(), "op 6 is not an operator");
+    assert!(
+        rack_compile(0, 6, 92.0, 3).is_none(),
+        "op 6 is not an operator"
+    );
     // A non-finite threshold refuses.
-    assert!(rack_compile(0, 0, f64::NAN, 3).is_none(), "NaN threshold refuses");
+    assert!(
+        rack_compile(0, 0, f64::NAN, 3).is_none(),
+        "NaN threshold refuses"
+    );
 }
 
 #[test]
@@ -203,10 +247,20 @@ fn rack_fires_refuses_a_nan_reading() {
 
 #[test]
 fn design_hash_is_stable_and_distinct() {
-    assert_eq!(anomaly_design_hash(), anomaly_design_hash(), "the hash is stable");
+    assert_eq!(
+        anomaly_design_hash(),
+        anomaly_design_hash(),
+        "the hash is stable"
+    );
     // Distinct from the economy and the aggregation: a different model, a different hash.
-    assert_ne!(anomaly_design_hash(), odderon_astro::mission::mission_design_hash());
-    assert_ne!(anomaly_design_hash(), odderon_astro::essence::essence_design_hash());
+    assert_ne!(
+        anomaly_design_hash(),
+        odderon_astro::mission::mission_design_hash()
+    );
+    assert_ne!(
+        anomaly_design_hash(),
+        odderon_astro::essence::essence_design_hash()
+    );
 }
 
 #[test]
