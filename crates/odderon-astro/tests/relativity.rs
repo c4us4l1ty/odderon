@@ -11,7 +11,7 @@
 
 use odderon_astro::relativity::*;
 use odderon_astro::{mu, Elements};
-use odderon_dmath::{fabs, PI, pow, sqrt};
+use odderon_dmath::{fabs, pow, sqrt, PI};
 
 /// The published Schwarzschild precession of Mercury, arcseconds per century.
 ///
@@ -57,8 +57,7 @@ fn mercury_precession_decomposition() {
         MERCURY_SEMI_MAJOR_AXIS,
         MERCURY_ECCENTRICITY,
     );
-    let orbits_per_century =
-        SECONDS_PER_CENTURY / (MERCURY_PERIOD_DAYS * SECONDS_PER_DAY);
+    let orbits_per_century = SECONDS_PER_CENTURY / (MERCURY_PERIOD_DAYS * SECONDS_PER_DAY);
     let total = advance_per_orbit * orbits_per_century;
 
     // The decomposition must agree with the direct function.
@@ -69,7 +68,10 @@ fn mercury_precession_decomposition() {
     );
 
     // Each factor must be physically sensible.
-    assert!(advance_per_orbit > 0.0, "per-orbit advance must be positive");
+    assert!(
+        advance_per_orbit > 0.0,
+        "per-orbit advance must be positive"
+    );
     assert!(
         orbits_per_century > 400.0 && orbits_per_century < 430.0,
         "Mercury has ~415 orbits per century, got {orbits_per_century}"
@@ -269,7 +271,10 @@ fn apply_advance_zero_time_is_noop() {
     };
 
     let unchanged = apply_advance(&el, mu::SUN, 0.0);
-    assert!(unchanged.argp == el.argp, "zero-time advance must be a no-op");
+    assert!(
+        unchanged.argp == el.argp,
+        "zero-time advance must be a no-op"
+    );
     assert!(unchanged.p == el.p);
     assert!(unchanged.e == el.e);
 }

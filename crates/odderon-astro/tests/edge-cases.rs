@@ -145,12 +145,22 @@ fn circular_equatorial_propagation_is_stable() {
 
 #[test]
 fn circular_inclined_propagation_is_stable() {
-    assert_period_closes(7000.0, 0.0, 90.0 * odderon_dmath::PI / 180.0, "circular polar");
+    assert_period_closes(
+        7000.0,
+        0.0,
+        90.0 * odderon_dmath::PI / 180.0,
+        "circular polar",
+    );
 }
 
 #[test]
 fn circular_retrograde_propagation_is_stable() {
-    assert_period_closes(7000.0, 0.0, 180.0 * odderon_dmath::PI / 180.0, "circular retrograde");
+    assert_period_closes(
+        7000.0,
+        0.0,
+        180.0 * odderon_dmath::PI / 180.0,
+        "circular retrograde",
+    );
 }
 
 /// Circular orbits at several inclinations, including near-zero and near-π, which are the boundaries
