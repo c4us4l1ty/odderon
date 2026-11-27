@@ -2689,6 +2689,57 @@ function debouncedRefreshComms(nowMs) {
 
 const archive = [];
 let archiveSeq = 0;
+const ARCHIVE_KEY = 'odderon.archive';
+
+/// Serialize the archive to localStorage (§9.2: the save is an input log, so it always exists).
+/// The archive is the verified replay every block derives from — the anomaly drawer, the Esse
+/// ledger, the museum, the protégé's notice. If it is not persisted, a reload empties it and the
+/// persisted drawer state becomes orphaned: anomalies whose source ids are in the open list but
+/// whose missions are gone, unresolvable and invisible. The archive and the drawer must share the
+/// same persistence rule.
+function saveArchive() {
+  try {
+    // BigInt-safe: the wasm ABI returns u64 design hashes as JS BigInt, which JSON.stringify cannot
+    // serialize. Walk the archive and convert every BigInt to a tagged object so the save is plain
+    // JSON. The reverse conversion happens in loadArchive.
+    const bigintReplacer = (key, value) => (typeof value === 'bigint' ? { __bigint: value.toString() } : value);
+    localStorage.setItem(ARCHIVE_KEY, JSON.stringify({
+      seq: archiveSeq,
+      entries: archive,
+    }, bigintReplacer));
+  } catch (err) {
+    // A storage failure (quota, private mode) is not a game failure: the archive lives in memory
+    // for this session, the same as any other session that cannot persist.
+  }
+}
+
+/// Restore the archive from localStorage. A missing or corrupt save is not an error — the archive
+/// starts empty, which is a legal entry point. Every entry's integrity is re-checked against its
+/// hash: a tampered or truncated entry is dropped rather than trusted, because a verifier would
+/// reject it too.
+function loadArchive() {
+  try {
+    const raw = localStorage.getItem(ARCHIVE_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw, (key, value) =>
+      (value && typeof value === 'object' && typeof value.__bigint === 'string')
+        ? BigInt(value.__bigint)
+        : value);
+    if (typeof saved.seq === 'number' && Number.isInteger(saved.seq) && saved.seq >= 0) {
+      archiveSeq = saved.seq;
+    }
+    if (!Array.isArray(saved.entries)) return;
+    for (const e of saved.entries) {
+      if (!e || typeof e.type !== 'string') continue;
+      if (!e.params || !e.readings) continue;
+      // Re-check the integrity hash: a corrupt entry fails verification and is dropped.
+      if (e.hash && archiveHash(e) !== e.hash) continue;
+      archive.push(e);
+    }
+  } catch (err) {
+    // A corrupt save is refused, not crashed: the archive starts from its defaults.
+  }
+}
 
 /// Canonical serialization of an archive entry's PHYSICS: fixed field order, fixed number
 /// formatting. The id and epoch are labels, not physics, so they are excluded -- the hash is a
@@ -2750,6 +2801,7 @@ function archivePush(entry) {
   entry.hash = archiveHash(entry);
   entry.verified = null;
   archive.push(entry);
+  saveArchive();
   renderArchive();
   return entry;
 }
@@ -5543,9 +5595,12 @@ loadKernel().then(() => {
   // The contract. Render the mission panel so it is present from the first frame; the price is the
   // kernel's, computed on demand, so the panel is correct before any contract is authored.
   renderMission();
-  // The drawer and the rack. Restore the persisted drawer state (§9.2: the save is an input log, so
-  // it always exists) and render both panels from the first frame; the anomalies are derived from
-  // the archive and the rack rules from the persisted state.
+  // The archive. Restore the persisted verified replay (§9.2: the save is an input log, so it always
+  // exists) BEFORE the drawer — the anomaly drawer derives anomalies from the archive, so the archive
+  // must be in place before the drawer state is loaded and rendered.
+  loadArchive();
+  // The drawer and the rack. Restore the persisted drawer state and render both panels from the
+  // first frame; the anomalies are derived from the archive and the rack rules from the persisted state.
   loadAnomalyState();
   renderAnomaly();
   renderRack();

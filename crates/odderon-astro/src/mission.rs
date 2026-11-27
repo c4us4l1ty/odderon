@@ -157,6 +157,9 @@ pub fn log_score(predicted_p: f64, occurred: u32) -> f64 {
     if !is_finite(predicted_p) || !(0.0..=1.0).contains(&predicted_p) {
         return f64::NAN;
     }
+    if occurred != 0 && occurred != 1 {
+        return f64::NAN;
+    }
     // Guard the degenerate certainties: p = 0 with occurred, or p = 1 without, is an infinite
     // penalty -- the honest score for claiming certainty and being wrong. Return it as infinity
     // rather than NaN, because it is a real (if extreme) score, not a refusal. The other
