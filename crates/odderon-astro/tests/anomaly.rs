@@ -7,9 +7,9 @@
 //! rather than the test merely asserting the kernel agrees with itself.
 
 use odderon_astro::anomaly::{
-    anomaly_design_hash, anomaly_from_mission, drawer_can_open, elo_expected, elo_update,
-    rack_compile, rack_fires, Anomaly, Op, DRAWER_CAP, DIVERGENCE_THRESHOLD, ELO_BASE, ELO_K,
-    ELO_SCALE, RISK_DEPTH_WEIGHT, WINDOW_REF_DAYS,
+    Anomaly, Op, DRAWER_CAP, DIVERGENCE_THRESHOLD, ELO_BASE, ELO_K, ELO_SCALE,
+    RISK_DEPTH_WEIGHT, WINDOW_REF_DAYS, anomaly_design_hash, anomaly_from_mission, drawer_can_open,
+    elo_expected, elo_update, rack_compile, rack_fires,
 };
 use odderon_dmath::{fabs, pow};
 

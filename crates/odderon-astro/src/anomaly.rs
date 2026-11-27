@@ -37,7 +37,7 @@
 //! ledger is bounded by them. No allocation, no hidden state, no clock — the same rules every kernel
 //! module follows.
 
-use odderon_dmath::{fmax, fmin, fabs, is_finite, pow};
+use odderon_dmath::{fabs, fmax, fmin, is_finite, pow};
 
 // =============================================================================================
 // The pinned constants
