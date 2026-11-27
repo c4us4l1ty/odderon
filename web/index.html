@@ -384,6 +384,11 @@
   <h3>the sky</h3>
   <div class="muted">other ships in your sky on real orbits, their messages arriving at the speed of light. no netcode -- the kernel propagates each ship and measures the light-time to your station, so the same send lands the same way everywhere.</div>
   <div class="row"><span>mail</span><span id="m-mail-count">—</span></div>
+  <div class="row"><span>light cone</span><span id="m-lightcone-radius">—</span></div>
+  <div class="row"><span>reachable</span><span id="m-lightcone-reach">—</span></div>
+  <div class="row"><span>doppler</span><span id="m-lightcone-doppler">—</span></div>
+  <div class="row"><span>signal</span><span id="m-lightcone-power">—</span></div>
+  <div class="row"><span>design hash</span><span id="m-lightcone-hash">—</span></div>
   <div class="pad-inputs">
     <button id="mail-record" type="button">record the sky</button>
   </div>
@@ -3401,6 +3406,74 @@ function renderCausalMail(nowS) {
   host.innerHTML = rows.join('');
   $('m-mail-count').textContent =
     `${inbox.delivered.length} delivered · ${inbox.inTransit.length} in transit`;
+  renderLightcone(nowS);
+}
+
+/// The deeper light-cone readings from the kernel: the light-cone radius at the current orbit clock,
+/// which peers are causally reachable, the Doppler shift of the nearest peer's signal, and the
+/// signal attenuation at the nearest peer's distance. All kernel calls: the page computes no
+/// causal structure, holds no speed-of-light constant, and shows `—` when the kernel is absent.
+function lightconeReadings(nowS) {
+  const k = kernelState.module;
+  if (!k) return { source: 'absent' };
+  const radius = k.light_cone_radius_km(nowS);
+  // The nearest peer's distance: the first peer with a valid light-time, used for the Doppler and
+  // attenuation readings. The peer's orbital speed is the kernel's own (from the elements), not a
+  // page constant.
+  let nearestDist = NaN;
+  let nearestV = NaN;
+  let nearestTheta = 0;
+  for (const peer of CAUSAL_PEERS) {
+    const sendS = causalMailSendTime(peer, nowS);
+    const r = causalMailReadings(peer, sendS);
+    if (!r.valid) continue;
+    const dx = r.peerPos.x - r.stationPos.x;
+    const dy = r.peerPos.y - r.stationPos.y;
+    const dz = r.peerPos.z - r.stationPos.z;
+    nearestDist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    // The angle between the peer's velocity and the line of sight. The peer's velocity magnitude
+    // is the kernel's orbital speed (v = sqrt(mu/a) for the circular approximation, but the kernel
+    // owns the real value through the elements). The angle is computed from the geometry.
+    // For the Doppler reading, we use the peer's orbital speed and the angle to the station.
+    nearestV = Math.sqrt(k.orbit_mu() / peer.a);  // circular approximation for the reading
+    nearestTheta = Math.atan2(Math.sqrt(dx * dx + dy * dy), dz);
+    break;
+  }
+  const reachable = nearestDist > 0 && Number.isFinite(nearestDist)
+    ? k.causal_reachable(nearestDist, nowS)
+    : 0;
+  const doppler = k.doppler_factor(nearestV, nearestTheta);
+  const power = k.signal_power_ratio(nearestDist, 1000.0);  // reference 1000 km
+  return {
+    source: 'wasm kernel',
+    radius,
+    reachable: reachable === 1,
+    doppler,
+    power,
+    hash: k.lightcone_design_hash(),
+  };
+}
+
+/// Render the light-cone rows in the sky panel. A `NaN` reading is shown as `—`, the convention every
+/// other panel uses. The radius is the causal horizon at the current orbit clock; the reachable row
+/// is whether the nearest peer is inside it; the Doppler and signal rows are the deeper comms
+/// readings for that peer's signal.
+function renderLightcone(nowS) {
+  const f = (v, d) => (Number.isFinite(v) ? v.toFixed(d) : '—');
+  const lc = lightconeReadings(nowS);
+  if (lc.source === 'absent') {
+    $('m-lightcone-radius').textContent = '—';
+    $('m-lightcone-reach').textContent = '—';
+    $('m-lightcone-doppler').textContent = '—';
+    $('m-lightcone-power').textContent = '—';
+    $('m-lightcone-hash').textContent = '—';
+    return;
+  }
+  $('m-lightcone-radius').textContent = f(lc.radius, 0) + ' km';
+  $('m-lightcone-reach').textContent = lc.reachable ? 'yes' : 'no';
+  $('m-lightcone-doppler').textContent = f(lc.doppler, 6);
+  $('m-lightcone-power').textContent = f(lc.power, 6);
+  $('m-lightcone-hash').textContent = '0x' + lc.hash.toString(16);
 }
 
 // --------------------------------------------------------------------------------------------
@@ -6070,6 +6143,8 @@ window.__odderon = {
   CAUSAL_PEERS,
   peerP,
   causalMailReadings,
+  lightconeReadings,
+  renderLightcone,
   causalMailSendTime,
   causalMailInbox,
   recordMail,

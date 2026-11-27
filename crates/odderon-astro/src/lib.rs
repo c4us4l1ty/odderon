@@ -195,6 +195,14 @@ pub mod rendezvous;
 /// distance arrives at a time this module predicts, deterministically. See [`lighttime::light_time_s`].
 pub mod lighttime;
 
+/// The deeper light-cone structure of comms: the light-cone envelope, causal reachability, the
+/// relativistic Doppler shift, and signal attenuation.
+///
+/// Not a new physics constant — the speed of light is owned by [`lighttime`] and reused here, never
+/// duplicated. This module answers the questions that come *after* light-time: what the causal
+/// structure of the sky looks like, not just how long a signal takes. See [`lightcone::light_cone_radius_km`].
+pub mod lightcone;
+
 /// Gravitational parameters, km³/s².
 ///
 /// Values from the IAU/JPL published constants. They are *data*, not physics: a body's `mu` is a
