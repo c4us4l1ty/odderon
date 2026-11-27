@@ -2770,12 +2770,16 @@ function archiveSerialize(entry) {
       f(entry.params.lat, 6), f(entry.params.lon, 6), f(entry.params.sendS, 6),
       f(entry.readings.lightTime, 9), f(entry.readings.arrival, 9));
   } else if (entry.type === 'mission') {
-    // A scored mission: the contract's parameters (the work it asks for), the committed prediction,
-    // and the kernel's price, achieved Δv, and score. A verifier re-derives the price from the
-    // contract's parameters, the achieved Δv from the rocket kernel, and the score from the
-    // committed prediction and the outcome -- all of it the kernel's, not the page's.
+    // A scored mission: the contract's parameters (the work it asks for), the launch parameters
+    // the achieved Δv was derived from, the committed prediction, and the kernel's price, achieved
+    // Δv, and score. A verifier re-derives the price from the contract's parameters, the achieved
+    // Δv from the launch parameters through the rocket kernel, and the score from the committed
+    // prediction and the outcome -- all of it the kernel's, not the page's. The launch params are
+    // in the hash so the entry is self-contained: a verifier does not need the page's current
+    // rocket state to confirm the record.
     parts.push(f(entry.params.dv, 6), f(entry.params.mass, 6), f(entry.params.risk, 6),
       f(entry.params.window, 6), f(entry.params.p, 6),
+      f(entry.params.lat, 6), f(entry.params.az, 6), f(entry.params.el, 6), f(entry.params.v, 6),
       f(entry.readings.price, 3), f(entry.readings.dv, 6), f(entry.readings.score, 6));
   }
   return parts.join('|');
@@ -2925,13 +2929,17 @@ function verifyArchiveEntry(entry) {
     return { ok: hashOk && readingsOk, detail: (hashOk ? 'hash ' : 'hash ') + (readingsOk ? 'light-time matches' : 'light-time differs') };
   }
   if (entry.type === 'mission') {
-    // Re-derive the price from the contract's parameters, the achieved Δv from the rocket kernel,
-    // and the score from the committed prediction and the outcome. All three are the kernel's, so a
-    // third party can recompute them and confirm the record.
+    // Re-derive the price from the contract's parameters, the achieved Δv from the entry's OWN
+    // launch parameters (not the page's current rocket state), and the score from the committed
+    // prediction and the outcome. All three are the kernel's, so a third party can recompute them
+    // from the entry alone and confirm the record.
+    const lat = entry.params.lat * Math.PI / 180;
+    const az = entry.params.az * Math.PI / 180;
+    const el = entry.params.el * Math.PI / 180;
+    const v = entry.params.v;
     const reDerived = {
       price: k.contract_price(entry.params.dv, entry.params.mass, entry.params.risk, entry.params.window),
-      dv: k.achieved_dv(rocketParams.latitudeDeg * Math.PI / 180, rocketParams.azimuthDeg * Math.PI / 180,
-        rocketParams.elevationDeg * Math.PI / 180, rocketParams.burnoutVelocity),
+      dv: k.achieved_dv(lat, az, el, v),
       score: k.log_score(entry.params.p, entry.readings.dv >= entry.params.dv ? 1 : 0),
     };
     const hashOk = archiveHash(entry) === entry.hash;
@@ -2986,6 +2994,12 @@ function renderArchive() {
       summary = `akashi epoch ${e.params.epoch} · design hash ${e.readings.hash}`;
     } else if (e.type === 'comms') {
       summary = `station ${f(e.params.lat, 1)}, ${f(e.params.lon, 1)} · sent ${f(e.params.sendS, 1)} s · one-way ${f(e.readings.oneWay * 1000, 1)} ms`;
+    } else if (e.type === 'briefing') {
+      summary = `briefing on ${e.params.of} #${e.params.id} · ${e.readings.diagnosis}`;
+    } else if (e.type === 'mail') {
+      summary = `${e.params.peer} · sent ${f(e.params.sendS, 1)} s · light-time ${f(e.readings.lightTime, 5)} s · arrived ${f(e.readings.arrival, 1)} s`;
+    } else if (e.type === 'mission') {
+      summary = `Δv ${f(e.params.dv, 1)} km/s · mass ${f(e.params.mass, 0)} kg · p ${f(e.params.p, 3)} · price ${f(e.readings.price, 0)} · score ${f(e.readings.score, 4)}`;
     }
     const verified = e.verified === true ? '<span class="ok">verified</span>'
       : (e.verified === false ? '<span class="bad">mismatch</span>' : '<span class="muted">unverified</span>');
@@ -3484,6 +3498,11 @@ function recordMission() {
       dv: missionState.dvBudget, mass: missionState.mass,
       risk: missionState.risk, window: missionState.window,
       p: missionState.committed ? missionState.committed.p : null,
+      // The launch parameters the achieved Δv was actually derived from. Without these the
+      // entry is not self-contained: a verifier cannot re-derive the achieved Δv from the
+      // entry alone, and verification would depend on the page's current rocket params.
+      lat: rocketParams.latitudeDeg, az: rocketParams.azimuthDeg,
+      el: rocketParams.elevationDeg, v: rocketParams.burnoutVelocity,
     },
     readings: {
       price: missionState.price,
