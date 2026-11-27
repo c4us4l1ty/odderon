@@ -13,8 +13,10 @@ propagator for the rendezvous case, a Dormand–Prince 5(4) adaptive integrator 
 gravitational field (point mass + J2 + J3 + J4), cross-checked to conserve energy and self-consistent
 to under 50 m over 7 days at LEO. The kernel also solves Lambert's problem (two positions + time of
 flight → transfer velocities) via the y-parameter universal-variable method, validated against the
-Vallado/Curtis published solution to ~1e-9 relative with the 180° degenerate case solved directly.
-The kernel is pure `no_std` Rust compiled to WASM; the page is a single `web/index.html`; every
+Vallado/Curtis published solution to ~1e-9 relative with the 180° degenerate case solved directly,
+and models the first-order Schwarzschild periapsis advance (relativistic corrections) — reproducing
+the published 43.0″/century precession of Mercury from first principles. The kernel is pure `no_std`
+Rust compiled to WASM; the page is a single `web/index.html`; every
 block ships a CI gate (`tools/check-*.mjs`) that someone else can run.
 
 **Start here: [`docs/README.md`](docs/README.md)** — the documentation index, in reading order, with an
