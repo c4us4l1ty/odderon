@@ -418,8 +418,9 @@ Two things this table is deliberately not allowed to hide:
 | **P2 — The Mark** (Block 3) | Grease pencil; ghost twin; one arrow; Akashi export | The Loop of Consequence firing end-to-end |
 | **P3 — Flight** (Block 4–6) | Sounding rocket → orbit → light-time comms | Bit-identical replay in a second browser |
 | **P4 — The Archive** (Block 7) | Museum, protégé, causal mail | Someone else can verify your work |
+| **P5 — The Drawer** (Blocks 5, 8, 9) | Anomaly drawer (cap 5, rescue over restart), logic rack, E_an Elo, the Esse career ledger | A diverged mission opens an anomaly; the drawer caps, the rack fires, and E_an is the kernel's |
 
-Two rules across all five:
+Two rules across all six:
 
 - **Nothing is held back for a big reveal.** Each phase produces a public build.
 - **Every phase has a kill criterion written before it starts** (`CREDIBILITY.md` §14). If Block 1 cannot
