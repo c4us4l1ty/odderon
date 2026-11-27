@@ -32,8 +32,8 @@
 use odderon_dmath::{fabs, is_finite, sqrt, TAU};
 
 use crate::integrate::integrate_zonal;
-use crate::mu;
 use crate::j2::{EARTH_J2, EARTH_J3, EARTH_J4};
+use crate::mu;
 use crate::radius;
 use crate::State;
 

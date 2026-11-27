@@ -120,14 +120,7 @@ const B4: [f64; 7] = [
 /// J2-only field exactly — see [`accel_j2`] for the convenience wrapper.
 ///
 /// Returns a zero vector for a non-finite or non-positive position magnitude, matching [`accel_j2`].
-pub fn accel_zonal(
-    r: Vec3,
-    mu: f64,
-    j2: f64,
-    j3: f64,
-    j4: f64,
-    equatorial_radius: f64,
-) -> Vec3 {
+pub fn accel_zonal(r: Vec3, mu: f64, j2: f64, j3: f64, j4: f64, equatorial_radius: f64) -> Vec3 {
     let rn = r.norm();
     if !is_positive_finite(rn) {
         return Vec3::new(0.0, 0.0, 0.0);
@@ -305,14 +298,7 @@ pub fn potential_j2(r: Vec3, mu: f64, j2: f64, equatorial_radius: f64) -> f64 {
 ///
 /// Verified by finite-differencing against [`accel_zonal`] in the test file: `−∇U_zonal` reproduces the
 /// full zonal acceleration (J2+J3+J4) to 1e-9 relative.
-pub fn potential_zonal(
-    r: Vec3,
-    mu: f64,
-    j2: f64,
-    j3: f64,
-    j4: f64,
-    equatorial_radius: f64,
-) -> f64 {
+pub fn potential_zonal(r: Vec3, mu: f64, j2: f64, j3: f64, j4: f64, equatorial_radius: f64) -> f64 {
     let rn = r.norm();
     if !is_positive_finite(rn) {
         return 0.0;

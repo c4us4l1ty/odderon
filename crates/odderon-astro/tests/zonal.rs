@@ -211,8 +211,9 @@ fn potential_gradient_reproduces_acceleration_at_high_latitude() {
 fn integrator_conserves_energy_with_full_zonal_field() {
     let state = at_periapsis(RE + 400.0, 0.001, 51.6 * core::f64::consts::PI / 180.0);
 
-    let total_energy =
-        |s: &State| s.specific_energy(MU) + potential_zonal(s.r, MU, EARTH_J2, EARTH_J3, EARTH_J4, RE);
+    let total_energy = |s: &State| {
+        s.specific_energy(MU) + potential_zonal(s.r, MU, EARTH_J2, EARTH_J3, EARTH_J4, RE)
+    };
     let e0 = total_energy(&state);
 
     let out = integrate_zonal(

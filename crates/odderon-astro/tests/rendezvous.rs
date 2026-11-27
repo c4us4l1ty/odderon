@@ -242,7 +242,10 @@ fn propagate_zonal_refuses_degenerate_input() {
     assert!(propagate_zonal(&s, f64::NAN, 1e-12).is_none(), "NaN dt");
     assert!(propagate_zonal(&s, -1.0, 1e-12).is_none(), "negative dt");
     assert!(propagate_zonal(&s, 100.0, 0.0).is_none(), "zero tolerance");
-    assert!(propagate_zonal(&s, 100.0, -1e-12).is_none(), "negative tolerance");
+    assert!(
+        propagate_zonal(&s, 100.0, -1e-12).is_none(),
+        "negative tolerance"
+    );
 }
 
 /// A zero-time propagation returns the initial state.
