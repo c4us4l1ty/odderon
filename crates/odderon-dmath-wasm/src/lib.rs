@@ -2191,9 +2191,14 @@ fn quantity_from_raw(value: f64, sigma: f64) -> odderon_astro::provenance::Quant
 
 /// Search a cone of sky for stars, writing matches into the output buffer.
 ///
-/// Returns the number of stars written (non-negative), or a negative error code:
+/// Returns the number of stars written (non-negative, with bit 16 set when the result was
+/// truncated), or a negative error code:
 /// -1 = bad star data pointer / count, -2 = BadDirection, -3 = BadRadius,
 /// -4 = backend returned a non-unit direction.
+///
+/// The count occupies the low 16 bits; bit 16 carries the `truncated` flag from the kernel's
+/// `StarTile`. A host that ignores the flag still gets a usable count; a host that reads it can
+/// detect that the output buffer filled before the backend finished scanning.
 ///
 /// The caller owns the star data and the output buffer; the kernel validates the request and the
 /// reply, and the backend's data is never copied into the binary.
@@ -2276,7 +2281,7 @@ pub extern "C" fn survey_cone_search(
         out[base + 9] = s.proper_motion.sigma;
         i += 1;
     }
-    count as i32
+    (count as i32) | if tile.truncated { 0x10000 } else { 0 }
 }
 
 /// Whether a build profile admits a backend with the given redistributable flag.

@@ -3361,14 +3361,17 @@ function surveyConeSearch(raRad, decRad, radiusRad) {
   const stars = surveyStarBuffer();
   const out = new Float64Array(SURVEY_MAX_N * SURVEY_STAR_FLOATS);
   try {
-    const n = k.survey_cone_search(
+    const raw = k.survey_cone_search(
       stars.byteOffset, stars.length / SURVEY_STAR_FLOATS,
       raRad, decRad, radiusRad,
       out.byteOffset, SURVEY_MAX_N
     );
-    if (n < 0) return { count: n, stars: [], truncated: false, error: 'kernel error ' + n };
+    if (raw < 0) return { count: raw, stars: [], truncated: false, error: 'kernel error ' + raw };
+    // The count is in the low 16 bits; bit 16 carries the kernel's `truncated` flag.
+    const count = raw & 0xFFFF;
+    const truncated = (raw & 0x10000) !== 0;
     const result = [];
-    for (let i = 0; i < n; i++) {
+    for (let i = 0; i < count; i++) {
       const base = i * SURVEY_STAR_FLOATS;
       result.push({
         id: out[base],
@@ -3377,7 +3380,7 @@ function surveyConeSearch(raRad, decRad, radiusRad) {
         magnitude: out[base + 6], magnitudeSigma: out[base + 7],
       });
     }
-    return { count: n, stars: result, truncated: false, error: null };
+    return { count, stars: result, truncated, error: null };
   } catch (e) {
     return { count: -1, stars: [], truncated: false, error: String(e) };
   }
@@ -3414,8 +3417,9 @@ function renderSurvey() {
   const hash = k_surveyHash();
   $('m-survey-hash').textContent = hash ? '0x' + hash.toString(16) : '—';
   // Run a default cone: centre on the first star, radius 0.3 rad (~17 deg).
+  // Star record layout: [id, x, y, z, ...], so ra = atan2(y, x), dec = asin(z).
   const ra = Math.atan2(SURVEY_STARS[0][2], SURVEY_STARS[0][1]);
-  const dec = Math.asin(SURVEY_STARS[0][2]);
+  const dec = Math.asin(SURVEY_STARS[0][3]);
   const r = surveyConeSearch(ra, dec, 0.3);
   if (r.error) {
     $count.textContent = 'error: ' + r.error;
