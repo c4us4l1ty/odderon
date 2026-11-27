@@ -542,7 +542,7 @@ pub fn integrate_j2(
 ///
 /// `rel_tol` is the per-step relative error target on the *state vector*, same as [`integrate_j2`].
 /// Returns `None` for a non-finite or non-positive `dt`, or if the integrator cannot make progress.
-#[allow(clippy::needless_range_loop)]
+#[allow(clippy::needless_range_loop, clippy::too_many_arguments)]
 pub fn integrate_zonal(
     state: &State,
     dt: f64,

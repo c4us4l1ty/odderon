@@ -248,29 +248,11 @@ fn zonal_integrator_self_consistency_under_50m_at_leo() {
     let state = at_periapsis(RE + 400.0, 0.001, 51.6 * core::f64::consts::PI / 180.0);
     let dt = 7.0 * 86_400.0;
 
-    let out_tight = integrate_zonal(
-        &state,
-        dt,
-        MU,
-        EARTH_J2,
-        EARTH_J3,
-        EARTH_J4,
-        RE,
-        1e-13,
-    )
-    .expect("tight-tolerance progress");
+    let out_tight = integrate_zonal(&state, dt, MU, EARTH_J2, EARTH_J3, EARTH_J4, RE, 1e-13)
+        .expect("tight-tolerance progress");
 
-    let out_loose = integrate_zonal(
-        &state,
-        dt,
-        MU,
-        EARTH_J2,
-        EARTH_J3,
-        EARTH_J4,
-        RE,
-        1e-11,
-    )
-    .expect("loose-tolerance progress");
+    let out_loose = integrate_zonal(&state, dt, MU, EARTH_J2, EARTH_J3, EARTH_J4, RE, 1e-11)
+        .expect("loose-tolerance progress");
 
     let dx = out_tight.state.r.x - out_loose.state.r.x;
     let dy = out_tight.state.r.y - out_loose.state.r.y;
@@ -305,17 +287,8 @@ fn j3_j4_produce_measurable_difference_from_j2_only() {
     let dt = 7.0 * 86_400.0;
 
     let out_j2 = integrate_j2(&state, dt, MU, EARTH_J2, RE, REL_TOL).expect("j2 progress");
-    let out_full = integrate_zonal(
-        &state,
-        dt,
-        MU,
-        EARTH_J2,
-        EARTH_J3,
-        EARTH_J4,
-        RE,
-        REL_TOL,
-    )
-    .expect("full progress");
+    let out_full = integrate_zonal(&state, dt, MU, EARTH_J2, EARTH_J3, EARTH_J4, RE, REL_TOL)
+        .expect("full progress");
 
     let dx = out_full.state.r.x - out_j2.state.r.x;
     let dy = out_full.state.r.y - out_j2.state.r.y;
@@ -345,17 +318,8 @@ fn j3_alone_produces_measurable_difference() {
     let dt = 7.0 * 86_400.0;
 
     let out_j2 = integrate_j2(&state, dt, MU, EARTH_J2, RE, REL_TOL).expect("j2 progress");
-    let out_j2j3 = integrate_zonal(
-        &state,
-        dt,
-        MU,
-        EARTH_J2,
-        EARTH_J3,
-        0.0,
-        RE,
-        REL_TOL,
-    )
-    .expect("j2+j3 progress");
+    let out_j2j3 = integrate_zonal(&state, dt, MU, EARTH_J2, EARTH_J3, 0.0, RE, REL_TOL)
+        .expect("j2+j3 progress");
 
     let dx = out_j2j3.state.r.x - out_j2.state.r.x;
     let dy = out_j2j3.state.r.y - out_j2.state.r.y;
@@ -398,6 +362,16 @@ fn zonal_integrator_refuses_degenerate_input() {
 /// `accel_zonal` returns a zero vector for a zero position (no division by zero, no NaN).
 #[test]
 fn accel_zonal_handles_zero_position() {
-    let a = accel_zonal(Vec3::new(0.0, 0.0, 0.0), MU, EARTH_J2, EARTH_J3, EARTH_J4, RE);
-    assert!(a.x == 0.0 && a.y == 0.0 && a.z == 0.0, "zero position must give zero acceleration");
+    let a = accel_zonal(
+        Vec3::new(0.0, 0.0, 0.0),
+        MU,
+        EARTH_J2,
+        EARTH_J3,
+        EARTH_J4,
+        RE,
+    );
+    assert!(
+        a.x == 0.0 && a.y == 0.0 && a.z == 0.0,
+        "zero position must give zero acceleration"
+    );
 }
