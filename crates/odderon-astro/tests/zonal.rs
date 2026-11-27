@@ -74,7 +74,13 @@ fn accel_zonal_reduces_to_accel_j2_when_j3_j4_zero() {
         let a_zonal = accel_zonal(r, MU, EARTH_J2, 0.0, 0.0, RE);
         // Mixed tolerance: relative when the value is non-zero, absolute floor when it is zero
         // (e.g. a_y at a point on the X-Z plane, where both must be exactly 0).
-        let tol = |a: f64| if fabs(a) > 1e-12 { 1e-12 * fabs(a) } else { 1e-15 };
+        let tol = |a: f64| {
+            if fabs(a) > 1e-12 {
+                1e-12 * fabs(a)
+            } else {
+                1e-15
+            }
+        };
         assert!(
             fabs(a_j2.x - a_zonal.x) < tol(a_j2.x),
             "x mismatch at {r:?}: {:.15e} vs {:.15e}",
@@ -132,11 +138,15 @@ fn potential_gradient_reproduces_full_zonal_acceleration() {
     let h = 1e-3;
 
     // Full potential = central (-μ/r) + perturbation (potential_zonal).
-    let full_u = |p: Vec3| -MU / p.norm() + potential_zonal(p, MU, EARTH_J2, EARTH_J3, EARTH_J4, RE);
+    let full_u =
+        |p: Vec3| -MU / p.norm() + potential_zonal(p, MU, EARTH_J2, EARTH_J3, EARTH_J4, RE);
 
-    let dx = -(full_u(Vec3::new(r.x + h, r.y, r.z)) - full_u(Vec3::new(r.x - h, r.y, r.z))) / (2.0 * h);
-    let dy = -(full_u(Vec3::new(r.x, r.y + h, r.z)) - full_u(Vec3::new(r.x, r.y - h, r.z))) / (2.0 * h);
-    let dz = -(full_u(Vec3::new(r.x, r.y, r.z + h)) - full_u(Vec3::new(r.x, r.y, r.z - h))) / (2.0 * h);
+    let dx =
+        -(full_u(Vec3::new(r.x + h, r.y, r.z)) - full_u(Vec3::new(r.x - h, r.y, r.z))) / (2.0 * h);
+    let dy =
+        -(full_u(Vec3::new(r.x, r.y + h, r.z)) - full_u(Vec3::new(r.x, r.y - h, r.z))) / (2.0 * h);
+    let dz =
+        -(full_u(Vec3::new(r.x, r.y, r.z + h)) - full_u(Vec3::new(r.x, r.y, r.z - h))) / (2.0 * h);
 
     let an = fabs(a.norm());
     let scale = if an > 1e-12 { an } else { 1e-12 };
@@ -165,15 +175,24 @@ fn potential_gradient_reproduces_acceleration_at_high_latitude() {
     let a = accel_zonal(r, MU, EARTH_J2, EARTH_J3, EARTH_J4, RE);
     let h = 1e-3;
 
-    let full_u = |p: Vec3| -MU / p.norm() + potential_zonal(p, MU, EARTH_J2, EARTH_J3, EARTH_J4, RE);
+    let full_u =
+        |p: Vec3| -MU / p.norm() + potential_zonal(p, MU, EARTH_J2, EARTH_J3, EARTH_J4, RE);
 
-    let dx = -(full_u(Vec3::new(r.x + h, r.y, r.z)) - full_u(Vec3::new(r.x - h, r.y, r.z))) / (2.0 * h);
-    let dz = -(full_u(Vec3::new(r.x, r.y, r.z + h)) - full_u(Vec3::new(r.x, r.y, r.z - h))) / (2.0 * h);
+    let dx =
+        -(full_u(Vec3::new(r.x + h, r.y, r.z)) - full_u(Vec3::new(r.x - h, r.y, r.z))) / (2.0 * h);
+    let dz =
+        -(full_u(Vec3::new(r.x, r.y, r.z + h)) - full_u(Vec3::new(r.x, r.y, r.z - h))) / (2.0 * h);
 
     let an = fabs(a.norm());
     let scale = if an > 1e-12 { an } else { 1e-12 };
-    assert!(fabs(dx - a.x) < 1e-6 * scale, "dU/dx mismatch at high latitude");
-    assert!(fabs(dz - a.z) < 1e-6 * scale, "dU/dz mismatch at high latitude");
+    assert!(
+        fabs(dx - a.x) < 1e-6 * scale,
+        "dU/dx mismatch at high latitude"
+    );
+    assert!(
+        fabs(dz - a.z) < 1e-6 * scale,
+        "dU/dz mismatch at high latitude"
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -192,10 +211,8 @@ fn potential_gradient_reproduces_acceleration_at_high_latitude() {
 fn integrator_conserves_energy_with_full_zonal_field() {
     let state = at_periapsis(RE + 400.0, 0.001, 51.6 * core::f64::consts::PI / 180.0);
 
-    let total_energy = |s: &State| {
-        s.specific_energy(MU)
-            + potential_zonal(s.r, MU, EARTH_J2, EARTH_J3, EARTH_J4, RE)
-    };
+    let total_energy =
+        |s: &State| s.specific_energy(MU) + potential_zonal(s.r, MU, EARTH_J2, EARTH_J3, EARTH_J4, RE);
     let e0 = total_energy(&state);
 
     let out = integrate_zonal(
