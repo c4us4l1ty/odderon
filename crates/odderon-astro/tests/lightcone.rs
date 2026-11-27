@@ -7,8 +7,8 @@
 //! values are computed independently from the textbook formulas.
 
 use odderon_astro::lightcone::{
-    causal_reachable, doppler_factor, light_cone_radius_km, lightcone_design_hash,
-    signal_power_ratio,
+    causal_reachable, doppler_factor, doppler_factor_from_vecs, light_cone_radius_km,
+    lightcone_design_hash, signal_distance_km, signal_power_ratio,
 };
 use odderon_astro::lighttime::SPEED_OF_LIGHT_KM_S;
 use odderon_dmath::pow;
@@ -99,6 +99,19 @@ fn not_reachable_for_nan_distance() {
 #[test]
 fn not_reachable_for_nan_time() {
     assert!(!causal_reachable(1.0, f64::NAN));
+}
+
+#[test]
+fn not_reachable_for_negative_distance() {
+    // A negative distance is physically meaningless. The kernel must refuse it, not accept it.
+    // This was a real bug: the guard only checked is_finite(), not positivity.
+    assert!(!causal_reachable(-1.0, 1.0));
+}
+
+#[test]
+fn not_reachable_for_negative_distance_at_large_time() {
+    // Even with a huge cone, a negative distance must still be refused.
+    assert!(!causal_reachable(-1.0, 1e6));
 }
 
 // --------------------------------------------------------------------------------------------
@@ -217,6 +230,118 @@ fn power_refuses_negative_distance() {
 #[test]
 fn power_refuses_nan() {
     assert!(signal_power_ratio(f64::NAN, 100.0).is_none());
+}
+
+// --------------------------------------------------------------------------------------------
+// Signal distance (Euclidean magnitude)
+// --------------------------------------------------------------------------------------------
+
+#[test]
+fn signal_distance_of_unit_vector_is_one() {
+    let d = signal_distance_km(1.0, 0.0, 0.0).unwrap();
+    assert!((d - 1.0) < 1e-12, "d = {d}, want 1.0");
+}
+
+#[test]
+fn signal_distance_3d_pythagorean() {
+    // sqrt(3^2 + 4^2 + 12^2) = sqrt(169) = 13
+    let d = signal_distance_km(3.0, 4.0, 12.0).unwrap();
+    assert!((d - 13.0) < 1e-12, "d = {d}, want 13.0");
+}
+
+#[test]
+fn signal_distance_zero_vector_is_zero() {
+    let d = signal_distance_km(0.0, 0.0, 0.0).unwrap();
+    assert!((d - 0.0) < 1e-12, "d = {d}, want 0.0");
+}
+
+#[test]
+fn signal_distance_refuses_nan() {
+    assert!(signal_distance_km(f64::NAN, 0.0, 0.0).is_none());
+}
+
+#[test]
+fn signal_distance_refuses_infinite() {
+    assert!(signal_distance_km(f64::INFINITY, 0.0, 0.0).is_none());
+}
+
+// --------------------------------------------------------------------------------------------
+// Doppler factor from vectors
+// --------------------------------------------------------------------------------------------
+
+#[test]
+fn doppler_vecs_approaching_is_blueshift() {
+    // Velocity along the line of sight toward the observer: blueshift.
+    let beta = 0.01;
+    let v = beta * SPEED_OF_LIGHT_KM_S;
+    let f = doppler_factor_from_vecs(v, 0.0, 0.0, 1.0, 0.0, 0.0).unwrap();
+    let expected = odderon_dmath::sqrt((1.0 + beta) / (1.0 - beta));
+    assert!((f - expected) < 1e-12, "f = {f}, want {expected}");
+    assert!(f > 1.0, "approaching should be a blueshift, got {f}");
+}
+
+#[test]
+fn doppler_vecs_receding_is_redshift() {
+    // Velocity along the line of sight away from the observer: redshift.
+    let beta = 0.01;
+    let v = beta * SPEED_OF_LIGHT_KM_S;
+    let f = doppler_factor_from_vecs(v, 0.0, 0.0, -1.0, 0.0, 0.0).unwrap();
+    let expected = odderon_dmath::sqrt((1.0 - beta) / (1.0 + beta));
+    assert!((f - expected) < 1e-12, "f = {f}, want {expected}");
+    assert!(f < 1.0, "receding should be a redshift, got {f}");
+}
+
+#[test]
+fn doppler_vecs_transverse_is_relativistic_redshift() {
+    // Velocity perpendicular to the line of sight: transverse relativistic redshift.
+    let beta = 0.01;
+    let v = beta * SPEED_OF_LIGHT_KM_S;
+    let f = doppler_factor_from_vecs(v, 0.0, 0.0, 0.0, 1.0, 0.0).unwrap();
+    let expected = odderon_dmath::sqrt(1.0 - beta * beta);
+    assert!((f - expected) < 1e-12, "f = {f}, want {expected}");
+    assert!(f < 1.0, "transverse should be a redshift, got {f}");
+}
+
+#[test]
+fn doppler_vecs_matches_scalar_form() {
+    // The vector form must agree with the scalar form for the same geometry.
+    let beta = 0.02;
+    let v = beta * SPEED_OF_LIGHT_KM_S;
+    let theta = 0.3;
+    let cos_t = odderon_dmath::cos(theta);
+    let sin_t = odderon_dmath::sqrt(1.0 - cos_t * cos_t);
+    // Velocity at angle theta from the line of sight.
+    let scalar = doppler_factor(v, theta).unwrap();
+    let vec = doppler_factor_from_vecs(v * cos_t, v * sin_t, 0.0, 1.0, 0.0, 0.0).unwrap();
+    assert!((scalar - vec) < 1e-9, "scalar = {scalar}, vec = {vec}");
+}
+
+#[test]
+fn doppler_vecs_zero_velocity_is_no_shift() {
+    // Zero speed: no Doppler shift, the factor is exactly 1. Matches the scalar form.
+    let f = doppler_factor_from_vecs(0.0, 0.0, 0.0, 1.0, 0.0, 0.0).unwrap();
+    assert!((f - 1.0) < 1e-12, "f = {f}, want 1.0");
+}
+
+#[test]
+fn doppler_vecs_refuses_zero_los() {
+    // Zero line-of-sight vector: no direction, no meaningful angle.
+    assert!(doppler_factor_from_vecs(100.0, 0.0, 0.0, 0.0, 0.0, 0.0).is_none());
+}
+
+#[test]
+fn doppler_vecs_refuses_nan_velocity() {
+    assert!(doppler_factor_from_vecs(f64::NAN, 0.0, 0.0, 1.0, 0.0, 0.0).is_none());
+}
+
+#[test]
+fn doppler_vecs_refuses_nan_los() {
+    assert!(doppler_factor_from_vecs(100.0, 0.0, 0.0, f64::NAN, 0.0, 0.0).is_none());
+}
+
+#[test]
+fn doppler_vecs_refuses_light_speed() {
+    assert!(doppler_factor_from_vecs(SPEED_OF_LIGHT_KM_S, 0.0, 0.0, 1.0, 0.0, 0.0).is_none());
 }
 
 // --------------------------------------------------------------------------------------------

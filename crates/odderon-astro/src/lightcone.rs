@@ -73,7 +73,7 @@ pub fn light_cone_radius_km(dt_s: f64) -> Option<f64> {
 /// well-formed inputs, and `false` is the correct answer for inputs the kernel refuses to place.
 #[inline]
 pub fn causal_reachable(r_km: f64, dt_s: f64) -> bool {
-    match (light_cone_radius_km(dt_s), r_km.is_finite()) {
+    match (light_cone_radius_km(dt_s), r_km.is_finite() && r_km > 0.0) {
         (Some(radius), true) => r_km <= radius,
         _ => false,
     }
@@ -112,6 +112,88 @@ pub fn doppler_factor(v_km_s: f64, theta_rad: f64) -> Option<f64> {
         return None;
     }
     let cos_theta = cos(theta_rad);
+    let denom = 1.0 - beta * cos_theta;
+    if denom <= 0.0 {
+        return None;
+    }
+    let shift = sqrt(1.0 - beta * beta) / denom;
+    if shift.is_finite() {
+        Some(shift)
+    } else {
+        None
+    }
+}
+
+/// The Euclidean magnitude of a displacement vector given its Cartesian components.
+///
+/// The kernel owns the distance computation so the page never performs a `sqrt` locally. Returns
+/// `None` when any component is non-finite or the magnitude is non-finite.
+#[inline]
+pub fn signal_distance_km(dx: f64, dy: f64, dz: f64) -> Option<f64> {
+    if !(dx.is_finite() && dy.is_finite() && dz.is_finite()) {
+        return None;
+    }
+    let dist = sqrt(dx * dx + dy * dy + dz * dz);
+    if dist.is_finite() {
+        Some(dist)
+    } else {
+        None
+    }
+}
+
+/// The relativistic Doppler shift computed directly from a velocity vector and a line-of-sight
+/// direction vector, so the caller supplies geometry and the kernel owns every trigonometric and
+/// relativistic step.
+///
+/// This is the kernel-side alternative to computing an angle in the page and passing it to
+/// [`doppler_factor`]. The page supplies the velocity components `(vx, vy, vz)` and the line-of-sight
+/// components `(lx, ly, lz)` from the source to the observer — the raw displacement, not a unit
+/// vector. The kernel normalises internally: it computes the speed `v = |v|`, the line-of-sight
+/// magnitude, and the cosine of the angle between them as `cos_theta = (v · los) / (|v| |los|)`.
+/// The Doppler formula is then `sqrt(1 - beta^2) / (1 - beta * cos_theta)` with
+/// `beta = v / c`, the same formula [`doppler_factor`] applies.
+///
+/// Returns `None` when any component is non-finite, the speed or line-of-sight magnitude is zero or
+/// non-finite, the angle is degenerate, or the speed reaches or exceeds the speed of light.
+#[inline]
+pub fn doppler_factor_from_vecs(
+    vx: f64,
+    vy: f64,
+    vz: f64,
+    lx: f64,
+    ly: f64,
+    lz: f64,
+) -> Option<f64> {
+    if !(vx.is_finite()
+        && vy.is_finite()
+        && vz.is_finite()
+        && lx.is_finite()
+        && ly.is_finite()
+        && lz.is_finite())
+    {
+        return None;
+    }
+    let v_mag = sqrt(vx * vx + vy * vy + vz * vz);
+    if !v_mag.is_finite() {
+        return None;
+    }
+    // A zero-speed source has no Doppler shift: the factor is exactly 1. This matches the scalar
+    // `doppler_factor(0.0, theta)`, which also returns `Some(1.0)`.
+    if v_mag == 0.0 {
+        return Some(1.0);
+    }
+    let los_mag = sqrt(lx * lx + ly * ly + lz * lz);
+    if !(los_mag.is_finite() && los_mag > 0.0) {
+        return None;
+    }
+    let cos_theta = (vx * lx + vy * ly + vz * lz) / (v_mag * los_mag);
+    if !cos_theta.is_finite() {
+        return None;
+    }
+    let beta = v_mag / SPEED_OF_LIGHT_KM_S;
+    if beta >= 1.0 {
+        return None;
+    }
     let denom = 1.0 - beta * cos_theta;
     if denom <= 0.0 {
         return None;
