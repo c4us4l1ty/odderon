@@ -2123,26 +2123,27 @@ impl odderon_astro::survey::Survey for RawSurvey {
 /// # Safety
 ///
 /// The caller must guarantee `stars_off` points to `n * SURVEY_STAR_FLOATS` f64 in linear memory.
-fn read_survey_stars(stars_off: u32, n: u32) -> Option<[odderon_astro::survey::Star; SURVEY_MAX_N]> {
+fn read_survey_stars(
+    stars_off: u32,
+    n: u32,
+) -> Option<[odderon_astro::survey::Star; SURVEY_MAX_N]> {
     let n_usize = n as usize;
     if n_usize > SURVEY_MAX_N {
         return None;
     }
     // SAFETY: bounded by the caller's guarantee, checked against SURVEY_MAX_N above.
-    let raw =
-        unsafe { core::slice::from_raw_parts(stars_off as *const f64, n_usize * SURVEY_STAR_FLOATS) };
-    let mut arr = [
-        odderon_astro::survey::Star {
-            id: 0,
-            direction: odderon_astro::survey::Direction {
-                vector: [1.0, 0.0, 0.0],
-            },
-            distance_parsec: odderon_astro::provenance::Quantity::unknown(),
-            magnitude: odderon_astro::provenance::Quantity::unknown(),
-            proper_motion: odderon_astro::provenance::Quantity::unknown(),
-        };
-        SURVEY_MAX_N
-    ];
+    let raw = unsafe {
+        core::slice::from_raw_parts(stars_off as *const f64, n_usize * SURVEY_STAR_FLOATS)
+    };
+    let mut arr = [odderon_astro::survey::Star {
+        id: 0,
+        direction: odderon_astro::survey::Direction {
+            vector: [1.0, 0.0, 0.0],
+        },
+        distance_parsec: odderon_astro::provenance::Quantity::unknown(),
+        magnitude: odderon_astro::provenance::Quantity::unknown(),
+        proper_motion: odderon_astro::provenance::Quantity::unknown(),
+    }; SURVEY_MAX_N];
     let mut i = 0;
     while i < n_usize {
         let base = i * SURVEY_STAR_FLOATS;
