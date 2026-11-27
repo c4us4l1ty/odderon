@@ -1454,6 +1454,49 @@ pub extern "C" fn rendezvous_design_hash() -> u64 {
 }
 
 // =============================================================================================
+// The protégé's teaching arc (Block N2: learning by teaching, bible §5.6, §6)
+// =============================================================================================
+
+/// The protégé's tier from the reputation count (correct briefings answered).
+///
+/// 0 = novice (0–1), 1 = junior (2–4), 2 = analyst (5–9), 3 = peer (10+). The thresholds are
+/// pinned in the kernel, so a replay bundle can detect a stale arc model.
+#[unsafe(no_mangle)]
+pub extern "C" fn protege_tier(reputation: u32) -> u32 {
+    odderon_astro::protege::protege_tier(reputation)
+}
+
+/// The depth of the protégé's next question, from the tier and the kernel's readings for the error
+/// entry.
+///
+/// `verdict` is the `RocketVerdict` code (0 = Suborbital, 1 = Orbital, 2 = Escape, 3 = Refused);
+/// `apogee_km` is the apogee in km (`NaN` if the launch was refused). The depth is the tier, capped
+/// at 1 for a refused launch or a non-finite apogee (the margin and counterfactual questions need
+/// an apogee).
+#[unsafe(no_mangle)]
+pub extern "C" fn protege_question_depth(verdict: u32, apogee_km: f64, tier: u32) -> u32 {
+    odderon_astro::protege::protege_question_depth(verdict, apogee_km, tier)
+}
+
+/// What the protégé can notice at a given tier.
+///
+/// 0 = nothing, 1 = a mismatched record, 2 = a stale record, 3 = a tampered record. Never exceeds
+/// the tier.
+#[unsafe(no_mangle)]
+pub extern "C" fn protege_notice_level(tier: u32) -> u32 {
+    odderon_astro::protege::protege_notice_level(tier)
+}
+
+/// The deterministic design hash of the protégé arc's constants.
+///
+/// Folds in the three tier thresholds, so a replay bundle or an Akashi entry can detect a stale
+/// arc model.
+#[unsafe(no_mangle)]
+pub extern "C" fn protege_design_hash() -> u64 {
+    odderon_astro::protege::protege_design_hash()
+}
+
+// =============================================================================================
 // The Esse career ledger (P5: the career core, bible §4.3)
 // =============================================================================================
 //

@@ -195,6 +195,14 @@ jobs:
       - name: rendezvous boundary (the Hohmann transfer is the kernel's, physical and reproducible)
         run: node tools/check-rendezvous.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
 
+      # The protégé's teaching-arc boundary, against the same binary: the tier thresholds are exactly
+      # the kernel's (0-1 novice, 2-4 junior, 5-9 analyst, 10+ peer), the question depth never
+      # exceeds the tier and is capped at 1 for a refused launch or a non-finite apogee, the notice
+      # level never exceeds the tier, and the design hash is deterministic and non-zero -- the replay
+      # gate. Static half in `shell-claims`.
+      - name: protégé arc boundary (the teaching arc is the kernel's, physical and reproducible)
+        run: node tools/check-protege.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
+
       # The museum archive's boundary, against the same binary: the archive adds no new kernel exports,
       # it re-derives every entry from the existing ones (rocket verdict, pad design hash, comms
       # light-time). This confirms those exports are present and physical -- a verifiable archive needs
@@ -404,6 +412,16 @@ jobs:
 
       - name: rendezvous verifier self-test (accepts good exports, rejects bad)
         run: node tools/check-rendezvous.mjs --selftest
+
+      # Block N2: the protégé's teaching arc. The page must read the tier, question depth, and notice
+      # level from the kernel's `protege_*` exports -- no local tier threshold, no local reputation
+      # comparison, no substitute progression when the kernel is absent. This is the gate that makes
+      # the arc prediction mechanically the kernel's own, the same way the other P4 gates guard theirs.
+      - name: the protégé's arc comes from the kernel, not from a JS progression
+        run: node tools/check-protege.mjs
+
+      - name: protégé arc verifier self-test (accepts good exports, rejects bad)
+        run: node tools/check-protege.mjs --selftest
 
       # P4 Block 7: the museum. The page must record the career as it happens (vehicle, report, comms)
       # with the kernel's own readings and a physics-only hash, and verification must re-derive every
