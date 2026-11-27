@@ -173,13 +173,7 @@ fn scale_from_size(size: f64) -> f64 {
     // The reference is 100.0: a 100 km apogee or a 100 s failure time displays at scale 1.
     let ref_size = 100.0;
     let raw = odderon_dmath::sqrt(size / ref_size);
-    if raw < SCALE_MIN {
-        SCALE_MIN
-    } else if raw > SCALE_MAX {
-        SCALE_MAX
-    } else {
-        raw
-    }
+    odderon_dmath::fmax(odderon_dmath::fmin(raw, SCALE_MAX), SCALE_MIN)
 }
 
 /// Compute the gallery layout for `entries`, writing exhibits into `out`.
@@ -237,7 +231,7 @@ pub fn museum_design_hash() -> u64 {
         // Fold the bits of each constant. `(c as f64).to_bits()` is the IEEE-754 bit pattern,
         // which is deterministic on every platform — the same value has the same bits natively
         // and in WASM.
-        let bits = (c as f64).to_bits();
+        let bits = c.to_bits();
         let mut b: u64 = bits;
         let mut shift = 0;
         while shift < 64 {
@@ -270,8 +264,28 @@ mod tests {
     #[test]
     fn layout_is_deterministic() {
         let entries = [vehicle(0, 100.0), vehicle(1, 200.0), vehicle(2, 300.0)];
-        let mut a = [Exhibit { x: 0.0, z: 0.0, scale: 0.0, rotation: 0.0, kind: 0, id: 0 }; 3];
-        let mut b = [Exhibit { x: 0.0, z: 0.0, scale: 0.0, rotation: 0.0, kind: 0, id: 0 }; 3];
+        let mut a = [
+            Exhibit {
+                x: 0.0,
+                z: 0.0,
+                scale: 0.0,
+                rotation: 0.0,
+                kind: 0,
+                id: 0,
+            };
+            3
+        ];
+        let mut b = [
+            Exhibit {
+                x: 0.0,
+                z: 0.0,
+                scale: 0.0,
+                rotation: 0.0,
+                kind: 0,
+                id: 0,
+            };
+            3
+        ];
         let n_a = museum_layout(&entries, &mut a);
         let n_b = museum_layout(&entries, &mut b);
         assert_eq!(n_a, 3);
@@ -289,14 +303,44 @@ mod tests {
     #[test]
     fn layout_uses_id_as_spiral_index() {
         // The same entry at a different id lands at a different position.
-        let mut a = [Exhibit { x: 0.0, z: 0.0, scale: 0.0, rotation: 0.0, kind: 0, id: 0 }; 1];
-        let mut b = [Exhibit { x: 0.0, z: 0.0, scale: 0.0, rotation: 0.0, kind: 0, id: 0 }; 1];
+        let mut a = [
+            Exhibit {
+                x: 0.0,
+                z: 0.0,
+                scale: 0.0,
+                rotation: 0.0,
+                kind: 0,
+                id: 0,
+            };
+            1
+        ];
+        let mut b = [
+            Exhibit {
+                x: 0.0,
+                z: 0.0,
+                scale: 0.0,
+                rotation: 0.0,
+                kind: 0,
+                id: 0,
+            };
+            1
+        ];
         museum_layout(&[vehicle(0, 100.0)], &mut a);
         museum_layout(&[vehicle(7, 100.0)], &mut b);
         assert_ne!(a[0].x, b[0].x, "different id must land at different x");
         assert_ne!(a[0].z, b[0].z, "different id must land at different z");
         // Same id, same position.
-        let mut c = [Exhibit { x: 0.0, z: 0.0, scale: 0.0, rotation: 0.0, kind: 0, id: 0 }; 1];
+        let mut c = [
+            Exhibit {
+                x: 0.0,
+                z: 0.0,
+                scale: 0.0,
+                rotation: 0.0,
+                kind: 0,
+                id: 0,
+            };
+            1
+        ];
         museum_layout(&[vehicle(7, 100.0)], &mut c);
         assert_eq!(b[0].x, c[0].x);
         assert_eq!(b[0].z, c[0].z);
@@ -306,7 +350,17 @@ mod tests {
     fn spiral_grows_outward() {
         // Later exhibits sit further from the centre.
         let entries = [vehicle(0, 100.0), vehicle(1, 100.0), vehicle(2, 100.0), vehicle(3, 100.0)];
-        let mut out = [Exhibit { x: 0.0, z: 0.0, scale: 0.0, rotation: 0.0, kind: 0, id: 0 }; 4];
+        let mut out = [
+            Exhibit {
+                x: 0.0,
+                z: 0.0,
+                scale: 0.0,
+                rotation: 0.0,
+                kind: 0,
+                id: 0,
+            };
+            4
+        ];
         museum_layout(&entries, &mut out);
         let r0 = odderon_dmath::sqrt(out[0].x * out[0].x + out[0].z * out[0].z);
         let r1 = odderon_dmath::sqrt(out[1].x * out[1].x + out[1].z * out[1].z);
@@ -342,7 +396,17 @@ mod tests {
 
     #[test]
     fn rotation_is_orientation_or_zero() {
-        let mut out = [Exhibit { x: 0.0, z: 0.0, scale: 0.0, rotation: 0.0, kind: 0, id: 0 }; 2];
+        let mut out = [
+            Exhibit {
+                x: 0.0,
+                z: 0.0,
+                scale: 0.0,
+                rotation: 0.0,
+                kind: 0,
+                id: 0,
+            };
+            2
+        ];
         let entries = [
             EntryDesc { kind: 0, size: 100.0, orient: 1.5, id: 0 },
             EntryDesc { kind: 0, size: 100.0, orient: f64::NAN, id: 1 },
@@ -356,7 +420,17 @@ mod tests {
     fn truncation_keeps_leading_exhibits() {
         // A short output buffer writes the first N exhibits, not a shifted subset.
         let entries = [vehicle(0, 100.0), vehicle(1, 200.0), vehicle(2, 300.0)];
-        let mut out = [Exhibit { x: 0.0, z: 0.0, scale: 0.0, rotation: 0.0, kind: 0, id: 0 }; 2];
+        let mut out = [
+            Exhibit {
+                x: 0.0,
+                z: 0.0,
+                scale: 0.0,
+                rotation: 0.0,
+                kind: 0,
+                id: 0,
+            };
+            2
+        ];
         let n = museum_layout(&entries, &mut out);
         assert_eq!(n, 2);
         assert_eq!(out[0].id, 0);
@@ -365,7 +439,17 @@ mod tests {
 
     #[test]
     fn empty_archive_gives_empty_gallery() {
-        let mut out = [Exhibit { x: 0.0, z: 0.0, scale: 0.0, rotation: 0.0, kind: 0, id: 0 }; 4];
+        let mut out = [
+            Exhibit {
+                x: 0.0,
+                z: 0.0,
+                scale: 0.0,
+                rotation: 0.0,
+                kind: 0,
+                id: 0,
+            };
+            4
+        ];
         let n = museum_layout(&[], &mut out);
         assert_eq!(n, 0);
     }
@@ -406,7 +490,17 @@ mod tests {
             EntryDesc { kind: ExhibitKind::Vehicle.code(), size: 100.0, orient: 0.0, id: 3 },
             EntryDesc { kind: ExhibitKind::Wreck.code(), size: 50.0, orient: 0.0, id: 4 },
         ];
-        let mut out = [Exhibit { x: 0.0, z: 0.0, scale: 0.0, rotation: 0.0, kind: 0, id: 0 }; 2];
+        let mut out = [
+            Exhibit {
+                x: 0.0,
+                z: 0.0,
+                scale: 0.0,
+                rotation: 0.0,
+                kind: 0,
+                id: 0,
+            };
+            2
+        ];
         museum_layout(&entries, &mut out);
         assert_eq!(out[0].kind, ExhibitKind::Vehicle.code());
         assert_eq!(out[0].id, 3);
@@ -418,12 +512,28 @@ mod tests {
     fn spiral_points_are_not_collinear() {
         // The golden angle ensures no two exhibits sit on the same ray from the centre.
         let entries = [vehicle(0, 100.0), vehicle(1, 100.0), vehicle(2, 100.0)];
-        let mut out = [Exhibit { x: 0.0, z: 0.0, scale: 0.0, rotation: 0.0, kind: 0, id: 0 }; 3];
+        let mut out = [
+            Exhibit {
+                x: 0.0,
+                z: 0.0,
+                scale: 0.0,
+                rotation: 0.0,
+                kind: 0,
+                id: 0,
+            };
+            3
+        ];
         museum_layout(&entries, &mut out);
         // Cross products of consecutive position vectors must not all be zero.
         let cross01 = out[0].x * out[1].z - out[0].z * out[1].x;
         let cross12 = out[1].x * out[2].z - out[1].z * out[2].x;
-        assert!(odderon_dmath::fabs(cross01) > 1e-9, "exhibits 0 and 1 are collinear");
-        assert!(odderon_dmath::fabs(cross12) > 1e-9, "exhibits 1 and 2 are collinear");
+        assert!(
+            odderon_dmath::fabs(cross01) > 1e-9,
+            "exhibits 0 and 1 are collinear"
+        );
+        assert!(
+            odderon_dmath::fabs(cross12) > 1e-9,
+            "exhibits 1 and 2 are collinear"
+        );
     }
 }

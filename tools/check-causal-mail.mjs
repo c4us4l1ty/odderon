@@ -209,6 +209,7 @@ function selftest() {
   const fnSource = [
     "const archive = []; let archiveSeq = 0;",
     "function renderArchive() {}",
+    "function renderMuseum() {}",
     "function saveArchive() {}",
     extract("archiveSerialize"),
     extract("archiveHash"),

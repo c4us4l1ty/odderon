@@ -1934,14 +1934,21 @@ const MUSEUM_EXHIBIT_FLOATS: usize = 6;
 /// # Safety
 ///
 /// The caller must guarantee `desc_off` points to `n * MUSEUM_DESC_FLOATS` f64 in linear memory.
-fn read_museum_descs(desc_off: u32, n: u32) -> Option<[odderon_astro::museum::EntryDesc; MUSEUM_MAX_N]> {
+fn read_museum_descs(
+    desc_off: u32,
+    n: u32,
+) -> Option<[odderon_astro::museum::EntryDesc; MUSEUM_MAX_N]> {
     let n = n as usize;
     if n > MUSEUM_MAX_N {
         return None;
     }
     // SAFETY: bounded by the caller's guarantee, checked against MUSEUM_MAX_N above.
-    let raw = unsafe { core::slice::from_raw_parts(desc_off as *const f64, n * MUSEUM_DESC_FLOATS) };
-    let mut arr = [odderon_astro::museum::EntryDesc { kind: 0, size: 0.0, orient: 0.0, id: 0 }; MUSEUM_MAX_N];
+    let raw =
+        unsafe { core::slice::from_raw_parts(desc_off as *const f64, n * MUSEUM_DESC_FLOATS) };
+    let mut arr = [
+        odderon_astro::museum::EntryDesc { kind: 0, size: 0.0, orient: 0.0, id: 0 };
+        MUSEUM_MAX_N
+    ];
     let mut i = 0;
     while i < n {
         let base = i * MUSEUM_DESC_FLOATS;
