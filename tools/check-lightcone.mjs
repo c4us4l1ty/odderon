@@ -113,6 +113,21 @@ check("the light-cone readings come from the kernel, not a local formula", (src)
   }
 });
 
+check("the peer semi-latus rectum is computed, not read from a peer field", (src) => {
+  // The peer objects carry `a` and `e`, not `p`. The page must compute `p = a(1-e²)` via
+  // `peerP(peer)` before passing it to the kernel's `peer_vel_*` exports. Reading `peer.p`
+  // passes `undefined` to WASM, which becomes `0.0` and produces a degenerate state.
+  const m = src.match(/function lightconeReadings\s*\([^)]*\)\s*\{([\s\S]*?)\n\}/);
+  if (!m) throw new Error("lightconeReadings not found");
+  const body = m[1];
+  if (/peer\.p\b/.test(body)) {
+    throw new Error("lightconeReadings reads peer.p directly; it must use peerP(peer) to compute p = a(1-e²)");
+  }
+  if (!body.includes("peerP(peer)")) {
+    throw new Error("lightconeReadings does not compute p via peerP(peer)");
+  }
+});
+
 /**
  * The physics the light-cone exports must satisfy, as a function of the exports alone.
  *
