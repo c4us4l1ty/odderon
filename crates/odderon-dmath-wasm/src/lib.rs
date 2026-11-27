@@ -2032,6 +2032,299 @@ pub extern "C" fn museum_design_hash() -> u64 {
     odderon_astro::museum::museum_design_hash()
 }
 
+// ---------------------------------------------------------------------------
+// The Survey seam (bible §3.3, DATA-LICENSING.md §3.3)
+// ---------------------------------------------------------------------------
+//
+// The kernel defines the `Survey` trait and validates requests; it ships no backend and holds no
+// catalogue. The WASM shell is where a backend lives — it has the linear memory and the caller's
+// data. `RawSurvey` is the concrete bridge: it reads star records from flat f64 memory, implements
+// the kernel's trait, and the three exports below let a page ask the kernel to search a cone.
+//
+// Star record layout (SURVEY_STAR_FLOATS f64 per star):
+//   [0] id           — backend-stable identifier, stored as f64 (exact to 2^53)
+//   [1..3] direction  — ICRS unit vector (x, y, z)
+//   [4] distance_val  — parsecs
+//   [5] distance_sig  — one-sigma, same units
+//   [6] mag_val       — apparent magnitude
+//   [7] mag_sig       — one-sigma
+//   [8] pm_val        — proper motion (rad/s), or NaN for absent
+//   [9] pm_sig        — one-sigma, or NaN
+//
+// A non-positive or non-finite sigma makes the corresponding `Quantity` unknown, not zero: the
+// kernel's `Quantity::measured` refuses a zero-sigma "measurement", and the ABI must not smuggle
+// one through by constructing it directly.
+
+/// F64 values per star record in linear memory.
+const SURVEY_STAR_FLOATS: usize = 10;
+/// Maximum stars a single cone search can read. Matches the museum cap: a page-side buffer, not a
+/// kernel limit — the kernel iterates whatever slice it is given.
+const SURVEY_MAX_N: usize = 256;
+
+/// A `Survey` implementation over flat star data in linear memory.
+///
+/// The data is read once at construction; the trait methods then filter it. This is the shape the
+/// kernel's `no_std` constraint forces: no allocator, so the backend owns a fixed array and lends
+/// out slices of it.
+struct RawSurvey {
+    stars: [odderon_astro::survey::Star; SURVEY_MAX_N],
+    n: usize,
+    redistributable: bool,
+    dataset: &'static str,
+}
+
+impl odderon_astro::survey::Survey for RawSurvey {
+    fn cone_search<'a>(
+        &self,
+        ra_rad: f64,
+        dec_rad: f64,
+        radius_rad: f64,
+        out: &'a mut [odderon_astro::survey::Star],
+    ) -> Result<odderon_astro::survey::StarTile<'a>, odderon_astro::survey::SurveyError> {
+        let centre = match odderon_astro::survey::Direction::from_ra_dec(ra_rad, dec_rad) {
+            Some(d) => d,
+            None => return Err(odderon_astro::survey::SurveyError::BadDirection),
+        };
+        let mut count = 0usize;
+        let mut truncated = false;
+        let mut i = 0usize;
+        while i < self.n {
+            let separation = centre.separation(&self.stars[i].direction);
+            if separation <= radius_rad {
+                if count == out.len() {
+                    truncated = true;
+                    break;
+                }
+                out[count] = self.stars[i];
+                count += 1;
+            }
+            i += 1;
+        }
+        let filled: &[odderon_astro::survey::Star] = &out[..count];
+        Ok(odderon_astro::survey::StarTile {
+            stars: filled,
+            truncated,
+        })
+    }
+
+    fn dataset(&self) -> &'static str {
+        self.dataset
+    }
+
+    fn redistributable(&self) -> bool {
+        self.redistributable
+    }
+}
+
+/// Read `n` star records from linear memory at `stars_off`.
+///
+/// Returns `None` if `n` exceeds the cap or the pointer would read out of bounds.
+///
+/// # Safety
+///
+/// The caller must guarantee `stars_off` points to `n * SURVEY_STAR_FLOATS` f64 in linear memory.
+fn read_survey_stars(
+    stars_off: u32,
+    n: u32,
+) -> Option<[odderon_astro::survey::Star; SURVEY_MAX_N]> {
+    let n_usize = n as usize;
+    if n_usize > SURVEY_MAX_N {
+        return None;
+    }
+    // SAFETY: bounded by the caller's guarantee, checked against SURVEY_MAX_N above.
+    let raw = unsafe {
+        core::slice::from_raw_parts(stars_off as *const f64, n_usize * SURVEY_STAR_FLOATS)
+    };
+    let mut arr = [odderon_astro::survey::Star {
+        id: 0,
+        direction: odderon_astro::survey::Direction {
+            vector: [1.0, 0.0, 0.0],
+        },
+        distance_parsec: odderon_astro::provenance::Quantity::unknown(),
+        magnitude: odderon_astro::provenance::Quantity::unknown(),
+        proper_motion: odderon_astro::provenance::Quantity::unknown(),
+    }; SURVEY_MAX_N];
+    let mut i = 0;
+    while i < n_usize {
+        let base = i * SURVEY_STAR_FLOATS;
+        let id = raw[base] as u64;
+        let dir = match odderon_astro::survey::Direction::from_vector([
+            raw[base + 1],
+            raw[base + 2],
+            raw[base + 3],
+        ]) {
+            Some(d) => d,
+            None => {
+                // A backend that handed over a non-unit vector is caught by the kernel's own
+                // `cone_search` check. Use a placeholder here; the kernel will refuse it.
+                odderon_astro::survey::Direction {
+                    vector: [0.0, 0.0, 0.0],
+                }
+            }
+        };
+        let distance = quantity_from_raw(raw[base + 4], raw[base + 5]);
+        let magnitude = quantity_from_raw(raw[base + 6], raw[base + 7]);
+        let proper_motion = quantity_from_raw(raw[base + 8], raw[base + 9]);
+        arr[i] = odderon_astro::survey::Star {
+            id,
+            direction: dir,
+            distance_parsec: distance,
+            magnitude,
+            proper_motion,
+        };
+        i += 1;
+    }
+    Some(arr)
+}
+
+/// Build a `Quantity` from a raw value and sigma, refusing a zero or non-finite sigma.
+///
+/// `Quantity::measured` returns `None` for a non-positive or non-finite sigma, and the ABI must not
+/// construct a measured quantity with a rejected sigma — that would be a zero-uncertainty claim
+/// smuggled through the back door the type system just closed.
+fn quantity_from_raw(value: f64, sigma: f64) -> odderon_astro::provenance::Quantity {
+    match odderon_astro::provenance::Quantity::measured(value, sigma) {
+        Some(q) => q,
+        None => odderon_astro::provenance::Quantity::unknown(),
+    }
+}
+
+/// Search a cone of sky for stars, writing matches into the output buffer.
+///
+/// Returns the number of stars written (non-negative), or a negative error code:
+/// -1 = bad star data pointer / count, -2 = BadDirection, -3 = BadRadius,
+/// -4 = backend returned a non-unit direction.
+///
+/// The caller owns the star data and the output buffer; the kernel validates the request and the
+/// reply, and the backend's data is never copied into the binary.
+#[unsafe(no_mangle)]
+pub extern "C" fn survey_cone_search(
+    stars_off: u32,
+    n: u32,
+    ra_rad: f64,
+    dec_rad: f64,
+    radius_rad: f64,
+    out_off: u32,
+    out_cap: u32,
+) -> i32 {
+    // Validate the request at the ABI boundary BEFORE allocating the large stack arrays.
+    // The kernel's `cone_search` validates in the same order, but doing it here first means
+    // a bad request returns immediately without the wasm stack overflow that two 256-element
+    // Star arrays would cause -- the return value would be corrupted by the overflow.
+    if !ra_rad.is_finite() || !dec_rad.is_finite() {
+        return -2;
+    }
+    let radius_is_usable = radius_rad.is_finite() && radius_rad > 0.0;
+    if !radius_is_usable {
+        return -3;
+    }
+    if radius_rad > core::f64::consts::FRAC_PI_2 {
+        return -3;
+    }
+    let stars = match read_survey_stars(stars_off, n) {
+        Some(s) => s,
+        None => return -1,
+    };
+    let survey = RawSurvey {
+        stars,
+        n: n as usize,
+        redistributable: true,
+        dataset: "raw",
+    };
+    let mut out_buf = [odderon_astro::survey::Star {
+        id: 0,
+        direction: odderon_astro::survey::Direction {
+            vector: [1.0, 0.0, 0.0],
+        },
+        distance_parsec: odderon_astro::provenance::Quantity::unknown(),
+        magnitude: odderon_astro::provenance::Quantity::unknown(),
+        proper_motion: odderon_astro::provenance::Quantity::unknown(),
+    }; SURVEY_MAX_N];
+    let cap = out_cap as usize;
+    if cap > SURVEY_MAX_N {
+        return -1;
+    }
+    let tile = match odderon_astro::survey::cone_search(
+        &survey,
+        ra_rad,
+        dec_rad,
+        radius_rad,
+        &mut out_buf[..cap],
+    ) {
+        Ok(t) => t,
+        Err(odderon_astro::survey::SurveyError::BadDirection) => return -2,
+        Err(odderon_astro::survey::SurveyError::BadRadius) => return -3,
+        Err(odderon_astro::survey::SurveyError::BackendReturnedNonUnitDirection) => return -4,
+    };
+    let count = tile.stars.len();
+    // SAFETY: the caller guarantees `out_off` points to `count * SURVEY_STAR_FLOATS` f64.
+    let out =
+        unsafe { core::slice::from_raw_parts_mut(out_off as *mut f64, count * SURVEY_STAR_FLOATS) };
+    let mut i = 0;
+    while i < count {
+        let base = i * SURVEY_STAR_FLOATS;
+        let s = tile.stars[i];
+        out[base] = s.id as f64;
+        out[base + 1] = s.direction.vector[0];
+        out[base + 2] = s.direction.vector[1];
+        out[base + 3] = s.direction.vector[2];
+        out[base + 4] = s.distance_parsec.value;
+        out[base + 5] = s.distance_parsec.sigma;
+        out[base + 6] = s.magnitude.value;
+        out[base + 7] = s.magnitude.sigma;
+        out[base + 8] = s.proper_motion.value;
+        out[base + 9] = s.proper_motion.sigma;
+        i += 1;
+    }
+    count as i32
+}
+
+/// Whether a build profile admits a backend with the given redistributable flag.
+///
+/// `is_release` is 1 for a release build, 0 for development. Returns 1 if admitted, 0 if not.
+/// This is the `DATA-LICENSING.md` §3.2 rule 2 expressed as a callable: a release build physically
+/// cannot load a non-redistributable backend.
+#[unsafe(no_mangle)]
+pub extern "C" fn survey_admits(redistributable: u32, is_release: u32) -> i32 {
+    let profile = if is_release != 0 {
+        odderon_astro::survey::BuildProfile::Release
+    } else {
+        odderon_astro::survey::BuildProfile::Development
+    };
+    let survey = RawSurvey {
+        stars: [odderon_astro::survey::Star {
+            id: 0,
+            direction: odderon_astro::survey::Direction {
+                vector: [1.0, 0.0, 0.0],
+            },
+            distance_parsec: odderon_astro::provenance::Quantity::unknown(),
+            magnitude: odderon_astro::provenance::Quantity::unknown(),
+            proper_motion: odderon_astro::provenance::Quantity::unknown(),
+        }; SURVEY_MAX_N],
+        n: 0,
+        redistributable: redistributable != 0,
+        dataset: "raw",
+    };
+    odderon_astro::survey::admits(profile, &survey) as i32
+}
+
+/// The deterministic design hash of the survey seam's constants.
+///
+/// Folds in the star record size and the max star count, so a verifier can detect a stale ABI
+/// boundary. A pure function: the same kernel produces the same hash on every platform.
+#[unsafe(no_mangle)]
+pub extern "C" fn survey_design_hash() -> u64 {
+    const SURVEY_HASH_SEED: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut h = SURVEY_HASH_SEED;
+    let mut mix = |v: u64| {
+        h ^= v;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    };
+    mix(SURVEY_STAR_FLOATS as u64);
+    mix(SURVEY_MAX_N as u64);
+    h
+}
+
 #[cfg(test)]
 mod tests {
     // The ABI is a contract a host can violate with a single bad number, and two of the values it can

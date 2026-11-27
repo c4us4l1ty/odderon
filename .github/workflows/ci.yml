@@ -256,6 +256,13 @@ jobs:
       - name: museum gallery boundary (the gallery layout is the kernel's)
         run: node tools/check-museum.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
 
+      # The Survey seam boundary, against the same binary: a cone search returns the right stars
+      # for a narrow and a wide cone, refuses a zero/NaN radius and a NaN coordinate with the
+      # kernel's error codes, admits only redistributable surveys in release, and the design
+      # hash is deterministic. Static half in the `static + self-test` job below.
+      - name: survey seam boundary (the cone search is the kernel's)
+        run: node tools/check-survey.mjs --wasm target/wasm32-unknown-unknown/release/odderon_dmath_wasm.wasm
+
       - name: stage wasm artifacts
         run: |
           mkdir -p dist
@@ -512,6 +519,10 @@ jobs:
         run: node tools/check-museum.mjs
       - name: museum gallery verifier self-test (grow, scale, rotation, hash)
         run: node tools/check-museum.mjs --selftest
+      - name: "the survey seam - the cone search, checked"
+        run: node tools/check-survey.mjs
+      - name: survey seam verifier self-test (boundary, radius, admit, hash)
+        run: node tools/check-survey.mjs --selftest
       # On 2026-11-24 this job failed on a condition the page handles correctly: the optional wasm
       # artifact is absent on a clean checkout, the browser logs a 404, and `tools/screenshot.mjs` treats
       # any console error as an untrustworthy frame. The capture now exempts that one error -- but only

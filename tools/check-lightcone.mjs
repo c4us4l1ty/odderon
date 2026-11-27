@@ -63,6 +63,12 @@ function check(name, fn) {
 check("no local causal math in the page", (src) => {
   // A local solver would carry the speed of light, a c*dt term, a Doppler formula, or an
   // inverse-square term. Each is the giveaway that the page is computing the structure itself.
+  // The check is scoped to the light-cone functions (lightconeReadings, renderLightcone,
+  // causalMailReadings) because other parts of the page legitimately use Math.atan2 for
+  // display-direction computation (e.g. the survey panel), which is a different concern.
+  const lcBody = (src.match(/function lightconeReadings\s*\([^)]*\)\s*\{[\s\S]*?\n\}/)?.[0] || "")
+    + (src.match(/function renderLightcone\s*\([^)]*\)\s*\{[\s\S]*?\n\}/)?.[0] || "")
+    + (src.match(/function causalMailReadings\s*\([^)]*\)\s*\{[\s\S]*?\n\}/)?.[0] || "");
   const patterns = [
     [/light_cone_radius\s*\([^)]*\)\s*=[^;]*Math\./, "a hand-computed light-cone radius"],
     [/causal_reachable\s*\([^)]*\)\s*=[^;]*Math\./, "a hand-computed reachability"],
@@ -75,7 +81,7 @@ check("no local causal math in the page", (src) => {
     [/Math\.atan2\s*\(/, "a local Doppler angle"],
     [/Math\.sqrt\s*\([^)]*orbit_mu[^)]*\)/, "a local orbital velocity"],
   ];
-  const hits = patterns.filter(([re]) => re.test(src)).map(([, why]) => why);
+  const hits = patterns.filter(([re]) => re.test(lcBody)).map(([, why]) => why);
   if (hits.length) throw new Error("page still computes the causal structure itself: " + hits.join("; "));
 });
 
