@@ -220,6 +220,19 @@ pub mod museum;
 /// the propagator — one conic type, the same [`stumpff`] functions, the same Lagrange coefficients.
 pub mod lambert;
 
+/// Relativistic corrections: the Schwarzschild periapsis advance.
+///
+/// The first-order general-relativistic correction to the two-body problem. A mass curves spacetime
+/// so that the periapsis of an elliptic orbit does not stay put — it advances by a small but
+/// measurable amount each orbit. The historical test case is Mercury: the Schwarzschild
+/// prediction of 43.0″/century is the residual that remains after planetary perturbations are
+/// subtracted from the observed 574.1″/century, and it was the first quantitative confirmation of
+/// general relativity. This module reproduces it from first principles.
+///
+/// The correction is a **secular** effect — a rotation of the argument of periapsis — and is applied
+/// as an option, not baked into [`propagate`]. The Newtonian propagator is unchanged.
+pub mod relativity;
+
 /// Gravitational parameters, km³/s².
 ///
 /// Values from the IAU/JPL published constants. They are *data*, not physics: a body's `mu` is a
