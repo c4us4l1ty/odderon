@@ -185,11 +185,9 @@ impl Checklist {
         let mut wrong: [usize; MAX_ITEMS] = [MAX_ITEMS; MAX_ITEMS];
         let mut wrong_count = 0usize;
         for i in 0..self.count {
-            if !self.is_item_correct(i) {
-                if wrong_count < MAX_ITEMS {
-                    wrong[wrong_count] = i;
-                    wrong_count += 1;
-                }
+            if !self.is_item_correct(i) && wrong_count < MAX_ITEMS {
+                wrong[wrong_count] = i;
+                wrong_count += 1;
             }
         }
         if wrong_count == 0 {
