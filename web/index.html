@@ -2310,8 +2310,13 @@ function computeGhostTwin() {
     }
     return;
   }
-  const chillS = mark.chillS;
-  const bleeds = mark.bleeds;
+  // The plan the ghost twin is computed against is the plan that RAN the fill -- the current pad
+  // inputs, not the ones frozen into the mark at mark time. A mark placed, then a chill time changed,
+  // then a fill: the divergence must describe the fill that actually happened, not the plan the player
+  // predicted against. `placeMark` snapshots the plan into the mark so the mark records what the player
+  // expected of; the ghost twin is about the consequence of what was run.
+  const chillS = padState.chillS;
+  const bleeds = padState.bleeds;
   const actual = k.pad_ghost_twin_actual(chillS, bleeds, mark.expected, PAD_FILL_RATE, PAD_WINDOW_S);
   const divergence = k.pad_ghost_twin_divergence(chillS, bleeds, mark.expected, PAD_FILL_RATE, PAD_WINDOW_S);
   if (!Number.isFinite(actual) || !Number.isFinite(divergence)) {
