@@ -247,6 +247,17 @@ pub mod relativity;
 /// fixed frame defined by one angle.
 pub mod ecliptic;
 
+/// Interplanetary Hohmann transfer planning.
+///
+/// Plans a transfer between two co-planar elliptical orbits around a central body: the transfer
+/// ellipse, the departure and arrival Δv, the transfer time, and the phase angle. This is the first
+/// module to actually *use* the ecliptic frame — planetary orbits are nearly coplanar with the
+/// ecliptic, so the transfer is a two-dimensional problem in that plane.
+///
+/// Generalises [`crate::rendezvous`] from circular orbits to elliptical ones, and adds the ICRF →
+/// ecliptic inclination transformation so published planetary elements can be fed in directly.
+pub mod transfer;
+
 /// Gravitational parameters, km³/s².
 ///
 /// Values from the IAU/JPL published constants. They are *data*, not physics: a body's `mu` is a

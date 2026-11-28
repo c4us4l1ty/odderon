@@ -183,7 +183,11 @@ pub enum SurveyError {
     /// Refused rather than clamped. A zero or negative radius is a caller's bug, and returning an empty tile
     /// would make it look like a genuinely empty patch of sky.
     BadRadius,
-    /// A coordinate was not finite.
+    /// A coordinate was not finite, or the declination was outside `[−π/2, π/2]`.
+    ///
+    /// Right ascension wraps at `2π` so any finite value is valid; declination does not wrap, and an angle
+    /// outside `[−π/2, π/2]` points off the celestial sphere — a physically meaningless request that the kernel
+    /// must refuse before the backend sees it.
     BadDirection,
     /// The direction handed back by a backend was not a unit vector.
     ///
@@ -286,6 +290,13 @@ pub fn cone_search<'a>(
     out: &'a mut [Star],
 ) -> Result<StarTile<'a>, SurveyError> {
     if !ra_rad.is_finite() || !dec_rad.is_finite() {
+        return Err(SurveyError::BadDirection);
+    }
+    // Declination does not wrap: only `[−π/2, π/2]` is on the celestial sphere. A value outside that
+    // range points off the sky and is a caller's bug, refused before the backend is called — the same
+    // discipline as the radius check. Right ascension is not reduced here because it wraps at `2π`
+    // and the backend is expected to reduce it (`Direction::from_ra_dec` does, via `sin_cos`).
+    if !(-core::f64::consts::FRAC_PI_2..=core::f64::consts::FRAC_PI_2).contains(&dec_rad) {
         return Err(SurveyError::BadDirection);
     }
     // Written as two positive tests rather than `!(r > 0.0)` so that NaN is excluded by name: NaN fails
