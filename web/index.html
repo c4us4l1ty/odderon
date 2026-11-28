@@ -111,6 +111,9 @@
   .debrief-head { color: #ffd166; margin-bottom: 4px; letter-spacing: .06em; text-transform: uppercase; font-size: 10px; }
   .debrief-cause { color: #cfd6de; margin-bottom: 4px; }
   .debrief-remedy { color: #6ee7a8; }
+  .ghost-head { color: #ffd166; margin-top: 6px; font-size: 11px; letter-spacing: .05em; }
+  .ghost-twin-line { color: #8aa0b8; font-size: 11px; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .ghost-arrow { color: #e0a040; font-size: 11px; margin-top: 2px; }
   .scales { display: flex; gap: 4px; margin-top: 6px; }
   .scales button {
     flex: 1; padding: 6px 4px; border-radius: 5px; cursor: pointer;
@@ -217,6 +220,7 @@
   <div class="row"><span>actual pressure</span><span id="m-fire-pressure">—</span></div>
   <div class="row"><span>divergence (vapour)</span><span id="m-fire-div-v">—</span></div>
   <div class="row"><span>divergence (pressure)</span><span id="m-fire-div-p">—</span></div>
+  <div id="fire-ghost" class="muted">no fire yet. place marks on both gauges, then run the fire.</div>
   <div id="fire-note" class="muted"></div>
 
   <div class="sep" style="margin:6px 0"></div>
@@ -2139,7 +2143,9 @@ function runStaticFire() {
 
   const actualV = k.clipboard_fire_vapour(chillS, bleeds, PAD_FILL_RATE, PAD_WINDOW_S);
   const actualP = k.clipboard_fire_pressure(chillS, bleeds, PAD_FILL_RATE, PAD_WINDOW_S);
-  clipState.fire = { verdict, actualV, actualP, markV, markP, chillS, bleeds };
+  const divV = k.clipboard_divergence(markV, actualV);
+  const divP = k.clipboard_divergence(markP, actualP);
+  clipState.fire = { verdict, actualV, actualP, markV, markP, chillS, bleeds, divergenceV: divV, divergenceP: divP };
 
   // Render the verdict and readings.
   $('m-fire-verdict').textContent = verdict === 1 ? 'FIRE LIT' : 'FIRE DID NOT LIGHT';
@@ -2147,11 +2153,15 @@ function runStaticFire() {
   $('m-fire-vapour').textContent = Number.isFinite(actualV) ? actualV.toFixed(3) : '—';
   $('m-fire-pressure').textContent = Number.isFinite(actualP) ? actualP.toFixed(1) + ' kPa' : '—';
 
-  // The divergences: the kernel's own function, not the page's arithmetic.
-  const divV = k.clipboard_divergence(markV, actualV);
-  const divP = k.clipboard_divergence(markP, actualP);
+  // The divergences are already computed above and stored in clipState.fire for the Akashi export.
   $('m-fire-div-v').textContent = Number.isFinite(divV) ? divV.toFixed(3) : '—';
   $('m-fire-div-p').textContent = Number.isFinite(divP) ? divP.toFixed(1) : '—';
+
+  // THE GHOST TWIN, fire edition. The same pedagogy machine as the pad: the player's mark (yellow
+  // ghost) against the actual (steel needle), with the divergence and the one arrow naming the gauge
+  // the player was wrong about. The fire has two gauges, so the ghost twin shows both and names the
+  // one with the larger divergence -- the offending gauge.
+  renderFireGhost(markV, actualV, divV, markP, actualP, divP, verdict);
 
   if (verdict === 1) {
     $('fire-note').textContent =
@@ -2165,6 +2175,46 @@ function runStaticFire() {
       'heat in the line frothed the cryogen and the pump lost prime. fix the checklist and try again.';
     $('fire-note').className = 'muted warn';
   }
+}
+
+/// Render the fire's ghost twin: both gauges, mark vs actual, divergence, and the one arrow.
+///
+/// The arrow names the gauge with the larger divergence -- the one the player was wrong about. This
+/// is the competence mirror for the static fire: the number about the player, computed by the kernel,
+/// not a fixed string.
+function renderFireGhost(markV, actualV, divV, markP, actualP, divP, verdict) {
+  const el = $('fire-ghost');
+  if (!Number.isFinite(markV) || !Number.isFinite(actualV) || !Number.isFinite(divV) ||
+      !Number.isFinite(markP) || !Number.isFinite(actualP) || !Number.isFinite(divP)) {
+    el.textContent = 'no ghost twin: the fire readings are not all finite.';
+    el.className = 'muted warn';
+    return;
+  }
+  // The one arrow: the gauge with the larger divergence. A tie or both-zero means no arrow.
+  const absV = Math.abs(divV);
+  const absP = Math.abs(divP);
+  let arrowLine = '';
+  if (absV > 1e-6 && absP > 1e-6) {
+    const offending = absV >= absP ? 'vapour gauge' : 'pressure gauge';
+    arrowLine = '<div class="ghost-arrow">one arrow → ' + offending + '</div>';
+  } else if (absV > 1e-6) {
+    arrowLine = '<div class="ghost-arrow">one arrow → vapour gauge</div>';
+  } else if (absP > 1e-6) {
+    arrowLine = '<div class="ghost-arrow">one arrow → pressure gauge</div>';
+  } else {
+    arrowLine = '<div class="ghost-arrow">no arrow: both marks landed on the actual.</div>';
+  }
+  const vSign = divV >= 0 ? '+' : '';
+  const pSign = divP >= 0 ? '+' : '';
+  let html =
+    '<div class="ghost-head">ghost twin · fire ' + (verdict === 1 ? 'lit' : 'did not light') + '</div>' +
+    '<div class="ghost-twin-line">vapour: mark ' + markV.toFixed(3) + ' · actual ' + actualV.toFixed(3) +
+    ' · δ ' + vSign + divV.toFixed(3) + '</div>' +
+    '<div class="ghost-twin-line">pressure: mark ' + markP.toFixed(1) + ' · actual ' + actualP.toFixed(1) +
+    ' · δ ' + pSign + divP.toFixed(1) + ' kPa</div>' +
+    arrowLine;
+  el.className = '';
+  el.innerHTML = html;
 }
 
 // =============================================================================================
@@ -2323,6 +2373,17 @@ function exportAkashi() {
     ? 'cavitated at ' + wreck.failureTime.toFixed(1) + ' s'
     : 'ran clean (no wreck)';
 
+  // The static fire: the two gauge marks, the actual readings, the divergences, and the verdict.
+  // This is the fire edition of the Loop of Consequence -- the peak event of the pad's day.
+  const fire = clipState.fire;
+  const fireVerdictStr = fire ? (fire.verdict === 1 ? 'lit' : 'did not light') : 'not run';
+  const fireMarkVStr = fire ? fire.markV.toFixed(3) : '—';
+  const fireMarkPStr = fire ? fire.markP.toFixed(1) + ' kPa' : '—';
+  const fireVStr = fire && Number.isFinite(fire.actualV) ? fire.actualV.toFixed(3) : '—';
+  const firePStr = fire && Number.isFinite(fire.actualP) ? fire.actualP.toFixed(1) + ' kPa' : '—';
+  const fireDivVStr = fire && Number.isFinite(fire.divergenceV) ? fire.divergenceV.toFixed(3) : '—';
+  const fireDivPStr = fire && Number.isFinite(fire.divergenceP) ? fire.divergenceP.toFixed(1) : '—';
+
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2361,6 +2422,17 @@ function exportAkashi() {
   <tr><td>grease mark</td><td>${markStr}</td></tr>
   <tr><td>ghost twin</td><td>${ghostStr}</td></tr>
   <tr><td>one arrow</td><td>${arrowStr}</td></tr>
+</table>
+
+<h2>the static fire</h2>
+<table>
+  <tr><td>verdict</td><td>${fireVerdictStr}</td></tr>
+  <tr><td>mark · vapour</td><td>${fireMarkVStr}</td></tr>
+  <tr><td>mark · pressure</td><td>${fireMarkPStr}</td></tr>
+  <tr><td>actual · vapour</td><td>${fireVStr}</td></tr>
+  <tr><td>actual · pressure</td><td>${firePStr}</td></tr>
+  <tr><td>divergence · vapour</td><td>${fireDivVStr}</td></tr>
+  <tr><td>divergence · pressure</td><td>${fireDivPStr}</td></tr>
 </table>
 
 <h2>consequence</h2>
