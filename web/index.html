@@ -205,6 +205,7 @@
   <div class="muted" id="clipboard-intro">the checklist a tired human wrote. one item is wrong.</div>
   <div id="clipboard-items" class="muted">reading the clipboard…</div>
   <div class="row"><span>wrong item</span><span id="m-clip-wrong">—</span></div>
+  <div class="row"><span>debrief (checklist says → kernel says)</span><span id="m-clip-debrief">—</span></div>
   <div class="row"><span>clipboard hash</span><span id="m-clip-hash">—</span></div>
 
   <div class="sep" style="margin:6px 0"></div>
@@ -225,10 +226,10 @@
 
   <div class="sep" style="margin:6px 0"></div>
   <div class="row"><span>chill down (s)</span><span id="m-pad-chill">5</span></div>
-  <div class="row"><span>purge cycles</span><span id="m-pad-bleeds">0</span></div>
+  <div class="row"><span>purge cycles</span><span id="m-pad-bleeds">3</span></div>
   <div class="pad-inputs">
     <label>chill s <input id="pad-chill" type="number" min="0" step="5" value="5"></label>
-    <label>bleeds <input id="pad-bleeds" type="number" min="0" step="1" value="0"></label>
+    <label>bleeds <input id="pad-bleeds" type="number" min="0" step="1" value="3"></label>
   </div>
   <button id="pad-fill">fill the line</button>
   <button id="pad-reset">reset to the checklist</button>
@@ -1801,9 +1802,11 @@ const padState = {
   akashiEpoch: 0,
 };
 
-/// The under-specified checklist the bible's first load starts from: a short chill, no purges. This is the
-/// "one item that is wrong" -- named so the default is one obvious value and the reset returns to it.
-const PAD_CHECKLIST = { chillS: 5.0, bleeds: 0 };
+/// The starting checklist values the bible's first load uses. These MUST match the kernel's
+/// reference checklist (`Checklist::reference()`): chill_s = 5.0 (the wrong item — too short, the
+/// pad cavitates) and bleeds = 3.0 (the correct purge count). The reset button restores these
+/// values, so the input log starts from the kernel's checklist, not a stale copy in the page.
+const PAD_CHECKLIST = { chillS: 5.0, bleeds: 3.0 };
 
 /// Run a cryo load from the current checklist and report what the kernel says.
 ///
@@ -2072,6 +2075,19 @@ function renderClipboard() {
   $('m-clip-wrong').textContent = clipState.wrongIndex >= 0
     ? 'item ' + (clipState.wrongIndex + 1) + ' (' + ptrToString(k.clipboard_item_label(clipState.wrongIndex)) + ')'
     : '—';
+  // The debrief: what the checklist says vs what the kernel says, from the kernel's own exports.
+  // Both values come from clipboard_debrief (remedy) and clipboard_debrief_wrong (wrong expected).
+  if (clipState.wrongIndex >= 0) {
+    const wrongVal = k.clipboard_debrief_wrong(clipState.wrongIndex);
+    const remedyVal = k.clipboard_debrief(clipState.wrongIndex);
+    if (Number.isFinite(wrongVal) && Number.isFinite(remedyVal)) {
+      $('m-clip-debrief').textContent = wrongVal.toFixed(1) + ' → ' + remedyVal.toFixed(1);
+    } else {
+      $('m-clip-debrief').textContent = '—';
+    }
+  } else {
+    $('m-clip-debrief').textContent = '—';
+  }
   $('m-clip-hash').textContent = k.clipboard_design_hash().toString();
 }
 
@@ -2135,6 +2151,8 @@ function runStaticFire() {
     $('m-fire-pressure').textContent = '—';
     $('m-fire-div-v').textContent = '—';
     $('m-fire-div-p').textContent = '—';
+    $('fire-ghost').textContent = 'no ghost twin: the fire was refused.';
+    $('fire-ghost').className = 'muted warn';
     $('fire-note').textContent = 'the fire was refused: check the chill time and fill rate.';
     $('fire-note').className = 'muted warn';
     clipState.fire = null;
