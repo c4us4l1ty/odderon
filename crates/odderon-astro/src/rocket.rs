@@ -384,7 +384,10 @@ fn radial_flight(state: &State, energy: f64, mu_earth: f64, r_earth: f64) -> Roc
 /// flight through the Earth, and the page's finiteness guard would draw it.
 pub fn rocket_state_at(params: &LaunchParams, t: f64) -> State {
     if params_degenerate(params) {
-        return State::new(Vec3::new(f64::NAN, f64::NAN, f64::NAN), Vec3::new(f64::NAN, f64::NAN, f64::NAN));
+        return State::new(
+            Vec3::new(f64::NAN, f64::NAN, f64::NAN),
+            Vec3::new(f64::NAN, f64::NAN, f64::NAN),
+        );
     }
     let state = launch_state(params);
     propagate(&state, t, mu::EARTH).state

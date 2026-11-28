@@ -417,7 +417,12 @@ fn elevation_outside_its_domain_is_refused() {
     // the horizontal points into the ground: the velocity's radial component is negative, so the
     // apogee lies behind the launch in time and the time readings come out negative -- numbers with
     // no meaning. The documented domain is enforced, the same way zero velocity is.
-    for bad_el in [-0.1, -std::f64::consts::PI / 4.0, std::f64::consts::PI / 2.0 + 0.1, 2.0] {
+    for bad_el in [
+        -0.1,
+        -std::f64::consts::PI / 4.0,
+        std::f64::consts::PI / 2.0 + 0.1,
+        2.0,
+    ] {
         let params = LaunchParams {
             latitude_rad: 0.0,
             azimuth_rad: 0.0,
@@ -425,7 +430,11 @@ fn elevation_outside_its_domain_is_refused() {
             burnout_velocity_km_s: 2.0,
         };
         let flight = rocket_flight(&params);
-        assert_eq!(flight.verdict, RocketVerdict::Refused, "elevation {bad_el} must be refused");
+        assert_eq!(
+            flight.verdict,
+            RocketVerdict::Refused,
+            "elevation {bad_el} must be refused"
+        );
         assert!(flight.apogee_km.is_nan());
         assert!(flight.time_to_apogee_s.is_nan());
         assert!(flight.impact_time_s.is_nan());
@@ -439,7 +448,11 @@ fn elevation_outside_its_domain_is_refused() {
             elevation_rad: ok_el,
             burnout_velocity_km_s: 2.0,
         };
-        assert_ne!(rocket_flight(&params).verdict, RocketVerdict::Refused, "elevation {ok_el} is in the domain");
+        assert_ne!(
+            rocket_flight(&params).verdict,
+            RocketVerdict::Refused,
+            "elevation {ok_el} is in the domain"
+        );
     }
 }
 
@@ -460,7 +473,10 @@ fn rocket_state_at_refuses_degenerate_launch() {
             burnout_velocity_km_s: 2.0,
         };
         let st = rocket_state_at(&params, 10.0);
-        assert!(st.r.x.is_nan() && st.r.y.is_nan() && st.r.z.is_nan(), "refused launch must give a NaN state");
+        assert!(
+            st.r.x.is_nan() && st.r.y.is_nan() && st.r.z.is_nan(),
+            "refused launch must give a NaN state"
+        );
         assert!(st.v.x.is_nan() && st.v.y.is_nan() && st.v.z.is_nan());
     }
     // A valid launch still produces a real state.
