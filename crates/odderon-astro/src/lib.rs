@@ -121,6 +121,14 @@ pub mod thermal;
 /// `t`, so the failure it produces is reproducible rather than a story about when the run happened.
 pub mod cryo;
 
+/// The clipboard: the checklist the player works from, with one deliberately wrong item, and the
+/// static fire that is its peak event.
+///
+/// Not astrodynamics, for the same reason [`cryo`] and [`thermal`] are here: it is a pure function
+/// of the input log and `t`, so the checklist's failure is reproducible and the static fire's
+/// readings are the same every run. See [`clipboard::Checklist`] and [`clipboard::StaticFire`].
+pub mod clipboard;
+
 /// The sounding rocket: a suborbital trajectory from a surface launch.
 ///
 /// Not astrodynamics in the orbital sense, for the same reason [`cryo`] and [`thermal`] are here:

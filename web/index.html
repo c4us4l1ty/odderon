@@ -196,6 +196,30 @@
   <div class="sep"></div>
   <h2>the pad</h2>
   <div class="muted" id="pad-intro">fill the line from the checklist. the first load is under-specified on purpose.</div>
+
+  <div class="sep" style="margin:6px 0"></div>
+  <h3>the clipboard</h3>
+  <div class="muted" id="clipboard-intro">the checklist a tired human wrote. one item is wrong.</div>
+  <div id="clipboard-items" class="muted">reading the clipboard…</div>
+  <div class="row"><span>wrong item</span><span id="m-clip-wrong">—</span></div>
+  <div class="row"><span>clipboard hash</span><span id="m-clip-hash">—</span></div>
+
+  <div class="sep" style="margin:6px 0"></div>
+  <h3>the static fire</h3>
+  <div class="muted" id="fire-intro">mark two gauges before the fire. one you'll be right about, one you won't.</div>
+  <div class="pad-inputs">
+    <label>mark vapour frac <input id="fire-mark-v" type="number" min="0" max="1" step="0.05" value=""></label>
+    <label>mark pressure (kPa) <input id="fire-mark-p" type="number" min="0" max="500" step="10" value=""></label>
+  </div>
+  <button id="fire-run">run the fire</button>
+  <div class="row"><span>fire verdict</span><span id="m-fire-verdict">—</span></div>
+  <div class="row"><span>actual vapour</span><span id="m-fire-vapour">—</span></div>
+  <div class="row"><span>actual pressure</span><span id="m-fire-pressure">—</span></div>
+  <div class="row"><span>divergence (vapour)</span><span id="m-fire-div-v">—</span></div>
+  <div class="row"><span>divergence (pressure)</span><span id="m-fire-div-p">—</span></div>
+  <div id="fire-note" class="muted"></div>
+
+  <div class="sep" style="margin:6px 0"></div>
   <div class="row"><span>chill down (s)</span><span id="m-pad-chill">5</span></div>
   <div class="row"><span>purge cycles</span><span id="m-pad-bleeds">0</span></div>
   <div class="pad-inputs">
@@ -1568,6 +1592,14 @@ async function loadKernel() {
                     'pad_ghost_twin_actual', 'pad_ghost_twin_divergence',
                     'pad_attribution_which', 'pad_attribution_sensitivity_chill',
                     'pad_attribution_sensitivity_bleeds', 'pad_design_hash',
+                    // Block 2: The Clipboard. The checklist itself (items, validation, debrief) and the
+                    // static fire (the peak event: two gauge readings, the player's marks, the divergence).
+                    'clipboard_item_count', 'clipboard_item_label', 'clipboard_item_quantity',
+                    'clipboard_item_expected', 'clipboard_item_tolerance',
+                    'clipboard_validate', 'clipboard_debrief', 'clipboard_debrief_wrong',
+                    'clipboard_design_hash',
+                    'clipboard_fire', 'clipboard_fire_vapour', 'clipboard_fire_pressure',
+                    'clipboard_divergence',
                     // P3: The Sounding Rocket. The gate to leave P3 is bit-identical replay in a second
                     // browser, and these are the exports that make the trajectory a pure function of the
                     // authored launch parameters and t: the position at time t, the surface-relative
@@ -1614,6 +1646,7 @@ async function loadKernel() {
     kernelState.module = ex;
     updateAkashiHash();
     kernelState.status = 'wasm';
+    refreshClipboard();
     return ex;
   } catch (e) {
     kernelState.module = null;
@@ -1981,6 +2014,157 @@ function renderDebrief() {
     '<div class="debrief-head">debrief · wreck ' + (idx + 1) + '</div>' +
     '<div class="debrief-cause">' + d.cause + '</div>' +
     '<div class="debrief-remedy">' + d.remedy + '</div>';
+}
+
+// =============================================================================================
+// The clipboard: the checklist and the static fire
+// =============================================================================================
+//
+// Block 2's gate is a reproducible failure from the input log, and the input log is the checklist.
+// These functions render the checklist the kernel returns (labels, expected values, the wrong item),
+// and drive the static fire: the player marks two gauges, the kernel reads the actual values, and the
+// debrief measures the divergence -- the competence mirror. Every number comes from the kernel; the
+// page holds no checklist constant of its own.
+
+const clipState = {
+  // The wrong item's index, from clipboard_validate. -1 if not validated.
+  wrongIndex: -1,
+  // The last fire result, or null.
+  fire: null,
+};
+
+/// Read the checklist from the kernel and render it.
+///
+/// The kernel returns each item's label, quantity, expected value, and tolerance as scalars. The page
+/// renders them in the order the kernel returns them, marking the wrong item. The checklist is the
+/// input log: the player reads it, follows it, and the pad's outcome is the consequence.
+function renderClipboard() {
+  const k = kernelState.module;
+  const el = $('clipboard-items');
+  if (!k || !el) {
+    el.textContent = 'the clipboard needs the wasm kernel; build it or run fetch:wasm.';
+    el.className = 'muted';
+    return;
+  }
+  const n = k.clipboard_item_count();
+  clipState.wrongIndex = k.clipboard_validate();
+  const items = [];
+  for (let i = 0; i < n; i++) {
+    const label = ptrToString(k.clipboard_item_label(i));
+    const qty = ptrToString(k.clipboard_item_quantity(i));
+    const expected = k.clipboard_item_expected(i);
+    const tol = k.clipboard_item_tolerance(i);
+    const isWrong = i === clipState.wrongIndex;
+    items.push(
+      '<div class="wreck' + (isWrong ? ' selected' : '') + '" style="cursor:default">' +
+      '<div class="wreck-head">' + (isWrong ? '✗ ' : '') + label + '</div>' +
+      '<div class="wreck-log">expects ' + (Number.isFinite(expected) ? expected.toFixed(2) : '—') +
+      ' ' + qty + ' (±' + (Number.isFinite(tol) ? tol.toFixed(2) : '—') + ')</div>' +
+      '</div>'
+    );
+  }
+  el.className = '';
+  el.innerHTML = items.join('');
+  $('m-clip-wrong').textContent = clipState.wrongIndex >= 0
+    ? 'item ' + (clipState.wrongIndex + 1) + ' (' + ptrToString(k.clipboard_item_label(clipState.wrongIndex)) + ')'
+    : '—';
+  $('m-clip-hash').textContent = k.clipboard_design_hash().toString();
+}
+
+/// Read a string the kernel returned as a packed u64: the high 32 bits are the byte pointer into wasm
+/// memory, the low 32 bits are the byte length. The page reads exactly `len` bytes from the pointer --
+/// Rust string literals are not null-terminated, so a null-scan would run past the end into the next
+/// literal in rodata. The WASM ABI returns `u64` as a BigInt in JS, so the function converts it first.
+function ptrToString(packed) {
+  if (!packed) return '';
+  const packedNum = typeof packed === 'bigint' ? Number(packed) : packed;
+  if (packedNum === 0) return '';
+  const ptr = Math.floor(packedNum / 2 ** 32);
+  const len = packedNum % 2 ** 32;
+  const mem = new Uint8Array(kernelState.module.memory.buffer);
+  let s = '';
+  for (let i = ptr; i < ptr + len && i < mem.length; i++) s += String.fromCharCode(mem[i]);
+  return s;
+}
+
+/// Run the static fire from the current checklist's chill time and bleed count.
+///
+/// The fire reads the same cryo network the pad uses: if the checklist's chilldown is under-specified,
+/// the pad cavitates and the fire never lights. The player's two marks are compared against the actual
+/// gauge readings, and the divergence is the competence mirror -- a number about the player.
+function runStaticFire() {
+  const k = kernelState.module;
+  if (!k) {
+    $('fire-note').textContent = 'the fire needs the wasm kernel; build it or run fetch:wasm.';
+    $('fire-note').className = 'muted warn';
+    return;
+  }
+  const chillS = Number($('pad-chill').value);
+  const bleeds = Math.max(0, Math.floor(Number($('pad-bleeds').value)));
+
+  // Read the marks. Empty or non-finite marks are refused: the divergence is the point of the fire,
+  // and a fire with no mark has nothing to measure.
+  const markVRaw = $('fire-mark-v').value;
+  const markPRaw = $('fire-mark-p').value;
+  if (markVRaw === '' || markPRaw === '') {
+    $('fire-note').textContent = 'place marks on both gauges before running the fire.';
+    $('fire-note').className = 'muted warn';
+    return;
+  }
+  const markV = Number(markVRaw);
+  const markP = Number(markPRaw);
+  if (!Number.isFinite(markV) || !Number.isFinite(markP)) {
+    $('fire-note').textContent = 'marks must be finite numbers.';
+    $('fire-note').className = 'muted warn';
+    return;
+  }
+
+  // The kernel returns the verdict (1 = lit, 0 = did not light, -1 = refused) and the two gauge
+  // readings as separate scalar exports -- the same ABI shape the pad uses, so the page holds no
+  // buffer pointer of its own.
+  const verdict = k.clipboard_fire(chillS, bleeds, PAD_FILL_RATE, PAD_WINDOW_S);
+
+  if (verdict === -1) {
+    $('m-fire-verdict').textContent = '— refused (bad input)';
+    $('m-fire-verdict').className = 'row big warn';
+    $('m-fire-vapour').textContent = '—';
+    $('m-fire-pressure').textContent = '—';
+    $('m-fire-div-v').textContent = '—';
+    $('m-fire-div-p').textContent = '—';
+    $('fire-note').textContent = 'the fire was refused: check the chill time and fill rate.';
+    $('fire-note').className = 'muted warn';
+    clipState.fire = null;
+    return;
+  }
+
+  const actualV = k.clipboard_fire_vapour(chillS, bleeds, PAD_FILL_RATE, PAD_WINDOW_S);
+  const actualP = k.clipboard_fire_pressure(chillS, bleeds, PAD_FILL_RATE, PAD_WINDOW_S);
+  clipState.fire = { verdict, actualV, actualP, markV, markP, chillS, bleeds };
+
+  // Render the verdict and readings.
+  $('m-fire-verdict').textContent = verdict === 1 ? 'FIRE LIT' : 'FIRE DID NOT LIGHT';
+  $('m-fire-verdict').className = verdict === 1 ? 'row big pass' : 'row big fail';
+  $('m-fire-vapour').textContent = Number.isFinite(actualV) ? actualV.toFixed(3) : '—';
+  $('m-fire-pressure').textContent = Number.isFinite(actualP) ? actualP.toFixed(1) + ' kPa' : '—';
+
+  // The divergences: the kernel's own function, not the page's arithmetic.
+  const divV = k.clipboard_divergence(markV, actualV);
+  const divP = k.clipboard_divergence(markP, actualP);
+  $('m-fire-div-v').textContent = Number.isFinite(divV) ? divV.toFixed(3) : '—';
+  $('m-fire-div-p').textContent = Number.isFinite(divP) ? divP.toFixed(1) : '—';
+
+  if (verdict === 1) {
+    $('fire-note').textContent =
+      'the fire lit. your vapour mark diverged by ' + (Number.isFinite(divV) ? divV.toFixed(3) : '—') +
+      ', your pressure mark by ' + (Number.isFinite(divP) ? divP.toFixed(1) : '—') +
+      ' kPa. the debrief is the number about you.';
+    $('fire-note').className = 'muted';
+  } else {
+    $('fire-note').textContent =
+      'the pad cavitated before the fire could light. the chilldown was under-specified: the residual ' +
+      'heat in the line frothed the cryogen and the pump lost prime. fix the checklist and try again.';
+    $('fire-note').className = 'muted warn';
+  }
 }
 
 // =============================================================================================
@@ -6003,6 +6187,17 @@ $('pad-bleeds').addEventListener('input', () => { $('m-pad-bleeds').textContent 
 // loop without a prediction. The mark is a pure input -- the kernel computes the divergence.
 $('pad-mark-place').addEventListener('click', () => { placeMark(); });
 $('pad-mark-clear').addEventListener('click', () => { clearMark(); });
+
+// THE CLIPBOARD AND THE STATIC FIRE. The clipboard renders when the kernel loads and after every
+// reset; the fire runs on its own button. Both read the checklist from the kernel -- the page holds
+// no checklist constant of its own.
+$('fire-run').addEventListener('click', () => { runStaticFire(); });
+
+// Render the clipboard after the kernel is available. The render is called from the boot sequence's
+// .then() so the checklist appears as soon as the wasm module is instantiated.
+function refreshClipboard() {
+  renderClipboard();
+}
 
 // THE SOUNDING ROCKET. The player authors the four launch parameters; every edit re-reads the kernel
 // and re-launches, so the HUD shows what the authored parameters actually produce. The launch button
