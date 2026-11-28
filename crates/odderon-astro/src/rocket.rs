@@ -184,6 +184,28 @@ pub fn launch_state(params: &LaunchParams) -> State {
     State::new(r, vel)
 }
 
+/// Whether the launch parameters are degenerate: non-finite, a zero or negative burnout
+/// velocity, or an elevation outside its documented domain.
+///
+/// Elevation is "above the local horizontal, 0 = horizontal, pi/2 = vertical". A launch below the
+/// horizontal points into the ground: the velocity's radial component is negative, so the apogee
+/// lies behind the launch in time and every time reading comes out negative -- a number with no
+/// meaning rather than a refusal. The documented domain is enforced here, the same way zero
+/// velocity is.
+///
+/// Shared by [`rocket_flight`] and [`rocket_state_at`] so every entry point to the rocket refuses
+/// the same inputs the same way: a page that samples the trajectory for a launch the readings
+/// refused would otherwise propagate a flight through the Earth and draw it.
+fn params_degenerate(params: &LaunchParams) -> bool {
+    !is_finite(params.latitude_rad)
+        || !is_finite(params.azimuth_rad)
+        || !is_finite(params.elevation_rad)
+        || !is_finite(params.burnout_velocity_km_s)
+        || params.burnout_velocity_km_s <= 0.0
+        || params.elevation_rad < 0.0
+        || params.elevation_rad > odderon_dmath::PI / 2.0
+}
+
 /// Compute the full flight readings from launch parameters.
 ///
 /// This is the core of the module: a pure function of [`LaunchParams`] that produces every
@@ -204,13 +226,8 @@ pub fn rocket_flight(params: &LaunchParams) -> RocketFlight {
     let mu_earth = mu::EARTH;
     let r_earth = radius::EARTH;
 
-    // Degenerate input: non-finite parameters, zero or negative burnout velocity, or a state
-    // that produces no orbit.
-    if !is_finite(params.latitude_rad)
-        || !is_finite(params.azimuth_rad)
-        || !is_finite(params.elevation_rad)
-        || !is_finite(params.burnout_velocity_km_s)
-        || params.burnout_velocity_km_s <= 0.0
+    // Degenerate input: bad parameters, or a state that produces no orbit.
+    if params_degenerate(params)
         || !is_finite(state.r.x)
         || !is_finite(state.r.y)
         || !is_finite(state.r.z)
@@ -361,7 +378,14 @@ fn radial_flight(state: &State, energy: f64, mu_earth: f64, r_earth: f64) -> Roc
 /// A thin wrapper over [`launch_state`] and [`propagate`], so the trajectory the page renders
 /// and the readings the page reports come from the same propagator. The same parameters and
 /// time produce the same state on every platform, which is the replay claim.
+///
+/// Degenerate parameters are refused with a `NaN` state, the same way [`rocket_flight`] refuses
+/// them: a trajectory sampled for a launch the readings refused would otherwise propagate a
+/// flight through the Earth, and the page's finiteness guard would draw it.
 pub fn rocket_state_at(params: &LaunchParams, t: f64) -> State {
+    if params_degenerate(params) {
+        return State::new(Vec3::new(f64::NAN, f64::NAN, f64::NAN), Vec3::new(f64::NAN, f64::NAN, f64::NAN));
+    }
     let state = launch_state(params);
     propagate(&state, t, mu::EARTH).state
 }
