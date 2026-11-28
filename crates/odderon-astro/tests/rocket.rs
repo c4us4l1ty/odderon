@@ -411,9 +411,78 @@ fn zero_velocity_is_refused() {
     assert_eq!(flight.verdict, RocketVerdict::Refused);
 }
 
+#[test]
+fn elevation_outside_its_domain_is_refused() {
+    // Elevation is "above the local horizontal, 0 = horizontal, pi/2 = vertical". A launch below
+    // the horizontal points into the ground: the velocity's radial component is negative, so the
+    // apogee lies behind the launch in time and the time readings come out negative -- numbers with
+    // no meaning. The documented domain is enforced, the same way zero velocity is.
+    for bad_el in [
+        -0.1,
+        -std::f64::consts::PI / 4.0,
+        std::f64::consts::PI / 2.0 + 0.1,
+        2.0,
+    ] {
+        let params = LaunchParams {
+            latitude_rad: 0.0,
+            azimuth_rad: 0.0,
+            elevation_rad: bad_el,
+            burnout_velocity_km_s: 2.0,
+        };
+        let flight = rocket_flight(&params);
+        assert_eq!(
+            flight.verdict,
+            RocketVerdict::Refused,
+            "elevation {bad_el} must be refused"
+        );
+        assert!(flight.apogee_km.is_nan());
+        assert!(flight.time_to_apogee_s.is_nan());
+        assert!(flight.impact_time_s.is_nan());
+        assert!(flight.range_km.is_nan());
+    }
+    // The domain's own boundaries are valid launches, not refusals.
+    for ok_el in [0.0, std::f64::consts::PI / 2.0] {
+        let params = LaunchParams {
+            latitude_rad: 0.0,
+            azimuth_rad: 0.0,
+            elevation_rad: ok_el,
+            burnout_velocity_km_s: 2.0,
+        };
+        assert_ne!(
+            rocket_flight(&params).verdict,
+            RocketVerdict::Refused,
+            "elevation {ok_el} is in the domain"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Cross-checks against the existing orbital core
 // ---------------------------------------------------------------------------
+
+#[test]
+fn rocket_state_at_refuses_degenerate_launch() {
+    // The trajectory sampler must refuse the same inputs the readings refuse. A launch below the
+    // horizontal points into the ground: sampling its "trajectory" would propagate a flight through
+    // the Earth, and the page's finiteness guard would draw it. The state comes out NaN instead.
+    for bad_el in [-0.1, std::f64::consts::PI / 2.0 + 0.1] {
+        let params = LaunchParams {
+            latitude_rad: 0.0,
+            azimuth_rad: 0.0,
+            elevation_rad: bad_el,
+            burnout_velocity_km_s: 2.0,
+        };
+        let st = rocket_state_at(&params, 10.0);
+        assert!(
+            st.r.x.is_nan() && st.r.y.is_nan() && st.r.z.is_nan(),
+            "refused launch must give a NaN state"
+        );
+        assert!(st.v.x.is_nan() && st.v.y.is_nan() && st.v.z.is_nan());
+    }
+    // A valid launch still produces a real state.
+    let st = rocket_state_at(&LaunchParams::inherited(), 10.0);
+    assert!(st.r.x.is_finite() && st.r.y.is_finite() && st.r.z.is_finite());
+}
 
 #[test]
 fn rocket_state_at_matches_propagate() {
