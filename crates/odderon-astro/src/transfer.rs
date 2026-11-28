@@ -374,7 +374,12 @@ pub fn elements_to_ecliptic(
     omega_rad: f64,
     eps_rad: f64,
 ) -> Option<OrbitalElements> {
-    if !is_finite(a_km) || !is_finite(e) || !is_finite(i_icrf_rad) || !is_finite(omega_rad) || !is_finite(eps_rad) {
+    if !is_finite(a_km)
+        || !is_finite(e)
+        || !is_finite(i_icrf_rad)
+        || !is_finite(omega_rad)
+        || !is_finite(eps_rad)
+    {
         return None;
     }
     if eps_rad <= 0.0 || eps_rad >= odderon_dmath::PI {
@@ -402,5 +407,7 @@ pub fn elements_to_ecliptic(
 /// Returns the IAU 2006 obliquity at J2000, in radians. This is the value [`elements_to_ecliptic`]
 /// expects for a J2000 ICRF input.
 pub fn ecliptic_obliquity_rad() -> f64 {
-    Ecliptic::standard().obliquity_at(0.0).expect("obliquity at J2000 is a finite constant")
+    Ecliptic::standard()
+        .obliquity_at(0.0)
+        .expect("obliquity at J2000 is a finite constant")
 }

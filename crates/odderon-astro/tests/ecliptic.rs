@@ -84,10 +84,7 @@ fn round_trip_closes_for_various_vectors() {
     for &v in vectors.iter() {
         let result = ec.round_trip(v, 0.0).expect("round trip should succeed");
         let err = (result - v).norm() / v.norm();
-        assert!(
-            err < 1e-14,
-            "round trip of {v:?}: relative error {err}"
-        );
+        assert!(err < 1e-14, "round trip of {v:?}: relative error {err}");
     }
 }
 
@@ -99,10 +96,7 @@ fn round_trip_closes_at_future_epochs() {
     for dt in [0.0, 86400.0, 86400.0 * 365.25, 86400.0 * 365.25 * 100.0] {
         let result = ec.round_trip(v, dt).expect("round trip should succeed");
         let err = (result - v).norm() / v.norm();
-        assert!(
-            err < 1e-14,
-            "round trip at dt={dt}: relative error {err}"
-        );
+        assert!(err < 1e-14, "round trip at dt={dt}: relative error {err}");
     }
 }
 
@@ -179,7 +173,11 @@ fn ecliptic_north_pole_maps_to_celestial_pole() {
     let pole_icrf = ec.to_icrf(pole_ecl, 0.0).expect("transform should succeed");
 
     let eps = OBLIQUITY_J2000_RAD;
-    let expected = Vec3::new(0.0, -odderon_astro::sin_rad(eps), odderon_astro::cos_rad(eps));
+    let expected = Vec3::new(
+        0.0,
+        -odderon_astro::sin_rad(eps),
+        odderon_astro::cos_rad(eps),
+    );
 
     let err = (pole_icrf - expected).norm();
     assert!(
@@ -201,7 +199,9 @@ fn vernal_equinox_maps_to_itself() {
     // The vernal equinox (1, 0, 0) is the x-axis in both frames, so it maps to itself.
     let ec = Ecliptic::standard();
     let equinox = vernal_equinox();
-    let mapped = ec.to_ecliptic(equinox, 0.0).expect("transform should succeed");
+    let mapped = ec
+        .to_ecliptic(equinox, 0.0)
+        .expect("transform should succeed");
     let err = (mapped - equinox).norm();
     assert!(
         err < 1e-15,
@@ -225,7 +225,10 @@ fn ecliptic_north_pole_icrf_function_matches_transform() {
     let via_transform = ec.to_icrf(pole, 0.0).expect("transform should succeed");
     let via_function = ecliptic_north_pole_icrf(0.0).expect("function should succeed");
     let err = (via_transform - via_function).norm();
-    assert!(err < 1e-14, "pole mismatch: {via_transform:?} vs {via_function:?}, err {err}");
+    assert!(
+        err < 1e-14,
+        "pole mismatch: {via_transform:?} vs {via_function:?}, err {err}"
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
