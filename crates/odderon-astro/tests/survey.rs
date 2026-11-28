@@ -169,7 +169,13 @@ fn a_declination_outside_the_sphere_is_refused() {
     let mut buf = [blank_star(); 8];
     let backend = Fixture::new(true);
     let deg = core::f64::consts::PI / 180.0;
-    for dec in [91.0 * deg, -91.0 * deg, 180.0 * deg, -180.0 * deg, 1000.0 * deg] {
+    for dec in [
+        91.0 * deg,
+        -91.0 * deg,
+        180.0 * deg,
+        -180.0 * deg,
+        1000.0 * deg,
+    ] {
         assert_eq!(
             cone_search(&backend, 0.0, dec, 0.1, &mut buf).err(),
             Some(SurveyError::BadDirection),

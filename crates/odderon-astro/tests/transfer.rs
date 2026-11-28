@@ -15,8 +15,8 @@
 //! * **Bi-elliptic threshold:** the predicate says whether the Hohmann answer is the optimum.
 //! * **ICRF → ecliptic:** the inclination transformation is checked against the rotation formula.
 
-use odderon_astro::transfer::*;
 use odderon_astro::mu;
+use odderon_astro::transfer::*;
 use odderon_dmath::{fabs, PI, TAU};
 
 // ---------------------------------------------------------------------------------------------
@@ -87,12 +87,22 @@ fn circular_transfer_matches_textbook_values() {
     approx_eq(plan.r_arrival_km, 1.5 * AU, 1e-12, "r_arrival");
 
     // Δv values from Python: dv_dep ≈ 2.8428033377, dv_arr ≈ 2.5674355987, total ≈ 5.4102389364.
-    approx_eq(plan.dv_departure_km_s, 2.842_803_337_7, 1e-9, "dv_departure");
+    approx_eq(
+        plan.dv_departure_km_s,
+        2.842_803_337_7,
+        1e-9,
+        "dv_departure",
+    );
     approx_eq(plan.dv_arrival_km_s, 2.567_435_598_7, 1e-9, "dv_arrival");
     approx_eq(plan.dv_total_km_s, 5.410_238_936_4, 1e-9, "dv_total");
 
     // Transfer time: π · sqrt(a³/μ) ≈ 22051959.86 s ≈ 255.231 days.
-    approx_eq(plan.transfer_time_s, 22_051_959.855_527, 1e-6, "transfer_time_s");
+    approx_eq(
+        plan.transfer_time_s,
+        22_051_959.855_527,
+        1e-6,
+        "transfer_time_s",
+    );
     // Phase angle: π − n_arr · t ≈ 0.7517021496 rad ≈ 43.069°.
     approx_eq(plan.phase_angle_rad, 0.751_702_149_6, 1e-9, "phase_angle");
 

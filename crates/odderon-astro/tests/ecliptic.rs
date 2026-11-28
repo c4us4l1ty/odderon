@@ -53,9 +53,10 @@ fn obliquity_constant_matches_published_value() {
 fn obliquity_rate_is_negative_and_small() {
     // The obliquity decreases over time. The rate is ~−47″/century ≈ −0.0131°/century,
     // which is ~5.6e-4 of the total angle per century — small, but the right sign.
+    let rate = OBLIQUITY_RATE_RAD_PER_S;
     assert!(
-        OBLIQUITY_RATE_RAD_PER_S < 0.0,
-        "obliquity must decrease over time, got rate {OBLIQUITY_RATE_RAD_PER_S}"
+        rate < 0.0,
+        "obliquity must decrease over time, got rate {rate}"
     );
     // The magnitude is tiny: over a century it changes by ~47 arcseconds ≈ 0.0131°.
     let change_per_century = OBLIQUITY_RATE_RAD_PER_S * 100.0 * 365.25 * 86400.0;
@@ -255,7 +256,10 @@ fn obliquity_at_j2000_is_the_constant() {
     let ec = Ecliptic::standard();
     let eps = ec.obliquity_at(0.0).expect("obliquity at J2000");
     let err = fabs(eps - OBLIQUITY_J2000_RAD);
-    assert!(err < 1e-15, "obliquity at J2000: got {eps}, expected {OBLIQUITY_J2000_RAD}");
+    assert!(
+        err < 1e-15,
+        "obliquity at J2000: got {eps}, expected {OBLIQUITY_J2000_RAD}"
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -305,7 +309,9 @@ fn ecliptic_plane_contains_the_equinox_and_is_tilted_from_icrf_equator() {
     // The ICRF equatorial plane (z=0) maps to a plane tilted by ε from the ecliptic.
     // The ICRF north pole (0,0,1) has an ecliptic z-component of cos(ε).
     let icrf_north = Vec3::new(0.0, 0.0, 1.0);
-    let north_ecl = ec.to_ecliptic(icrf_north, 0.0).expect("transform should succeed");
+    let north_ecl = ec
+        .to_ecliptic(icrf_north, 0.0)
+        .expect("transform should succeed");
     let expected_ecl_z = odderon_astro::cos_rad(OBLIQUITY_J2000_RAD);
     let z_err = fabs(north_ecl.z - expected_ecl_z);
     let got_ecl_z = north_ecl.z;
