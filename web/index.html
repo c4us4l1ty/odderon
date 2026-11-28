@@ -4441,7 +4441,6 @@ function renderMission() {
   const f = (v, d) => (Number.isFinite(v) ? v.toFixed(d) : '—');
   const priceEl = $('m-mission-price');
   const dvEl = $('m-mission-dv');
-  const essEl = $('m-mission-essence');
   const statusEl = $('m-mission-status');
   if (priceEl) priceEl.textContent = missionState.price === null ? '—' : f(missionState.price, 0);
   if (dvEl) dvEl.textContent = missionState.achievedDv === null ? '—' : f(missionState.achievedDv, 3);
