@@ -184,10 +184,15 @@ pub fn log_score(predicted_p: f64, occurred: u32) -> f64 {
 ///
 /// ```text
 ///   w = hi - lo
-///   y ∈ [lo, hi]:  CRPS = w/6 + ((y-lo)² + (hi-y)² + (y-lo)(hi-y)) / (3w)
+///   y ∈ [lo, hi]:  CRPS = ((y-lo)² + (hi-y)²) / (2w)
 ///   y <  lo:       CRPS = (lo - y) + w/2
 ///   y >  hi:       CRPS = (y - hi) + w/2
 /// ```
+///
+/// The interior form is derived by splitting the integral at `y`: on `[lo, y]` the CDF is below the
+/// step function and the integrand is `(x-lo)/w`, on `[y, hi]` it is above and the integrand is
+/// `1 - (x-lo)/w`. Evaluating both gives `(a² + b²)/(2w)` with `a = y-lo`, `b = hi-y`. At the midpoint
+/// of a unit interval this is 1/4, which is the well-known CRPS of a uniform [0,1] at its median.
 ///
 /// **Lower is better**: `0` is a degenerate point prediction exactly at the outcome. It is a
 /// **proper** scoring rule for a continuous forecast: the expected score is minimised by the true
@@ -211,12 +216,12 @@ pub fn crps(predicted_lo: f64, predicted_hi: f64, actual: f64) -> f64 {
     if actual > predicted_hi {
         return (actual - predicted_hi) + w * 0.5;
     }
-    // actual ∈ [lo, hi]: the closed form. Clamp the terms so a rounding slip at the endpoints
-    // cannot produce a tiny negative width in the denominator.
+    // actual ∈ [lo, hi]: the closed form (a² + b²)/(2w). Clamp the terms so a rounding slip at
+    // the endpoints cannot produce a tiny negative width in the denominator.
     let yl = fmax(actual - predicted_lo, 0.0);
     let yh = fmax(predicted_hi - actual, 0.0);
     let w_safe = fmax(w, f64::MIN_POSITIVE);
-    w * (1.0 / 6.0) + (yl * yl + yh * yh + yl * yh) / (3.0 * w_safe)
+    (yl * yl + yh * yh) / (2.0 * w_safe)
 }
 
 /// The deterministic design hash of the mission economy's constants.

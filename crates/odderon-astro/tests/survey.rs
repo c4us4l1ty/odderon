@@ -158,6 +158,32 @@ fn a_non_finite_coordinate_is_refused() {
     );
 }
 
+/// A declination outside `[−π/2, π/2]` is refused, not passed to the backend.
+///
+/// Declination does not wrap — only `[−π/2, π/2]` is on the celestial sphere. A value outside that range
+/// points off the sky, and without this check the kernel would silently forward a physically meaningless
+/// request to the backend, which would either reject it with a different error or (worse) answer with a
+/// result the caller could not tell apart from a real one.
+#[test]
+fn a_declination_outside_the_sphere_is_refused() {
+    let mut buf = [blank_star(); 8];
+    let backend = Fixture::new(true);
+    let deg = core::f64::consts::PI / 180.0;
+    for dec in [91.0 * deg, -91.0 * deg, 180.0 * deg, -180.0 * deg, 1000.0 * deg] {
+        assert_eq!(
+            cone_search(&backend, 0.0, dec, 0.1, &mut buf).err(),
+            Some(SurveyError::BadDirection),
+            "declination {dec} must be refused"
+        );
+    }
+    // The boundaries themselves are valid: exactly ±π/2 is the pole.
+    assert!(cone_search(&backend, 0.0, core::f64::consts::FRAC_PI_2, 0.1, &mut buf).is_ok());
+    assert!(cone_search(&backend, 0.0, -core::f64::consts::FRAC_PI_2, 0.1, &mut buf).is_ok());
+    // Right ascension wraps at 2π, so any finite value is valid.
+    assert!(cone_search(&backend, 100.0 * deg, 0.0, 0.1, &mut buf).is_ok());
+    assert!(cone_search(&backend, -100.0 * deg, 0.0, 0.1, &mut buf).is_ok());
+}
+
 // -------------------------------------------------------------------------------------------
 // The cone actually restricts the answer
 // -------------------------------------------------------------------------------------------

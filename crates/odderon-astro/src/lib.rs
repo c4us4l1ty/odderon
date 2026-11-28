@@ -233,6 +233,31 @@ pub mod lambert;
 /// as an option, not baked into [`propagate`]. The Newtonian propagator is unchanged.
 pub mod relativity;
 
+/// Ecliptic frame: the ICRF ↔ ecliptic transformation.
+///
+/// The ecliptic is the plane the solar system actually lives in — planetary orbits are nearly
+/// coplanar with it, so interplanetary transfer trajectories are naturally two-dimensional here.
+/// The ICRF frame is tilted by the obliquity of the ecliptic (~23.4°), which makes every
+/// interplanetary trajectory look like it has an out-of-plane component that is just the frame's
+/// tilt.
+///
+/// The transformation is a pure rotation about the x-axis by the obliquity, a single published
+/// constant. It needs no ephemeris — that is a misconception this module exists to correct: the
+/// ephemeris is needed for *body-fixed* frames of other planets, not for the ecliptic, which is a
+/// fixed frame defined by one angle.
+pub mod ecliptic;
+
+/// Interplanetary Hohmann transfer planning.
+///
+/// Plans a transfer between two co-planar elliptical orbits around a central body: the transfer
+/// ellipse, the departure and arrival Δv, the transfer time, and the phase angle. This is the first
+/// module to actually *use* the ecliptic frame — planetary orbits are nearly coplanar with the
+/// ecliptic, so the transfer is a two-dimensional problem in that plane.
+///
+/// Generalises [`crate::rendezvous`] from circular orbits to elliptical ones, and adds the ICRF →
+/// ecliptic inclination transformation so published planetary elements can be fed in directly.
+pub mod transfer;
+
 /// Gravitational parameters, km³/s².
 ///
 /// Values from the IAU/JPL published constants. They are *data*, not physics: a body's `mu` is a

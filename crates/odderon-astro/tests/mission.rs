@@ -175,15 +175,58 @@ fn crps_rewards_sharpness_and_accuracy() {
 }
 
 #[test]
-fn crps_matches_the_closed_form_against_the_platform() {
-    // The closed form for a uniform interval: w/6 + (yl² + yh² + yl·yh)/(3w) when the outcome is
-    // inside. Checked against the platform's own arithmetic so a coefficient error is caught.
-    let (lo, hi, y) = (4.0, 6.0, 5.0);
-    let w = hi - lo;
-    let yl = y - lo;
-    let yh = hi - y;
-    let expected = w / 6.0 + (yl * yl + yh * yh + yl * yh) / (3.0 * w);
-    assert!((crps(lo, hi, y) - expected).abs() < 1e-12);
+fn crps_matches_the_closed_form_at_the_midpoint() {
+    // The CRPS of a uniform [0,1] at its midpoint is 1/4 — the well-known result, and the value
+    // the closed form (a² + b²)/(2w) gives with a = b = 1/2. This is checked against the
+    // *published* value, not against the code's own arithmetic: a formula that computes its own
+    // expectation is circular and cannot catch a coefficient error.
+    // At the midpoint of [4,6]: a = b = 1, w = 2, so CRPS = (1+1)/(2·2) = 1/2.
+    assert!((crps(4.0, 6.0, 5.0) - 0.5).abs() < 1e-12);
+    // At the midpoint of [0,1]: a = b = 1/2, w = 1, so CRPS = (1/4+1/4)/(2) = 1/4.
+    assert!((crps(0.0, 1.0, 0.5) - 0.25).abs() < 1e-12);
+}
+
+#[test]
+fn crps_matches_numerical_integration() {
+    // The source outside the simulation: CRPS is an integral, and a Simpson's-rule evaluation of
+    // that integral at several interior and exterior points must agree with the closed form. This
+    // is the check that catches a coefficient error, because the closed form and the numerical
+    // integral are derived independently.
+    fn simpson(lo: f64, hi: f64, y: f64, n: u32) -> f64 {
+        let w = hi - lo;
+        let h = w / (n as f64);
+        let mut total = 0.0;
+        for i in 0..=n {
+            let x = lo + i as f64 * h;
+            let f = ((x - lo) / w).clamp(0.0, 1.0);
+            let h_step = if x >= y { 1.0 } else { 0.0 };
+            let v = (f - h_step).abs();
+            if i == 0 || i == n {
+                total += v;
+            } else if i % 2 == 1 {
+                total += 4.0 * v;
+            } else {
+                total += 2.0 * v;
+            }
+        }
+        total * h / 3.0
+    }
+
+    let cases: [(f64, f64, f64); 5] = [
+        (4.0, 6.0, 5.0),
+        (0.0, 1.0, 0.25),
+        (0.0, 1.0, 0.75),
+        (4.9, 5.1, 5.0),
+        (4.0, 6.0, 4.5),
+    ];
+    for (lo, hi, y) in cases {
+        let numeric = simpson(lo, hi, y, 20000);
+        let closed = crps(lo, hi, y);
+        assert!(
+            (closed - numeric).abs() < 1e-4,
+            "lo={lo} hi={hi} y={y}: closed form {closed} vs numerical {numeric}"
+        );
+    }
 }
 
 #[test]
