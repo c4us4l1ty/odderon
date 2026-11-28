@@ -15,7 +15,12 @@ to under 50 m over 7 days at LEO. The kernel also solves Lambert's problem (two 
 flight → transfer velocities) via the y-parameter universal-variable method, validated against the
 Vallado/Curtis published solution to ~1e-9 relative with the 180° degenerate case solved directly,
 and models the first-order Schwarzschild periapsis advance (relativistic corrections) — reproducing
-the published 43.0″/century precession of Mercury from first principles. The kernel is pure `no_std`
+the published 43.0″/century precession of Mercury from first principles. The **ecliptic frame**
+implements the ICRF ↔ ecliptic transformation as a pure rotation about the x-axis by the obliquity
+of the ecliptic (IAU 2006), and the **Hohmann transfer planner** — the first module to use it —
+plans interplanetary transfers between two co-planar elliptical orbits: the transfer ellipse,
+departure and arrival Δv, transfer time, and phase angle, with an ICRF → ecliptic inclination
+transformation so published planetary elements can be fed in directly. The kernel is pure `no_std`
 Rust compiled to WASM; the page is a single `web/index.html`; every
 block ships a CI gate (`tools/check-*.mjs`) that someone else can run.
 
