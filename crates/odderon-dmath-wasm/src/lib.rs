@@ -756,6 +756,161 @@ pub extern "C" fn pad_design_hash() -> u64 {
 }
 
 // =============================================================================================
+// The clipboard: the checklist and the static fire
+// =============================================================================================
+//
+// `odderon_astro::clipboard` is a pure function of the checklist and the pad's cryo state, so these
+// exports are stateless accessors over it -- the same shape as the room and pad exports above. The
+// checklist's four items cross the ABI as scalars (the C ABI cannot return a struct), and a refusal
+// (a checklist that does not validate, a fire that refuses) crosses as `NaN` in every float field
+// and a negative verdict in the integer fields, the same convention the pad uses.
+//
+// The clipboard is Block 2's gate: the checklist is the input log, and the same checklist produces
+// the same pad outcome and the same static fire readings every run. That is what makes the failure
+// reproducible rather than a story about when it happened.
+
+/// The number of items in the reference checklist.
+#[unsafe(no_mangle)]
+pub extern "C" fn clipboard_item_count() -> u32 {
+    odderon_astro::clipboard::Checklist::reference().count as u32
+}
+
+/// The label of the item at `index` in the reference checklist, or an empty string if `index` is out
+/// of range.
+#[unsafe(no_mangle)]
+pub extern "C" fn clipboard_item_label(index: u32) -> *const u8 {
+    let cl = odderon_astro::clipboard::Checklist::reference();
+    let i = index as usize;
+    match cl.item(i) {
+        Some(item) => item.label.as_ptr(),
+        None => b"".as_ptr(),
+    }
+}
+
+/// The quantity the item at `index` measures, or an empty string if `index` is out of range.
+#[unsafe(no_mangle)]
+pub extern "C" fn clipboard_item_quantity(index: u32) -> *const u8 {
+    let cl = odderon_astro::clipboard::Checklist::reference();
+    let i = index as usize;
+    match cl.item(i) {
+        Some(item) => item.quantity.as_ptr(),
+        None => b"".as_ptr(),
+    }
+}
+
+/// The expected value of the item at `index`, or `NaN` if `index` is out of range.
+#[unsafe(no_mangle)]
+pub extern "C" fn clipboard_item_expected(index: u32) -> f64 {
+    let cl = odderon_astro::clipboard::Checklist::reference();
+    let i = index as usize;
+    match cl.item(i) {
+        Some(item) => item.expected,
+        None => f64::NAN,
+    }
+}
+
+/// The tolerance of the item at `index`, or `NaN` if `index` is out of range.
+#[unsafe(no_mangle)]
+pub extern "C" fn clipboard_item_tolerance(index: u32) -> f64 {
+    let cl = odderon_astro::clipboard::Checklist::reference();
+    let i = index as usize;
+    match cl.item(i) {
+        Some(item) => item.tolerance,
+        None => f64::NAN,
+    }
+}
+
+/// Validate the reference checklist. Returns the wrong item's index (0-based), or -1 if the
+/// checklist has no wrong item, -2 if it is empty, -3 if multiple items are wrong.
+///
+/// The reference checklist always has exactly one wrong item, so this returns 0 on every platform.
+/// The check exists so the page can verify the kernel agrees with the bible's design before it
+/// renders the clipboard.
+#[unsafe(no_mangle)]
+pub extern "C" fn clipboard_validate() -> i32 {
+    let mut cl = odderon_astro::clipboard::Checklist::reference();
+    match cl.validate() {
+        Ok(wrong) => wrong as i32,
+        Err(odderon_astro::clipboard::ChecklistError::Empty) => -1,
+        Err(odderon_astro::clipboard::ChecklistError::NoWrongItem) => -2,
+        Err(odderon_astro::clipboard::ChecklistError::MultipleWrong) => -3,
+    }
+}
+
+/// The chill time the reference checklist's wrong item says, and the chill time the kernel says is
+/// correct (the remedy).
+///
+/// Writes the remedy into `remedy_out` and the wrong value into `wrong_out`. Returns `0` on success,
+/// `-1` if the wrong index is out of range. The page can render the debrief's "you said X, it should
+/// be Y" without holding either constant.
+#[unsafe(no_mangle)]
+pub extern "C" fn clipboard_debrief(
+    wrong_index: u32,
+    remedy_out: *mut f64,
+    wrong_out: *mut f64,
+) -> i32 {
+    let cl = odderon_astro::clipboard::Checklist::reference();
+    let db = cl.debrief(wrong_index as usize);
+    // SAFETY: the caller guarantees both pointers are valid and writable.
+    unsafe {
+        *remedy_out = db.remedy_value;
+        *wrong_out = db.wrong_expected;
+    }
+    0
+}
+
+/// The deterministic design hash of the clipboard module's constants.
+#[unsafe(no_mangle)]
+pub extern "C" fn clipboard_design_hash() -> u64 {
+    odderon_astro::clipboard::design_hash()
+}
+
+/// Run a static fire from a checklist's chill time and bleed count.
+///
+/// Returns: `1` if the fire lit, `0` if it did not (the pad cavitated first), `-1` if the inputs
+/// were refused (non-finite or non-positive). Writes the two gauge readings into `vapour_out` and
+/// `pressure_out` (set to `NaN` on refusal).
+///
+/// `chill_s` and `bleeds` come from the checklist; `fill_rate` and `window_s` are the pad's fill
+/// parameters. The function is pure: the same inputs produce the same readings.
+#[unsafe(no_mangle)]
+pub extern "C" fn clipboard_fire(
+    chill_s: f64,
+    bleeds: u32,
+    fill_rate: f64,
+    window_s: f64,
+    vapour_out: *mut f64,
+    pressure_out: *mut f64,
+) -> i32 {
+    match odderon_astro::clipboard::StaticFire::run(chill_s, bleeds, fill_rate, window_s) {
+        Some(fire) => {
+            let verdict = if fire.fired { 1 } else { 0 };
+            // SAFETY: the caller guarantees both pointers are valid and writable.
+            unsafe {
+                *vapour_out = fire.inlet_vapour_fraction;
+                *pressure_out = fire.pressure_kpa;
+            }
+            verdict
+        }
+        None => {
+            // SAFETY: the caller guarantees both pointers are valid and writable.
+            unsafe {
+                *vapour_out = f64::NAN;
+                *pressure_out = f64::NAN;
+            }
+            -1
+        }
+    }
+}
+
+/// The divergence between the player's mark and the fire's actual reading. Returns `NaN` if either
+/// value is non-finite.
+#[unsafe(no_mangle)]
+pub extern "C" fn clipboard_divergence(mark: f64, actual: f64) -> f64 {
+    odderon_astro::clipboard::StaticFire::divergence(mark, actual).unwrap_or(f64::NAN)
+}
+
+// =============================================================================================
 // The sounding rocket: a suborbital flight from a surface launch
 // =============================================================================================
 //
