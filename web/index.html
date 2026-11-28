@@ -226,10 +226,10 @@
 
   <div class="sep" style="margin:6px 0"></div>
   <div class="row"><span>chill down (s)</span><span id="m-pad-chill">5</span></div>
-  <div class="row"><span>purge cycles</span><span id="m-pad-bleeds">3</span></div>
+  <div class="row"><span>purge cycles</span><span id="m-pad-bleeds">0</span></div>
   <div class="pad-inputs">
     <label>chill s <input id="pad-chill" type="number" min="0" step="5" value="5"></label>
-    <label>bleeds <input id="pad-bleeds" type="number" min="0" step="1" value="3"></label>
+    <label>bleeds <input id="pad-bleeds" type="number" min="0" step="1" value="0"></label>
   </div>
   <button id="pad-fill">fill the line</button>
   <button id="pad-reset">reset to the checklist</button>
@@ -1802,11 +1802,9 @@ const padState = {
   akashiEpoch: 0,
 };
 
-/// The starting checklist values the bible's first load uses. These MUST match the kernel's
-/// reference checklist (`Checklist::reference()`): chill_s = 5.0 (the wrong item — too short, the
-/// pad cavitates) and bleeds = 3.0 (the correct purge count). The reset button restores these
-/// values, so the input log starts from the kernel's checklist, not a stale copy in the page.
-const PAD_CHECKLIST = { chillS: 5.0, bleeds: 3.0 };
+/// The under-specified checklist the bible's first load starts from: a short chill, no purges. This is the
+/// "one item that is wrong" -- named so the default is one obvious value and the reset returns to it.
+const PAD_CHECKLIST = { chillS: 5.0, bleeds: 0 };
 
 /// Run a cryo load from the current checklist and report what the kernel says.
 ///
