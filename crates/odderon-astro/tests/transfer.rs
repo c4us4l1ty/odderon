@@ -153,12 +153,22 @@ fn elliptical_transfer_matches_independent_values() {
     approx_eq(plan.e_transfer, 0.272_727_272_7, 1e-9, "e_transfer");
 
     // Python: dv_dep ≈ 2.4910481592, dv_arr ≈ 2.8924978973, total ≈ 5.3835460565.
-    approx_eq(plan.dv_departure_km_s, 2.491_048_159_2, 1e-9, "dv_departure");
+    approx_eq(
+        plan.dv_departure_km_s,
+        2.491_048_159_2,
+        1e-9,
+        "dv_departure",
+    );
     approx_eq(plan.dv_arrival_km_s, 2.892_497_897_3, 1e-9, "dv_arrival");
     approx_eq(plan.dv_total_km_s, 5.383_546_056_5, 1e-9, "dv_total");
 
     // Python: t_transfer ≈ 21722008.79 s ≈ 251.412 days.
-    approx_eq(plan.transfer_time_s, 21_722_008.789_630, 1e-6, "transfer_time_s");
+    approx_eq(
+        plan.transfer_time_s,
+        21_722_008.789_630,
+        1e-6,
+        "transfer_time_s",
+    );
     // Python: phase ≈ 0.7874607363 rad ≈ 45.118°.
     approx_eq(plan.phase_angle_rad, 0.787_460_736_3, 1e-9, "phase_angle");
 
@@ -194,12 +204,27 @@ fn inward_transfer_has_negative_phase_and_nonnegative_eccentricity() {
     approx_eq(plan.r_arrival_km, 1.0 * AU, 1e-12, "r_arrival");
 
     // The total Δv equals the outward case's total (same burn magnitudes, reversed).
-    approx_eq(plan.dv_total_km_s, 5.410_238_936_4, 1e-9, "dv_total (inward)");
+    approx_eq(
+        plan.dv_total_km_s,
+        5.410_238_936_4,
+        1e-9,
+        "dv_total (inward)",
+    );
     // Transfer time is the same (same ellipse, same half-period).
-    approx_eq(plan.transfer_time_s, 22_051_959.855_527, 1e-6, "transfer_time_s (inward)");
+    approx_eq(
+        plan.transfer_time_s,
+        22_051_959.855_527,
+        1e-6,
+        "transfer_time_s (inward)",
+    );
     // Phase angle is negative: π − n_arr · t where n_arr is the inner orbit's mean motion.
     // Python: phase ≈ -1.2489165533 rad ≈ -71.558°.
-    approx_eq(plan.phase_angle_rad, -1.248_916_553_3, 1e-9, "phase_angle (inward)");
+    approx_eq(
+        plan.phase_angle_rad,
+        -1.248_916_553_3,
+        1e-9,
+        "phase_angle (inward)",
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -430,7 +455,12 @@ fn an_ecliptic_orbit_has_zero_ecliptic_inclination() {
     let eps = ecliptic_obliquity_rad();
     // An orbit in the ecliptic plane: ICRF inclination = obliquity, omega = 0.
     let result = elements_to_ecliptic(1.0 * AU, 0.0, eps, 0.0, eps).expect("valid");
-    approx_eq(result.i_rad, 0.0, 1e-9, "ecliptic inclination of an ecliptic-plane orbit");
+    approx_eq(
+        result.i_rad,
+        0.0,
+        1e-9,
+        "ecliptic inclination of an ecliptic-plane orbit",
+    );
     // a and e pass through unchanged.
     approx_eq(result.a_km, 1.0 * AU, 1e-12, "a passes through");
     approx_eq(result.e, 0.0, 1e-12, "e passes through");
@@ -446,7 +476,12 @@ fn an_icrf_equatorial_orbit_has_ecliptic_inclination_equal_to_obliquity() {
     let eps = ecliptic_obliquity_rad();
     // ICRF inclination 0, omega = 0: the orbit is in the ICRF equatorial plane.
     let result = elements_to_ecliptic(1.0 * AU, 0.0, 0.0, 0.0, eps).expect("valid");
-    approx_eq(result.i_rad, eps, 1e-9, "ecliptic inclination of an ICRF-equatorial orbit");
+    approx_eq(
+        result.i_rad,
+        eps,
+        1e-9,
+        "ecliptic inclination of an ICRF-equatorial orbit",
+    );
 }
 
 /// The transformation refuses non-finite inputs and degenerate obliquity.

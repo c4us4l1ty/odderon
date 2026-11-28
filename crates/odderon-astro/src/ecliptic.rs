@@ -92,7 +92,7 @@ pub const OBLIQUITY_J2000_RAD: f64 = 23.439_291_0 * core::f64::consts::PI / 180.
 /// The magnitude is small: over a century the obliquity changes by ~47″ ≈ 0.00023°, which is
 /// ~2e-6 of the total angle. The rate is included so the transformation can be evaluated at any
 /// epoch, not just J2000, but it is negligible for any mission shorter than a century.
-pub const OBLIQUITY_RATE_RAD_PER_S: f64 = -0.000_000_36_0 * core::f64::consts::PI / 180.0 / SECONDS_PER_DAY;
+pub const OBLIQUITY_RATE_RAD_PER_S: f64 = -0.000_000_360 * core::f64::consts::PI / 180.0 / SECONDS_PER_DAY;
 
 /// The ecliptic frame: a rotation from ICRF to the ecliptic, parameterised by the obliquity.
 ///
