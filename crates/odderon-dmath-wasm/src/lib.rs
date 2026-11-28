@@ -763,7 +763,10 @@ pub extern "C" fn pad_design_hash() -> u64 {
 // exports are stateless accessors over it -- the same shape as the room and pad exports above. The
 // checklist's four items cross the ABI as scalars (the C ABI cannot return a struct), and a refusal
 // (a checklist that does not validate, a fire that refuses) crosses as `NaN` in every float field
-// and a negative verdict in the integer fields, the same convention the pad uses.
+// and a negative verdict in the integer fields, the same convention the pad uses. Strings cross as
+// packed `u64` (pointer in the high 32 bits, byte length in the low 32 bits), because Rust string
+// literals are not null-terminated and a bare pointer would run past the end into the next literal
+// in rodata.
 //
 // The clipboard is Block 2's gate: the checklist is the input log, and the same checklist produces
 // the same pad outcome and the same static fire readings every run. That is what makes the failure
@@ -775,26 +778,38 @@ pub extern "C" fn clipboard_item_count() -> u32 {
     odderon_astro::clipboard::Checklist::reference().count as u32
 }
 
-/// The label of the item at `index` in the reference checklist, or an empty string if `index` is out
-/// of range.
+/// The label of the item at `index` in the reference checklist.
+///
+/// Returns a packed `u64`: the high 32 bits are the byte pointer into wasm memory, the low 32 bits
+/// are the byte length. The page reads the bytes from the wasm memory buffer with the length, so
+/// it stops at the exact end of the string -- Rust string literals are not null-terminated, so a
+/// pointer-only return would run into the next literal in rodata. Returns `0` if `index` is out of
+/// range.
 #[unsafe(no_mangle)]
-pub extern "C" fn clipboard_item_label(index: u32) -> *const u8 {
+pub extern "C" fn clipboard_item_label(index: u32) -> u64 {
     let cl = odderon_astro::clipboard::Checklist::reference();
-    let i = index as usize;
-    match cl.item(i) {
-        Some(item) => item.label.as_ptr(),
-        None => b"".as_ptr(),
+    match cl.item(index as usize) {
+        Some(item) => {
+            let ptr = item.label.as_ptr() as u64;
+            let len = item.label.len() as u64;
+            (ptr << 32) | len
+        }
+        None => 0,
     }
 }
 
-/// The quantity the item at `index` measures, or an empty string if `index` is out of range.
+/// The quantity the item at `index` measures. Returns a packed `u64` (pointer in the high 32 bits,
+/// length in the low 32 bits), or `0` if `index` is out of range.
 #[unsafe(no_mangle)]
-pub extern "C" fn clipboard_item_quantity(index: u32) -> *const u8 {
+pub extern "C" fn clipboard_item_quantity(index: u32) -> u64 {
     let cl = odderon_astro::clipboard::Checklist::reference();
-    let i = index as usize;
-    match cl.item(i) {
-        Some(item) => item.quantity.as_ptr(),
-        None => b"".as_ptr(),
+    match cl.item(index as usize) {
+        Some(item) => {
+            let ptr = item.quantity.as_ptr() as u64;
+            let len = item.quantity.len() as u64;
+            (ptr << 32) | len
+        }
+        None => 0,
     }
 }
 
@@ -837,26 +852,29 @@ pub extern "C" fn clipboard_validate() -> i32 {
     }
 }
 
-/// The chill time the reference checklist's wrong item says, and the chill time the kernel says is
-/// correct (the remedy).
-///
-/// Writes the remedy into `remedy_out` and the wrong value into `wrong_out`. Returns `0` on success,
-/// `-1` if the wrong index is out of range. The page can render the debrief's "you said X, it should
-/// be Y" without holding either constant.
+/// The chill time the reference checklist's wrong item says (the value the player is told to use), or
+/// `NaN` if `wrong_index` is out of range.
 #[unsafe(no_mangle)]
-pub extern "C" fn clipboard_debrief(
-    wrong_index: u32,
-    remedy_out: *mut f64,
-    wrong_out: *mut f64,
-) -> i32 {
+pub extern "C" fn clipboard_debrief(wrong_index: u32) -> f64 {
     let cl = odderon_astro::clipboard::Checklist::reference();
-    let db = cl.debrief(wrong_index as usize);
-    // SAFETY: the caller guarantees both pointers are valid and writable.
-    unsafe {
-        *remedy_out = db.remedy_value;
-        *wrong_out = db.wrong_expected;
+    match cl.item(wrong_index as usize) {
+        Some(_) => cl.debrief(wrong_index as usize).remedy_value,
+        None => f64::NAN,
     }
-    0
+}
+
+/// The chill time the kernel says is correct for the reference checklist's wrong item (the remedy), or
+/// `NaN` if `wrong_index` is out of range.
+///
+/// The page renders the debrief's "the checklist says X, the kernel says Y" from these two exports
+/// without holding either constant.
+#[unsafe(no_mangle)]
+pub extern "C" fn clipboard_debrief_wrong(wrong_index: u32) -> f64 {
+    let cl = odderon_astro::clipboard::Checklist::reference();
+    match cl.item(wrong_index as usize) {
+        Some(_) => cl.debrief(wrong_index as usize).wrong_expected,
+        None => f64::NAN,
+    }
 }
 
 /// The deterministic design hash of the clipboard module's constants.
@@ -865,41 +883,52 @@ pub extern "C" fn clipboard_design_hash() -> u64 {
     odderon_astro::clipboard::design_hash()
 }
 
-/// Run a static fire from a checklist's chill time and bleed count.
-///
-/// Returns: `1` if the fire lit, `0` if it did not (the pad cavitated first), `-1` if the inputs
-/// were refused (non-finite or non-positive). Writes the two gauge readings into `vapour_out` and
-/// `pressure_out` (set to `NaN` on refusal).
+/// Run a static fire from a checklist's chill time and bleed count. Returns `1` if the fire lit,
+/// `0` if it did not (the pad cavitated first), `-1` if the inputs were refused (non-finite or
+/// non-positive).
 ///
 /// `chill_s` and `bleeds` come from the checklist; `fill_rate` and `window_s` are the pad's fill
-/// parameters. The function is pure: the same inputs produce the same readings.
+/// parameters. The function is pure: the same inputs produce the same verdict every time.
 #[unsafe(no_mangle)]
-pub extern "C" fn clipboard_fire(
+pub extern "C" fn clipboard_fire(chill_s: f64, bleeds: u32, fill_rate: f64, window_s: f64) -> i32 {
+    match odderon_astro::clipboard::StaticFire::run(chill_s, bleeds, fill_rate, window_s) {
+        Some(fire) => {
+            if fire.fired {
+                1
+            } else {
+                0
+            }
+        }
+        None => -1,
+    }
+}
+
+/// The fire's inlet vapour fraction reading, or `NaN` if the fire was refused. The same scalar-export
+/// shape as [`clipboard_fire`]: the page calls it with the same inputs and reads the gauge.
+#[unsafe(no_mangle)]
+pub extern "C" fn clipboard_fire_vapour(
     chill_s: f64,
     bleeds: u32,
     fill_rate: f64,
     window_s: f64,
-    vapour_out: *mut f64,
-    pressure_out: *mut f64,
-) -> i32 {
+) -> f64 {
     match odderon_astro::clipboard::StaticFire::run(chill_s, bleeds, fill_rate, window_s) {
-        Some(fire) => {
-            let verdict = if fire.fired { 1 } else { 0 };
-            // SAFETY: the caller guarantees both pointers are valid and writable.
-            unsafe {
-                *vapour_out = fire.inlet_vapour_fraction;
-                *pressure_out = fire.pressure_kpa;
-            }
-            verdict
-        }
-        None => {
-            // SAFETY: the caller guarantees both pointers are valid and writable.
-            unsafe {
-                *vapour_out = f64::NAN;
-                *pressure_out = f64::NAN;
-            }
-            -1
-        }
+        Some(fire) => fire.inlet_vapour_fraction,
+        None => f64::NAN,
+    }
+}
+
+/// The fire's tank pressure reading in kPa, or `NaN` if the fire was refused.
+#[unsafe(no_mangle)]
+pub extern "C" fn clipboard_fire_pressure(
+    chill_s: f64,
+    bleeds: u32,
+    fill_rate: f64,
+    window_s: f64,
+) -> f64 {
+    match odderon_astro::clipboard::StaticFire::run(chill_s, bleeds, fill_rate, window_s) {
+        Some(fire) => fire.pressure_kpa,
+        None => f64::NAN,
     }
 }
 
